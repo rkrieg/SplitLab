@@ -1,0 +1,117 @@
+'use client';
+
+import { Suspense, useState } from 'react';
+import { signIn } from 'next-auth/react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { Zap } from 'lucide-react';
+import toast from 'react-hot-toast';
+
+function LoginForm() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const callbackUrl = searchParams.get('callbackUrl') || '/dashboard';
+
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+
+    try {
+      const result = await signIn('credentials', {
+        email,
+        password,
+        redirect: false,
+      });
+
+      if (result?.error) {
+        toast.error('Invalid email or password');
+      } else {
+        router.push(callbackUrl);
+        router.refresh();
+      }
+    } catch {
+      toast.error('An unexpected error occurred');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="w-full max-w-md">
+      {/* Logo */}
+      <div className="flex items-center justify-center gap-2 mb-8">
+        <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center">
+          <Zap className="w-6 h-6 text-white" />
+        </div>
+        <span className="text-2xl font-bold text-slate-100">SplitLab</span>
+      </div>
+
+      {/* Card */}
+      <div className="bg-slate-800 border border-slate-700 rounded-2xl p-8">
+        <h1 className="text-xl font-semibold text-slate-100 mb-1">Sign in</h1>
+        <p className="text-slate-400 text-sm mb-6">
+          Enter your credentials to access the platform
+        </p>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-slate-300 mb-1.5">
+              Email address
+            </label>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="input-base"
+              placeholder="you@agency.com"
+              required
+              autoComplete="email"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-300 mb-1.5">
+              Password
+            </label>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="input-base"
+              placeholder="••••••••"
+              required
+              autoComplete="current-password"
+            />
+          </div>
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="btn-primary w-full justify-center py-2.5 mt-2"
+          >
+            {loading ? 'Signing in…' : 'Sign in'}
+          </button>
+        </form>
+      </div>
+
+      <p className="text-center text-slate-500 text-xs mt-6">
+        Account access is managed by your agency administrator.
+      </p>
+    </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={
+      <div className="w-full max-w-md flex items-center justify-center py-20">
+        <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+      </div>
+    }>
+      <LoginForm />
+    </Suspense>
+  );
+}

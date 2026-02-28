@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install 2>&1 | tail -20)",
+      "Bash(npx next build 2>&1 | head -80)",
+      "Bash(npx next build 2>&1 | grep -E \"\\(error|Error|warning|Warning|✓|✗|Failed|success\\)\" | head -40)",
+      "Bash(npx next build 2>&1 | grep -E \"\\(error|Error|warning|Failed|success|✓|Route|Page\\)\" | head -60)",
+      "Bash(head -5 /Users/reynoldkrieg/splitlab/src/app/\\\\\\(auth\\\\\\)/login/page.tsx)",
+      "Bash(npx next build 2>&1 | grep -E \"\\(error|Error|warning|Warning|Failed|success|✓|✗\\)\" | head -40)",
+      "Bash(npx next build 2>&1 | tail -40)",
+      "Bash(npm run dev)",
+      "Bash(open /Users/reynoldkrieg/splitlab/supabase/migrations/001_initial_schema.sql)"
+    ]
+  }
+}
