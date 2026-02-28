@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
+import { sendInvitationEmail } from '@/lib/email';
 
 const createSchema = z.object({
   name: z.string().min(1).max(255),
@@ -63,6 +64,15 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+    // Send invitation email (non-blocking — don't fail the request if email fails)
+    sendInvitationEmail({
+      toName: data.name,
+      toEmail: data.email,
+      temporaryPassword: data.password,
+      role: data.role,
+    }).catch((err) => console.error('[email] invitation failed:', err));
+
     return NextResponse.json(user, { status: 201 });
   } catch (err) {
     if (err instanceof z.ZodError) {

@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
 import {
   Plus, FileCode2, Upload, Code2, Eye, Edit2, Copy, Trash2,
-  Tag, X, Check,
+  Tag, X, Check, Link,
 } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
@@ -35,7 +35,7 @@ interface Props {
   canManage: boolean;
 }
 
-type UploadTab = 'file' | 'code';
+type UploadTab = 'file' | 'code' | 'url';
 
 export default function PagesClient({ initialPages, workspaceId, canManage }: Props) {
   const router = useRouter();
@@ -48,6 +48,8 @@ export default function PagesClient({ initialPages, workspaceId, canManage }: Pr
   const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [tab, setTab] = useState<UploadTab>('file');
+  const [importUrl, setImportUrl] = useState('');
+  const [importing, setImporting] = useState(false);
 
   // Form
   const [name, setName] = useState('');
@@ -145,7 +147,32 @@ export default function PagesClient({ initialPages, workspaceId, canManage }: Pr
     setTags('');
     setHtmlContent('<!DOCTYPE html>\n<html lang="en">\n<head>\n  <meta charset="UTF-8">\n  <title>Landing Page</title>\n</head>\n<body>\n  \n</body>\n</html>');
     setTab('file');
+    setImportUrl('');
     if (fileRef.current) fileRef.current.value = '';
+  }
+
+  async function handleImportUrl() {
+    if (!importUrl.trim()) return;
+    setImporting(true);
+    try {
+      const res = await fetch('/api/fetch-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: importUrl }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error || 'Failed to fetch URL');
+        return;
+      }
+      setHtmlContent(data.html);
+      setTab('code');
+      toast.success('HTML imported — review and save below');
+    } catch {
+      toast.error('Failed to fetch URL');
+    } finally {
+      setImporting(false);
+    }
   }
 
   return (
@@ -254,16 +281,46 @@ export default function PagesClient({ initialPages, workspaceId, canManage }: Pr
             <button type="button" onClick={() => setTab('code')} className={`px-3 py-1.5 text-sm rounded-md transition-colors ${tab === 'code' ? 'bg-slate-700 text-slate-100' : 'text-slate-400 hover:text-slate-300'}`}>
               <span className="flex items-center gap-1.5"><Code2 size={13} /> Paste HTML</span>
             </button>
+            <button type="button" onClick={() => setTab('url')} className={`px-3 py-1.5 text-sm rounded-md transition-colors ${tab === 'url' ? 'bg-slate-700 text-slate-100' : 'text-slate-400 hover:text-slate-300'}`}>
+              <span className="flex items-center gap-1.5"><Link size={13} /> Import from URL</span>
+            </button>
           </div>
 
-          {tab === 'file' ? (
+          {tab === 'file' && (
             <div className="border-2 border-dashed border-slate-600 rounded-xl p-8 text-center">
               <Upload size={24} className="mx-auto text-slate-500 mb-2" />
               <p className="text-slate-400 text-sm mb-3">Drop an HTML file or click to browse</p>
               <input ref={fileRef} type="file" accept=".html,.htm" className="hidden" id="html-file" />
               <label htmlFor="html-file" className="btn-secondary cursor-pointer">Browse Files</label>
             </div>
-          ) : (
+          )}
+
+          {tab === 'url' && (
+            <div className="space-y-3">
+              <label className="block text-sm font-medium text-slate-300">Page URL</label>
+              <p className="text-slate-500 text-xs -mt-1">Paste any URL — Loveable, Replit preview, or any public webpage. The HTML will be fetched and loaded into the editor.</p>
+              <div className="flex gap-2">
+                <input
+                  type="url"
+                  value={importUrl}
+                  onChange={(e) => setImportUrl(e.target.value)}
+                  className="input-base flex-1"
+                  placeholder="https://my-app.lovable.app"
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleImportUrl(); } }}
+                />
+                <Button
+                  type="button"
+                  onClick={handleImportUrl}
+                  loading={importing}
+                  disabled={!importUrl.trim()}
+                >
+                  <Link size={14} /> Fetch
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {tab === 'code' && (
             <div>
               <label className="block text-sm font-medium text-slate-300 mb-1.5">HTML Content</label>
               <CodeEditor value={htmlContent} onChange={setHtmlContent} height="350px" />
