@@ -2,10 +2,11 @@
 
 import { useState } from 'react';
 import toast from 'react-hot-toast';
-import { Plus, Globe, CheckCircle, XCircle, Copy, AlertCircle } from 'lucide-react';
+import { Plus, Globe, CheckCircle, XCircle, Copy, AlertCircle, Trash2 } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
 import EmptyState from '@/components/ui/EmptyState';
+import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import { formatDate } from '@/lib/utils';
 
 interface Domain {
@@ -30,6 +31,8 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
   const [domainInput, setDomainInput] = useState('');
   const [adding, setAdding] = useState(false);
   const [verifying, setVerifying] = useState<string | null>(null);
+  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault();
@@ -70,6 +73,27 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
       toast.success('Verification check triggered — DNS propagation may take up to 48 hours.');
     } finally {
       setVerifying(null);
+    }
+  }
+
+  async function handleDelete() {
+    if (!deleteId) return;
+    setDeleting(true);
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}/domains`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ domain_id: deleteId }),
+      });
+      if (!res.ok) {
+        toast.error('Failed to delete domain');
+        return;
+      }
+      setDomains((prev) => prev.filter((d) => d.id !== deleteId));
+      toast.success('Domain removed');
+    } finally {
+      setDeleting(false);
+      setDeleteId(null);
     }
   }
 
@@ -149,20 +173,41 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
                   CNAME → {d.cname_target || appHostname} • Added {formatDate(d.created_at)}
                 </p>
               </div>
-              {!d.verified && canManage && (
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => handleVerify(d.id)}
-                  loading={verifying === d.id}
-                >
-                  Verify DNS
-                </Button>
-              )}
+              <div className="flex items-center gap-2">
+                {!d.verified && canManage && (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => handleVerify(d.id)}
+                    loading={verifying === d.id}
+                  >
+                    Verify DNS
+                  </Button>
+                )}
+                {canManage && (
+                  <button
+                    onClick={() => setDeleteId(d.id)}
+                    className="p-2 text-slate-500 hover:text-red-400 transition-colors rounded-lg hover:bg-slate-700"
+                    title="Delete domain"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                )}
+              </div>
             </div>
           ))}
         </div>
       )}
+
+      {/* Delete confirm */}
+      <ConfirmDialog
+        open={!!deleteId}
+        onClose={() => setDeleteId(null)}
+        onConfirm={handleDelete}
+        title="Delete Domain"
+        description="This will remove the domain from this workspace. You will need to re-add it and update DNS records if you want to use it again."
+        loading={deleting}
+      />
 
       {/* Add domain modal */}
       <Modal open={modalOpen} onClose={() => setModalOpen(false)} title="Add Custom Domain" size="sm">

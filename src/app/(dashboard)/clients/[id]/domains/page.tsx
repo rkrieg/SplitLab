@@ -27,7 +27,7 @@ export default async function DomainsPage({ params }: { params: { id: string } }
 
   const { data: client } = await db.from('clients').select('name').eq('id', params.id).single();
 
-  const appHostname = process.env.APP_HOSTNAME || 'splitlab.agency';
+  const appHostname = process.env.APP_HOSTNAME || 'cname.vercel-dns.com';
 
   return (
     <div>
