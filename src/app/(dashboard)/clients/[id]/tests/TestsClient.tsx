@@ -318,16 +318,60 @@ export default function TestsClient({ tests: initialTests, pages, workspaceId, c
                 + Add goal
               </button>
             </div>
-            {goals.map((g, i) => (
-              <div key={i} className="flex items-center gap-2 mb-2">
-                <input type="text" value={g.name} onChange={(e) => { const c = [...goals]; c[i].name = e.target.value; setGoals(c); }} className="input-base flex-1" placeholder="Goal name" />
-                <select value={g.type} onChange={(e) => { const c = [...goals]; c[i].type = e.target.value; setGoals(c); }} className="input-base w-36">
-                  {GOAL_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-                </select>
-                <input type="text" value={g.selector || ''} onChange={(e) => { const c = [...goals]; c[i].selector = e.target.value; setGoals(c); }} className="input-base w-28 font-mono text-xs" placeholder="#form-id" />
-                <button type="button" onClick={() => setGoals(goals.filter((_, gi) => gi !== i))} className="text-slate-500 hover:text-red-400">✕</button>
-              </div>
-            ))}
+            <div className="space-y-3">
+              {goals.map((g, i) => (
+                <div key={i} className="rounded-lg border border-slate-700 p-3 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <input type="text" value={g.name} onChange={(e) => { const c = [...goals]; c[i].name = e.target.value; setGoals(c); }} className="input-base flex-1" placeholder="Goal name" required />
+                    <select value={g.type} onChange={(e) => { const c = [...goals]; c[i].type = e.target.value; c[i].selector = ''; c[i].url_pattern = ''; setGoals(c); }} className="input-base w-36">
+                      {GOAL_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+                    </select>
+                    <button type="button" onClick={() => setGoals(goals.filter((_, gi) => gi !== i))} className="text-slate-500 hover:text-red-400 transition-colors">✕</button>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {(g.type === 'form_submit' || g.type === 'button_click') && (
+                      <div className="flex-1">
+                        <input
+                          type="text"
+                          value={g.selector || ''}
+                          onChange={(e) => { const c = [...goals]; c[i].selector = e.target.value; setGoals(c); }}
+                          className="input-base w-full font-mono text-xs"
+                          placeholder={g.type === 'form_submit' ? '#my-form or .contact-form' : '#cta-button or .signup-btn'}
+                        />
+                        <p className="text-slate-500 text-[10px] mt-1">CSS selector{g.type === 'form_submit' ? ' (blank = all forms)' : ''}</p>
+                      </div>
+                    )}
+                    {g.type === 'url_reached' && (
+                      <div className="flex-1">
+                        <input
+                          type="text"
+                          value={g.url_pattern || ''}
+                          onChange={(e) => { const c = [...goals]; c[i].url_pattern = e.target.value; setGoals(c); }}
+                          className="input-base w-full font-mono text-xs"
+                          placeholder="/thank-you or /success.*"
+                        />
+                        <p className="text-slate-500 text-[10px] mt-1">URL pattern (regex supported)</p>
+                      </div>
+                    )}
+                    {g.type === 'call_click' && (
+                      <p className="text-slate-500 text-xs flex-1">Automatically tracks clicks on tel: links</p>
+                    )}
+                    <label className="flex items-center gap-1.5 cursor-pointer flex-shrink-0">
+                      <input
+                        type="checkbox"
+                        checked={g.is_primary}
+                        onChange={(e) => { const c = [...goals]; c[i].is_primary = e.target.checked; setGoals(c); }}
+                        className="rounded border-slate-600 bg-slate-700 text-indigo-500 focus:ring-indigo-500 focus:ring-offset-0 w-3.5 h-3.5"
+                      />
+                      <span className="text-slate-400 text-xs">Primary</span>
+                    </label>
+                  </div>
+                </div>
+              ))}
+            </div>
+            {goals.length === 0 && (
+              <p className="text-slate-500 text-xs mt-2">No goals configured. Add a goal to track conversions.</p>
+            )}
           </div>
 
           <div className="flex justify-end gap-3 pt-2">

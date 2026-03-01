@@ -23,7 +23,7 @@ export async function middleware(request: NextRequest) {
   // and Next.js internals are never rewritten.
   const APP_ROUTES = [
     '/login', '/dashboard', '/clients', '/api', '/tests', '/pages',
-    '/scripts', '/team', '/settings', '/_next', '/favicon.ico', '/static',
+    '/scripts', '/team', '/settings', '/_next', '/favicon.ico', '/static', '/tracker.js',
   ];
   const isAppRoute = APP_ROUTES.some((r) => pathname === r || pathname.startsWith(r + '/') || pathname.startsWith(r + '?'));
 

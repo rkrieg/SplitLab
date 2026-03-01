@@ -2,6 +2,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/supabase-server';
 import { z } from 'zod';
 
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type',
+};
+
 const schema = z.object({
   testId: z.string().uuid(),
   variantId: z.string().uuid(),
@@ -31,7 +37,7 @@ export async function POST(request: NextRequest) {
         .single();
 
       if (existing) {
-        return NextResponse.json({ ok: true, duplicate: true });
+        return NextResponse.json({ ok: true, duplicate: true }, { headers: CORS_HEADERS });
       }
     }
 
@@ -46,22 +52,16 @@ export async function POST(request: NextRequest) {
 
     if (error) throw error;
 
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true }, { headers: CORS_HEADERS });
   } catch (err) {
     if (err instanceof z.ZodError) {
-      return NextResponse.json({ error: err.errors }, { status: 400 });
+      return NextResponse.json({ error: err.errors }, { status: 400, headers: CORS_HEADERS });
     }
     console.error('[event]', err);
-    return NextResponse.json({ error: 'Internal error' }, { status: 500 });
+    return NextResponse.json({ error: 'Internal error' }, { status: 500, headers: CORS_HEADERS });
   }
 }
 
 export async function OPTIONS() {
-  return new NextResponse(null, {
-    headers: {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
-    },
-  });
+  return new NextResponse(null, { headers: CORS_HEADERS });
 }

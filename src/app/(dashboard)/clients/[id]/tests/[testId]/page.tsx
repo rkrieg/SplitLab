@@ -17,6 +17,8 @@ async function getTest(testId: string) {
   return data;
 }
 
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://trysplitlab.com';
+
 export default async function TestAnalyticsPage({
   params,
 }: {
@@ -40,7 +42,7 @@ export default async function TestAnalyticsPage({
         }
       />
       <div className="p-6">
-        <AnalyticsClient test={test} />
+        <AnalyticsClient test={test} appUrl={APP_URL} />
       </div>
     </div>
   );

@@ -75,7 +75,11 @@ export async function GET(request: NextRequest) {
 
     // 6a. If variant has a redirect URL, redirect the visitor
     if (selectedVariant.redirect_url) {
-      const redirectResponse = NextResponse.redirect(selectedVariant.redirect_url, 302);
+      const redirectUrl = new URL(selectedVariant.redirect_url);
+      redirectUrl.searchParams.set('sl_tid', test.id);
+      redirectUrl.searchParams.set('sl_vid', selectedVariant.id);
+      redirectUrl.searchParams.set('sl_vh', visitorId);
+      const redirectResponse = NextResponse.redirect(redirectUrl.toString(), 302);
 
       const cookieOptions = {
         httpOnly: true,
