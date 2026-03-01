@@ -92,6 +92,7 @@ export interface TestVariant {
   test_id: string;
   name: string;
   page_id: string | null;
+  redirect_url: string | null;
   traffic_weight: number;
   is_control: boolean;
   created_at: string;

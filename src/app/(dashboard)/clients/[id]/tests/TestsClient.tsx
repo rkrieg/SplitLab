@@ -4,7 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
-import { Plus, FlaskConical, MoreHorizontal, Play, Pause, Check, Trash2 } from 'lucide-react';
+import { Plus, FlaskConical, MoreHorizontal, Play, Pause, Check, Trash2, Link2, FileCode2 } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
 import EmptyState from '@/components/ui/EmptyState';
@@ -12,7 +12,7 @@ import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import { TestStatusBadge } from '@/components/ui/Badge';
 
 interface Page { id: string; name: string }
-interface Variant { id: string; name: string; page_id: string | null; traffic_weight: number; is_control: boolean }
+interface Variant { id: string; name: string; page_id: string | null; redirect_url: string | null; traffic_weight: number; is_control: boolean }
 interface Goal { name: string; type: string; selector?: string; url_pattern?: string; is_primary: boolean }
 interface Test {
   id: string;
@@ -52,8 +52,8 @@ export default function TestsClient({ tests: initialTests, pages, workspaceId, c
   const [testName, setTestName] = useState('');
   const [urlPath, setUrlPath] = useState('/');
   const [variants, setVariants] = useState([
-    { name: 'Control', page_id: '', traffic_weight: 50, is_control: true },
-    { name: 'Variant B', page_id: '', traffic_weight: 50, is_control: false },
+    { name: 'Control', page_id: '', redirect_url: '', source_type: 'page' as 'page' | 'url', traffic_weight: 50, is_control: true },
+    { name: 'Variant B', page_id: '', redirect_url: '', source_type: 'page' as 'page' | 'url', traffic_weight: 50, is_control: false },
   ]);
   const [goals, setGoals] = useState<Goal[]>([]);
 
@@ -62,7 +62,7 @@ export default function TestsClient({ tests: initialTests, pages, workspaceId, c
   function addVariant() {
     if (variants.length >= 5) return;
     const remaining = 100 - variants.reduce((s, v) => s + v.traffic_weight, 0);
-    setVariants([...variants, { name: `Variant ${String.fromCharCode(66 + variants.length - 1)}`, page_id: '', traffic_weight: Math.max(remaining, 10), is_control: false }]);
+    setVariants([...variants, { name: `Variant ${String.fromCharCode(66 + variants.length - 1)}`, page_id: '', redirect_url: '', source_type: 'page' as 'page' | 'url', traffic_weight: Math.max(remaining, 10), is_control: false }]);
   }
 
   function removeVariant(i: number) {
@@ -84,7 +84,13 @@ export default function TestsClient({ tests: initialTests, pages, workspaceId, c
         body: JSON.stringify({
           name: testName,
           url_path: urlPath,
-          variants: variants.map((v) => ({ ...v, page_id: v.page_id || null })),
+          variants: variants.map((v) => ({
+            name: v.name,
+            page_id: v.source_type === 'page' ? (v.page_id || null) : null,
+            redirect_url: v.source_type === 'url' ? (v.redirect_url || null) : null,
+            traffic_weight: v.traffic_weight,
+            is_control: v.is_control,
+          })),
           goals,
         }),
       });
@@ -110,8 +116,8 @@ export default function TestsClient({ tests: initialTests, pages, workspaceId, c
     setTestName('');
     setUrlPath('/');
     setVariants([
-      { name: 'Control', page_id: '', traffic_weight: 50, is_control: true },
-      { name: 'Variant B', page_id: '', traffic_weight: 50, is_control: false },
+      { name: 'Control', page_id: '', redirect_url: '', source_type: 'page' as 'page' | 'url', traffic_weight: 50, is_control: true },
+      { name: 'Variant B', page_id: '', redirect_url: '', source_type: 'page' as 'page' | 'url', traffic_weight: 50, is_control: false },
     ]);
     setGoals([]);
   }
@@ -187,6 +193,7 @@ export default function TestsClient({ tests: initialTests, pages, workspaceId, c
                         {v.name}
                         <span className="text-slate-500">{v.traffic_weight}%</span>
                         {v.is_control && <span className="text-indigo-400 text-[10px]">ctrl</span>}
+                        {v.redirect_url && <Link2 size={10} className="text-amber-400" />}
                       </span>
                     ))}
                   </div>
@@ -264,19 +271,35 @@ export default function TestsClient({ tests: initialTests, pages, workspaceId, c
                 {totalWeight}% / 100%
               </span>
             </div>
-            <div className="space-y-2">
+            <div className="space-y-3">
               {variants.map((v, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <input type="text" value={v.name} onChange={(e) => { const c = [...variants]; c[i].name = e.target.value; setVariants(c); }} className="input-base flex-1" placeholder="Variant name" required />
-                  <select value={v.page_id} onChange={(e) => { const c = [...variants]; c[i].page_id = e.target.value; setVariants(c); }} className="input-base w-40">
-                    <option value="">No page</option>
-                    {pages.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                  </select>
-                  <input type="number" value={v.traffic_weight} onChange={(e) => { const c = [...variants]; c[i].traffic_weight = Number(e.target.value); setVariants(c); }} className="input-base w-20 text-center" min={1} max={100} />
-                  <span className="text-slate-400 text-sm w-4">%</span>
-                  {variants.length > 2 && (
-                    <button type="button" onClick={() => removeVariant(i)} className="text-slate-500 hover:text-red-400 transition-colors">✕</button>
-                  )}
+                <div key={i} className="rounded-lg border border-slate-700 p-3 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <input type="text" value={v.name} onChange={(e) => { const c = [...variants]; c[i].name = e.target.value; setVariants(c); }} className="input-base flex-1" placeholder="Variant name" required />
+                    <input type="number" value={v.traffic_weight} onChange={(e) => { const c = [...variants]; c[i].traffic_weight = Number(e.target.value); setVariants(c); }} className="input-base w-20 text-center" min={1} max={100} />
+                    <span className="text-slate-400 text-sm w-4">%</span>
+                    {variants.length > 2 && (
+                      <button type="button" onClick={() => removeVariant(i)} className="text-slate-500 hover:text-red-400 transition-colors">✕</button>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="flex rounded-md overflow-hidden border border-slate-600">
+                      <button type="button" onClick={() => { const c = [...variants]; c[i].source_type = 'page'; c[i].redirect_url = ''; setVariants(c); }} className={`px-2.5 py-1 text-xs flex items-center gap-1 ${v.source_type === 'page' ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-400 hover:text-slate-200'}`}>
+                        <FileCode2 size={12} /> Page
+                      </button>
+                      <button type="button" onClick={() => { const c = [...variants]; c[i].source_type = 'url'; c[i].page_id = ''; setVariants(c); }} className={`px-2.5 py-1 text-xs flex items-center gap-1 ${v.source_type === 'url' ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-400 hover:text-slate-200'}`}>
+                        <Link2 size={12} /> URL
+                      </button>
+                    </div>
+                    {v.source_type === 'page' ? (
+                      <select value={v.page_id} onChange={(e) => { const c = [...variants]; c[i].page_id = e.target.value; setVariants(c); }} className="input-base flex-1">
+                        <option value="">Select a page</option>
+                        {pages.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                      </select>
+                    ) : (
+                      <input type="url" value={v.redirect_url} onChange={(e) => { const c = [...variants]; c[i].redirect_url = e.target.value; setVariants(c); }} className="input-base flex-1 font-mono text-xs" placeholder="https://my-app.lovable.app/landing" />
+                    )}
+                  </div>
                 </div>
               ))}
             </div>

@@ -16,7 +16,8 @@ async function getClient(id: string) {
         *,
         domains (*),
         tests ( id, name, status, url_path, created_at, updated_at ),
-        _count: tests(count)
+        pages ( id ),
+        scripts ( id )
       )
     `)
     .eq('id', id)
@@ -52,14 +53,14 @@ export default async function ClientDetailPage({
       icon: FileCode2,
       label: 'Pages',
       desc: 'HTML landing pages',
-      count: null,
+      count: (workspace?.pages ?? []).length,
     },
     {
       href: `/clients/${client.id}/scripts`,
       icon: Code2,
       label: 'Scripts',
       desc: 'Tracking & analytics scripts',
-      count: null,
+      count: (workspace?.scripts ?? []).length,
     },
     {
       href: `/clients/${client.id}/domains`,

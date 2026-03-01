@@ -48,7 +48,7 @@ export async function GET(request: NextRequest) {
     // 3. Fetch variants
     const { data: variants } = await db
       .from('test_variants')
-      .select('id, name, page_id, traffic_weight, is_control, pages(html_url, html_content)')
+      .select('id, name, page_id, redirect_url, traffic_weight, is_control, pages(html_url, html_content)')
       .eq('test_id', test.id)
       .order('is_control', { ascending: false });
 
@@ -73,7 +73,39 @@ export async function GET(request: NextRequest) {
       selectedVariant = await assignVariant(visitorId, test.id, variants as { id: string; traffic_weight: number }[]) as typeof variants[0];
     }
 
-    // 6. Fetch HTML for variant
+    // 6a. If variant has a redirect URL, redirect the visitor
+    if (selectedVariant.redirect_url) {
+      const redirectResponse = NextResponse.redirect(selectedVariant.redirect_url, 302);
+
+      const cookieOptions = {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax' as const,
+        maxAge: 60 * 60 * 24 * 90,
+        path: '/',
+      };
+
+      if (!existingCookie) {
+        redirectResponse.cookies.set(COOKIE_NAME, visitorId, cookieOptions);
+      }
+      if (!stickyVariantId) {
+        redirectResponse.cookies.set(stickyCookieName, selectedVariant.id, cookieOptions);
+      }
+
+      // Fire pageview via query param so the tracking snippet on the target page isn't needed
+      // The redirect itself counts as a pageview — record it server-side
+      await db.from('events').insert({
+        test_id: test.id,
+        variant_id: selectedVariant.id,
+        visitor_hash: visitorId,
+        type: 'pageview',
+        metadata: { redirect_url: selectedVariant.redirect_url },
+      });
+
+      return redirectResponse;
+    }
+
+    // 6b. Fetch HTML for variant
     let html = '';
     const pageData = (selectedVariant.pages as unknown) as { html_url: string; html_content: string | null } | null;
 

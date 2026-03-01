@@ -7,6 +7,7 @@ import { z } from 'zod';
 const variantSchema = z.object({
   name: z.string().min(1),
   page_id: z.string().uuid().nullable().optional(),
+  redirect_url: z.string().url().nullable().optional(),
   traffic_weight: z.number().int().min(1).max(100),
   is_control: z.boolean().optional(),
 });
@@ -81,6 +82,7 @@ export async function POST(
       test_id: test.id,
       name: v.name,
       page_id: v.page_id || null,
+      redirect_url: v.redirect_url || null,
       traffic_weight: v.traffic_weight,
       is_control: i === 0 || v.is_control || false,
     }));
