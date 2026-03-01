@@ -204,7 +204,7 @@ function notFoundHtml(domain: string) {
 <html lang="en">
 <head><meta charset="UTF-8"><title>Not Found</title>
 <style>body{font-family:sans-serif;background:#0f172a;color:#f8fafc;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}
-.box{text-align:center}.code{font-size:4rem;font-weight:700;color:#6366f1}h1{margin:.5rem 0}p{color:#94a3b8}</style>
+.box{text-align:center}.code{font-size:4rem;font-weight:700;color:#3D8BDA}h1{margin:.5rem 0}p{color:#94a3b8}</style>
 </head>
 <body><div class="box"><div class="code">404</div><h1>Page Not Found</h1>
 <p>No active test found for <strong>${domain}</strong></p></div></body>

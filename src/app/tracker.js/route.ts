@@ -15,9 +15,9 @@ export async function GET() {
 
 function buildTrackerScript(appUrl: string): string {
   return `/**
- * SplitLab Conversion Tracker v1.0
- * Lightweight, zero-dependency tracking snippet for external websites.
- * Include on any page: <script src="${appUrl}/tracker.js"></script>
+ * SplitLab Conversion Tracker v2.0
+ * Zero-config tracking. One script tag, no setup needed.
+ * <script src="${appUrl}/tracker.js"></script>
  */
 (function() {
   "use strict";
@@ -27,10 +27,7 @@ function buildTrackerScript(appUrl: string): string {
   var RESOLVE_URL = API_BASE + "/api/resolve";
   var STORAGE_KEY = "sl_tracking";
   var _sent = {};
-  var _ready = false;
-  var _queue = [];
-  var _ctx = null; // { tid, vid, vh }
-  var _goals = [];
+  var _ctx = null;
 
   // ─── Utility ────────────────────────────────────────────────────────────────
 
@@ -81,6 +78,65 @@ function buildTrackerScript(appUrl: string): string {
     } catch(e) {}
   }
 
+  // ─── Core tracking ─────────────────────────────────────────────────────────
+
+  function track(type, goalId, meta) {
+    if (!_ctx) return;
+    var key = type + ":" + (goalId || "") + ":" + (meta && meta.trigger || "");
+    if (_sent[key]) return;
+    _sent[key] = true;
+
+    send({
+      testId: _ctx.tid,
+      variantId: _ctx.vid,
+      visitorHash: _ctx.vh,
+      type: type,
+      goalId: goalId || null,
+      metadata: meta || null
+    });
+  }
+
+  // ─── Auto-wire conversions (zero config) ────────────────────────────────────
+
+  function wireAutoConversions() {
+    // Track all form submissions
+    document.querySelectorAll("form").forEach(function(form) {
+      form.addEventListener("submit", function() {
+        track("conversion", null, { trigger: "form_submit" });
+      });
+    });
+
+    // Track CTA button clicks (buttons not inside forms)
+    document.querySelectorAll("button, [role='button'], input[type='submit'], input[type='button']").forEach(function(el) {
+      if (el.closest("form")) return;
+      el.addEventListener("click", function() {
+        track("conversion", null, { trigger: "button_click", text: (el.textContent || "").trim().slice(0, 50) });
+      });
+    });
+
+    // Track CTA link clicks (links styled as buttons)
+    document.querySelectorAll("a").forEach(function(el) {
+      var href = el.getAttribute("href") || "";
+      if (!href || href.charAt(0) === "#" || href.indexOf("javascript:") === 0) return;
+
+      // Track tel: links as call clicks
+      if (href.indexOf("tel:") === 0) {
+        el.addEventListener("click", function() {
+          track("conversion", null, { trigger: "call_click" });
+        });
+        return;
+      }
+
+      // Track links that look like CTA buttons
+      var cls = (el.className || "").toLowerCase();
+      if (cls.match(/btn|button|cta/) || el.getAttribute("role") === "button") {
+        el.addEventListener("click", function() {
+          track("conversion", null, { trigger: "button_click", text: (el.textContent || "").trim().slice(0, 50) });
+        });
+      }
+    });
+  }
+
   // ─── Detection: resolve context from URL params or localStorage ────────────
 
   function detect(callback) {
@@ -95,21 +151,16 @@ function buildTrackerScript(appUrl: string): string {
       return callback({ tid: tid, vid: vid, vh: vh });
     }
 
-    // Method 2: Variant-only shorthand (?sl_variant=variantId)
-    var variantId = params.get("sl_variant");
-    if (variantId) {
-      cleanUrl(["sl_variant"]);
-      // Resolve test ID from variant ID via API
+    // Method 2: Variant ID only (?sl_vid=xxx) — resolve test ID via API
+    if (vid && !tid) {
+      cleanUrl(["sl_vid"]);
       var xhr = new XMLHttpRequest();
-      xhr.open("GET", RESOLVE_URL + "?vid=" + encodeURIComponent(variantId), true);
+      xhr.open("GET", RESOLVE_URL + "?vid=" + encodeURIComponent(vid), true);
       xhr.onload = function() {
         try {
           var data = JSON.parse(xhr.responseText);
-          if (data.testId) {
-            callback({ tid: data.testId, vid: data.variantId, vh: uuid() });
-          } else {
-            callback(load()); // Fallback to localStorage
-          }
+          if (data.testId) callback({ tid: data.testId, vid: data.variantId, vh: vh || uuid() });
+          else callback(load());
         } catch(e) { callback(load()); }
       };
       xhr.onerror = function() { callback(load()); };
@@ -117,90 +168,36 @@ function buildTrackerScript(appUrl: string): string {
       return;
     }
 
-    // Method 3: localStorage (returning visitor)
+    // Method 3: Shorthand (?sl_variant=xxx)
+    var variantId = params.get("sl_variant");
+    if (variantId) {
+      cleanUrl(["sl_variant"]);
+      var xhr2 = new XMLHttpRequest();
+      xhr2.open("GET", RESOLVE_URL + "?vid=" + encodeURIComponent(variantId), true);
+      xhr2.onload = function() {
+        try {
+          var data = JSON.parse(xhr2.responseText);
+          if (data.testId) callback({ tid: data.testId, vid: data.variantId, vh: uuid() });
+          else callback(load());
+        } catch(e) { callback(load()); }
+      };
+      xhr2.onerror = function() { callback(load()); };
+      xhr2.send();
+      return;
+    }
+
+    // Method 4: localStorage (returning visitor)
     callback(load());
   }
 
-  // ─── Core tracking ─────────────────────────────────────────────────────────
-
-  function track(type, goalId, meta) {
-    if (!_ctx) return;
-    var key = type + ":" + (goalId || "");
-    if (_sent[key]) return;
-    _sent[key] = true;
-
-    var payload = {
-      testId: _ctx.tid,
-      variantId: _ctx.vid,
-      visitorHash: _ctx.vh,
-      type: type,
-      goalId: goalId || null
-    };
-    if (meta) payload.metadata = meta;
-    send(payload);
-  }
-
-  // ─── Goal auto-wiring ─────────────────────────────────────────────────────
-
-  function wireGoals() {
-    _goals.forEach(function(goal) {
-      switch (goal.type) {
-        case "form_submit":
-          var forms = goal.selector
-            ? document.querySelectorAll(goal.selector)
-            : document.querySelectorAll("form");
-          forms.forEach(function(form) {
-            form.addEventListener("submit", function() {
-              track("conversion", goal.id || null, { trigger: "form_submit", selector: goal.selector || "*" });
-            });
-          });
-          break;
-
-        case "button_click":
-          if (goal.selector) {
-            document.querySelectorAll(goal.selector).forEach(function(el) {
-              el.addEventListener("click", function() {
-                track("conversion", goal.id || null, { trigger: "button_click", selector: goal.selector });
-              });
-            });
-          }
-          break;
-
-        case "url_reached":
-          if (goal.urlPattern) {
-            try {
-              if (new RegExp(goal.urlPattern).test(window.location.href)) {
-                track("conversion", goal.id || null, { trigger: "url_reached", pattern: goal.urlPattern });
-              }
-            } catch(e) {}
-          }
-          break;
-
-        case "call_click":
-          document.querySelectorAll('a[href^="tel:"]').forEach(function(el) {
-            el.addEventListener("click", function() {
-              track("conversion", goal.id || null, { trigger: "call_click" });
-            });
-          });
-          break;
-      }
-    });
-  }
-
-  // ─── Initialization ────────────────────────────────────────────────────────
+  // ─── Boot ───────────────────────────────────────────────────────────────────
 
   function boot(ctx) {
     _ctx = ctx;
     if (!_ctx) return;
     store(_ctx);
-    _ready = true;
 
-    // Flush any queued calls
-    _queue.forEach(function(fn) { fn(); });
-    _queue = [];
-
-    // Auto-wire goals once DOM is ready
-    function onReady() { wireGoals(); }
+    function onReady() { wireAutoConversions(); }
     if (document.readyState === "loading") {
       document.addEventListener("DOMContentLoaded", onReady);
     } else {
@@ -208,68 +205,17 @@ function buildTrackerScript(appUrl: string): string {
     }
   }
 
-  // ─── Public API: window.SplitLab ──────────────────────────────────────────
+  // ─── Public API (optional manual use) ───────────────────────────────────────
 
   window.SplitLab = {
-    /**
-     * Manually initialize with known IDs (used by pre-filled snippets).
-     * SplitLab.init({ testId: "...", variantId: "..." })
-     */
-    init: function(opts) {
-      if (!opts) return;
-      var ctx = {
-        tid: opts.testId || opts.tid,
-        vid: opts.variantId || opts.vid,
-        vh:  opts.visitorHash || opts.vh || load()?.vh || uuid()
-      };
-      if (ctx.tid && ctx.vid) {
-        boot(ctx);
-      }
-    },
-
-    /**
-     * Register conversion goals for auto-wiring.
-     * SplitLab.goals([
-     *   { type: "form_submit", selector: "#my-form", id: "goal-uuid" },
-     *   { type: "button_click", selector: ".cta-btn" },
-     *   { type: "url_reached", urlPattern: "/thank-you" },
-     *   { type: "call_click" }
-     * ])
-     */
-    goals: function(goalList) {
-      _goals = goalList || [];
-      if (_ready) {
-        // Re-wire if already booted
-        if (document.readyState === "loading") {
-          document.addEventListener("DOMContentLoaded", wireGoals);
-        } else {
-          wireGoals();
-        }
-      }
-    },
-
-    /**
-     * Fire a tracking event manually.
-     * SplitLab.track("conversion")
-     * SplitLab.track("conversion", "goal-uuid")
-     * SplitLab.track("conversion", null, { custom: "data" })
-     */
     track: function(type, goalId, meta) {
-      if (_ready) {
-        track(type || "conversion", goalId, meta);
-      } else {
-        _queue.push(function() { track(type || "conversion", goalId, meta); });
-      }
+      track(type || "conversion", goalId, meta);
     },
-
-    /** Get the current tracking context (for debugging). */
     getContext: function() { return _ctx; },
-
-    /** Check if tracking is active. */
-    isActive: function() { return _ready; }
+    isActive: function() { return !!_ctx; }
   };
 
-  // ─── Auto-detect and boot ─────────────────────────────────────────────────
+  // Auto-detect and boot — no init() call needed
   detect(boot);
 
 })();

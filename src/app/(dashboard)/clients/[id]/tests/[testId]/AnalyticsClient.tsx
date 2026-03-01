@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import toast from 'react-hot-toast';
-import { Download, RefreshCw, Trophy, TrendingUp, Code2, Copy, ChevronDown, ChevronUp } from 'lucide-react';
+import { Download, RefreshCw, Trophy, TrendingUp, Code2, Copy, ChevronDown, ChevronUp, ShieldCheck, ShieldX, Loader2 } from 'lucide-react';
 import { TestStatusBadge } from '@/components/ui/Badge';
 import { formatPercent } from '@/lib/utils';
 
@@ -13,6 +13,8 @@ interface Variant {
   traffic_weight: number;
   redirect_url?: string | null;
   pages?: { id: string; name: string } | null;
+  tracking_verified?: boolean | null;
+  tracking_verified_at?: string | null;
 }
 
 interface Goal {
@@ -55,6 +57,8 @@ export default function AnalyticsClient({ test, appUrl }: Props) {
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [snippetOpen, setSnippetOpen] = useState(false);
+  const [checkingTracking, setCheckingTracking] = useState<string | null>(null);
+  const [variantOverrides, setVariantOverrides] = useState<Record<string, { tracking_verified: boolean; tracking_verified_at: string }>>({});
 
   const fetchAnalytics = useCallback(async () => {
     setLoading(true);
@@ -107,55 +111,41 @@ export default function AnalyticsClient({ test, appUrl }: Props) {
   const variants = test.test_variants || [];
   const goals = test.conversion_goals || [];
 
-  function buildSnippet() {
-    const goalsArray = goals.map((g) => {
-      const obj: Record<string, string | null> = { type: g.type };
-      if (g.id) obj.id = g.id;
-      if (g.selector) obj.selector = g.selector;
-      if (g.url_pattern) obj.urlPattern = g.url_pattern;
-      return obj;
-    });
-
-    const lines = [
-      `<!-- SplitLab Conversion Tracker -->`,
-      `<script src="${appUrl}/tracker.js"></script>`,
-      `<script>`,
-      `  // Auto-detection: If visitors arrive via SplitLab redirect,`,
-      `  // tracking starts automatically. For manual setup, use init():`,
-    ];
-
-    if (variants.length > 0) {
-      lines.push(`  //`);
-      lines.push(`  // Variant IDs for this test:`);
-      variants.forEach((v) => {
-        lines.push(`  //   ${v.name}${v.is_control ? ' (control)' : ''}: "${v.id}"`);
-      });
-    }
-
-    lines.push(`  //`);
-    lines.push(`  // Uncomment the init() call below if not using redirect-based tracking:`);
-    lines.push(`  // SplitLab.init({ testId: "${test.id}", variantId: "VARIANT_ID_HERE" });`);
-
-    if (goalsArray.length > 0) {
-      lines.push(``);
-      lines.push(`  // Register conversion goals for auto-tracking:`);
-      lines.push(`  SplitLab.goals(${JSON.stringify(goalsArray, null, 4).split('\n').map((l, i) => i === 0 ? l : '  ' + l).join('\n')});`);
-    }
-
-    lines.push(``);
-    lines.push(`  // Or fire conversions manually:`);
-    lines.push(`  // SplitLab.track("conversion");`);
-    if (goals.length > 0) {
-      lines.push(`  // SplitLab.track("conversion", "${goals[0].id}");`);
-    }
-    lines.push(`</script>`);
-
-    return lines.join('\n');
-  }
+  const snippet = `<script src="${appUrl}/tracker.js"></script>`;
 
   function copySnippet() {
-    navigator.clipboard.writeText(buildSnippet());
+    navigator.clipboard.writeText(snippet);
     toast.success('Snippet copied to clipboard');
+  }
+
+  async function checkTracking(variantId: string, url: string) {
+    setCheckingTracking(variantId);
+    try {
+      const res = await fetch('/api/check-tracking', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url, variant_id: variantId }),
+      });
+      const data = await res.json();
+      setVariantOverrides((prev) => ({
+        ...prev,
+        [variantId]: { tracking_verified: data.verified, tracking_verified_at: data.checked_at },
+      }));
+      if (data.verified) {
+        toast.success('Tracker verified on target page');
+      } else {
+        toast.error('Tracker not found on target page');
+      }
+    } catch {
+      toast.error('Failed to check tracking');
+    } finally {
+      setCheckingTracking(null);
+    }
+  }
+
+  function getVerifiedStatus(v: Variant) {
+    if (variantOverrides[v.id]) return variantOverrides[v.id].tracking_verified;
+    return v.tracking_verified;
   }
 
   return (
@@ -279,9 +269,36 @@ export default function AnalyticsClient({ test, appUrl }: Props) {
                         {stat.isWinner && (
                           <Trophy size={13} className="text-green-400" />
                         )}
+                        {stat.variant.redirect_url && getVerifiedStatus(stat.variant) === true && (
+                          <span className="flex items-center gap-1 badge bg-green-500/20 text-green-400 border border-green-500/30 text-[10px]">
+                            <ShieldCheck size={9} /> Verified
+                          </span>
+                        )}
+                        {stat.variant.redirect_url && getVerifiedStatus(stat.variant) === false && (
+                          <span className="flex items-center gap-1 badge bg-red-500/20 text-red-400 border border-red-500/30 text-[10px]">
+                            <ShieldX size={9} /> Unverified
+                          </span>
+                        )}
                       </div>
                       {stat.variant.pages?.name && (
                         <p className="text-slate-500 text-xs mt-0.5">{stat.variant.pages.name}</p>
+                      )}
+                      {stat.variant.redirect_url && (
+                        <div className="flex items-center gap-2 mt-1">
+                          <p className="text-slate-500 text-xs font-mono truncate max-w-[200px]">{stat.variant.redirect_url}</p>
+                          <button
+                            onClick={() => checkTracking(stat.variant.id, stat.variant.redirect_url!)}
+                            disabled={checkingTracking === stat.variant.id}
+                            className="inline-flex items-center gap-1 text-[10px] text-slate-400 hover:text-slate-200 transition-colors"
+                          >
+                            {checkingTracking === stat.variant.id ? (
+                              <Loader2 size={9} className="animate-spin" />
+                            ) : (
+                              <ShieldCheck size={9} />
+                            )}
+                            Check
+                          </button>
+                        </div>
                       )}
                     </td>
                     <td className="px-5 py-3.5 text-slate-400">{stat.variant.traffic_weight}%</td>
@@ -347,12 +364,10 @@ export default function AnalyticsClient({ test, appUrl }: Props) {
           <div className="border-t border-slate-700 px-5 py-4 space-y-4">
             <div className="flex items-center justify-between">
               <p className="text-slate-400 text-xs">
-                Add this code before <code className="text-indigo-300">&lt;/body&gt;</code> on your external site.
-                {variants.some(v => v.redirect_url) && (
-                  <span className="block mt-1 text-slate-500">
-                    Since this test uses redirect URLs, tracking context is passed automatically via URL parameters.
-                  </span>
-                )}
+                Paste this single line before <code className="text-indigo-300">&lt;/body&gt;</code> on your external site. No configuration needed.
+                <span className="block mt-1 text-slate-500">
+                  Tracking context is passed automatically via URL parameters. Form submissions and CTA button clicks are tracked as conversions.
+                </span>
               </p>
               <button onClick={copySnippet} className="btn-secondary text-xs flex-shrink-0">
                 <Copy size={12} /> Copy
@@ -360,8 +375,48 @@ export default function AnalyticsClient({ test, appUrl }: Props) {
             </div>
 
             <pre className="bg-slate-900 border border-slate-700 rounded-lg p-4 overflow-x-auto text-xs text-slate-300 leading-relaxed">
-              <code>{buildSnippet()}</code>
+              <code>{snippet}</code>
             </pre>
+
+            {/* Check Tracking for redirect variants */}
+            {variants.filter((v) => v.redirect_url).length > 0 && (
+              <div>
+                <p className="text-slate-400 text-xs font-medium mb-2">Tracking Verification</p>
+                <div className="grid gap-1.5">
+                  {variants.filter((v) => v.redirect_url).map((v) => {
+                    const verified = getVerifiedStatus(v);
+                    return (
+                      <div key={v.id} className="flex items-center gap-2 text-xs">
+                        <span className="text-slate-300 font-medium w-28 truncate">{v.name}</span>
+                        {verified === true && (
+                          <span className="flex items-center gap-1 badge bg-green-500/20 text-green-400 border border-green-500/30 text-[10px]">
+                            <ShieldCheck size={9} /> Verified
+                          </span>
+                        )}
+                        {verified === false && (
+                          <span className="flex items-center gap-1 badge bg-red-500/20 text-red-400 border border-red-500/30 text-[10px]">
+                            <ShieldX size={9} /> Not Found
+                          </span>
+                        )}
+                        <button
+                          onClick={() => checkTracking(v.id, v.redirect_url!)}
+                          disabled={checkingTracking === v.id}
+                          className="inline-flex items-center gap-1 text-slate-400 hover:text-slate-200 transition-colors disabled:opacity-50"
+                        >
+                          {checkingTracking === v.id ? (
+                            <Loader2 size={10} className="animate-spin" />
+                          ) : (
+                            <ShieldCheck size={10} />
+                          )}
+                          Check
+                        </button>
+                        <code className="text-slate-500 font-mono truncate max-w-[200px]">{v.redirect_url}</code>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             {variants.length > 0 && (
               <div>

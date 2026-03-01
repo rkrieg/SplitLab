@@ -4,7 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
-import { Plus, FlaskConical, MoreHorizontal, Play, Pause, Check, Trash2, Link2, FileCode2 } from 'lucide-react';
+import { Plus, FlaskConical, MoreHorizontal, Play, Pause, Check, Trash2, Link2, FileCode2, ShieldCheck, ShieldX, Loader2 } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
 import EmptyState from '@/components/ui/EmptyState';
@@ -12,7 +12,7 @@ import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import { TestStatusBadge } from '@/components/ui/Badge';
 
 interface Page { id: string; name: string }
-interface Variant { id: string; name: string; page_id: string | null; redirect_url: string | null; traffic_weight: number; is_control: boolean }
+interface Variant { id: string; name: string; page_id: string | null; redirect_url: string | null; traffic_weight: number; is_control: boolean; tracking_verified?: boolean | null; tracking_verified_at?: string | null }
 interface Goal { name: string; type: string; selector?: string; url_pattern?: string; is_primary: boolean }
 interface Test {
   id: string;
@@ -47,6 +47,7 @@ export default function TestsClient({ tests: initialTests, pages, workspaceId, c
   const [deleting, setDeleting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [activeMenu, setActiveMenu] = useState<string | null>(null);
+  const [checkingTracking, setCheckingTracking] = useState<string | null>(null);
 
   // Form state
   const [testName, setTestName] = useState('');
@@ -156,6 +157,38 @@ export default function TestsClient({ tests: initialTests, pages, workspaceId, c
     }
   }
 
+  async function checkTracking(variantId: string, url: string) {
+    setCheckingTracking(variantId);
+    try {
+      const res = await fetch('/api/check-tracking', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url, variant_id: variantId }),
+      });
+      const data = await res.json();
+      // Update the variant's tracking_verified status in local state
+      setTests((prev) =>
+        prev.map((t) => ({
+          ...t,
+          test_variants: (t.test_variants ?? []).map((v) =>
+            v.id === variantId
+              ? { ...v, tracking_verified: data.verified, tracking_verified_at: data.checked_at }
+              : v
+          ),
+        }))
+      );
+      if (data.verified) {
+        toast.success('Tracker verified on target page');
+      } else {
+        toast.error('Tracker not found on target page');
+      }
+    } catch {
+      toast.error('Failed to check tracking');
+    } finally {
+      setCheckingTracking(null);
+    }
+  }
+
   return (
     <>
       <div className="flex items-center justify-between mb-6">
@@ -194,9 +227,39 @@ export default function TestsClient({ tests: initialTests, pages, workspaceId, c
                         <span className="text-slate-500">{v.traffic_weight}%</span>
                         {v.is_control && <span className="text-indigo-400 text-[10px]">ctrl</span>}
                         {v.redirect_url && <Link2 size={10} className="text-amber-400" />}
+                        {v.redirect_url && v.tracking_verified === true && (
+                          <ShieldCheck size={10} className="text-green-400" />
+                        )}
+                        {v.redirect_url && v.tracking_verified === false && (
+                          <ShieldX size={10} className="text-red-400" />
+                        )}
                       </span>
                     ))}
                   </div>
+                  {/* Check Tracking buttons for redirect variants */}
+                  {canManage && (test.test_variants ?? []).some((v) => v.redirect_url) && (
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      {(test.test_variants ?? []).filter((v) => v.redirect_url).map((v) => (
+                        <button
+                          key={v.id}
+                          onClick={() => checkTracking(v.id, v.redirect_url!)}
+                          disabled={checkingTracking === v.id}
+                          className="inline-flex items-center gap-1 text-[10px] text-slate-400 hover:text-slate-200 bg-slate-700/50 hover:bg-slate-700 border border-slate-600/50 rounded-full px-2 py-0.5 transition-colors disabled:opacity-50"
+                        >
+                          {checkingTracking === v.id ? (
+                            <Loader2 size={9} className="animate-spin" />
+                          ) : v.tracking_verified === true ? (
+                            <ShieldCheck size={9} className="text-green-400" />
+                          ) : v.tracking_verified === false ? (
+                            <ShieldX size={9} className="text-red-400" />
+                          ) : (
+                            <ShieldCheck size={9} />
+                          )}
+                          Check {v.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 <div className="flex items-center gap-2 ml-4">
                   <Link

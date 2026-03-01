@@ -28,7 +28,7 @@ export async function sendInvitationEmail({
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f172a; color: #e2e8f0; margin: 0; padding: 0; }
     .wrapper { max-width: 520px; margin: 40px auto; background: #1e293b; border-radius: 12px; overflow: hidden; }
-    .header { background: #6366f1; padding: 32px; text-align: center; }
+    .header { background: #3D8BDA; padding: 32px; text-align: center; }
     .header h1 { margin: 0; color: #fff; font-size: 22px; font-weight: 700; letter-spacing: -0.5px; }
     .body { padding: 32px; }
     .body p { margin: 0 0 16px; color: #94a3b8; line-height: 1.6; }
@@ -36,7 +36,7 @@ export async function sendInvitationEmail({
     .creds div { margin-bottom: 10px; font-size: 14px; }
     .creds span.label { color: #64748b; display: inline-block; width: 80px; }
     .creds span.value { color: #e2e8f0; font-family: monospace; }
-    .btn { display: inline-block; background: #6366f1; color: #fff; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-weight: 600; font-size: 15px; }
+    .btn { display: inline-block; background: #3D8BDA; color: #fff; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-weight: 600; font-size: 15px; }
     .footer { text-align: center; padding: 20px 32px; color: #475569; font-size: 12px; border-top: 1px solid #334155; }
   </style>
 </head>
