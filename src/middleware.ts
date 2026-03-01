@@ -19,19 +19,15 @@ export async function middleware(request: NextRequest) {
   const host = request.headers.get('host') || '';
 
   // ── Custom domain page serving ──────────────────────────────────────────
-  // If the request comes in on a client's custom domain, rewrite it to the
-  // internal /api/serve handler which resolves the test, assigns a variant,
-  // and returns the injected HTML.
-  if (isCustomDomain(host)) {
-    // Skip rewrite for Next.js internals
-    if (
-      pathname.startsWith('/_next') ||
-      pathname.startsWith('/api/') ||
-      pathname.startsWith('/static/')
-    ) {
-      return NextResponse.next();
-    }
+  // Only intercept requests on custom client domains. App routes, API routes,
+  // and Next.js internals are never rewritten.
+  const APP_ROUTES = [
+    '/login', '/dashboard', '/clients', '/api', '/tests', '/pages',
+    '/scripts', '/team', '/settings', '/_next', '/favicon.ico', '/static',
+  ];
+  const isAppRoute = APP_ROUTES.some((r) => pathname === r || pathname.startsWith(r + '/') || pathname.startsWith(r + '?'));
 
+  if (isCustomDomain(host) && !isAppRoute) {
     const url = request.nextUrl.clone();
     url.pathname = '/api/serve';
     url.searchParams.set('domain', host);
