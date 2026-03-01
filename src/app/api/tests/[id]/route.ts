@@ -4,10 +4,20 @@ import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { z } from 'zod';
 
+const goalSchema = z.object({
+  id: z.string().uuid().optional(),
+  name: z.string().min(1).max(255),
+  type: z.enum(['form_submit', 'button_click', 'url_reached', 'call_click']),
+  selector: z.string().max(500).nullable().optional(),
+  url_pattern: z.string().max(500).nullable().optional(),
+  is_primary: z.boolean(),
+});
+
 const updateSchema = z.object({
   name: z.string().min(1).max(255).optional(),
   url_path: z.string().min(1).max(500).optional(),
   status: z.enum(['draft', 'active', 'paused', 'completed']).optional(),
+  goals: z.array(goalSchema).optional(),
 });
 
 export async function GET(
@@ -36,16 +46,48 @@ export async function PATCH(
 
   try {
     const body = await request.json();
-    const data = updateSchema.parse(body);
+    const { goals, ...testFields } = updateSchema.parse(body);
 
-    const { data: updated, error } = await db
+    // Update test fields if any provided
+    if (Object.keys(testFields).length > 0) {
+      const { error } = await db
+        .from('tests')
+        .update(testFields)
+        .eq('id', params.id);
+
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    // Replace goals if provided
+    if (goals) {
+      // Delete existing goals
+      await db.from('conversion_goals').delete().eq('test_id', params.id);
+
+      // Insert new goals
+      if (goals.length > 0) {
+        const { error: goalsError } = await db
+          .from('conversion_goals')
+          .insert(goals.map((g) => ({
+            test_id: params.id,
+            name: g.name,
+            type: g.type,
+            selector: g.selector || null,
+            url_pattern: g.url_pattern || null,
+            is_primary: g.is_primary,
+          })));
+
+        if (goalsError) return NextResponse.json({ error: goalsError.message }, { status: 500 });
+      }
+    }
+
+    // Return full test with relations
+    const { data: updated, error: fetchError } = await db
       .from('tests')
-      .update(data)
+      .select('*, test_variants(*, pages(id, name)), conversion_goals(*)')
       .eq('id', params.id)
-      .select()
       .single();
 
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    if (fetchError) return NextResponse.json({ error: fetchError.message }, { status: 500 });
     return NextResponse.json(updated);
   } catch (err) {
     if (err instanceof z.ZodError) {

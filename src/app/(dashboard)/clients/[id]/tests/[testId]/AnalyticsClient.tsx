@@ -2,9 +2,18 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import toast from 'react-hot-toast';
-import { Download, RefreshCw, Trophy, TrendingUp, Code2, Copy, ChevronDown, ChevronUp, ShieldCheck, ShieldX, Loader2 } from 'lucide-react';
+import { Download, RefreshCw, Trophy, TrendingUp, Code2, Copy, ChevronDown, ChevronUp, ShieldCheck, ShieldX, Loader2, Edit2 } from 'lucide-react';
 import { TestStatusBadge } from '@/components/ui/Badge';
+import Modal from '@/components/ui/Modal';
+import Button from '@/components/ui/Button';
 import { formatPercent } from '@/lib/utils';
+
+const GOAL_TYPES = [
+  { value: 'form_submit', label: 'Form Submit' },
+  { value: 'button_click', label: 'Button Click' },
+  { value: 'url_reached', label: 'URL Reached' },
+  { value: 'call_click', label: 'Call Click' },
+];
 
 interface Variant {
   id: string;
@@ -49,7 +58,8 @@ interface Props {
   appUrl: string;
 }
 
-export default function AnalyticsClient({ test, appUrl }: Props) {
+export default function AnalyticsClient({ test: initialTest, appUrl }: Props) {
+  const [test, setTest] = useState(initialTest);
   const [stats, setStats] = useState<VariantStat[]>([]);
   const [totalViews, setTotalViews] = useState(0);
   const [totalConversions, setTotalConversions] = useState(0);
@@ -59,6 +69,13 @@ export default function AnalyticsClient({ test, appUrl }: Props) {
   const [snippetOpen, setSnippetOpen] = useState(false);
   const [checkingTracking, setCheckingTracking] = useState<string | null>(null);
   const [variantOverrides, setVariantOverrides] = useState<Record<string, { tracking_verified: boolean; tracking_verified_at: string }>>({});
+
+  // Edit state
+  const [editOpen, setEditOpen] = useState(false);
+  const [editName, setEditName] = useState('');
+  const [editUrlPath, setEditUrlPath] = useState('');
+  const [editGoals, setEditGoals] = useState<Goal[]>([]);
+  const [editSaving, setEditSaving] = useState(false);
 
   const fetchAnalytics = useCallback(async () => {
     setLoading(true);
@@ -148,6 +165,62 @@ export default function AnalyticsClient({ test, appUrl }: Props) {
     return v.tracking_verified;
   }
 
+  function openEdit() {
+    setEditName(test.name);
+    setEditUrlPath(test.url_path);
+    setEditGoals((test.conversion_goals || []).map((g) => ({
+      id: g.id,
+      name: g.name,
+      type: g.type,
+      selector: g.selector || '',
+      url_pattern: g.url_pattern || '',
+      is_primary: g.is_primary,
+    })));
+    setEditOpen(true);
+  }
+
+  function closeEdit() {
+    setEditOpen(false);
+    setEditName('');
+    setEditUrlPath('');
+    setEditGoals([]);
+  }
+
+  async function handleEdit(e: React.FormEvent) {
+    e.preventDefault();
+    setEditSaving(true);
+    try {
+      const res = await fetch(`/api/tests/${test.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: editName,
+          url_path: editUrlPath,
+          goals: editGoals.map((g) => ({
+            name: g.name,
+            type: g.type,
+            selector: g.selector || null,
+            url_pattern: g.url_pattern || null,
+            is_primary: g.is_primary,
+          })),
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        toast.error(err.error || 'Failed to update test');
+        return;
+      }
+      const updated = await res.json();
+      setTest(updated);
+      closeEdit();
+      toast.success('Test updated');
+    } catch {
+      toast.error('Unexpected error');
+    } finally {
+      setEditSaving(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       {/* Summary bar */}
@@ -212,7 +285,11 @@ export default function AnalyticsClient({ test, appUrl }: Props) {
           <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
           Refresh
         </button>
-        <button onClick={exportCsv} className="btn-secondary ml-auto">
+        <button onClick={openEdit} className="btn-secondary ml-auto">
+          <Edit2 size={14} />
+          Edit
+        </button>
+        <button onClick={exportCsv} className="btn-secondary">
           <Download size={14} />
           Export CSV
         </button>
@@ -463,6 +540,91 @@ export default function AnalyticsClient({ test, appUrl }: Props) {
           </div>
         )}
       </div>
+
+      {/* Edit test modal */}
+      <Modal open={editOpen} onClose={closeEdit} title="Edit Test" size="lg">
+        <form onSubmit={handleEdit} className="space-y-5">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-300 mb-1.5">Test Name</label>
+              <input type="text" value={editName} onChange={(e) => setEditName(e.target.value)} className="input-base" placeholder="Homepage Hero Test" required />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-300 mb-1.5">URL Path</label>
+              <input type="text" value={editUrlPath} onChange={(e) => setEditUrlPath(e.target.value)} className="input-base font-mono" placeholder="/" required />
+            </div>
+          </div>
+
+          {/* Goals */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="section-label">Conversion Goals</label>
+              <button type="button" onClick={() => setEditGoals([...editGoals, { id: '', name: '', type: 'form_submit', selector: '', url_pattern: '', is_primary: editGoals.length === 0 }])} className="text-indigo-400 hover:text-indigo-300 text-sm">
+                + Add goal
+              </button>
+            </div>
+            <div className="space-y-3">
+              {editGoals.map((g, i) => (
+                <div key={i} className="rounded-lg border border-slate-700 p-3 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <input type="text" value={g.name} onChange={(e) => { const c = [...editGoals]; c[i].name = e.target.value; setEditGoals(c); }} className="input-base flex-1" placeholder="Goal name" required />
+                    <select value={g.type} onChange={(e) => { const c = [...editGoals]; c[i].type = e.target.value; c[i].selector = ''; c[i].url_pattern = ''; setEditGoals(c); }} className="input-base w-36">
+                      {GOAL_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+                    </select>
+                    <button type="button" onClick={() => setEditGoals(editGoals.filter((_, gi) => gi !== i))} className="text-slate-500 hover:text-red-400 transition-colors">✕</button>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {(g.type === 'form_submit' || g.type === 'button_click') && (
+                      <div className="flex-1">
+                        <input
+                          type="text"
+                          value={g.selector || ''}
+                          onChange={(e) => { const c = [...editGoals]; c[i].selector = e.target.value; setEditGoals(c); }}
+                          className="input-base w-full font-mono text-xs"
+                          placeholder={g.type === 'form_submit' ? '#my-form or .contact-form' : '#cta-button or .signup-btn'}
+                        />
+                        <p className="text-slate-500 text-[10px] mt-1">CSS selector{g.type === 'form_submit' ? ' (blank = all forms)' : ''}</p>
+                      </div>
+                    )}
+                    {g.type === 'url_reached' && (
+                      <div className="flex-1">
+                        <input
+                          type="text"
+                          value={g.url_pattern || ''}
+                          onChange={(e) => { const c = [...editGoals]; c[i].url_pattern = e.target.value; setEditGoals(c); }}
+                          className="input-base w-full font-mono text-xs"
+                          placeholder="/thank-you or /success.*"
+                        />
+                        <p className="text-slate-500 text-[10px] mt-1">URL pattern (regex supported)</p>
+                      </div>
+                    )}
+                    {g.type === 'call_click' && (
+                      <p className="text-slate-500 text-xs flex-1">Automatically tracks clicks on tel: links</p>
+                    )}
+                    <label className="flex items-center gap-1.5 cursor-pointer flex-shrink-0">
+                      <input
+                        type="checkbox"
+                        checked={g.is_primary}
+                        onChange={(e) => { const c = [...editGoals]; c[i].is_primary = e.target.checked; setEditGoals(c); }}
+                        className="rounded border-slate-600 bg-slate-700 text-indigo-500 focus:ring-indigo-500 focus:ring-offset-0 w-3.5 h-3.5"
+                      />
+                      <span className="text-slate-400 text-xs">Primary</span>
+                    </label>
+                  </div>
+                </div>
+              ))}
+            </div>
+            {editGoals.length === 0 && (
+              <p className="text-slate-500 text-xs mt-2">No goals configured. Add a goal to track conversions.</p>
+            )}
+          </div>
+
+          <div className="flex justify-end gap-3 pt-2">
+            <Button variant="secondary" type="button" onClick={closeEdit}>Cancel</Button>
+            <Button type="submit" loading={editSaving}>Save Changes</Button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }
