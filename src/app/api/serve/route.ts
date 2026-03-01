@@ -16,11 +16,11 @@ export async function GET(request: NextRequest) {
     // 1. Resolve domain → workspace
     const { data: domainRow, error: domainError } = await db
       .from('domains')
-      .select('workspace_id, verified')
+      .select('workspace_id')
       .eq('domain', domain)
       .single();
 
-    if (domainError || !domainRow || !domainRow.verified) {
+    if (domainError || !domainRow) {
       return new NextResponse(notFoundHtml(domain), {
         status: 404,
         headers: { 'Content-Type': 'text/html' },
