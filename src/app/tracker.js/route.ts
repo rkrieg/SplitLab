@@ -53,7 +53,8 @@ function buildTrackerScript(appUrl: string): string {
     try {
       var body = JSON.stringify(payload);
       if (navigator.sendBeacon) {
-        navigator.sendBeacon(EVENT_URL, body);
+        var blob = new Blob([body], { type: "application/json" });
+        navigator.sendBeacon(EVENT_URL, blob);
       } else {
         var xhr = new XMLHttpRequest();
         xhr.open("POST", EVENT_URL, true);
@@ -96,14 +97,15 @@ function buildTrackerScript(appUrl: string): string {
     if (_sent[key]) return;
     _sent[key] = true;
 
-    send({
+    var payload = {
       testId: _ctx.tid,
       variantId: _ctx.vid,
       visitorHash: _ctx.vh,
       type: type,
-      goalId: goalId || null,
-      metadata: meta || null
-    });
+      goalId: goalId || null
+    };
+    if (meta) payload.metadata = meta;
+    send(payload);
   }
 
   // ─── Auto-wire conversions (zero config) ────────────────────────────────────

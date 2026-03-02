@@ -14,7 +14,7 @@ const schema = z.object({
   goalId: z.string().uuid().nullable().optional(),
   visitorHash: z.string().min(1).max(64),
   type: z.enum(['pageview', 'conversion']),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.unknown()).nullable().optional(),
 });
 
 export async function POST(request: NextRequest) {

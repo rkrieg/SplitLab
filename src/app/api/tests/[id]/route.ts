@@ -13,11 +13,17 @@ const goalSchema = z.object({
   is_primary: z.boolean(),
 });
 
+const weightSchema = z.object({
+  id: z.string().uuid(),
+  traffic_weight: z.number().int().min(0).max(100),
+});
+
 const updateSchema = z.object({
   name: z.string().min(1).max(255).optional(),
   url_path: z.string().min(1).max(500).optional(),
   status: z.enum(['draft', 'active', 'paused', 'completed']).optional(),
   goals: z.array(goalSchema).optional(),
+  weights: z.array(weightSchema).optional(),
 });
 
 export async function GET(
@@ -46,7 +52,7 @@ export async function PATCH(
 
   try {
     const body = await request.json();
-    const { goals, ...testFields } = updateSchema.parse(body);
+    const { goals, weights, ...testFields } = updateSchema.parse(body);
 
     // Update test fields if any provided
     if (Object.keys(testFields).length > 0) {
@@ -56,6 +62,22 @@ export async function PATCH(
         .eq('id', params.id);
 
       if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    // Update variant weights if provided
+    if (weights) {
+      const totalWeight = weights.reduce((s, w) => s + w.traffic_weight, 0);
+      if (totalWeight !== 100) {
+        return NextResponse.json({ error: 'Weights must sum to 100' }, { status: 400 });
+      }
+      for (const w of weights) {
+        const { error: wErr } = await db
+          .from('test_variants')
+          .update({ traffic_weight: w.traffic_weight })
+          .eq('id', w.id)
+          .eq('test_id', params.id);
+        if (wErr) return NextResponse.json({ error: wErr.message }, { status: 500 });
+      }
     }
 
     // Replace goals if provided

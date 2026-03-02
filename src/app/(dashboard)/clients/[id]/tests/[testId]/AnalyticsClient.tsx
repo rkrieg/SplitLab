@@ -70,6 +70,11 @@ export default function AnalyticsClient({ test: initialTest, appUrl }: Props) {
   const [checkingTracking, setCheckingTracking] = useState<string | null>(null);
   const [variantOverrides, setVariantOverrides] = useState<Record<string, { tracking_verified: boolean; tracking_verified_at: string }>>({});
 
+  // Weight editing state
+  const [editingWeights, setEditingWeights] = useState(false);
+  const [weightDraft, setWeightDraft] = useState<Record<string, number>>({});
+  const [savingWeights, setSavingWeights] = useState(false);
+
   // Edit state
   const [editOpen, setEditOpen] = useState(false);
   const [editName, setEditName] = useState('');
@@ -184,6 +189,53 @@ export default function AnalyticsClient({ test: initialTest, appUrl }: Props) {
     setEditName('');
     setEditUrlPath('');
     setEditGoals([]);
+  }
+
+  function openWeightEdit() {
+    const draft: Record<string, number> = {};
+    for (const s of stats) {
+      draft[s.variant.id] = s.variant.traffic_weight;
+    }
+    setWeightDraft(draft);
+    setEditingWeights(true);
+  }
+
+  function cancelWeightEdit() {
+    setEditingWeights(false);
+    setWeightDraft({});
+  }
+
+  const weightSum = Object.values(weightDraft).reduce((s, v) => s + v, 0);
+
+  async function saveWeights() {
+    if (weightSum !== 100) {
+      toast.error('Weights must sum to 100%');
+      return;
+    }
+    setSavingWeights(true);
+    try {
+      const weights = Object.entries(weightDraft).map(([id, traffic_weight]) => ({ id, traffic_weight }));
+      const res = await fetch(`/api/tests/${test.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ weights }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        toast.error(err.error || 'Failed to save weights');
+        return;
+      }
+      const updated = await res.json();
+      setTest(updated);
+      setEditingWeights(false);
+      setWeightDraft({});
+      toast.success('Weights updated');
+      fetchAnalytics();
+    } catch {
+      toast.error('Unexpected error');
+    } finally {
+      setSavingWeights(false);
+    }
   }
 
   async function handleEdit(e: React.FormEvent) {
@@ -301,7 +353,31 @@ export default function AnalyticsClient({ test: initialTest, appUrl }: Props) {
           <thead>
             <tr className="border-b border-slate-700">
               <th className="text-left px-5 py-3 text-slate-400 font-medium">Variant</th>
-              <th className="text-left px-5 py-3 text-slate-400 font-medium">Weight</th>
+              <th className="text-left px-5 py-3 text-slate-400 font-medium">
+                {editingWeights ? (
+                  <div className="flex items-center gap-2">
+                    <span>Weight</span>
+                    <span className={`text-xs font-normal ${weightSum === 100 ? 'text-green-400' : 'text-red-400'}`}>
+                      ({weightSum}%)
+                    </span>
+                    <button
+                      onClick={saveWeights}
+                      disabled={weightSum !== 100 || savingWeights}
+                      className="px-2 py-0.5 rounded text-xs font-medium text-white disabled:opacity-50"
+                      style={{ backgroundColor: '#3D8BDA' }}
+                    >
+                      {savingWeights ? 'Saving…' : 'Save'}
+                    </button>
+                    <button onClick={cancelWeightEdit} className="text-xs text-slate-500 hover:text-slate-300">
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <button onClick={openWeightEdit} className="hover:text-slate-200 transition-colors" title="Click to edit weights">
+                    Weight
+                  </button>
+                )}
+              </th>
               <th className="text-right px-5 py-3 text-slate-400 font-medium">Views</th>
               <th className="text-right px-5 py-3 text-slate-400 font-medium">Conversions</th>
               <th className="text-right px-5 py-3 text-slate-400 font-medium">CVR</th>
@@ -378,7 +454,25 @@ export default function AnalyticsClient({ test: initialTest, appUrl }: Props) {
                         </div>
                       )}
                     </td>
-                    <td className="px-5 py-3.5 text-slate-400">{stat.variant.traffic_weight}%</td>
+                    <td className="px-5 py-3.5 text-slate-400">
+                      {editingWeights ? (
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="number"
+                            min={0}
+                            max={100}
+                            value={weightDraft[stat.variant.id] ?? stat.variant.traffic_weight}
+                            onChange={(e) => setWeightDraft({ ...weightDraft, [stat.variant.id]: parseInt(e.target.value) || 0 })}
+                            className="input-base w-16 text-sm text-center py-1 px-1.5"
+                          />
+                          <span className="text-xs">%</span>
+                        </div>
+                      ) : (
+                        <button onClick={openWeightEdit} className="hover:text-slate-200 transition-colors">
+                          {stat.variant.traffic_weight}%
+                        </button>
+                      )}
+                    </td>
                     <td className="px-5 py-3.5 text-right text-slate-300">{stat.views.toLocaleString()}</td>
                     <td className="px-5 py-3.5 text-right text-slate-300">{stat.conversions.toLocaleString()}</td>
                     <td className="px-5 py-3.5 text-right font-semibold text-slate-100">{formatPercent(cvr)}</td>
