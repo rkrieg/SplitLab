@@ -41,10 +41,24 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Auto-match goal_id from metadata.trigger when not explicitly provided
+    let goalId = data.goalId || null;
+    if (data.type === 'conversion' && !goalId && data.metadata?.trigger) {
+      const { data: goals } = await db
+        .from('conversion_goals')
+        .select('id, type')
+        .eq('test_id', data.testId)
+        .eq('type', data.metadata.trigger as string);
+
+      if (goals && goals.length > 0) {
+        goalId = goals[0].id;
+      }
+    }
+
     const { error } = await db.from('events').insert({
       test_id: data.testId,
       variant_id: data.variantId,
-      goal_id: data.goalId || null,
+      goal_id: goalId,
       visitor_hash: data.visitorHash,
       type: data.type,
       metadata: data.metadata || {},
