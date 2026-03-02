@@ -18,6 +18,23 @@ export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const host = request.headers.get('host') || '';
 
+  // ── Public tracking routes: bypass ALL middleware logic ────────────────
+  const PUBLIC_PATHS = ['/api/event', '/api/resolve', '/tracker.js'];
+  if (PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(p + '/'))) {
+    if (request.method === 'OPTIONS') {
+      return new NextResponse(null, {
+        status: 204,
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type',
+          'Access-Control-Max-Age': '86400',
+        },
+      });
+    }
+    return NextResponse.next();
+  }
+
   // ── Custom domain page serving ──────────────────────────────────────────
   // Only intercept requests on custom client domains. App routes, API routes,
   // and Next.js internals are never rewritten.
@@ -72,6 +89,6 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|api/event|api/resolve|tracker\\.js).*)',
+    '/((?!_next/static|_next/image|favicon.ico).*)',
   ],
 };
