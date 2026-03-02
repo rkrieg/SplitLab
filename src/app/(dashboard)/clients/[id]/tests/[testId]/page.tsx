@@ -17,7 +17,7 @@ async function getTest(testId: string) {
   return data;
 }
 
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://trysplitlab.com';
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://www.trysplitlab.com';
 
 export default async function TestAnalyticsPage({
   params,

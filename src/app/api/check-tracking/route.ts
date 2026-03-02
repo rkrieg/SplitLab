@@ -3,7 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://trysplitlab.com';
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://www.trysplitlab.com';
 
 export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);
