@@ -13,7 +13,7 @@ export async function GET() {
   return new NextResponse(script, {
     headers: {
       'Content-Type': 'application/javascript; charset=utf-8',
-      'Cache-Control': 'public, max-age=3600, s-maxage=86400',
+      'Cache-Control': 'public, max-age=300, s-maxage=300',
       ...CORS_HEADERS,
     },
   });
