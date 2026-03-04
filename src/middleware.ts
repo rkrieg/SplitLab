@@ -21,18 +21,23 @@ export async function middleware(request: NextRequest) {
   // ── Public tracking routes: bypass ALL middleware logic ────────────────
   const PUBLIC_PATHS = ['/api/event', '/api/resolve', '/tracker.js'];
   if (PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(p + '/'))) {
+    const origin = request.headers.get('origin') || '*';
     if (request.method === 'OPTIONS') {
       return new NextResponse(null, {
         status: 204,
         headers: {
-          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Origin': origin,
+          'Access-Control-Allow-Credentials': 'true',
           'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
           'Access-Control-Allow-Headers': 'Content-Type',
           'Access-Control-Max-Age': '86400',
         },
       });
     }
-    return NextResponse.next();
+    const res = NextResponse.next();
+    res.headers.set('Access-Control-Allow-Origin', origin);
+    res.headers.set('Access-Control-Allow-Credentials', 'true');
+    return res;
   }
 
   // ── Custom domain page serving ──────────────────────────────────────────

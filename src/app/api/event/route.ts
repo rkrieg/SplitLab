@@ -2,11 +2,15 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/supabase-server';
 import { z } from 'zod';
 
-const CORS_HEADERS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
-};
+function corsHeaders(request: NextRequest) {
+  const origin = request.headers.get('origin') || '*';
+  return {
+    'Access-Control-Allow-Origin': origin,
+    'Access-Control-Allow-Credentials': 'true',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+  };
+}
 
 const schema = z.object({
   testId: z.string().uuid(),
@@ -18,6 +22,7 @@ const schema = z.object({
 });
 
 export async function POST(request: NextRequest) {
+  const headers = corsHeaders(request);
   try {
     const body = await request.json();
     const data = schema.parse(body);
@@ -37,7 +42,7 @@ export async function POST(request: NextRequest) {
         .single();
 
       if (existing) {
-        return NextResponse.json({ ok: true, duplicate: true }, { headers: CORS_HEADERS });
+        return NextResponse.json({ ok: true, duplicate: true }, { headers });
       }
     }
 
@@ -66,16 +71,16 @@ export async function POST(request: NextRequest) {
 
     if (error) throw error;
 
-    return NextResponse.json({ ok: true }, { headers: CORS_HEADERS });
+    return NextResponse.json({ ok: true }, { headers });
   } catch (err) {
     if (err instanceof z.ZodError) {
-      return NextResponse.json({ error: err.errors }, { status: 400, headers: CORS_HEADERS });
+      return NextResponse.json({ error: err.errors }, { status: 400, headers });
     }
     console.error('[event]', err);
-    return NextResponse.json({ error: 'Internal error' }, { status: 500, headers: CORS_HEADERS });
+    return NextResponse.json({ error: 'Internal error' }, { status: 500, headers });
   }
 }
 
-export async function OPTIONS() {
-  return new NextResponse(null, { headers: CORS_HEADERS });
+export async function OPTIONS(request: NextRequest) {
+  return new NextResponse(null, { headers: corsHeaders(request) });
 }

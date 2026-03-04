@@ -1,26 +1,30 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://www.trysplitlab.com';
 
-const CORS_HEADERS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
-};
+function corsHeaders(request: NextRequest) {
+  const origin = request.headers.get('origin') || '*';
+  return {
+    'Access-Control-Allow-Origin': origin,
+    'Access-Control-Allow-Credentials': 'true',
+    'Access-Control-Allow-Methods': 'GET, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+  };
+}
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const script = buildTrackerScript(APP_URL);
   return new NextResponse(script, {
     headers: {
       'Content-Type': 'application/javascript; charset=utf-8',
       'Cache-Control': 'public, max-age=300, s-maxage=300',
-      ...CORS_HEADERS,
+      ...corsHeaders(request),
     },
   });
 }
 
-export async function OPTIONS() {
-  return new NextResponse(null, { headers: CORS_HEADERS });
+export async function OPTIONS(request: NextRequest) {
+  return new NextResponse(null, { headers: corsHeaders(request) });
 }
 
 function buildTrackerScript(appUrl: string): string {
@@ -58,6 +62,7 @@ function buildTrackerScript(appUrl: string): string {
       } else {
         var xhr = new XMLHttpRequest();
         xhr.open("POST", EVENT_URL, true);
+        xhr.withCredentials = false;
         xhr.setRequestHeader("Content-Type", "application/json");
         xhr.send(body);
       }
@@ -166,12 +171,16 @@ function buildTrackerScript(appUrl: string): string {
     // Method 2: Variant ID only (?sl_vid=xxx) — resolve test ID via API
     if (vid && !tid) {
       cleanUrl(["sl_vid"]);
+      // Store partial context immediately so it survives CORS failures
+      var tempVh = vh || uuid();
+      store({ tid: null, vid: vid, vh: tempVh });
       var xhr = new XMLHttpRequest();
       xhr.open("GET", RESOLVE_URL + "?vid=" + encodeURIComponent(vid), true);
+      xhr.withCredentials = false;
       xhr.onload = function() {
         try {
           var data = JSON.parse(xhr.responseText);
-          if (data.testId) callback({ tid: data.testId, vid: data.variantId, vh: vh || uuid() });
+          if (data.testId) callback({ tid: data.testId, vid: data.variantId, vh: tempVh });
           else callback(load());
         } catch(e) { callback(load()); }
       };
@@ -186,6 +195,7 @@ function buildTrackerScript(appUrl: string): string {
       cleanUrl(["sl_variant"]);
       var xhr2 = new XMLHttpRequest();
       xhr2.open("GET", RESOLVE_URL + "?vid=" + encodeURIComponent(variantId), true);
+      xhr2.withCredentials = false;
       xhr2.onload = function() {
         try {
           var data = JSON.parse(xhr2.responseText);

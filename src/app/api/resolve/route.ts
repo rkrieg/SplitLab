@@ -1,16 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/supabase-server';
 
-const CORS_HEADERS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
-};
+function corsHeaders(request: NextRequest) {
+  const origin = request.headers.get('origin') || '*';
+  return {
+    'Access-Control-Allow-Origin': origin,
+    'Access-Control-Allow-Credentials': 'true',
+    'Access-Control-Allow-Methods': 'GET, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+  };
+}
 
 export async function GET(request: NextRequest) {
+  const headers = corsHeaders(request);
   const vid = request.nextUrl.searchParams.get('vid');
   if (!vid) {
-    return NextResponse.json({ error: 'vid is required' }, { status: 400, headers: CORS_HEADERS });
+    return NextResponse.json({ error: 'vid is required' }, { status: 400, headers });
   }
 
   const { data, error } = await db
@@ -20,12 +25,12 @@ export async function GET(request: NextRequest) {
     .single();
 
   if (error || !data) {
-    return NextResponse.json({ error: 'Variant not found' }, { status: 404, headers: CORS_HEADERS });
+    return NextResponse.json({ error: 'Variant not found' }, { status: 404, headers });
   }
 
-  return NextResponse.json({ testId: data.test_id, variantId: data.id }, { headers: CORS_HEADERS });
+  return NextResponse.json({ testId: data.test_id, variantId: data.id }, { headers });
 }
 
-export async function OPTIONS() {
-  return new NextResponse(null, { headers: CORS_HEADERS });
+export async function OPTIONS(request: NextRequest) {
+  return new NextResponse(null, { headers: corsHeaders(request) });
 }
