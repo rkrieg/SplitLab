@@ -14,9 +14,19 @@ function isCustomDomain(host: string): boolean {
   );
 }
 
+const CANONICAL_HOST = process.env.CANONICAL_HOST || 'www.trysplitlab.com';
+const NAKED_HOST = CANONICAL_HOST.replace(/^www\./, '');
+
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const host = request.headers.get('host') || '';
+
+  // ── Redirect naked domain → www (301) ─────────────────────────────────
+  if (host === NAKED_HOST) {
+    const url = request.nextUrl.clone();
+    url.host = CANONICAL_HOST;
+    return NextResponse.redirect(url, 301);
+  }
 
   // ── Public tracking routes: bypass ALL middleware logic ────────────────
   const PUBLIC_PATHS = ['/api/event', '/api/resolve', '/tracker.js'];
