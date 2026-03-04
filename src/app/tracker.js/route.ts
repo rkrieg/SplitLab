@@ -116,42 +116,40 @@ function buildTrackerScript(appUrl: string): string {
   // ─── Auto-wire conversions (zero config) ────────────────────────────────────
 
   function wireAutoConversions() {
-    // Track all form submissions
-    document.querySelectorAll("form").forEach(function(form) {
-      form.addEventListener("submit", function() {
-        track("conversion", null, { trigger: "form_submit" });
-      });
-    });
+    // Use event delegation so dynamically-rendered elements (React/SPA) are tracked
+    document.addEventListener("submit", function(e) {
+      track("conversion", null, { trigger: "form_submit" });
+    }, true);
 
-    // Track CTA button clicks (buttons not inside forms)
-    document.querySelectorAll("button, [role='button'], input[type='submit'], input[type='button']").forEach(function(el) {
-      if (el.closest("form")) return;
-      el.addEventListener("click", function() {
-        track("conversion", null, { trigger: "button_click", text: (el.textContent || "").trim().slice(0, 50) });
-      });
-    });
+    document.addEventListener("click", function(e) {
+      var el = e.target;
+      if (!el || !el.closest) return;
 
-    // Track CTA link clicks (links styled as buttons)
-    document.querySelectorAll("a").forEach(function(el) {
-      var href = el.getAttribute("href") || "";
-      if (!href || href.charAt(0) === "#" || href.indexOf("javascript:") === 0) return;
-
-      // Track tel: links as call clicks
-      if (href.indexOf("tel:") === 0) {
-        el.addEventListener("click", function() {
-          track("conversion", null, { trigger: "call_click" });
-        });
+      // Check for tel: link clicks (call conversions)
+      var link = el.closest("a[href^='tel:']");
+      if (link) {
+        track("conversion", null, { trigger: "call_click" });
         return;
       }
 
-      // Track links that look like CTA buttons
-      var cls = (el.className || "").toLowerCase();
-      if (cls.match(/btn|button|cta/) || el.getAttribute("role") === "button") {
-        el.addEventListener("click", function() {
-          track("conversion", null, { trigger: "button_click", text: (el.textContent || "").trim().slice(0, 50) });
-        });
+      // Check for button clicks outside forms
+      var btn = el.closest("button, [role='button'], input[type='submit'], input[type='button']");
+      if (btn && !btn.closest("form")) {
+        track("conversion", null, { trigger: "button_click", text: (btn.textContent || "").trim().slice(0, 50) });
+        return;
       }
-    });
+
+      // Check for CTA-styled link clicks
+      var cta = el.closest("a");
+      if (cta) {
+        var href = cta.getAttribute("href") || "";
+        if (!href || href.charAt(0) === "#" || href.indexOf("javascript:") === 0) return;
+        var cls = (cta.className || "").toLowerCase();
+        if (cls.match(/btn|button|cta/) || cta.getAttribute("role") === "button") {
+          track("conversion", null, { trigger: "button_click", text: (cta.textContent || "").trim().slice(0, 50) });
+        }
+      }
+    }, true);
   }
 
   // ─── Detection: resolve context from URL params or localStorage ────────────
