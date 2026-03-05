@@ -46,8 +46,7 @@ export default function Sidebar() {
             <circle cx="18" cy="24" r="16" fill="#3D8BDA" opacity="0.15"/>
             <circle cx="18" cy="24" r="14" stroke="#3D8BDA" strokeWidth="1.5"/>
             <path d="M20 12L13 26H18L15 36L24 22H19L20 12Z" fill="#3D8BDA"/>
-            <text x="42" y="21" fontFamily="system-ui, sans-serif" fontWeight="700" fontSize="24" fill="white" letterSpacing="-0.5">Split</text>
-            <text x="106" y="21" fontFamily="system-ui, sans-serif" fontWeight="600" fontSize="24" fill="#3D8BDA" letterSpacing="-0.5">Lab</text>
+            <text x="42" y="21" fontFamily="system-ui, sans-serif" fontWeight="700" fontSize="24" fill="white" letterSpacing="-0.5">Split<tspan fill="#3D8BDA" fontWeight="600">Lab</tspan></text>
           </svg>
         </Link>
       </div>
