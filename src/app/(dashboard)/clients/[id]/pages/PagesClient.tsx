@@ -69,6 +69,8 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
   const [variantUrl, setVariantUrl] = useState('');
   const [variantWeight, setVariantWeight] = useState(50);
   const [addingVariant, setAddingVariant] = useState(false);
+  const [variantMode, setVariantMode] = useState<'url' | 'html'>('url');
+  const [variantHtml, setVariantHtml] = useState('');
 
   // ─── Create Page ────────────────────────────────────────────────────────
 
@@ -176,6 +178,8 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
     setVariantName(`Variant ${String.fromCharCode(65 + count)}`);
     setVariantUrl('');
     setVariantWeight(50);
+    setVariantMode('url');
+    setVariantHtml('');
     setActiveMenu(null);
   }
 
@@ -184,15 +188,13 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
     if (!addVariantTestId) return;
     setAddingVariant(true);
     try {
+      const payload = variantMode === 'html'
+        ? { name: variantName, html_content: variantHtml, traffic_weight: variantWeight }
+        : { name: variantName, redirect_url: variantUrl, proxy_mode: true, traffic_weight: variantWeight };
       const res = await fetch(`/api/tests/${addVariantTestId}/variants`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: variantName,
-          redirect_url: variantUrl,
-          proxy_mode: true,
-          traffic_weight: variantWeight,
-        }),
+        body: JSON.stringify(payload),
       });
       if (!res.ok) { const err = await res.json(); toast.error(err.error || 'Failed to add variant'); return; }
       const updated = await res.json();
@@ -257,7 +259,11 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
             const fullUrl = domain ? `${domain}${test.url_path}` : test.url_path;
 
             return (
-              <div key={test.id} className="card p-5">
+              <div
+                key={test.id}
+                className="card p-5 cursor-pointer hover:border-slate-600 transition-colors"
+                onClick={() => router.push(`/clients/${clientId}/tests/${test.id}`)}
+              >
                 <div className="flex items-start justify-between">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-3 mb-1">
@@ -295,7 +301,7 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
                         {(test.test_variants ?? []).filter((v) => v.redirect_url).map((v) => (
                           <button
                             key={v.id}
-                            onClick={() => checkTracking(v.id, v.redirect_url!)}
+                            onClick={(e) => { e.stopPropagation(); checkTracking(v.id, v.redirect_url!); }}
                             disabled={checkingTracking === v.id}
                             className="inline-flex items-center gap-1 text-[10px] text-slate-400 hover:text-slate-200 bg-slate-700/50 hover:bg-slate-700 border border-slate-600/50 rounded-full px-2 py-0.5 transition-colors disabled:opacity-50"
                           >
@@ -307,12 +313,12 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
                     )}
                   </div>
                   <div className="flex items-center gap-2 ml-4">
-                    <Link href={`/clients/${clientId}/tests/${test.id}`} className="btn-secondary text-xs">
+                    <Link href={`/clients/${clientId}/tests/${test.id}`} className="btn-secondary text-xs" onClick={e => e.stopPropagation()}>
                       Analytics
                     </Link>
                     {canManage && (
                       <div className="relative">
-                        <button onClick={() => setActiveMenu(activeMenu === test.id ? null : test.id)} className="btn-secondary p-2">
+                        <button onClick={(e) => { e.stopPropagation(); setActiveMenu(activeMenu === test.id ? null : test.id); }} className="btn-secondary p-2">
                           <MoreHorizontal size={14} />
                         </button>
                         {activeMenu === test.id && (
@@ -405,18 +411,70 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
       {/* Add Variant Modal */}
       <Modal open={!!addVariantTestId} onClose={() => setAddVariantTestId(null)} title="Add Variant" size="sm">
         <form onSubmit={handleAddVariant} className="space-y-4">
+          {/* Mode toggle */}
+          <div className="flex border border-slate-700 rounded-lg overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setVariantMode('url')}
+              className={`flex-1 py-2 text-sm font-medium transition-colors ${variantMode === 'url' ? 'bg-indigo-500/20 text-indigo-400' : 'text-slate-400 hover:bg-slate-700/50'}`}
+            >
+              External URL
+            </button>
+            <button
+              type="button"
+              onClick={() => setVariantMode('html')}
+              className={`flex-1 py-2 text-sm font-medium transition-colors border-l border-slate-700 ${variantMode === 'html' ? 'bg-indigo-500/20 text-indigo-400' : 'text-slate-400 hover:bg-slate-700/50'}`}
+            >
+              Upload HTML
+            </button>
+          </div>
+
           <div>
             <label className="block text-sm font-medium text-slate-300 mb-1.5">Variant Name</label>
             <input type="text" value={variantName} onChange={(e) => setVariantName(e.target.value)} className="input-base" required />
           </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1.5">Destination URL</label>
-            <input type="url" value={variantUrl} onChange={(e) => setVariantUrl(e.target.value)} className="input-base font-mono text-sm" placeholder="https://example.com/variant-b" required />
-          </div>
+
+          {variantMode === 'url' ? (
+            <div>
+              <label className="block text-sm font-medium text-slate-300 mb-1.5">Destination URL</label>
+              <input type="url" value={variantUrl} onChange={(e) => setVariantUrl(e.target.value)} className="input-base font-mono text-sm" placeholder="https://example.com/variant-b" required />
+            </div>
+          ) : (
+            <div>
+              <label className="block text-sm font-medium text-slate-300 mb-1.5">HTML Content</label>
+              <textarea
+                value={variantHtml}
+                onChange={(e) => setVariantHtml(e.target.value)}
+                className="input-base font-mono text-xs w-full h-40 resize-y"
+                placeholder="<!DOCTYPE html>\n<html>\n<head>...</head>\n<body>...</body>\n</html>"
+                required
+              />
+              <div className="mt-2">
+                <label className="btn-secondary text-xs inline-flex items-center gap-1.5 cursor-pointer">
+                  <FileCode2 size={12} /> Upload .html file
+                  <input
+                    type="file"
+                    accept=".html,.htm"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      const reader = new FileReader();
+                      reader.onload = () => setVariantHtml(reader.result as string);
+                      reader.readAsText(file);
+                      e.target.value = '';
+                    }}
+                  />
+                </label>
+              </div>
+            </div>
+          )}
+
           <div>
             <label className="block text-sm font-medium text-slate-300 mb-1.5">Traffic Weight (%)</label>
             <input type="number" value={variantWeight} onChange={(e) => setVariantWeight(Number(e.target.value))} className="input-base w-24" min={1} max={100} required />
           </div>
+
           <div className="flex justify-end gap-3 pt-2">
             <Button variant="secondary" type="button" onClick={() => setAddVariantTestId(null)}>Cancel</Button>
             <Button type="submit" loading={addingVariant}>Add Variant</Button>

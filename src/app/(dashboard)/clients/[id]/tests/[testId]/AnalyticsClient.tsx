@@ -5,7 +5,7 @@ import Link from 'next/link';
 import toast from 'react-hot-toast';
 import {
   Download, RefreshCw, Trophy, TrendingUp, Code2, Copy,
-  ChevronRight, ShieldCheck, ShieldX,
+  ChevronRight, ShieldCheck, ShieldX, FileCode2,
   Loader2, Globe, ExternalLink, Plus, Trash2, Check, X,
   Pencil, BarChart3, Users, Settings as SettingsIcon,
 } from 'lucide-react';
@@ -115,6 +115,8 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
   const [addVariantOpen, setAddVariantOpen] = useState(false);
   const [newVariantName, setNewVariantName] = useState('');
   const [newVariantUrl, setNewVariantUrl] = useState('');
+  const [newVariantMode, setNewVariantMode] = useState<'url' | 'html'>('url');
+  const [newVariantHtml, setNewVariantHtml] = useState('');
   const [addingVariant, setAddingVariant] = useState(false);
 
   // Tracking verification
@@ -335,12 +337,12 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
       const weight = Math.floor(100 / count);
       const remainder = 100 - weight * count;
 
+      const payload = newVariantMode === 'html'
+        ? { name: newVariantName, html_content: newVariantHtml, traffic_weight: weight + remainder }
+        : { name: newVariantName, redirect_url: newVariantUrl, proxy_mode: true, traffic_weight: weight + remainder };
       const res = await fetch(`/api/tests/${test.id}/variants`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: newVariantName, redirect_url: newVariantUrl,
-          proxy_mode: true, traffic_weight: weight + remainder,
-        }),
+        body: JSON.stringify(payload),
       });
       if (!res.ok) { const err = await res.json(); toast.error(err.error || 'Failed to add variant'); return; }
       const updated = await res.json();
@@ -359,7 +361,7 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
       });
       setTest(wRes.ok ? await wRes.json() : updated);
       setAddVariantOpen(false);
-      setNewVariantName(''); setNewVariantUrl('');
+      setNewVariantName(''); setNewVariantUrl(''); setNewVariantHtml(''); setNewVariantMode('url');
       toast.success('Variant added');
       fetchAnalytics();
     } catch { toast.error('Failed to add variant'); }
@@ -824,7 +826,7 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
                 <button
                   onClick={() => {
                     setNewVariantName(`Variant ${String.fromCharCode(65 + variants.length)}`);
-                    setNewVariantUrl('');
+                    setNewVariantUrl(''); setNewVariantHtml(''); setNewVariantMode('url');
                     setAddVariantOpen(true);
                   }}
                   className="text-indigo-400 hover:text-indigo-300 text-sm font-medium flex items-center gap-1.5 transition-colors"
@@ -1032,14 +1034,65 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
       {/* ═══ MODALS ═══ */}
       <Modal open={addVariantOpen} onClose={() => setAddVariantOpen(false)} title="Add Variant" size="sm">
         <form onSubmit={handleAddVariant} className="space-y-4">
+          {/* Mode toggle */}
+          <div className="flex border border-slate-700 rounded-lg overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setNewVariantMode('url')}
+              className={`flex-1 py-2 text-sm font-medium transition-colors ${newVariantMode === 'url' ? 'bg-indigo-500/20 text-indigo-400' : 'text-slate-400 hover:bg-slate-700/50'}`}
+            >
+              External URL
+            </button>
+            <button
+              type="button"
+              onClick={() => setNewVariantMode('html')}
+              className={`flex-1 py-2 text-sm font-medium transition-colors border-l border-slate-700 ${newVariantMode === 'html' ? 'bg-indigo-500/20 text-indigo-400' : 'text-slate-400 hover:bg-slate-700/50'}`}
+            >
+              Upload HTML
+            </button>
+          </div>
+
           <div>
             <label className="block text-sm font-medium text-slate-300 mb-1.5">Variant Name</label>
             <input type="text" value={newVariantName} onChange={e => setNewVariantName(e.target.value)} className="input-base" required autoFocus />
           </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1.5">Destination URL</label>
-            <input type="url" value={newVariantUrl} onChange={e => setNewVariantUrl(e.target.value)} className="input-base font-mono text-sm" placeholder="https://..." required />
-          </div>
+
+          {newVariantMode === 'url' ? (
+            <div>
+              <label className="block text-sm font-medium text-slate-300 mb-1.5">Destination URL</label>
+              <input type="url" value={newVariantUrl} onChange={e => setNewVariantUrl(e.target.value)} className="input-base font-mono text-sm" placeholder="https://..." required />
+            </div>
+          ) : (
+            <div>
+              <label className="block text-sm font-medium text-slate-300 mb-1.5">HTML Content</label>
+              <textarea
+                value={newVariantHtml}
+                onChange={e => setNewVariantHtml(e.target.value)}
+                className="input-base font-mono text-xs w-full h-40 resize-y"
+                placeholder="<!DOCTYPE html>\n<html>\n<head>...</head>\n<body>...</body>\n</html>"
+                required
+              />
+              <div className="mt-2">
+                <label className="btn-secondary text-xs inline-flex items-center gap-1.5 cursor-pointer">
+                  <FileCode2 size={12} /> Upload .html file
+                  <input
+                    type="file"
+                    accept=".html,.htm"
+                    className="hidden"
+                    onChange={e => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      const reader = new FileReader();
+                      reader.onload = () => setNewVariantHtml(reader.result as string);
+                      reader.readAsText(file);
+                      e.target.value = '';
+                    }}
+                  />
+                </label>
+              </div>
+            </div>
+          )}
+
           <p className="text-slate-500 text-xs">Traffic weights will be automatically split equally across all variants.</p>
           <div className="flex justify-end gap-3 pt-2">
             <Button variant="secondary" type="button" onClick={() => setAddVariantOpen(false)}>Cancel</Button>
