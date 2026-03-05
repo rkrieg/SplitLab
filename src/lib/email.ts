@@ -3,7 +3,7 @@ import { Resend } from 'resend';
 const resend = new Resend(process.env.RESEND_API_KEY);
 
 const FROM = 'renny@infinitymediala.com';
-const LOGIN_URL = 'https://split-lab-red.vercel.app/login';
+const LOGIN_URL = process.env.NEXT_PUBLIC_APP_URL ? `${process.env.NEXT_PUBLIC_APP_URL}/login` : 'https://www.trysplitlab.com/login';
 
 export async function sendInvitationEmail({
   toName,
