@@ -93,6 +93,7 @@ export interface TestVariant {
   name: string;
   page_id: string | null;
   redirect_url: string | null;
+  proxy_mode: boolean;
   traffic_weight: number;
   is_control: boolean;
   created_at: string;

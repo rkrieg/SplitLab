@@ -46,11 +46,15 @@ export async function GET(request: NextRequest) {
     }
 
     // 3. Fetch variants
-    const { data: variants } = await db
+    const { data: variants, error: variantsError } = await db
       .from('test_variants')
-      .select('id, name, page_id, redirect_url, traffic_weight, is_control, pages(html_url, html_content)')
+      .select('id, name, page_id, redirect_url, proxy_mode, traffic_weight, is_control, pages(html_url, html_content)')
       .eq('test_id', test.id)
       .order('is_control', { ascending: false });
+
+    if (variantsError) {
+      console.error('[serve] variants query error:', variantsError.message, variantsError.code);
+    }
 
     if (!variants || variants.length === 0) {
       return new NextResponse(notFoundHtml(domain), {
@@ -73,8 +77,113 @@ export async function GET(request: NextRequest) {
       selectedVariant = await assignVariant(visitorId, test.id, variants as { id: string; traffic_weight: number }[]) as typeof variants[0];
     }
 
-    // 6a. If variant has a redirect URL, redirect the visitor
+    // 6a. If variant has a redirect URL
     if (selectedVariant.redirect_url) {
+      console.log('[serve] redirect variant:', {
+        id: selectedVariant.id,
+        redirect_url: selectedVariant.redirect_url,
+        proxy_mode: selectedVariant.proxy_mode,
+        proxy_mode_type: typeof selectedVariant.proxy_mode,
+        will_proxy: selectedVariant.proxy_mode !== false,
+      });
+
+      // Proxy mode: fetch remote HTML server-side and serve through custom domain
+      if (selectedVariant.proxy_mode !== false) {
+        let proxyHtml = '';
+        try {
+          console.log('[serve] proxy: fetching remote URL:', selectedVariant.redirect_url);
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 8000);
+          const proxyRes = await fetch(selectedVariant.redirect_url, {
+            signal: controller.signal,
+            headers: {
+              'User-Agent': request.headers.get('user-agent') || '',
+              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+              'Accept-Language': request.headers.get('accept-language') || 'en-US,en;q=0.5',
+            },
+            redirect: 'follow',
+          });
+          clearTimeout(timeout);
+
+          console.log('[serve] proxy: remote response status:', proxyRes.status, 'content-type:', proxyRes.headers.get('content-type'));
+          if (!proxyRes.ok) throw new Error(`Remote fetch failed: ${proxyRes.status}`);
+          proxyHtml = await proxyRes.text();
+          console.log('[serve] proxy: fetched HTML length:', proxyHtml.length);
+        } catch (proxyErr) {
+          // Fall back to 302 redirect if proxy fetch fails
+          console.error('[serve] proxy fetch FAILED, falling back to redirect. Error:', proxyErr instanceof Error ? proxyErr.message : proxyErr);
+          const redirectUrl = new URL(selectedVariant.redirect_url);
+          redirectUrl.searchParams.set('sl_vid', selectedVariant.id);
+          const fallbackResponse = NextResponse.redirect(redirectUrl.toString(), 302);
+          const cookieOptions = { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax' as const, maxAge: 60 * 60 * 24 * 90, path: '/' };
+          if (!existingCookie) fallbackResponse.cookies.set(COOKIE_NAME, visitorId, cookieOptions);
+          if (!stickyVariantId) fallbackResponse.cookies.set(stickyCookieName, selectedVariant.id, cookieOptions);
+          await db.from('events').insert({ test_id: test.id, variant_id: selectedVariant.id, visitor_hash: visitorId, type: 'pageview', metadata: { redirect_url: selectedVariant.redirect_url } });
+          return fallbackResponse;
+        }
+
+        // Inject <base href> so relative assets resolve against the remote origin
+        const remoteUrl = new URL(selectedVariant.redirect_url);
+        const baseHref = remoteUrl.origin + remoteUrl.pathname.replace(/\/[^/]*$/, '/');
+        const baseTag = `<base href="${baseHref}">`;
+        if (proxyHtml.includes('<head>')) {
+          proxyHtml = proxyHtml.replace('<head>', `<head>\n${baseTag}`);
+        } else if (proxyHtml.includes('<HEAD>')) {
+          proxyHtml = proxyHtml.replace('<HEAD>', `<HEAD>\n${baseTag}`);
+        } else {
+          proxyHtml = baseTag + '\n' + proxyHtml;
+        }
+
+        // Fetch workspace scripts
+        const { data: proxyScripts } = await db
+          .from('scripts')
+          .select('*')
+          .eq('workspace_id', workspaceId)
+          .eq('is_active', true)
+          .is('page_id', null);
+
+        const proxyHeadScripts: string[] = [];
+        const proxyBodyEndScripts: string[] = [];
+        for (const script of proxyScripts || []) {
+          const tag = buildScriptTag(script.type, script.content);
+          if (script.placement === 'head') proxyHeadScripts.push(tag);
+          else proxyBodyEndScripts.push(tag);
+        }
+
+        // Fetch conversion goals and build tracking snippet
+        const { data: proxyGoals } = await db
+          .from('conversion_goals')
+          .select('*')
+          .eq('test_id', test.id);
+
+        const proxyTrackingSnippet = buildTrackingSnippet(
+          test.id, selectedVariant.id, visitorId, proxyGoals || [], APP_URL
+        );
+
+        const finalProxyHtml = injectIntoHtml(proxyHtml, proxyHeadScripts, proxyBodyEndScripts, proxyTrackingSnippet);
+
+        // Record server-side pageview
+        await db.from('events').insert({
+          test_id: test.id,
+          variant_id: selectedVariant.id,
+          visitor_hash: visitorId,
+          type: 'pageview',
+          metadata: { redirect_url: selectedVariant.redirect_url, proxy: true },
+        });
+
+        const proxyResponse = new NextResponse(finalProxyHtml, {
+          status: 200,
+          headers: { 'Content-Type': 'text/html; charset=utf-8' },
+        });
+
+        const cookieOptions = { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax' as const, maxAge: 60 * 60 * 24 * 90, path: '/' };
+        if (!existingCookie) proxyResponse.cookies.set(COOKIE_NAME, visitorId, cookieOptions);
+        if (!stickyVariantId) proxyResponse.cookies.set(stickyCookieName, selectedVariant.id, cookieOptions);
+
+        return proxyResponse;
+      }
+
+      // Standard 302 redirect mode
       const redirectUrl = new URL(selectedVariant.redirect_url);
       redirectUrl.searchParams.set('sl_vid', selectedVariant.id);
       const redirectResponse = NextResponse.redirect(redirectUrl.toString(), 302);
@@ -94,8 +203,6 @@ export async function GET(request: NextRequest) {
         redirectResponse.cookies.set(stickyCookieName, selectedVariant.id, cookieOptions);
       }
 
-      // Fire pageview via query param so the tracking snippet on the target page isn't needed
-      // The redirect itself counts as a pageview — record it server-side
       await db.from('events').insert({
         test_id: test.id,
         variant_id: selectedVariant.id,

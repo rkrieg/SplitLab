@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import toast from 'react-hot-toast';
-import { Download, RefreshCw, Trophy, TrendingUp, Code2, Copy, ChevronDown, ChevronUp, ShieldCheck, ShieldX, Loader2, Edit2 } from 'lucide-react';
+import { Download, RefreshCw, Trophy, TrendingUp, Code2, Copy, ChevronDown, ChevronUp, ShieldCheck, ShieldX, Loader2, Edit2, Globe, ExternalLink } from 'lucide-react';
 import { TestStatusBadge } from '@/components/ui/Badge';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
@@ -21,6 +21,7 @@ interface Variant {
   is_control: boolean;
   traffic_weight: number;
   redirect_url?: string | null;
+  proxy_mode?: boolean;
   pages?: { id: string; name: string } | null;
   tracking_verified?: boolean | null;
   tracking_verified_at?: string | null;
@@ -238,6 +239,26 @@ export default function AnalyticsClient({ test: initialTest, appUrl }: Props) {
     }
   }
 
+  async function toggleProxyMode(variantId: string, currentValue: boolean) {
+    try {
+      const res = await fetch(`/api/tests/${test.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ variant_updates: [{ id: variantId, proxy_mode: !currentValue }] }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        toast.error(err.error || 'Failed to update proxy mode');
+        return;
+      }
+      const updated = await res.json();
+      setTest(updated);
+      toast.success(!currentValue ? 'Proxy mode enabled' : 'Redirect mode enabled');
+    } catch {
+      toast.error('Unexpected error');
+    }
+  }
+
   async function handleEdit(e: React.FormEvent) {
     e.preventDefault();
     setEditSaving(true);
@@ -439,6 +460,21 @@ export default function AnalyticsClient({ test: initialTest, appUrl }: Props) {
                       {stat.variant.redirect_url && (
                         <div className="flex items-center gap-2 mt-1">
                           <p className="text-slate-500 text-xs font-mono truncate max-w-[200px]">{stat.variant.redirect_url}</p>
+                          <button
+                            onClick={() => toggleProxyMode(stat.variant.id, stat.variant.proxy_mode !== false)}
+                            className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full border transition-colors ${
+                              stat.variant.proxy_mode !== false
+                                ? 'bg-indigo-500/20 text-indigo-400 border-indigo-500/30 hover:bg-indigo-500/30'
+                                : 'bg-slate-700/50 text-slate-400 border-slate-600 hover:bg-slate-700'
+                            }`}
+                            title={stat.variant.proxy_mode !== false ? 'Proxy mode: URL stays on your domain' : 'Redirect mode: 302 redirect to target'}
+                          >
+                            {stat.variant.proxy_mode !== false ? (
+                              <><Globe size={9} /> Proxy</>
+                            ) : (
+                              <><ExternalLink size={9} /> Redirect</>
+                            )}
+                          </button>
                           <button
                             onClick={() => checkTracking(stat.variant.id, stat.variant.redirect_url!)}
                             disabled={checkingTracking === stat.variant.id}

@@ -18,12 +18,18 @@ const weightSchema = z.object({
   traffic_weight: z.number().int().min(0).max(100),
 });
 
+const variantUpdateSchema = z.object({
+  id: z.string().uuid(),
+  proxy_mode: z.boolean(),
+});
+
 const updateSchema = z.object({
   name: z.string().min(1).max(255).optional(),
   url_path: z.string().min(1).max(500).optional(),
   status: z.enum(['draft', 'active', 'paused', 'completed']).optional(),
   goals: z.array(goalSchema).optional(),
   weights: z.array(weightSchema).optional(),
+  variant_updates: z.array(variantUpdateSchema).optional(),
 });
 
 export async function GET(
@@ -52,7 +58,7 @@ export async function PATCH(
 
   try {
     const body = await request.json();
-    const { goals, weights, ...testFields } = updateSchema.parse(body);
+    const { goals, weights, variant_updates, ...testFields } = updateSchema.parse(body);
 
     // Update test fields if any provided
     if (Object.keys(testFields).length > 0) {
@@ -77,6 +83,18 @@ export async function PATCH(
           .eq('id', w.id)
           .eq('test_id', params.id);
         if (wErr) return NextResponse.json({ error: wErr.message }, { status: 500 });
+      }
+    }
+
+    // Update variant fields (e.g. proxy_mode) if provided
+    if (variant_updates) {
+      for (const vu of variant_updates) {
+        const { error: vuErr } = await db
+          .from('test_variants')
+          .update({ proxy_mode: vu.proxy_mode })
+          .eq('id', vu.id)
+          .eq('test_id', params.id);
+        if (vuErr) return NextResponse.json({ error: vuErr.message }, { status: 500 });
       }
     }
 
