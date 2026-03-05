@@ -16,6 +16,12 @@ const verifySchema = z.object({
   domain_id: z.string().uuid(),
 });
 
+const updateSchema = z.object({
+  action: z.literal('update'),
+  domain_id: z.string().uuid(),
+  domain: z.string().min(3).max(255),
+});
+
 export async function GET(
   _req: NextRequest,
   { params }: { params: { id: string } }
@@ -72,6 +78,67 @@ export async function POST(
         status: status.status,
         message: status.message,
       });
+    }
+
+    // ── Update domain (rename) ──
+    if (body.action === 'update') {
+      const { domain_id, domain: newDomain } = updateSchema.parse(body);
+
+      const { data: oldRow, error: fetchErr } = await db
+        .from('domains')
+        .select('id, domain')
+        .eq('id', domain_id)
+        .eq('workspace_id', params.id)
+        .single();
+
+      if (fetchErr || !oldRow) {
+        return NextResponse.json({ error: 'Domain not found' }, { status: 404 });
+      }
+
+      if (oldRow.domain === newDomain) {
+        return NextResponse.json({ error: 'Domain unchanged' }, { status: 400 });
+      }
+
+      // Check uniqueness
+      const { data: existing } = await db
+        .from('domains')
+        .select('id')
+        .eq('domain', newDomain)
+        .single();
+
+      if (existing) {
+        return NextResponse.json({ error: 'Domain already registered' }, { status: 409 });
+      }
+
+      // Register new domain with Vercel
+      try {
+        await addDomainToVercel(newDomain);
+      } catch (vercelErr: unknown) {
+        const msg = vercelErr instanceof Error ? vercelErr.message : 'Vercel API error';
+        return NextResponse.json(
+          { error: `Failed to register new domain with Vercel: ${msg}` },
+          { status: 502 }
+        );
+      }
+
+      // Remove old domain from Vercel
+      try {
+        await removeDomainFromVercel(oldRow.domain);
+      } catch {
+        // Non-fatal — old domain cleanup can fail
+      }
+
+      // Update DB
+      const { data: updated, error: updateErr } = await db
+        .from('domains')
+        .update({ domain: newDomain, verified: false, verified_at: null })
+        .eq('id', domain_id)
+        .eq('workspace_id', params.id)
+        .select()
+        .single();
+
+      if (updateErr) return NextResponse.json({ error: updateErr.message }, { status: 500 });
+      return NextResponse.json(updated);
     }
 
     // ── Add domain ──

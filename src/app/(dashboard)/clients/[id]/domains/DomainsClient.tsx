@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import toast from 'react-hot-toast';
-import { Plus, Globe, CheckCircle, XCircle, Copy, AlertCircle, Trash2, Clock } from 'lucide-react';
+import { Plus, Globe, CheckCircle, XCircle, Copy, AlertCircle, Trash2, Clock, Pencil } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
 import EmptyState from '@/components/ui/EmptyState';
@@ -27,23 +27,107 @@ interface Props {
 
 export default function DomainsClient({ initialDomains, workspaceId, appHostname, canManage }: Props) {
   const [domains, setDomains] = useState(initialDomains);
+
+  // Add modal state
   const [modalOpen, setModalOpen] = useState(false);
-  const [domainInput, setDomainInput] = useState('');
+  const [addBaseDomain, setAddBaseDomain] = useState('');
+  const [addMode, setAddMode] = useState<'root' | 'subdomain'>('root');
+  const [addSubdomain, setAddSubdomain] = useState('');
   const [adding, setAdding] = useState(false);
+
+  // Edit modal state
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [editDomain, setEditDomain] = useState<Domain | null>(null);
+  const [editBaseDomain, setEditBaseDomain] = useState('');
+  const [editMode, setEditMode] = useState<'root' | 'subdomain'>('root');
+  const [editSubdomain, setEditSubdomain] = useState('');
+  const [saving, setSaving] = useState(false);
+
   const [verifying, setVerifying] = useState<string | null>(null);
   const [verifyStatus, setVerifyStatus] = useState<Record<string, string>>({});
   const [verifyMessage, setVerifyMessage] = useState<Record<string, string>>({});
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
 
+  // ─── Helpers ──────────────────────────────────────────────────────────────
+
+  function buildFullDomain(base: string, mode: 'root' | 'subdomain', sub: string): string {
+    const clean = base.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/+$/, '');
+    if (mode === 'subdomain' && sub.trim()) {
+      return `${sub.trim().toLowerCase()}.${clean}`;
+    }
+    return clean;
+  }
+
+  function getAddPreview(): string {
+    return buildFullDomain(addBaseDomain, addMode, addSubdomain);
+  }
+
+  function getEditPreview(): string {
+    return buildFullDomain(editBaseDomain, editMode, editSubdomain);
+  }
+
+  function getDomainName(domain: string): string {
+    const parts = domain.split('.');
+    if (parts.length <= 2) return '@';
+    return parts.slice(0, -2).join('.');
+  }
+
+  function isRootDomain(domain: string): boolean {
+    return domain.split('.').length <= 2;
+  }
+
+  function getBaseDomain(domain: string): string {
+    const parts = domain.split('.');
+    return parts.slice(-2).join('.');
+  }
+
+  function getSubdomainPart(domain: string): string {
+    const parts = domain.split('.');
+    if (parts.length <= 2) return '';
+    return parts.slice(0, -2).join('.');
+  }
+
+  function copyToClipboard(text: string) {
+    navigator.clipboard.writeText(text);
+    toast.success('Copied to clipboard');
+  }
+
+  function resetAddModal() {
+    setAddBaseDomain('');
+    setAddMode('root');
+    setAddSubdomain('');
+  }
+
+  function openEditModal(d: Domain) {
+    setEditDomain(d);
+    setEditBaseDomain(getBaseDomain(d.domain));
+    const sub = getSubdomainPart(d.domain);
+    if (sub) {
+      setEditMode('subdomain');
+      setEditSubdomain(sub);
+    } else {
+      setEditMode('root');
+      setEditSubdomain('');
+    }
+    setEditModalOpen(true);
+  }
+
+  // ─── API handlers ─────────────────────────────────────────────────────────
+
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault();
+    const domain = getAddPreview();
+    if (!domain || domain.split('.').length < 2) {
+      toast.error('Enter a valid domain');
+      return;
+    }
     setAdding(true);
     try {
       const res = await fetch(`/api/workspaces/${workspaceId}/domains`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ domain: domainInput.trim().toLowerCase() }),
+        body: JSON.stringify({ domain }),
       });
       if (!res.ok) {
         const err = await res.json();
@@ -53,10 +137,45 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
       const d = await res.json();
       setDomains((prev) => [d, ...prev]);
       setModalOpen(false);
-      setDomainInput('');
+      resetAddModal();
       toast.success('Domain registered — now configure your DNS records');
     } finally {
       setAdding(false);
+    }
+  }
+
+  async function handleEdit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editDomain) return;
+    const newDomain = getEditPreview();
+    if (!newDomain || newDomain.split('.').length < 2) {
+      toast.error('Enter a valid domain');
+      return;
+    }
+    if (newDomain === editDomain.domain) {
+      setEditModalOpen(false);
+      return;
+    }
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}/domains`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'update', domain_id: editDomain.id, domain: newDomain }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        toast.error(err.error || 'Failed to update domain');
+        return;
+      }
+      const updated = await res.json();
+      setDomains((prev) => prev.map((d) => (d.id === editDomain.id ? updated : d)));
+      setVerifyStatus((prev) => { const n = { ...prev }; delete n[editDomain.id]; return n; });
+      setVerifyMessage((prev) => { const n = { ...prev }; delete n[editDomain.id]; return n; });
+      setEditModalOpen(false);
+      toast.success('Domain updated — configure DNS for the new domain');
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -68,16 +187,13 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'verify', domain_id: domainId }),
       });
-
       if (!res.ok) {
         const err = await res.json();
         toast.error(err.error || 'Verification check failed');
         return;
       }
-
       const result = await res.json();
       setVerifyStatus((prev) => ({ ...prev, [domainId]: result.status }));
-
       if (result.verified) {
         setDomains((prev) =>
           prev.map((d) =>
@@ -128,20 +244,91 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
     }
   }
 
-  function copyToClipboard(text: string) {
-    navigator.clipboard.writeText(text);
-    toast.success('Copied to clipboard');
+  // ─── Domain mode selector (shared between add & edit modals) ──────────────
+
+  function renderModeSelector(
+    mode: 'root' | 'subdomain',
+    setMode: (m: 'root' | 'subdomain') => void,
+    baseDomain: string,
+    setBaseDomain: (v: string) => void,
+    subdomain: string,
+    setSubdomain: (v: string) => void,
+    preview: string,
+  ) {
+    return (
+      <>
+        <div>
+          <label className="block text-sm font-medium text-slate-300 mb-1.5">Base Domain</label>
+          <input
+            type="text"
+            value={baseDomain}
+            onChange={(e) => setBaseDomain(e.target.value)}
+            className="input-base font-mono"
+            placeholder="example.com"
+            required
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-slate-300 mb-2">Type</label>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setMode('root')}
+              className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${
+                mode === 'root'
+                  ? 'bg-[#3D8BDA]/15 border-[#3D8BDA]/40 text-[#3D8BDA]'
+                  : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-600'
+              }`}
+            >
+              Root domain (@)
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode('subdomain')}
+              className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${
+                mode === 'subdomain'
+                  ? 'bg-[#3D8BDA]/15 border-[#3D8BDA]/40 text-[#3D8BDA]'
+                  : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-600'
+              }`}
+            >
+              Subdomain
+            </button>
+          </div>
+        </div>
+
+        {mode === 'subdomain' && (
+          <div>
+            <label className="block text-sm font-medium text-slate-300 mb-1.5">Subdomain Prefix</label>
+            <div className="flex items-center gap-0">
+              <input
+                type="text"
+                value={subdomain}
+                onChange={(e) => setSubdomain(e.target.value.replace(/[^a-zA-Z0-9-]/g, ''))}
+                className="input-base font-mono rounded-r-none border-r-0"
+                placeholder="testing"
+                required
+                autoFocus
+              />
+              <div className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-r-lg text-slate-500 text-sm font-mono whitespace-nowrap">
+                .{baseDomain.trim().toLowerCase() || 'example.com'}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Live preview */}
+        {baseDomain.trim() && (
+          <div className="rounded-lg bg-slate-800/50 border border-slate-700/50 px-3 py-2.5">
+            <p className="text-slate-500 text-xs mb-1">Domain preview</p>
+            <p className="text-slate-100 font-mono text-sm">{preview || '—'}</p>
+          </div>
+        )}
+      </>
+    );
   }
 
-  function getDomainName(domain: string): string {
-    const parts = domain.split('.');
-    if (parts.length <= 2) return '@';
-    return parts.slice(0, -2).join('.');
-  }
-
-  function isRootDomain(domain: string): boolean {
-    return domain.split('.').length <= 2;
-  }
+  // ─── Domain card ──────────────────────────────────────────────────────────
 
   function renderDomainCard(d: Domain) {
     const status = verifyStatus[d.id];
@@ -166,13 +353,22 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
               </p>
             </div>
             {canManage && (
-              <button
-                onClick={() => setDeleteId(d.id)}
-                className="p-2 text-slate-500 hover:text-red-400 transition-colors rounded-lg hover:bg-slate-700"
-                title="Delete domain"
-              >
-                <Trash2 size={14} />
-              </button>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => openEditModal(d)}
+                  className="p-2 text-slate-500 hover:text-slate-200 transition-colors rounded-lg hover:bg-slate-700"
+                  title="Edit domain"
+                >
+                  <Pencil size={14} />
+                </button>
+                <button
+                  onClick={() => setDeleteId(d.id)}
+                  className="p-2 text-slate-500 hover:text-red-400 transition-colors rounded-lg hover:bg-slate-700"
+                  title="Delete domain"
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
             )}
           </div>
 
@@ -215,7 +411,7 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
             </div>
             <p className="text-slate-500 text-xs ml-[23px]">Added {formatDate(d.created_at)}</p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1">
             {canManage && (
               <>
                 <Button
@@ -226,6 +422,13 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
                 >
                   Verify DNS
                 </Button>
+                <button
+                  onClick={() => openEditModal(d)}
+                  className="p-2 text-slate-500 hover:text-slate-200 transition-colors rounded-lg hover:bg-slate-700"
+                  title="Edit domain"
+                >
+                  <Pencil size={14} />
+                </button>
                 <button
                   onClick={() => setDeleteId(d.id)}
                   className="p-2 text-slate-500 hover:text-red-400 transition-colors rounded-lg hover:bg-slate-700"
@@ -272,7 +475,7 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
         {/* Inline DNS instructions */}
         <div className="border-t border-slate-800 px-5 py-4">
           <h4 className="text-xs font-medium text-slate-300 mb-3">
-            Add this DNS record at your domain registrar (GoDaddy, Namecheap, Cloudflare, etc.)
+            Point your domain to SplitLab by adding this DNS record at your registrar (GoDaddy, Namecheap, Cloudflare, etc.)
           </h4>
 
           {/* DNS record table */}
@@ -297,7 +500,7 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
             </div>
           </div>
 
-          {/* Root domain note */}
+          {/* Root domain A record note */}
           {isRoot && (
             <div className="mt-3 rounded-lg border border-slate-700/50 bg-slate-800/30 px-3 py-2.5">
               <p className="text-slate-400 text-xs leading-relaxed">
@@ -323,12 +526,14 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
     );
   }
 
+  // ─── Render ───────────────────────────────────────────────────────────────
+
   return (
     <>
       <div className="flex items-center justify-between mb-6">
         <p className="text-slate-400 text-sm">{domains.length} domain{domains.length !== 1 ? 's' : ''}</p>
         {canManage && (
-          <Button onClick={() => setModalOpen(true)}>
+          <Button onClick={() => { resetAddModal(); setModalOpen(true); }}>
             <Plus size={16} /> Add Domain
           </Button>
         )}
@@ -339,7 +544,7 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
           icon={Globe}
           title="No custom domains"
           description="Add your client's custom domain to serve A/B tests on their own URL."
-          action={canManage ? <Button onClick={() => setModalOpen(true)}><Plus size={16} /> Add Domain</Button> : undefined}
+          action={canManage ? <Button onClick={() => { resetAddModal(); setModalOpen(true); }}><Plus size={16} /> Add Domain</Button> : undefined}
         />
       )}
 
@@ -362,22 +567,22 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
       {/* Add domain modal */}
       <Modal open={modalOpen} onClose={() => setModalOpen(false)} title="Add Custom Domain" size="sm">
         <form onSubmit={handleAdd} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1.5">Domain</label>
-            <input
-              type="text"
-              value={domainInput}
-              onChange={(e) => setDomainInput(e.target.value)}
-              className="input-base font-mono"
-              placeholder="landing.clientname.com"
-              required
-              autoFocus
-            />
-            <p className="text-slate-500 text-xs mt-1.5">Enter the exact domain or subdomain (without https://)</p>
-          </div>
+          {renderModeSelector(addMode, setAddMode, addBaseDomain, setAddBaseDomain, addSubdomain, setAddSubdomain, getAddPreview())}
           <div className="flex justify-end gap-3 pt-2">
             <Button variant="secondary" type="button" onClick={() => setModalOpen(false)}>Cancel</Button>
-            <Button type="submit" loading={adding}>Add Domain</Button>
+            <Button type="submit" loading={adding} disabled={!addBaseDomain.trim()}>Add Domain</Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Edit domain modal */}
+      <Modal open={editModalOpen} onClose={() => setEditModalOpen(false)} title="Edit Domain" size="sm">
+        <form onSubmit={handleEdit} className="space-y-4">
+          {renderModeSelector(editMode, setEditMode, editBaseDomain, setEditBaseDomain, editSubdomain, setEditSubdomain, getEditPreview())}
+          <p className="text-slate-500 text-xs">Changing the domain will reset its verification status. You&apos;ll need to update DNS records for the new domain.</p>
+          <div className="flex justify-end gap-3 pt-2">
+            <Button variant="secondary" type="button" onClick={() => setEditModalOpen(false)}>Cancel</Button>
+            <Button type="submit" loading={saving} disabled={!editBaseDomain.trim()}>Save Changes</Button>
           </div>
         </form>
       </Modal>
