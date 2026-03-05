@@ -65,15 +65,21 @@ export async function POST(request: NextRequest) {
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-    // Send invitation email (non-blocking — don't fail the request if email fails)
-    sendInvitationEmail({
-      toName: data.name,
-      toEmail: data.email,
-      temporaryPassword: data.password,
-      role: data.role,
-    }).catch((err) => console.error('[email] invitation failed:', err));
+    // Send invitation email
+    let emailError: string | null = null;
+    try {
+      await sendInvitationEmail({
+        toName: data.name,
+        toEmail: data.email,
+        temporaryPassword: data.password,
+        role: data.role,
+      });
+    } catch (err) {
+      emailError = err instanceof Error ? err.message : 'Email send failed';
+      console.error('[email] invitation failed:', err);
+    }
 
-    return NextResponse.json(user, { status: 201 });
+    return NextResponse.json({ ...user, emailError }, { status: 201 });
   } catch (err) {
     if (err instanceof z.ZodError) {
       return NextResponse.json({ error: err.errors }, { status: 400 });

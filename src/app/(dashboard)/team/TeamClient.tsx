@@ -60,7 +60,11 @@ export default function TeamClient({ initialUsers, currentUserId }: Props) {
       setUsers((prev) => [user, ...prev]);
       setModalOpen(false);
       resetForm();
-      toast.success('User created');
+      if (user.emailError) {
+        toast.error(`User created but invite email failed: ${user.emailError}`);
+      } else {
+        toast.success('User created and invite email sent');
+      }
     } finally {
       setSaving(false);
     }

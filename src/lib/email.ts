@@ -1,9 +1,13 @@
 import { Resend } from 'resend';
 
-const resend = new Resend(process.env.RESEND_API_KEY);
-
-const FROM = 'renny@infinitymediala.com';
+const FROM = 'SplitLab <renny@infinitymediala.com>';
 const LOGIN_URL = process.env.NEXT_PUBLIC_APP_URL ? `${process.env.NEXT_PUBLIC_APP_URL}/login` : 'https://www.trysplitlab.com/login';
+
+function getResend(): Resend {
+  const key = process.env.RESEND_API_KEY;
+  if (!key) throw new Error('Missing RESEND_API_KEY environment variable');
+  return new Resend(key);
+}
 
 export async function sendInvitationEmail({
   toName,
@@ -16,7 +20,8 @@ export async function sendInvitationEmail({
   temporaryPassword: string;
   role: string;
 }) {
-  await resend.emails.send({
+  const resend = getResend();
+  const { error } = await resend.emails.send({
     from: FROM,
     to: toEmail,
     subject: "You've been invited to SplitLab",
@@ -65,4 +70,7 @@ export async function sendInvitationEmail({
 </body>
 </html>`,
   });
+  if (error) {
+    throw new Error(`Resend error: ${error.message}`);
+  }
 }
