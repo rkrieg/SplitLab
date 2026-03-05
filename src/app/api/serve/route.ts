@@ -79,61 +79,9 @@ export async function GET(request: NextRequest) {
 
     // 6a. If variant has a redirect URL
     if (selectedVariant.redirect_url) {
-      console.log('[serve] redirect variant:', {
-        id: selectedVariant.id,
-        redirect_url: selectedVariant.redirect_url,
-        proxy_mode: selectedVariant.proxy_mode,
-        proxy_mode_type: typeof selectedVariant.proxy_mode,
-        will_proxy: selectedVariant.proxy_mode !== false,
-      });
-
-      // Proxy mode: fetch remote HTML server-side and serve through custom domain
+      // Proxy mode: serve iframe wrapper so URL stays on custom domain
+      // The SPA runs in its original context inside the iframe
       if (selectedVariant.proxy_mode !== false) {
-        let proxyHtml = '';
-        try {
-          console.log('[serve] proxy: fetching remote URL:', selectedVariant.redirect_url);
-          const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 8000);
-          const proxyRes = await fetch(selectedVariant.redirect_url, {
-            signal: controller.signal,
-            headers: {
-              'User-Agent': request.headers.get('user-agent') || '',
-              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-              'Accept-Language': request.headers.get('accept-language') || 'en-US,en;q=0.5',
-            },
-            redirect: 'follow',
-          });
-          clearTimeout(timeout);
-
-          console.log('[serve] proxy: remote response status:', proxyRes.status, 'content-type:', proxyRes.headers.get('content-type'));
-          if (!proxyRes.ok) throw new Error(`Remote fetch failed: ${proxyRes.status}`);
-          proxyHtml = await proxyRes.text();
-          console.log('[serve] proxy: fetched HTML length:', proxyHtml.length);
-        } catch (proxyErr) {
-          // Fall back to 302 redirect if proxy fetch fails
-          console.error('[serve] proxy fetch FAILED, falling back to redirect. Error:', proxyErr instanceof Error ? proxyErr.message : proxyErr);
-          const redirectUrl = new URL(selectedVariant.redirect_url);
-          redirectUrl.searchParams.set('sl_vid', selectedVariant.id);
-          const fallbackResponse = NextResponse.redirect(redirectUrl.toString(), 302);
-          const cookieOptions = { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax' as const, maxAge: 60 * 60 * 24 * 90, path: '/' };
-          if (!existingCookie) fallbackResponse.cookies.set(COOKIE_NAME, visitorId, cookieOptions);
-          if (!stickyVariantId) fallbackResponse.cookies.set(stickyCookieName, selectedVariant.id, cookieOptions);
-          await db.from('events').insert({ test_id: test.id, variant_id: selectedVariant.id, visitor_hash: visitorId, type: 'pageview', metadata: { redirect_url: selectedVariant.redirect_url } });
-          return fallbackResponse;
-        }
-
-        // Inject <base href> so relative assets resolve against the remote origin
-        const remoteUrl = new URL(selectedVariant.redirect_url);
-        const baseHref = remoteUrl.origin + remoteUrl.pathname.replace(/\/[^/]*$/, '/');
-        const baseTag = `<base href="${baseHref}">`;
-        if (proxyHtml.includes('<head>')) {
-          proxyHtml = proxyHtml.replace('<head>', `<head>\n${baseTag}`);
-        } else if (proxyHtml.includes('<HEAD>')) {
-          proxyHtml = proxyHtml.replace('<HEAD>', `<HEAD>\n${baseTag}`);
-        } else {
-          proxyHtml = baseTag + '\n' + proxyHtml;
-        }
-
         // Fetch workspace scripts
         const { data: proxyScripts } = await db
           .from('scripts')
@@ -142,12 +90,12 @@ export async function GET(request: NextRequest) {
           .eq('is_active', true)
           .is('page_id', null);
 
-        const proxyHeadScripts: string[] = [];
-        const proxyBodyEndScripts: string[] = [];
+        const headScriptTags: string[] = [];
+        const bodyEndScriptTags: string[] = [];
         for (const script of proxyScripts || []) {
           const tag = buildScriptTag(script.type, script.content);
-          if (script.placement === 'head') proxyHeadScripts.push(tag);
-          else proxyBodyEndScripts.push(tag);
+          if (script.placement === 'head') headScriptTags.push(tag);
+          else bodyEndScriptTags.push(tag);
         }
 
         // Fetch conversion goals and build tracking snippet
@@ -160,7 +108,22 @@ export async function GET(request: NextRequest) {
           test.id, selectedVariant.id, visitorId, proxyGoals || [], APP_URL
         );
 
-        const finalProxyHtml = injectIntoHtml(proxyHtml, proxyHeadScripts, proxyBodyEndScripts, proxyTrackingSnippet);
+        const iframeUrl = selectedVariant.redirect_url;
+        const iframeHtml = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Loading…</title>
+${headScriptTags.join('\n')}
+<style>*{margin:0;padding:0}html,body{width:100%;height:100%;overflow:hidden}iframe{width:100%;height:100vh;border:none;display:block}</style>
+</head>
+<body>
+<iframe src="${iframeUrl}" allow="forms; scripts; same-origin" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation"></iframe>
+${bodyEndScriptTags.join('\n')}
+${proxyTrackingSnippet}
+</body>
+</html>`;
 
         // Record server-side pageview
         await db.from('events').insert({
@@ -171,7 +134,7 @@ export async function GET(request: NextRequest) {
           metadata: { redirect_url: selectedVariant.redirect_url, proxy: true },
         });
 
-        const proxyResponse = new NextResponse(finalProxyHtml, {
+        const proxyResponse = new NextResponse(iframeHtml, {
           status: 200,
           headers: { 'Content-Type': 'text/html; charset=utf-8' },
         });
