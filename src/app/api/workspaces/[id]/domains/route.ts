@@ -2,12 +2,18 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
+import { addDomainToVercel, removeDomainFromVercel, getDomainStatus } from '@/lib/vercel';
 import { z } from 'zod';
 
 const APP_HOSTNAME = process.env.APP_HOSTNAME || 'cname.vercel-dns.com';
 
 const addSchema = z.object({
   domain: z.string().min(3).max(255),
+});
+
+const verifySchema = z.object({
+  action: z.literal('verify'),
+  domain_id: z.string().uuid(),
 });
 
 export async function GET(
@@ -36,6 +42,39 @@ export async function POST(
 
   try {
     const body = await request.json();
+
+    // ── Verify action ──
+    if (body.action === 'verify') {
+      const { domain_id } = verifySchema.parse(body);
+
+      const { data: domainRow, error: fetchErr } = await db
+        .from('domains')
+        .select('id, domain')
+        .eq('id', domain_id)
+        .eq('workspace_id', params.id)
+        .single();
+
+      if (fetchErr || !domainRow) {
+        return NextResponse.json({ error: 'Domain not found' }, { status: 404 });
+      }
+
+      const status = await getDomainStatus(domainRow.domain);
+
+      if (status.verified) {
+        await db
+          .from('domains')
+          .update({ verified: true, verified_at: new Date().toISOString() })
+          .eq('id', domain_id);
+      }
+
+      return NextResponse.json({
+        verified: status.verified,
+        status: status.status,
+        message: status.message,
+      });
+    }
+
+    // ── Add domain ──
     const { domain } = addSchema.parse(body);
 
     const { data: existing } = await db
@@ -46,6 +85,17 @@ export async function POST(
 
     if (existing) {
       return NextResponse.json({ error: 'Domain already registered' }, { status: 409 });
+    }
+
+    // Register with Vercel first
+    try {
+      await addDomainToVercel(domain);
+    } catch (vercelErr: unknown) {
+      const msg = vercelErr instanceof Error ? vercelErr.message : 'Vercel API error';
+      return NextResponse.json(
+        { error: `Failed to register domain with Vercel: ${msg}` },
+        { status: 502 }
+      );
     }
 
     const { data: newDomain, error } = await db
@@ -80,6 +130,29 @@ export async function DELETE(
     const { domain_id } = await request.json();
     if (!domain_id) {
       return NextResponse.json({ error: 'domain_id is required' }, { status: 400 });
+    }
+
+    // Fetch domain name for Vercel API
+    const { data: domainRow, error: fetchErr } = await db
+      .from('domains')
+      .select('domain')
+      .eq('id', domain_id)
+      .eq('workspace_id', params.id)
+      .single();
+
+    if (fetchErr || !domainRow) {
+      return NextResponse.json({ error: 'Domain not found' }, { status: 404 });
+    }
+
+    // Remove from Vercel first
+    try {
+      await removeDomainFromVercel(domainRow.domain);
+    } catch (vercelErr: unknown) {
+      const msg = vercelErr instanceof Error ? vercelErr.message : 'Vercel API error';
+      return NextResponse.json(
+        { error: `Failed to remove domain from Vercel: ${msg}` },
+        { status: 502 }
+      );
     }
 
     const { error } = await db

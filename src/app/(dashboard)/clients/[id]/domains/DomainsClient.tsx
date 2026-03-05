@@ -31,6 +31,7 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
   const [domainInput, setDomainInput] = useState('');
   const [adding, setAdding] = useState(false);
   const [verifying, setVerifying] = useState<string | null>(null);
+  const [verifyStatus, setVerifyStatus] = useState<Record<string, string>>({});
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
 
@@ -52,7 +53,7 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
       setDomains((prev) => [d, ...prev]);
       setModalOpen(false);
       setDomainInput('');
-      toast.success('Domain added');
+      toast.success('Domain added and registered with Vercel');
     } finally {
       setAdding(false);
     }
@@ -61,16 +62,37 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
   async function handleVerify(domainId: string) {
     setVerifying(domainId);
     try {
-      // In production this would do a real DNS check via an API
-      // For demo, we'll simulate by marking as verified
       const res = await fetch(`/api/workspaces/${workspaceId}/domains`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'verify', domain_id: domainId }),
       });
 
-      // Optimistically update for demo purposes
-      toast.success('Verification check triggered — DNS propagation may take up to 48 hours.');
+      if (!res.ok) {
+        const err = await res.json();
+        toast.error(err.error || 'Verification check failed');
+        return;
+      }
+
+      const result = await res.json();
+      setVerifyStatus((prev) => ({ ...prev, [domainId]: result.status }));
+
+      if (result.verified) {
+        setDomains((prev) =>
+          prev.map((d) =>
+            d.id === domainId
+              ? { ...d, verified: true, verified_at: new Date().toISOString() }
+              : d
+          )
+        );
+        toast.success('Domain verified successfully!');
+      } else if (result.status === 'misconfigured') {
+        toast.error(result.message || 'DNS records are misconfigured. Check your CNAME settings.');
+      } else {
+        toast.success(result.message || 'DNS detected but verification pending. Try again later.');
+      }
+    } catch {
+      toast.error('Failed to check domain verification');
     } finally {
       setVerifying(null);
     }
@@ -86,7 +108,8 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
         body: JSON.stringify({ domain_id: deleteId }),
       });
       if (!res.ok) {
-        toast.error('Failed to delete domain');
+        const err = await res.json();
+        toast.error(err.error || 'Failed to delete domain');
         return;
       }
       setDomains((prev) => prev.filter((d) => d.id !== deleteId));
@@ -100,6 +123,28 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
   function copyToClipboard(text: string) {
     navigator.clipboard.writeText(text);
     toast.success('Copied to clipboard');
+  }
+
+  function renderBadge(d: Domain) {
+    if (d.verified) {
+      return (
+        <span className="flex items-center gap-1 badge bg-green-500/20 text-green-400 border-green-500/30">
+          <CheckCircle size={11} /> Verified
+        </span>
+      );
+    }
+    if (verifyStatus[d.id] === 'misconfigured') {
+      return (
+        <span className="flex items-center gap-1 badge bg-red-500/20 text-red-400 border-red-500/30">
+          <XCircle size={11} /> Misconfigured
+        </span>
+      );
+    }
+    return (
+      <span className="flex items-center gap-1 badge bg-amber-500/20 text-amber-400 border-amber-500/30">
+        <AlertCircle size={11} /> Pending DNS
+      </span>
+    );
   }
 
   return (
@@ -159,15 +204,7 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
                 <div className="flex items-center gap-2 mb-1">
                   <Globe size={15} className="text-slate-400 flex-shrink-0" />
                   <span className="font-medium text-slate-100">{d.domain}</span>
-                  {d.verified ? (
-                    <span className="flex items-center gap-1 badge bg-green-500/20 text-green-400 border-green-500/30">
-                      <CheckCircle size={11} /> Verified
-                    </span>
-                  ) : (
-                    <span className="flex items-center gap-1 badge bg-amber-500/20 text-amber-400 border-amber-500/30">
-                      <XCircle size={11} /> Pending DNS
-                    </span>
-                  )}
+                  {renderBadge(d)}
                 </div>
                 <p className="text-slate-500 text-xs ml-5">
                   CNAME → {d.cname_target || appHostname} • Added {formatDate(d.created_at)}
@@ -205,7 +242,7 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
         onClose={() => setDeleteId(null)}
         onConfirm={handleDelete}
         title="Delete Domain"
-        description="This will remove the domain from this workspace. You will need to re-add it and update DNS records if you want to use it again."
+        description="This will remove the domain from this workspace and from Vercel. You will need to re-add it and update DNS records if you want to use it again."
         loading={deleting}
       />
 
