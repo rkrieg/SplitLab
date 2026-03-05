@@ -5,6 +5,9 @@ import Providers from './providers';
 export const metadata: Metadata = {
   title: 'SplitLab — A/B Testing Platform',
   description: 'Agency-grade landing page A/B testing and management platform.',
+  icons: {
+    icon: '/icon.svg',
+  },
 };
 
 export default function RootLayout({

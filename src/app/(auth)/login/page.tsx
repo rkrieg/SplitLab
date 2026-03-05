@@ -3,7 +3,7 @@
 import { Suspense, useState } from 'react';
 import { signIn } from 'next-auth/react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Zap, Eye, EyeOff } from 'lucide-react';
+import { Eye, EyeOff } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 function LoginForm() {
@@ -43,11 +43,14 @@ function LoginForm() {
   return (
     <div className="w-full max-w-md">
       {/* Logo */}
-      <div className="flex items-center justify-center gap-2 mb-8">
-        <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center">
-          <Zap className="w-6 h-6 text-white" />
-        </div>
-        <span className="text-2xl font-bold text-slate-100">SplitLab</span>
+      <div className="flex items-center justify-center mb-8">
+        <svg width="180" height="42" viewBox="0 0 220 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="18" cy="24" r="16" fill="#3D8BDA" opacity="0.15"/>
+          <circle cx="18" cy="24" r="14" stroke="#3D8BDA" strokeWidth="1.5"/>
+          <path d="M20 12L13 26H18L15 36L24 22H19L20 12Z" fill="#3D8BDA"/>
+          <text x="42" y="21" fontFamily="system-ui, sans-serif" fontWeight="700" fontSize="24" fill="white" letterSpacing="-0.5">Split</text>
+          <text x="106" y="21" fontFamily="system-ui, sans-serif" fontWeight="600" fontSize="24" fill="#3D8BDA" letterSpacing="-0.5">Lab</text>
+        </svg>
       </div>
 
       {/* Card */}

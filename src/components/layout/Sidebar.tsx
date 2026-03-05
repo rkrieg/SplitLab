@@ -11,7 +11,6 @@ import {
   Code2,
   Users,
   Settings,
-  Zap,
   LogOut,
   ChevronDown,
 } from 'lucide-react';
@@ -42,13 +41,14 @@ export default function Sidebar() {
     <aside className="w-60 min-h-screen bg-slate-900 border-r border-slate-800 flex flex-col">
       {/* Logo */}
       <div className="h-16 flex items-center px-5 border-b border-slate-800">
-        <Link href="/dashboard" className="flex items-center gap-2.5">
-          <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center flex-shrink-0">
-            <Zap className="w-4.5 h-4.5 text-white" size={18} />
-          </div>
-          <span className="font-bold text-slate-100 text-lg tracking-tight">
-            SplitLab
-          </span>
+        <Link href="/dashboard" className="flex items-center">
+          <svg width="140" height="32" viewBox="0 0 220 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="18" cy="24" r="16" fill="#3D8BDA" opacity="0.15"/>
+            <circle cx="18" cy="24" r="14" stroke="#3D8BDA" strokeWidth="1.5"/>
+            <path d="M20 12L13 26H18L15 36L24 22H19L20 12Z" fill="#3D8BDA"/>
+            <text x="42" y="21" fontFamily="system-ui, sans-serif" fontWeight="700" fontSize="24" fill="white" letterSpacing="-0.5">Split</text>
+            <text x="106" y="21" fontFamily="system-ui, sans-serif" fontWeight="600" fontSize="24" fill="#3D8BDA" letterSpacing="-0.5">Lab</text>
+          </svg>
         </Link>
       </div>
 
