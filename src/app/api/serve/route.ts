@@ -32,7 +32,7 @@ export async function GET(request: NextRequest) {
     // 2. Find active test matching this URL path
     const { data: test, error: testError } = await db
       .from('tests')
-      .select('id, name, url_path')
+      .select('*')
       .eq('workspace_id', workspaceId)
       .eq('status', 'active')
       .eq('url_path', urlPath)
@@ -109,12 +109,14 @@ export async function GET(request: NextRequest) {
         );
 
         const iframeUrl = selectedVariant.redirect_url;
+        const testHeadScripts = (test as { head_scripts?: string }).head_scripts || '';
         const iframeHtml = `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Loading…</title>
+${testHeadScripts}
 ${headScriptTags.join('\n')}
 <style>*{margin:0;padding:0}html,body{width:100%;height:100%;overflow:hidden}iframe{width:100%;height:100vh;border:none;display:block}</style>
 </head>
