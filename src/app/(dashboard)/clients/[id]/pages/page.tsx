@@ -3,8 +3,6 @@ import { redirect, notFound } from 'next/navigation';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import Header from '@/components/layout/Header';
-import Link from 'next/link';
-import { ArrowLeft } from 'lucide-react';
 import PagesClient from './PagesClient';
 
 async function getWorkspaceForClient(clientId: string) {
@@ -16,13 +14,23 @@ async function getWorkspaceForClient(clientId: string) {
   return data;
 }
 
-async function getPages(workspaceId: string) {
+async function getTests(workspaceId: string) {
   const { data } = await db
-    .from('pages')
-    .select('*')
+    .from('tests')
+    .select('*, test_variants(*), conversion_goals(*)')
     .eq('workspace_id', workspaceId)
     .order('created_at', { ascending: false });
   return data ?? [];
+}
+
+async function getDomain(workspaceId: string) {
+  const { data } = await db
+    .from('domains')
+    .select('domain, verified')
+    .eq('workspace_id', workspaceId)
+    .limit(1)
+    .single();
+  return data;
 }
 
 export default async function PagesPage({ params }: { params: { id: string } }) {
@@ -32,26 +40,22 @@ export default async function PagesPage({ params }: { params: { id: string } }) 
   const workspace = await getWorkspaceForClient(params.id);
   if (!workspace) notFound();
 
-  const pages = await getPages(workspace.id);
-
   const { data: client } = await db.from('clients').select('name').eq('id', params.id).single();
+  const [tests, domain] = await Promise.all([
+    getTests(workspace.id),
+    getDomain(workspace.id),
+  ]);
 
   return (
     <div>
-      <Header
-        title="Page Library"
-        subtitle={client?.name}
-        actions={
-          <Link href={`/clients/${params.id}`} className="btn-secondary text-xs">
-            <ArrowLeft size={14} /> Back
-          </Link>
-        }
-      />
+      <Header title="Pages" subtitle={client?.name} />
       <div className="p-6">
         <PagesClient
-          initialPages={pages}
+          tests={tests}
           workspaceId={workspace.id}
+          clientId={params.id}
           canManage={session.user.role !== 'viewer'}
+          domain={domain?.verified ? domain.domain : undefined}
         />
       </div>
     </div>

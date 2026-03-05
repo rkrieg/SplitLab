@@ -24,7 +24,7 @@ const goalSchema = z.object({
 const createSchema = z.object({
   name: z.string().min(1).max(255),
   url_path: z.string().min(1).max(500),
-  variants: z.array(variantSchema).min(2).max(5),
+  variants: z.array(variantSchema).min(1).max(5),
   goals: z.array(goalSchema).optional(),
 });
 

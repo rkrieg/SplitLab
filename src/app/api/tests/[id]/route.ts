@@ -20,7 +20,9 @@ const weightSchema = z.object({
 
 const variantUpdateSchema = z.object({
   id: z.string().uuid(),
-  proxy_mode: z.boolean(),
+  name: z.string().min(1).max(255).optional(),
+  redirect_url: z.string().url().nullable().optional(),
+  proxy_mode: z.boolean().optional(),
 });
 
 const updateSchema = z.object({
@@ -30,7 +32,12 @@ const updateSchema = z.object({
   goals: z.array(goalSchema).optional(),
   weights: z.array(weightSchema).optional(),
   variant_updates: z.array(variantUpdateSchema).optional(),
+  delete_variant_id: z.string().uuid().optional(),
 });
+
+function fullTestSelect() {
+  return '*, test_variants(*, pages(id, name)), conversion_goals(*)';
+}
 
 export async function GET(
   _req: NextRequest,
@@ -41,7 +48,7 @@ export async function GET(
 
   const { data, error } = await db
     .from('tests')
-    .select('*, test_variants(*, pages(id, name, html_url)), conversion_goals(*)')
+    .select(fullTestSelect())
     .eq('id', params.id)
     .single();
 
@@ -58,7 +65,7 @@ export async function PATCH(
 
   try {
     const body = await request.json();
-    const { goals, weights, variant_updates, ...testFields } = updateSchema.parse(body);
+    const { goals, weights, variant_updates, delete_variant_id, ...testFields } = updateSchema.parse(body);
 
     // Update test fields if any provided
     if (Object.keys(testFields).length > 0) {
@@ -86,24 +93,37 @@ export async function PATCH(
       }
     }
 
-    // Update variant fields (e.g. proxy_mode) if provided
+    // Update variant fields (name, redirect_url, proxy_mode) if provided
     if (variant_updates) {
       for (const vu of variant_updates) {
-        const { error: vuErr } = await db
-          .from('test_variants')
-          .update({ proxy_mode: vu.proxy_mode })
-          .eq('id', vu.id)
-          .eq('test_id', params.id);
-        if (vuErr) return NextResponse.json({ error: vuErr.message }, { status: 500 });
+        const updateFields: Record<string, unknown> = {};
+        if (vu.name !== undefined) updateFields.name = vu.name;
+        if (vu.redirect_url !== undefined) updateFields.redirect_url = vu.redirect_url;
+        if (vu.proxy_mode !== undefined) updateFields.proxy_mode = vu.proxy_mode;
+        if (Object.keys(updateFields).length > 0) {
+          const { error: vuErr } = await db
+            .from('test_variants')
+            .update(updateFields)
+            .eq('id', vu.id)
+            .eq('test_id', params.id);
+          if (vuErr) return NextResponse.json({ error: vuErr.message }, { status: 500 });
+        }
       }
+    }
+
+    // Delete variant if requested
+    if (delete_variant_id) {
+      const { error: delErr } = await db
+        .from('test_variants')
+        .delete()
+        .eq('id', delete_variant_id)
+        .eq('test_id', params.id);
+      if (delErr) return NextResponse.json({ error: delErr.message }, { status: 500 });
     }
 
     // Replace goals if provided
     if (goals) {
-      // Delete existing goals
       await db.from('conversion_goals').delete().eq('test_id', params.id);
-
-      // Insert new goals
       if (goals.length > 0) {
         const { error: goalsError } = await db
           .from('conversion_goals')
@@ -115,7 +135,6 @@ export async function PATCH(
             url_pattern: g.url_pattern || null,
             is_primary: g.is_primary,
           })));
-
         if (goalsError) return NextResponse.json({ error: goalsError.message }, { status: 500 });
       }
     }
@@ -123,7 +142,7 @@ export async function PATCH(
     // Return full test with relations
     const { data: updated, error: fetchError } = await db
       .from('tests')
-      .select('*, test_variants(*, pages(id, name)), conversion_goals(*)')
+      .select(fullTestSelect())
       .eq('id', params.id)
       .single();
 

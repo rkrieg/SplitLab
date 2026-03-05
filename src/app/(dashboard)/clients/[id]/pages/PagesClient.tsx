@@ -1,392 +1,436 @@
 'use client';
 
-import { useState, useRef } from 'react';
-import dynamic from 'next/dynamic';
+import { useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
 import {
-  Plus, FileCode2, Upload, Code2, Eye, Edit2, Copy, Trash2,
-  Tag, X, Check, Link,
+  Plus, FileCode2, MoreHorizontal, Play, Pause, Check, Trash2,
+  Globe, Link2, ShieldCheck, ShieldX, Loader2, Edit2,
 } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
 import EmptyState from '@/components/ui/EmptyState';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
-import { formatDate } from '@/lib/utils';
+import { TestStatusBadge } from '@/components/ui/Badge';
 
-// CodeMirror loaded client-side only
-const CodeEditor = dynamic(() => import('@/components/pages/CodeEditor'), { ssr: false });
-
-interface Page {
+interface Variant {
   id: string;
   name: string;
-  slug: string | null;
-  html_url: string;
-  html_content: string | null;
-  tags: string[];
+  redirect_url: string | null;
+  proxy_mode: boolean;
+  traffic_weight: number;
+  is_control: boolean;
+  tracking_verified?: boolean | null;
+}
+interface Goal { id?: string; name: string; type: string; selector?: string; url_pattern?: string; is_primary: boolean }
+interface Test {
+  id: string;
+  name: string;
+  url_path: string;
   status: string;
   created_at: string;
-  updated_at: string;
+  test_variants: Variant[];
+  conversion_goals: Goal[];
 }
 
 interface Props {
-  initialPages: Page[];
+  tests: Test[];
   workspaceId: string;
+  clientId: string;
   canManage: boolean;
+  domain?: string;
 }
 
-type UploadTab = 'file' | 'code' | 'url';
-
-export default function PagesClient({ initialPages, workspaceId, canManage }: Props) {
+export default function PagesClient({ tests: initialTests, workspaceId, clientId, canManage, domain }: Props) {
   const router = useRouter();
-  const [pages, setPages] = useState(initialPages);
-  const [uploadOpen, setUploadOpen] = useState(false);
-  const [editPage, setEditPage] = useState<Page | null>(null);
+  const [tests, setTests] = useState(initialTests);
+  const [createOpen, setCreateOpen] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
-  const [previewPage, setPreviewPage] = useState<Page | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [tab, setTab] = useState<UploadTab>('file');
-  const [importUrl, setImportUrl] = useState('');
-  const [importing, setImporting] = useState(false);
+  const [activeMenu, setActiveMenu] = useState<string | null>(null);
+  const [checkingTracking, setCheckingTracking] = useState<string | null>(null);
 
-  // Form
-  const [name, setName] = useState('');
-  const [tags, setTags] = useState('');
-  const [htmlContent, setHtmlContent] = useState('<!DOCTYPE html>\n<html lang="en">\n<head>\n  <meta charset="UTF-8">\n  <title>Landing Page</title>\n</head>\n<body>\n  \n</body>\n</html>');
-  const fileRef = useRef<HTMLInputElement>(null);
+  // Create form
+  const [pageName, setPageName] = useState('');
+  const [urlPath, setUrlPath] = useState('/');
+  const [destinationUrl, setDestinationUrl] = useState('');
 
-  async function handleUpload(e: React.FormEvent) {
+  // Edit state
+  const [editTestId, setEditTestId] = useState<string | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editUrlPath, setEditUrlPath] = useState('');
+  const [editSaving, setEditSaving] = useState(false);
+
+  // Add variant state
+  const [addVariantTestId, setAddVariantTestId] = useState<string | null>(null);
+  const [variantName, setVariantName] = useState('');
+  const [variantUrl, setVariantUrl] = useState('');
+  const [variantWeight, setVariantWeight] = useState(50);
+  const [addingVariant, setAddingVariant] = useState(false);
+
+  // ─── Create Page ────────────────────────────────────────────────────────
+
+  async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
-    setUploading(true);
-
-    try {
-      const formData = new FormData();
-      formData.append('name', name);
-      formData.append('workspace_id', workspaceId);
-      if (tags) formData.append('tags', tags);
-
-      if (tab === 'file') {
-        const file = fileRef.current?.files?.[0];
-        if (!file) { toast.error('Please select an HTML file'); return; }
-        formData.append('file', file);
-      } else {
-        formData.append('html', htmlContent);
-      }
-
-      const res = await fetch('/api/upload', { method: 'POST', body: formData });
-      if (!res.ok) {
-        const err = await res.json();
-        toast.error(err.error || 'Upload failed');
-        return;
-      }
-
-      const page = await res.json();
-      setPages((prev) => [page, ...prev]);
-      setUploadOpen(false);
-      resetForm();
-      toast.success('Page uploaded');
-      router.refresh();
-    } catch {
-      toast.error('Upload failed');
-    } finally {
-      setUploading(false);
-    }
-  }
-
-  async function handleSaveEdit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!editPage) return;
     setSaving(true);
     try {
-      const res = await fetch(`/api/pages/${editPage.id}`, {
-        method: 'PATCH',
+      const res = await fetch(`/api/workspaces/${workspaceId}/tests`, {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: editPage.name, html_content: editPage.html_content }),
+        body: JSON.stringify({
+          name: pageName,
+          url_path: urlPath,
+          variants: [{
+            name: 'Control',
+            redirect_url: destinationUrl,
+            proxy_mode: true,
+            traffic_weight: 100,
+            is_control: true,
+          }],
+        }),
       });
-      if (!res.ok) { toast.error('Save failed'); return; }
-      const updated = await res.json();
-      setPages((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
-      setEditPage(null);
-      toast.success('Page saved');
+      if (!res.ok) {
+        const err = await res.json();
+        toast.error(err.error || 'Failed to create page');
+        return;
+      }
+      const newTest = await res.json();
+      setTests((prev) => [newTest, ...prev]);
+      setCreateOpen(false);
+      resetCreateForm();
+      toast.success('Page created');
+      router.refresh();
+    } catch {
+      toast.error('Unexpected error');
     } finally {
       setSaving(false);
     }
   }
 
-  async function handleDuplicate(page: Page) {
-    const formData = new FormData();
-    formData.append('name', `${page.name} (copy)`);
-    formData.append('workspace_id', workspaceId);
-    formData.append('html', page.html_content || '');
+  function resetCreateForm() {
+    setPageName('');
+    setUrlPath('/');
+    setDestinationUrl('');
+  }
 
-    const res = await fetch('/api/upload', { method: 'POST', body: formData });
-    if (!res.ok) { toast.error('Duplicate failed'); return; }
-    const copy = await res.json();
-    setPages((prev) => [copy, ...prev]);
-    toast.success('Page duplicated');
+  // ─── Actions ────────────────────────────────────────────────────────────
+
+  async function updateStatus(testId: string, status: string) {
+    const res = await fetch(`/api/tests/${testId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+    });
+    if (!res.ok) { toast.error('Failed to update status'); return; }
+    setTests((prev) => prev.map((t) => (t.id === testId ? { ...t, status } : t)));
+    toast.success(`Page ${status}`);
+    setActiveMenu(null);
   }
 
   async function handleDelete() {
     if (!deleteId) return;
     setDeleting(true);
     try {
-      const res = await fetch(`/api/pages/${deleteId}`, { method: 'DELETE' });
-      if (!res.ok) { toast.error('Delete failed'); return; }
-      setPages((prev) => prev.filter((p) => p.id !== deleteId));
+      const res = await fetch(`/api/tests/${deleteId}`, { method: 'DELETE' });
+      if (!res.ok) { toast.error('Failed to delete'); return; }
+      setTests((prev) => prev.filter((t) => t.id !== deleteId));
       toast.success('Page deleted');
-    } finally {
-      setDeleting(false);
-      setDeleteId(null);
-    }
+    } finally { setDeleting(false); setDeleteId(null); }
   }
 
-  function resetForm() {
-    setName('');
-    setTags('');
-    setHtmlContent('<!DOCTYPE html>\n<html lang="en">\n<head>\n  <meta charset="UTF-8">\n  <title>Landing Page</title>\n</head>\n<body>\n  \n</body>\n</html>');
-    setTab('file');
-    setImportUrl('');
-    if (fileRef.current) fileRef.current.value = '';
+  // ─── Edit ───────────────────────────────────────────────────────────────
+
+  function openEditModal(test: Test) {
+    setEditTestId(test.id);
+    setEditName(test.name);
+    setEditUrlPath(test.url_path);
+    setActiveMenu(null);
   }
 
-  async function handleImportUrl() {
-    if (!importUrl.trim()) return;
-    setImporting(true);
+  async function handleEdit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editTestId) return;
+    setEditSaving(true);
     try {
-      const res = await fetch('/api/fetch-url', {
+      const res = await fetch(`/api/tests/${editTestId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: editName, url_path: editUrlPath }),
+      });
+      if (!res.ok) { const err = await res.json(); toast.error(err.error || 'Failed to update'); return; }
+      const updated = await res.json();
+      setTests((prev) => prev.map((t) => (t.id === editTestId ? { ...t, ...updated } : t)));
+      setEditTestId(null);
+      toast.success('Page updated');
+      router.refresh();
+    } catch { toast.error('Unexpected error'); } finally { setEditSaving(false); }
+  }
+
+  // ─── Add Variant ────────────────────────────────────────────────────────
+
+  function openAddVariant(test: Test) {
+    setAddVariantTestId(test.id);
+    const count = (test.test_variants ?? []).length;
+    setVariantName(`Variant ${String.fromCharCode(65 + count)}`);
+    setVariantUrl('');
+    setVariantWeight(50);
+    setActiveMenu(null);
+  }
+
+  async function handleAddVariant(e: React.FormEvent) {
+    e.preventDefault();
+    if (!addVariantTestId) return;
+    setAddingVariant(true);
+    try {
+      const res = await fetch(`/api/tests/${addVariantTestId}/variants`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: importUrl }),
+        body: JSON.stringify({
+          name: variantName,
+          redirect_url: variantUrl,
+          proxy_mode: true,
+          traffic_weight: variantWeight,
+        }),
+      });
+      if (!res.ok) { const err = await res.json(); toast.error(err.error || 'Failed to add variant'); return; }
+      const updated = await res.json();
+      setTests((prev) => prev.map((t) => (t.id === addVariantTestId ? updated : t)));
+      setAddVariantTestId(null);
+      toast.success('Variant added');
+    } catch { toast.error('Unexpected error'); } finally { setAddingVariant(false); }
+  }
+
+  // ─── Tracking Check ────────────────────────────────────────────────────
+
+  async function checkTracking(variantId: string, url: string) {
+    setCheckingTracking(variantId);
+    try {
+      const res = await fetch('/api/check-tracking', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url, variant_id: variantId }),
       });
       const data = await res.json();
-      if (!res.ok) {
-        toast.error(data.error || 'Failed to fetch URL');
-        return;
-      }
-      setHtmlContent(data.html);
-      setTab('code');
-      toast.success('HTML imported — review and save below');
-    } catch {
-      toast.error('Failed to fetch URL');
-    } finally {
-      setImporting(false);
-    }
+      setTests((prev) =>
+        prev.map((t) => ({
+          ...t,
+          test_variants: (t.test_variants ?? []).map((v) =>
+            v.id === variantId
+              ? { ...v, tracking_verified: data.verified }
+              : v
+          ),
+        }))
+      );
+      if (data.verified) toast.success('Tracker verified');
+      else toast.error('Tracker not found on target page');
+    } catch { toast.error('Failed to check tracking'); } finally { setCheckingTracking(null); }
   }
+
+  // ─── Render ─────────────────────────────────────────────────────────────
 
   return (
     <>
       <div className="flex items-center justify-between mb-6">
-        <p className="text-slate-400 text-sm">{pages.length} page{pages.length !== 1 ? 's' : ''}</p>
+        <p className="text-slate-400 text-sm">{tests.length} page{tests.length !== 1 ? 's' : ''}</p>
         {canManage && (
-          <Button onClick={() => setUploadOpen(true)}>
-            <Plus size={16} /> Upload Page
+          <Button onClick={() => setCreateOpen(true)}>
+            <Plus size={16} /> New Page
           </Button>
         )}
       </div>
 
-      {pages.length === 0 && (
+      {tests.length === 0 && (
         <EmptyState
           icon={FileCode2}
           title="No pages yet"
-          description="Upload HTML files or write them directly in the code editor."
-          action={canManage ? <Button onClick={() => setUploadOpen(true)}><Plus size={16} /> Upload Page</Button> : undefined}
+          description="Create a page to start routing traffic through your custom domain."
+          action={canManage ? <Button onClick={() => setCreateOpen(true)}><Plus size={16} /> New Page</Button> : undefined}
         />
       )}
 
-      {pages.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {pages.map((page) => (
-            <div key={page.id} className="card p-5 flex flex-col">
-              <div className="flex items-start justify-between mb-3">
-                <div className="w-9 h-9 rounded-lg bg-slate-700 flex items-center justify-center flex-shrink-0">
-                  <FileCode2 size={16} className="text-indigo-400" />
-                </div>
-                {page.status === 'archived' && (
-                  <span className="badge bg-slate-600 text-slate-400 text-[10px]">archived</span>
-                )}
-              </div>
-              <h3 className="font-semibold text-slate-100 mb-1 truncate">{page.name}</h3>
-              <p className="text-slate-500 text-xs mb-3">{formatDate(page.created_at)}</p>
+      {tests.length > 0 && (
+        <div className="space-y-3">
+          {tests.map((test) => {
+            const variantCount = (test.test_variants ?? []).length;
+            const fullUrl = domain ? `${domain}${test.url_path}` : test.url_path;
 
-              {page.tags.length > 0 && (
-                <div className="flex flex-wrap gap-1 mb-3">
-                  {page.tags.slice(0, 3).map((tag) => (
-                    <span key={tag} className="flex items-center gap-1 badge bg-slate-700 text-slate-400 text-[10px]">
-                      <Tag size={9} />
-                      {tag}
-                    </span>
-                  ))}
+            return (
+              <div key={test.id} className="card p-5">
+                <div className="flex items-start justify-between">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-3 mb-1">
+                      <h3 className="font-semibold text-slate-100">{test.name}</h3>
+                      <TestStatusBadge status={test.status} />
+                      {variantCount > 1 && (
+                        <span className="text-slate-500 text-xs">{variantCount} variants</span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 mb-3">
+                      {domain ? (
+                        <span className="flex items-center gap-1.5 text-xs text-slate-400 font-mono">
+                          <Globe size={12} className="text-green-400" />
+                          {fullUrl}
+                        </span>
+                      ) : (
+                        <span className="text-slate-400 text-xs font-mono">{test.url_path}</span>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {(test.test_variants ?? []).map((v) => (
+                        <span key={v.id} className="badge bg-slate-700 text-slate-300 gap-1">
+                          {v.name}
+                          <span className="text-slate-500">{v.traffic_weight}%</span>
+                          {v.is_control && <span className="text-indigo-400 text-[10px]">ctrl</span>}
+                          {v.redirect_url && <Link2 size={10} className="text-amber-400" />}
+                          {v.redirect_url && v.tracking_verified === true && <ShieldCheck size={10} className="text-green-400" />}
+                          {v.redirect_url && v.tracking_verified === false && <ShieldX size={10} className="text-red-400" />}
+                        </span>
+                      ))}
+                    </div>
+                    {/* Tracking check buttons */}
+                    {canManage && (test.test_variants ?? []).some((v) => v.redirect_url) && (
+                      <div className="flex flex-wrap gap-2 mt-2">
+                        {(test.test_variants ?? []).filter((v) => v.redirect_url).map((v) => (
+                          <button
+                            key={v.id}
+                            onClick={() => checkTracking(v.id, v.redirect_url!)}
+                            disabled={checkingTracking === v.id}
+                            className="inline-flex items-center gap-1 text-[10px] text-slate-400 hover:text-slate-200 bg-slate-700/50 hover:bg-slate-700 border border-slate-600/50 rounded-full px-2 py-0.5 transition-colors disabled:opacity-50"
+                          >
+                            {checkingTracking === v.id ? <Loader2 size={9} className="animate-spin" /> : v.tracking_verified === true ? <ShieldCheck size={9} className="text-green-400" /> : v.tracking_verified === false ? <ShieldX size={9} className="text-red-400" /> : <ShieldCheck size={9} />}
+                            Check {v.name}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 ml-4">
+                    <Link href={`/clients/${clientId}/tests/${test.id}`} className="btn-secondary text-xs">
+                      Analytics
+                    </Link>
+                    {canManage && (
+                      <div className="relative">
+                        <button onClick={() => setActiveMenu(activeMenu === test.id ? null : test.id)} className="btn-secondary p-2">
+                          <MoreHorizontal size={14} />
+                        </button>
+                        {activeMenu === test.id && (
+                          <div className="absolute right-0 top-full mt-1 w-44 bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-10 overflow-hidden">
+                            {test.status === 'draft' && (
+                              <button onClick={() => updateStatus(test.id, 'active')} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-300 hover:bg-slate-700">
+                                <Play size={14} className="text-green-400" /> Activate
+                              </button>
+                            )}
+                            {test.status === 'active' && (
+                              <button onClick={() => updateStatus(test.id, 'paused')} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-300 hover:bg-slate-700">
+                                <Pause size={14} className="text-amber-400" /> Pause
+                              </button>
+                            )}
+                            {test.status === 'paused' && (
+                              <>
+                                <button onClick={() => updateStatus(test.id, 'active')} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-300 hover:bg-slate-700">
+                                  <Play size={14} className="text-green-400" /> Resume
+                                </button>
+                                <button onClick={() => updateStatus(test.id, 'completed')} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-300 hover:bg-slate-700">
+                                  <Check size={14} className="text-blue-400" /> Complete
+                                </button>
+                              </>
+                            )}
+                            <button onClick={() => openEditModal(test)} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-300 hover:bg-slate-700">
+                              <Edit2 size={14} className="text-indigo-400" /> Edit
+                            </button>
+                            <button onClick={() => openAddVariant(test)} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-300 hover:bg-slate-700">
+                              <Plus size={14} className="text-indigo-400" /> Add Variant
+                            </button>
+                            <button onClick={() => { setDeleteId(test.id); setActiveMenu(null); }} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-400 hover:bg-slate-700 border-t border-slate-700">
+                              <Trash2 size={14} /> Delete
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
-              )}
-
-              <div className="flex items-center gap-2 mt-auto pt-3 border-t border-slate-700/50">
-                <button
-                  onClick={() => setPreviewPage(page)}
-                  className="flex-1 btn-secondary text-xs justify-center py-1.5"
-                >
-                  <Eye size={13} /> Preview
-                </button>
-                {canManage && (
-                  <>
-                    <button
-                      onClick={() => setEditPage({ ...page })}
-                      className="btn-secondary p-1.5"
-                      title="Edit"
-                    >
-                      <Edit2 size={13} />
-                    </button>
-                    <button
-                      onClick={() => handleDuplicate(page)}
-                      className="btn-secondary p-1.5"
-                      title="Duplicate"
-                    >
-                      <Copy size={13} />
-                    </button>
-                    <button
-                      onClick={() => setDeleteId(page.id)}
-                      className="btn-secondary p-1.5 hover:text-red-400"
-                      title="Delete"
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                  </>
-                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
-      {/* Upload modal */}
-      <Modal open={uploadOpen} onClose={() => { setUploadOpen(false); resetForm(); }} title="Upload Page" size="xl">
-        <form onSubmit={handleUpload} className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-300 mb-1.5">Page Name</label>
-              <input type="text" value={name} onChange={(e) => setName(e.target.value)} className="input-base" placeholder="Homepage Hero" required />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-300 mb-1.5">Tags (comma-separated)</label>
-              <input type="text" value={tags} onChange={(e) => setTags(e.target.value)} className="input-base" placeholder="hero, cta, v2" />
-            </div>
+      {/* Create Page Modal */}
+      <Modal open={createOpen} onClose={() => { setCreateOpen(false); resetCreateForm(); }} title="New Page" size="sm">
+        <form onSubmit={handleCreate} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-slate-300 mb-1.5">Page Name</label>
+            <input type="text" value={pageName} onChange={(e) => setPageName(e.target.value)} className="input-base" placeholder="Homepage" required autoFocus />
           </div>
-
-          {/* Tab selector */}
-          <div className="flex gap-1 bg-slate-700/50 p-1 rounded-lg w-fit">
-            <button type="button" onClick={() => setTab('file')} className={`px-3 py-1.5 text-sm rounded-md transition-colors ${tab === 'file' ? 'bg-slate-700 text-slate-100' : 'text-slate-400 hover:text-slate-300'}`}>
-              <span className="flex items-center gap-1.5"><Upload size={13} /> Upload File</span>
-            </button>
-            <button type="button" onClick={() => setTab('code')} className={`px-3 py-1.5 text-sm rounded-md transition-colors ${tab === 'code' ? 'bg-slate-700 text-slate-100' : 'text-slate-400 hover:text-slate-300'}`}>
-              <span className="flex items-center gap-1.5"><Code2 size={13} /> Paste HTML</span>
-            </button>
-            <button type="button" onClick={() => setTab('url')} className={`px-3 py-1.5 text-sm rounded-md transition-colors ${tab === 'url' ? 'bg-slate-700 text-slate-100' : 'text-slate-400 hover:text-slate-300'}`}>
-              <span className="flex items-center gap-1.5"><Link size={13} /> Import from URL</span>
-            </button>
+          <div>
+            <label className="block text-sm font-medium text-slate-300 mb-1.5">URL Path</label>
+            <input type="text" value={urlPath} onChange={(e) => setUrlPath(e.target.value)} className="input-base font-mono" placeholder="/" required />
+            {domain && urlPath && (
+              <p className="text-slate-500 text-xs mt-1 font-mono">{domain}{urlPath}</p>
+            )}
           </div>
-
-          {tab === 'file' && (
-            <div className="border-2 border-dashed border-slate-600 rounded-xl p-8 text-center">
-              <Upload size={24} className="mx-auto text-slate-500 mb-2" />
-              <p className="text-slate-400 text-sm mb-3">Drop an HTML file or click to browse</p>
-              <input ref={fileRef} type="file" accept=".html,.htm" className="hidden" id="html-file" />
-              <label htmlFor="html-file" className="btn-secondary cursor-pointer">Browse Files</label>
-            </div>
-          )}
-
-          {tab === 'url' && (
-            <div className="space-y-3">
-              <label className="block text-sm font-medium text-slate-300">Page URL</label>
-              <p className="text-slate-500 text-xs -mt-1">Paste any URL — Loveable, Replit preview, or any public webpage. The HTML will be fetched and loaded into the editor.</p>
-              <div className="flex gap-2">
-                <input
-                  type="url"
-                  value={importUrl}
-                  onChange={(e) => setImportUrl(e.target.value)}
-                  className="input-base flex-1"
-                  placeholder="https://my-app.lovable.app"
-                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleImportUrl(); } }}
-                />
-                <Button
-                  type="button"
-                  onClick={handleImportUrl}
-                  loading={importing}
-                  disabled={!importUrl.trim()}
-                >
-                  <Link size={14} /> Fetch
-                </Button>
-              </div>
-            </div>
-          )}
-
-          {tab === 'code' && (
-            <div>
-              <label className="block text-sm font-medium text-slate-300 mb-1.5">HTML Content</label>
-              <CodeEditor value={htmlContent} onChange={setHtmlContent} height="350px" />
-            </div>
-          )}
-
+          <div>
+            <label className="block text-sm font-medium text-slate-300 mb-1.5">Destination URL</label>
+            <input type="url" value={destinationUrl} onChange={(e) => setDestinationUrl(e.target.value)} className="input-base font-mono text-sm" placeholder="https://my-app.lovable.app/landing" required />
+            <p className="text-slate-500 text-xs mt-1">The page visitors will see when they hit your domain.</p>
+          </div>
           <div className="flex justify-end gap-3 pt-2">
-            <Button variant="secondary" type="button" onClick={() => { setUploadOpen(false); resetForm(); }}>Cancel</Button>
-            <Button type="submit" loading={uploading}>Upload Page</Button>
+            <Button variant="secondary" type="button" onClick={() => { setCreateOpen(false); resetCreateForm(); }}>Cancel</Button>
+            <Button type="submit" loading={saving}>Create Page</Button>
           </div>
         </form>
       </Modal>
 
-      {/* Edit modal */}
-      {editPage && (
-        <Modal open={!!editPage} onClose={() => setEditPage(null)} title="Edit Page" size="xl">
-          <form onSubmit={handleSaveEdit} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-300 mb-1.5">Page Name</label>
-              <input type="text" value={editPage.name} onChange={(e) => setEditPage({ ...editPage, name: e.target.value })} className="input-base" required />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-300 mb-1.5">HTML Content</label>
-              <CodeEditor value={editPage.html_content || ''} onChange={(v) => setEditPage({ ...editPage, html_content: v })} height="400px" />
-            </div>
-            <div className="flex justify-end gap-3 pt-2">
-              <Button variant="secondary" type="button" onClick={() => setEditPage(null)}>Cancel</Button>
-              <Button type="submit" loading={saving}><Check size={14} /> Save Changes</Button>
-            </div>
-          </form>
-        </Modal>
-      )}
-
-      {/* Preview modal */}
-      {previewPage && (
-        <Modal open={!!previewPage} onClose={() => setPreviewPage(null)} title={`Preview: ${previewPage.name}`} size="xl">
-          <div className="border border-slate-700 rounded-lg overflow-hidden">
-            <div className="flex items-center gap-2 px-3 py-2 bg-slate-700/50 border-b border-slate-700">
-              <div className="flex gap-1">
-                <div className="w-3 h-3 rounded-full bg-red-500/60" />
-                <div className="w-3 h-3 rounded-full bg-yellow-500/60" />
-                <div className="w-3 h-3 rounded-full bg-green-500/60" />
-              </div>
-              <span className="text-slate-500 text-xs ml-2">Preview</span>
-            </div>
-            <iframe
-              srcDoc={previewPage.html_content || undefined}
-              src={!previewPage.html_content ? previewPage.html_url : undefined}
-              sandbox="allow-same-origin allow-scripts"
-              className="w-full bg-white"
-              style={{ height: '500px' }}
-            />
+      {/* Edit Modal */}
+      <Modal open={!!editTestId} onClose={() => setEditTestId(null)} title="Edit Page" size="sm">
+        <form onSubmit={handleEdit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-slate-300 mb-1.5">Page Name</label>
+            <input type="text" value={editName} onChange={(e) => setEditName(e.target.value)} className="input-base" required />
           </div>
-          <div className="flex justify-end mt-4">
-            <Button variant="secondary" onClick={() => setPreviewPage(null)}><X size={14} /> Close</Button>
+          <div>
+            <label className="block text-sm font-medium text-slate-300 mb-1.5">URL Path</label>
+            <input type="text" value={editUrlPath} onChange={(e) => setEditUrlPath(e.target.value)} className="input-base font-mono" required />
           </div>
-        </Modal>
-      )}
+          <div className="flex justify-end gap-3 pt-2">
+            <Button variant="secondary" type="button" onClick={() => setEditTestId(null)}>Cancel</Button>
+            <Button type="submit" loading={editSaving}>Save Changes</Button>
+          </div>
+        </form>
+      </Modal>
 
-      {/* Delete confirm */}
+      {/* Add Variant Modal */}
+      <Modal open={!!addVariantTestId} onClose={() => setAddVariantTestId(null)} title="Add Variant" size="sm">
+        <form onSubmit={handleAddVariant} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-slate-300 mb-1.5">Variant Name</label>
+            <input type="text" value={variantName} onChange={(e) => setVariantName(e.target.value)} className="input-base" required />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-300 mb-1.5">Destination URL</label>
+            <input type="url" value={variantUrl} onChange={(e) => setVariantUrl(e.target.value)} className="input-base font-mono text-sm" placeholder="https://example.com/variant-b" required />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-300 mb-1.5">Traffic Weight (%)</label>
+            <input type="number" value={variantWeight} onChange={(e) => setVariantWeight(Number(e.target.value))} className="input-base w-24" min={1} max={100} required />
+          </div>
+          <div className="flex justify-end gap-3 pt-2">
+            <Button variant="secondary" type="button" onClick={() => setAddVariantTestId(null)}>Cancel</Button>
+            <Button type="submit" loading={addingVariant}>Add Variant</Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Delete Confirm */}
       <ConfirmDialog
         open={!!deleteId}
         onClose={() => setDeleteId(null)}
         onConfirm={handleDelete}
         title="Delete Page"
-        description="This will permanently delete the page. Any tests using this page will lose the reference."
+        description="This will permanently delete the page and all its event data. This cannot be undone."
         loading={deleting}
       />
     </>

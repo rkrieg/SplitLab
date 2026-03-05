@@ -2,9 +2,6 @@ import { getServerSession } from 'next-auth';
 import { redirect, notFound } from 'next/navigation';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
-import Header from '@/components/layout/Header';
-import Link from 'next/link';
-import { ArrowLeft } from 'lucide-react';
 import AnalyticsClient from './AnalyticsClient';
 
 async function getTest(testId: string) {
@@ -30,20 +27,29 @@ export default async function TestAnalyticsPage({
   const test = await getTest(params.testId);
   if (!test) notFound();
 
+  const { data: client } = await db.from('clients').select('name').eq('id', params.id).single();
+
+  // Get workspace domain
+  const { data: workspace } = await db.from('workspaces').select('id').eq('client_id', params.id).single();
+  let domain: string | undefined;
+  if (workspace) {
+    const { data: domainData } = await db
+      .from('domains')
+      .select('domain, verified')
+      .eq('workspace_id', workspace.id)
+      .eq('verified', true)
+      .limit(1)
+      .single();
+    if (domainData) domain = domainData.domain;
+  }
+
   return (
-    <div>
-      <Header
-        title={test.name}
-        subtitle={`URL: ${test.url_path}`}
-        actions={
-          <Link href={`/clients/${params.id}/tests`} className="btn-secondary text-xs">
-            <ArrowLeft size={14} /> Back to Tests
-          </Link>
-        }
-      />
-      <div className="p-6">
-        <AnalyticsClient test={test} appUrl={APP_URL} />
-      </div>
-    </div>
+    <AnalyticsClient
+      test={test}
+      appUrl={APP_URL}
+      clientId={params.id}
+      clientName={client?.name || 'Client'}
+      domain={domain}
+    />
   );
 }

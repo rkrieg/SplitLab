@@ -3,7 +3,7 @@ import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import Header from '@/components/layout/Header';
 import Link from 'next/link';
-import { Building2, FlaskConical, Eye, TrendingUp } from 'lucide-react';
+import { Building2, FlaskConical, FileCode2, Eye, TrendingUp } from 'lucide-react';
 
 async function getDashboardStats() {
   const [
@@ -43,15 +43,15 @@ export default async function DashboardPage() {
       icon: Building2,
       color: 'text-indigo-400',
       bg: 'bg-indigo-500/10',
-      href: '/clients',
+      href: '/pages',
     },
     {
-      label: 'Running Tests',
+      label: 'Active Pages',
       value: activeTestCount,
-      icon: FlaskConical,
+      icon: FileCode2,
       color: 'text-green-400',
       bg: 'bg-green-500/10',
-      href: '/tests',
+      href: '/pages',
     },
     {
       label: 'Total Page Views',
@@ -109,8 +109,8 @@ export default async function DashboardPage() {
         {/* Recent active tests */}
         <div>
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-slate-100">Active Tests</h2>
-            <Link href="/tests" className="text-sm text-indigo-400 hover:text-indigo-300">
+            <h2 className="text-lg font-semibold text-slate-100">Active Pages</h2>
+            <Link href="/pages" className="text-sm text-indigo-400 hover:text-indigo-300">
               View all
             </Link>
           </div>

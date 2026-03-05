@@ -4,15 +4,18 @@ import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import Header from '@/components/layout/Header';
 import Link from 'next/link';
-import { FileCode2, Tag } from 'lucide-react';
+import { FileCode2 } from 'lucide-react';
+import { TestStatusBadge } from '@/components/ui/Badge';
 import EmptyState from '@/components/ui/EmptyState';
-import { formatDate } from '@/lib/utils';
 
-async function getAllPages() {
+async function getAllTests() {
   const { data } = await db
-    .from('pages')
-    .select('*, workspaces(name, client_id, clients(name))')
-    .eq('status', 'active')
+    .from('tests')
+    .select(`
+      id, name, url_path, status, created_at,
+      workspaces ( name, client_id, clients ( name ) ),
+      test_variants ( id )
+    `)
     .order('created_at', { ascending: false });
   return data ?? [];
 }
@@ -21,52 +24,63 @@ export default async function AllPagesPage() {
   const session = await getServerSession(authOptions);
   if (!session) redirect('/login');
 
-  const pages = await getAllPages();
+  const tests = await getAllTests();
 
   return (
     <div>
-      <Header title="All Pages" subtitle="HTML pages across all client workspaces" />
+      <Header title="All Pages" subtitle="Pages across all client workspaces" />
       <div className="p-6">
-        {pages.length === 0 ? (
+        {tests.length === 0 ? (
           <EmptyState
             icon={FileCode2}
             title="No pages yet"
-            description="Upload HTML pages from a client workspace."
+            description="Pages will appear here once created in a client workspace."
           />
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {pages.map((page: Record<string, unknown>) => {
-              const ws = page.workspaces as { name: string; client_id: string; clients: { name: string } } | null;
-              return (
-                <div key={page.id as string} className="card p-5">
-                  <div className="flex items-start justify-between mb-3">
-                    <div className="w-9 h-9 rounded-lg bg-slate-700 flex items-center justify-center">
-                      <FileCode2 size={15} className="text-indigo-400" />
-                    </div>
-                    <span className="text-slate-500 text-xs">{formatDate(page.created_at as string)}</span>
-                  </div>
-                  <h3 className="font-medium text-slate-200 truncate mb-0.5">{page.name as string}</h3>
-                  {ws && (
-                    <Link
-                      href={`/clients/${ws.client_id}/pages`}
-                      className="text-slate-500 text-xs hover:text-indigo-400 transition-colors"
-                    >
-                      {ws.clients?.name ?? ws.name}
-                    </Link>
-                  )}
-                  {(page.tags as string[]).length > 0 && (
-                    <div className="flex flex-wrap gap-1 mt-2">
-                      {(page.tags as string[]).slice(0, 3).map((tag) => (
-                        <span key={tag} className="flex items-center gap-1 badge bg-slate-700 text-slate-400 text-[10px]">
-                          <Tag size={9} />
-                          {tag}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+          <div className="card overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-700">
+                  <th className="text-left px-5 py-3 text-slate-400 font-medium">Page</th>
+                  <th className="text-left px-5 py-3 text-slate-400 font-medium">Client</th>
+                  <th className="text-left px-5 py-3 text-slate-400 font-medium">URL Path</th>
+                  <th className="text-left px-5 py-3 text-slate-400 font-medium">Variants</th>
+                  <th className="text-left px-5 py-3 text-slate-400 font-medium">Status</th>
+                  <th className="text-left px-5 py-3 text-slate-400 font-medium">Analytics</th>
+                </tr>
+              </thead>
+              <tbody>
+                {tests.map((test: Record<string, unknown>) => {
+                  const ws = test.workspaces as { name: string; client_id: string; clients: { name: string } } | null;
+                  const variants = test.test_variants as { id: string }[] | null;
+                  return (
+                    <tr key={test.id as string} className="border-b border-slate-700/50 hover:bg-slate-700/20">
+                      <td className="px-5 py-3.5 font-medium text-slate-200">{test.name as string}</td>
+                      <td className="px-5 py-3.5 text-slate-400">
+                        {ws?.client_id ? (
+                          <Link href={`/clients/${ws.client_id}/pages`} className="hover:text-indigo-400 transition-colors">
+                            {ws.clients?.name ?? '—'}
+                          </Link>
+                        ) : '—'}
+                      </td>
+                      <td className="px-5 py-3.5 font-mono text-xs text-slate-400">{test.url_path as string}</td>
+                      <td className="px-5 py-3.5 text-slate-400">{variants?.length ?? 0}</td>
+                      <td className="px-5 py-3.5"><TestStatusBadge status={test.status as string} /></td>
+                      <td className="px-5 py-3.5">
+                        {ws?.client_id && (
+                          <Link
+                            href={`/clients/${ws.client_id}/tests/${test.id}`}
+                            className="text-indigo-400 hover:text-indigo-300 text-xs"
+                          >
+                            View →
+                          </Link>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         )}
       </div>
