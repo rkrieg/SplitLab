@@ -91,7 +91,7 @@ export default function TeamClient({ initialUsers, currentUserId }: Props) {
   return (
     <>
       <div className="flex items-center justify-between mb-6">
-        <p className="text-slate-400 text-sm">{users.length} team member{users.length !== 1 ? 's' : ''}</p>
+        <p className="text-slate-500 dark:text-slate-400 text-sm">{users.length} team member{users.length !== 1 ? 's' : ''}</p>
         <Button onClick={() => setModalOpen(true)}>
           <Plus size={16} /> Invite User
         </Button>
@@ -110,30 +110,30 @@ export default function TeamClient({ initialUsers, currentUserId }: Props) {
         <div className="card overflow-hidden">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-slate-700">
-                <th className="text-left px-5 py-3 text-slate-400 font-medium">Name</th>
-                <th className="text-left px-5 py-3 text-slate-400 font-medium">Email</th>
-                <th className="text-left px-5 py-3 text-slate-400 font-medium">Role</th>
-                <th className="text-left px-5 py-3 text-slate-400 font-medium">Status</th>
-                <th className="text-left px-5 py-3 text-slate-400 font-medium">Joined</th>
-                <th className="text-center px-5 py-3 text-slate-400 font-medium">Actions</th>
+              <tr className="border-b border-slate-200 dark:border-slate-700">
+                <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">Name</th>
+                <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">Email</th>
+                <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">Role</th>
+                <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">Status</th>
+                <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">Joined</th>
+                <th className="text-center px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">Actions</th>
               </tr>
             </thead>
             <tbody>
               {users.map((user) => (
-                <tr key={user.id} className="border-b border-slate-700/50 hover:bg-slate-700/20">
+                <tr key={user.id} className="border-b border-slate-100 dark:border-slate-700/50 hover:bg-slate-50 dark:hover:bg-slate-700/20">
                   <td className="px-5 py-3.5">
                     <div className="flex items-center gap-2.5">
                       <div className="w-7 h-7 rounded-full bg-indigo-600/80 flex items-center justify-center text-xs font-bold text-white flex-shrink-0">
                         {user.name[0].toUpperCase()}
                       </div>
-                      <span className="font-medium text-slate-200">{user.name}</span>
+                      <span className="font-medium text-slate-800 dark:text-slate-200">{user.name}</span>
                       {user.id === currentUserId && (
-                        <span className="badge bg-slate-700 text-slate-400 text-[10px]">You</span>
+                        <span className="badge bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 text-[10px]">You</span>
                       )}
                     </div>
                   </td>
-                  <td className="px-5 py-3.5 text-slate-400">{user.email}</td>
+                  <td className="px-5 py-3.5 text-slate-500 dark:text-slate-400">{user.email}</td>
                   <td className="px-5 py-3.5">
                     <Badge variant={ROLE_BADGE[user.role] || 'default'} className="capitalize">
                       <Shield size={10} className="mr-1" />
@@ -145,7 +145,7 @@ export default function TeamClient({ initialUsers, currentUserId }: Props) {
                       {user.status}
                     </Badge>
                   </td>
-                  <td className="px-5 py-3.5 text-slate-400">{formatDate(user.created_at)}</td>
+                  <td className="px-5 py-3.5 text-slate-500 dark:text-slate-400">{formatDate(user.created_at)}</td>
                   <td className="px-5 py-3.5 text-center">
                     {user.id !== currentUserId && (
                       <button
@@ -167,19 +167,19 @@ export default function TeamClient({ initialUsers, currentUserId }: Props) {
       <Modal open={modalOpen} onClose={() => { setModalOpen(false); resetForm(); }} title="Invite Team Member" size="sm">
         <form onSubmit={handleCreate} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1.5">Full Name</label>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Full Name</label>
             <input type="text" value={name} onChange={(e) => setName(e.target.value)} className="input-base" placeholder="Jane Smith" required />
           </div>
           <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1.5">Email</label>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Email</label>
             <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="input-base" placeholder="jane@agency.com" required />
           </div>
           <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1.5">Temporary Password</label>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Temporary Password</label>
             <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="input-base" placeholder="Min. 8 characters" required minLength={8} />
           </div>
           <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1.5">Role</label>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Role</label>
             <select value={role} onChange={(e) => setRole(e.target.value as 'admin' | 'manager' | 'viewer')} className="input-base">
               <option value="viewer">Viewer — read-only access</option>
               <option value="manager">Manager — manage clients & tests</option>

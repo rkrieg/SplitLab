@@ -40,13 +40,13 @@ export default async function AllPagesPage() {
           <div className="card overflow-hidden">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-slate-700">
-                  <th className="text-left px-5 py-3 text-slate-400 font-medium">Page</th>
-                  <th className="text-left px-5 py-3 text-slate-400 font-medium">Client</th>
-                  <th className="text-left px-5 py-3 text-slate-400 font-medium">URL Path</th>
-                  <th className="text-left px-5 py-3 text-slate-400 font-medium">Variants</th>
-                  <th className="text-left px-5 py-3 text-slate-400 font-medium">Status</th>
-                  <th className="text-left px-5 py-3 text-slate-400 font-medium">Analytics</th>
+                <tr className="border-b border-slate-200 dark:border-slate-700">
+                  <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">Page</th>
+                  <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">Client</th>
+                  <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">URL Path</th>
+                  <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">Variants</th>
+                  <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">Status</th>
+                  <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">Analytics</th>
                 </tr>
               </thead>
               <tbody>
@@ -54,17 +54,17 @@ export default async function AllPagesPage() {
                   const ws = test.workspaces as { name: string; client_id: string; clients: { name: string } } | null;
                   const variants = test.test_variants as { id: string }[] | null;
                   return (
-                    <tr key={test.id as string} className="border-b border-slate-700/50 hover:bg-slate-700/20">
-                      <td className="px-5 py-3.5 font-medium text-slate-200">{test.name as string}</td>
-                      <td className="px-5 py-3.5 text-slate-400">
+                    <tr key={test.id as string} className="border-b border-slate-100 dark:border-slate-700/50 hover:bg-slate-50 dark:hover:bg-slate-700/20">
+                      <td className="px-5 py-3.5 font-medium text-slate-800 dark:text-slate-200">{test.name as string}</td>
+                      <td className="px-5 py-3.5 text-slate-500 dark:text-slate-400">
                         {ws?.client_id ? (
                           <Link href={`/clients/${ws.client_id}/pages`} className="hover:text-indigo-400 transition-colors">
                             {ws.clients?.name ?? '—'}
                           </Link>
                         ) : '—'}
                       </td>
-                      <td className="px-5 py-3.5 font-mono text-xs text-slate-400">{test.url_path as string}</td>
-                      <td className="px-5 py-3.5 text-slate-400">{variants?.length ?? 0}</td>
+                      <td className="px-5 py-3.5 font-mono text-xs text-slate-500 dark:text-slate-400">{test.url_path as string}</td>
+                      <td className="px-5 py-3.5 text-slate-500 dark:text-slate-400">{variants?.length ?? 0}</td>
                       <td className="px-5 py-3.5"><TestStatusBadge status={test.status as string} /></td>
                       <td className="px-5 py-3.5">
                         {ws?.client_id && (

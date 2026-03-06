@@ -217,33 +217,33 @@ export default function ClientSettingsClient({ client, initialDomains, workspace
     return (
       <>
         <div>
-          <label className="block text-sm font-medium text-slate-300 mb-1.5">Base Domain</label>
+          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Base Domain</label>
           <input type="text" value={baseDomain} onChange={(e) => setBaseDomainFn(e.target.value)} className="input-base font-mono" placeholder="example.com" required />
         </div>
         <div>
-          <label className="block text-sm font-medium text-slate-300 mb-2">Type</label>
+          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Type</label>
           <div className="flex gap-2">
-            <button type="button" onClick={() => setMode('root')} className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${mode === 'root' ? 'bg-[#3D8BDA]/15 border-[#3D8BDA]/40 text-[#3D8BDA]' : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-600'}`}>
+            <button type="button" onClick={() => setMode('root')} className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${mode === 'root' ? 'bg-[#3D8BDA]/15 border-[#3D8BDA]/40 text-[#3D8BDA]' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:border-slate-300 dark:hover:border-slate-600'}`}>
               Root domain (@)
             </button>
-            <button type="button" onClick={() => setMode('subdomain')} className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${mode === 'subdomain' ? 'bg-[#3D8BDA]/15 border-[#3D8BDA]/40 text-[#3D8BDA]' : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-600'}`}>
+            <button type="button" onClick={() => setMode('subdomain')} className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${mode === 'subdomain' ? 'bg-[#3D8BDA]/15 border-[#3D8BDA]/40 text-[#3D8BDA]' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:border-slate-300 dark:hover:border-slate-600'}`}>
               Subdomain
             </button>
           </div>
         </div>
         {mode === 'subdomain' && (
           <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1.5">Subdomain Prefix</label>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Subdomain Prefix</label>
             <div className="flex items-center gap-0">
               <input type="text" value={subdomain} onChange={(e) => setSubdomainFn(e.target.value.replace(/[^a-zA-Z0-9-]/g, ''))} className="input-base font-mono rounded-r-none border-r-0" placeholder="testing" required autoFocus />
-              <div className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-r-lg text-slate-500 text-sm font-mono whitespace-nowrap">.{baseDomain.trim().toLowerCase() || 'example.com'}</div>
+              <div className="px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-r-lg text-slate-500 text-sm font-mono whitespace-nowrap">.{baseDomain.trim().toLowerCase() || 'example.com'}</div>
             </div>
           </div>
         )}
         {baseDomain.trim() && (
-          <div className="rounded-lg bg-slate-800/50 border border-slate-700/50 px-3 py-2.5">
+          <div className="rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/50 px-3 py-2.5">
             <p className="text-slate-500 text-xs mb-1">Domain preview</p>
-            <p className="text-slate-100 font-mono text-sm">{preview || '—'}</p>
+            <p className="text-slate-900 dark:text-slate-100 font-mono text-sm">{preview || '—'}</p>
           </div>
         )}
       </>
@@ -265,21 +265,21 @@ export default function ClientSettingsClient({ client, initialDomains, workspace
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 mb-1">
                 <Globe size={15} className="text-green-400 flex-shrink-0" />
-                <span className="font-medium text-slate-100">{d.domain}</span>
+                <span className="font-medium text-slate-900 dark:text-slate-100">{d.domain}</span>
                 <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-green-500/15 text-green-400 border border-green-500/25">
                   <CheckCircle size={11} /> Domain Active
                 </span>
               </div>
-              <p className="text-slate-500 text-xs ml-[23px]">Verified {d.verified_at ? formatDate(d.verified_at) : ''} • Added {formatDate(d.created_at)}</p>
+              <p className="text-slate-400 dark:text-slate-500 text-xs ml-[23px]">Verified {d.verified_at ? formatDate(d.verified_at) : ''} • Added {formatDate(d.created_at)}</p>
             </div>
             {canManage && (
               <div className="flex items-center gap-1">
-                <button onClick={() => openEditModal(d)} className="p-2 text-slate-500 hover:text-slate-200 transition-colors rounded-lg hover:bg-slate-700" title="Edit domain"><Pencil size={14} /></button>
-                <button onClick={() => setDeleteId(d.id)} className="p-2 text-slate-500 hover:text-red-400 transition-colors rounded-lg hover:bg-slate-700" title="Delete domain"><Trash2 size={14} /></button>
+                <button onClick={() => openEditModal(d)} className="p-2 text-slate-500 hover:text-slate-200 transition-colors rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700" title="Edit domain"><Pencil size={14} /></button>
+                <button onClick={() => setDeleteId(d.id)} className="p-2 text-slate-500 hover:text-red-400 transition-colors rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700" title="Delete domain"><Trash2 size={14} /></button>
               </div>
             )}
           </div>
-          <div className="border-t border-slate-800 px-5 py-3 bg-green-500/5">
+          <div className="border-t border-slate-200 dark:border-slate-800 px-5 py-3 bg-green-500/5">
             <div className="flex items-center gap-6 text-xs">
               <span className="flex items-center gap-1.5 text-green-400"><CheckCircle size={13} /> Domain registered</span>
               <span className="flex items-center gap-1.5 text-green-400"><CheckCircle size={13} /> DNS configured</span>
@@ -296,26 +296,26 @@ export default function ClientSettingsClient({ client, initialDomains, workspace
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-1">
               <Globe size={15} className="text-slate-400 flex-shrink-0" />
-              <span className="font-medium text-slate-100">{d.domain}</span>
+              <span className="font-medium text-slate-900 dark:text-slate-100">{d.domain}</span>
               {status === 'misconfigured' ? (
                 <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-red-500/15 text-red-400 border border-red-500/25"><XCircle size={11} /> DNS Not Found</span>
               ) : (
                 <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/25"><Clock size={11} /> Pending DNS</span>
               )}
             </div>
-            <p className="text-slate-500 text-xs ml-[23px]">Added {formatDate(d.created_at)}</p>
+            <p className="text-slate-400 dark:text-slate-500 text-xs ml-[23px]">Added {formatDate(d.created_at)}</p>
           </div>
           <div className="flex items-center gap-1">
             {canManage && (
               <>
                 <Button variant="secondary" size="sm" onClick={() => handleVerify(d.id)} loading={verifying === d.id}>Verify DNS</Button>
-                <button onClick={() => openEditModal(d)} className="p-2 text-slate-500 hover:text-slate-200 transition-colors rounded-lg hover:bg-slate-700" title="Edit domain"><Pencil size={14} /></button>
-                <button onClick={() => setDeleteId(d.id)} className="p-2 text-slate-500 hover:text-red-400 transition-colors rounded-lg hover:bg-slate-700" title="Delete domain"><Trash2 size={14} /></button>
+                <button onClick={() => openEditModal(d)} className="p-2 text-slate-500 hover:text-slate-200 transition-colors rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700" title="Edit domain"><Pencil size={14} /></button>
+                <button onClick={() => setDeleteId(d.id)} className="p-2 text-slate-500 hover:text-red-400 transition-colors rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700" title="Delete domain"><Trash2 size={14} /></button>
               </>
             )}
           </div>
         </div>
-        <div className="border-t border-slate-800 px-5 py-3 bg-slate-800/30">
+        <div className="border-t border-slate-200 dark:border-slate-800 px-5 py-3 bg-slate-50 dark:bg-slate-800/30">
           <div className="flex items-center gap-6 text-xs">
             <span className="flex items-center gap-1.5 text-green-400"><CheckCircle size={13} /> Domain registered</span>
             <span className="flex items-center gap-1.5 text-amber-400"><Clock size={13} /> Configure DNS</span>
@@ -332,17 +332,17 @@ export default function ClientSettingsClient({ client, initialDomains, workspace
             <p className="text-red-300 text-xs">{errorMsg}</p>
           </div>
         )}
-        <div className="border-t border-slate-800 px-5 py-4">
-          <h4 className="text-xs font-medium text-slate-300 mb-3">Point your domain to SplitLab by adding this DNS record at your registrar (GoDaddy, Namecheap, Cloudflare, etc.)</h4>
+        <div className="border-t border-slate-200 dark:border-slate-800 px-5 py-4">
+          <h4 className="text-xs font-medium text-slate-700 dark:text-slate-300 mb-3">Point your domain to SplitLab by adding this DNS record at your registrar (GoDaddy, Namecheap, Cloudflare, etc.)</h4>
           <div className="rounded-lg border border-slate-700 overflow-hidden text-xs">
-            <div className="grid grid-cols-3 bg-slate-800/60">
-              <div className="px-3 py-2 text-slate-500 font-medium border-r border-slate-700">Type</div>
-              <div className="px-3 py-2 text-slate-500 font-medium border-r border-slate-700">Name</div>
+            <div className="grid grid-cols-3 bg-slate-50 dark:bg-slate-800/60">
+              <div className="px-3 py-2 text-slate-500 font-medium border-r border-slate-200 dark:border-slate-700">Type</div>
+              <div className="px-3 py-2 text-slate-500 font-medium border-r border-slate-200 dark:border-slate-700">Name</div>
               <div className="px-3 py-2 text-slate-500 font-medium">Value</div>
             </div>
-            <div className="grid grid-cols-3 bg-slate-900/50">
-              <div className="px-3 py-2.5 text-slate-200 font-mono border-r border-slate-700">CNAME</div>
-              <div className="px-3 py-2.5 text-slate-200 font-mono border-r border-slate-700">{dnsName}</div>
+            <div className="grid grid-cols-3 bg-white dark:bg-slate-900/50">
+              <div className="px-3 py-2.5 text-slate-800 dark:text-slate-200 font-mono border-r border-slate-200 dark:border-slate-700">CNAME</div>
+              <div className="px-3 py-2.5 text-slate-800 dark:text-slate-200 font-mono border-r border-slate-200 dark:border-slate-700">{dnsName}</div>
               <div className="px-3 py-2.5 font-mono flex items-center justify-between gap-2">
                 <span className="text-[#3D8BDA]">{d.cname_target || appHostname}</span>
                 <button onClick={() => copyToClipboard(d.cname_target || appHostname)} className="text-slate-500 hover:text-slate-300 flex-shrink-0"><Copy size={12} /></button>
@@ -350,13 +350,13 @@ export default function ClientSettingsClient({ client, initialDomains, workspace
             </div>
           </div>
           {isRoot && (
-            <div className="mt-3 rounded-lg border border-slate-700/50 bg-slate-800/30 px-3 py-2.5">
+            <div className="mt-3 rounded-lg border border-slate-200 dark:border-slate-700/50 bg-slate-50 dark:bg-slate-800/30 px-3 py-2.5">
               <p className="text-slate-400 text-xs leading-relaxed">
-                <strong className="text-slate-300">Root domain?</strong> Some registrars don&apos;t support CNAME on root domains. Use an <strong className="text-slate-300">A record</strong> instead:
+                <strong className="text-slate-700 dark:text-slate-300">Root domain?</strong> Some registrars don&apos;t support CNAME on root domains. Use an <strong className="text-slate-700 dark:text-slate-300">A record</strong> instead:
               </p>
               <div className="grid grid-cols-3 mt-2 text-xs font-mono">
-                <span className="text-slate-300">A</span>
-                <span className="text-slate-300">@</span>
+                <span className="text-slate-700 dark:text-slate-300">A</span>
+                <span className="text-slate-700 dark:text-slate-300">@</span>
                 <span className="text-[#3D8BDA] flex items-center gap-2">
                   76.76.21.21
                   <button onClick={() => copyToClipboard('76.76.21.21')} className="text-slate-500 hover:text-slate-300"><Copy size={12} /></button>
@@ -375,11 +375,11 @@ export default function ClientSettingsClient({ client, initialDomains, workspace
     <div className="space-y-8 max-w-3xl">
       {/* Client Name Section */}
       <section>
-        <h2 className="text-lg font-semibold text-slate-100 mb-4">Client Name</h2>
+        <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100 mb-4">Client Name</h2>
         <form onSubmit={handleSaveName} className="card p-5">
           <div className="flex items-end gap-3">
             <div className="flex-1">
-              <label className="block text-sm font-medium text-slate-300 mb-1.5">Name</label>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Name</label>
               <input
                 type="text"
                 value={clientName}
@@ -401,7 +401,7 @@ export default function ClientSettingsClient({ client, initialDomains, workspace
       {/* Custom Domain Section */}
       <section>
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-slate-100">Custom Domain</h2>
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Custom Domain</h2>
           {canManage && domains.length === 0 && (
             <Button onClick={() => { resetAddModal(); setModalOpen(true); }}>
               <Plus size={16} /> Add Domain
@@ -412,8 +412,8 @@ export default function ClientSettingsClient({ client, initialDomains, workspace
         {domains.length === 0 ? (
           <div className="card p-8 text-center">
             <Globe className="mx-auto text-slate-600 mb-3" size={28} />
-            <p className="text-slate-400 text-sm mb-1">No custom domain configured</p>
-            <p className="text-slate-500 text-xs">Add a custom domain to serve A/B tests on your client&apos;s own URL.</p>
+            <p className="text-slate-500 dark:text-slate-400 text-sm mb-1">No custom domain configured</p>
+            <p className="text-slate-400 dark:text-slate-500 text-xs">Add a custom domain to serve A/B tests on your client&apos;s own URL.</p>
           </div>
         ) : (
           <div className="space-y-4">
@@ -447,7 +447,7 @@ export default function ClientSettingsClient({ client, initialDomains, workspace
       <Modal open={editModalOpen} onClose={() => setEditModalOpen(false)} title="Edit Domain" size="sm">
         <form onSubmit={handleEdit} className="space-y-4">
           {renderModeSelector(editMode, setEditMode, editBaseDomain, setEditBaseDomain, editSubdomain, setEditSubdomain, getEditPreview())}
-          <p className="text-slate-500 text-xs">Changing the domain will reset its verification status. You&apos;ll need to update DNS records for the new domain.</p>
+          <p className="text-slate-400 dark:text-slate-500 text-xs">Changing the domain will reset its verification status. You&apos;ll need to update DNS records for the new domain.</p>
           <div className="flex justify-end gap-3 pt-2">
             <Button variant="secondary" type="button" onClick={() => setEditModalOpen(false)}>Cancel</Button>
             <Button type="submit" loading={saving} disabled={!editBaseDomain.trim()}>Save Changes</Button>

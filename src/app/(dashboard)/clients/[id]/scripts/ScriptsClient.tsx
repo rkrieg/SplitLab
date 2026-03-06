@@ -126,13 +126,13 @@ export default function ScriptsClient({ initialScripts, pages, workspaceId, canM
   return (
     <>
       <div className="flex items-center justify-between mb-6">
-        <p className="text-slate-400 text-sm">{scripts.length} script{scripts.length !== 1 ? 's' : ''}</p>
+        <p className="text-slate-500 dark:text-slate-400 text-sm">{scripts.length} script{scripts.length !== 1 ? 's' : ''}</p>
         {canManage && <Button onClick={() => setModalOpen(true)}><Plus size={16} /> Add Script</Button>}
       </div>
 
       {/* Info banner */}
-      <div className="card p-4 mb-6 border-slate-600 bg-slate-800/50 text-sm text-slate-400">
-        Scripts marked as <strong className="text-slate-300">workspace-level</strong> will be injected into every page served for this client.
+      <div className="card p-4 mb-6 border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-800/50 text-sm text-slate-500 dark:text-slate-400">
+        Scripts marked as <strong className="text-slate-700 dark:text-slate-300">workspace-level</strong> will be injected into every page served for this client.
         You can also assign a script to a specific page only.
       </div>
 
@@ -149,20 +149,20 @@ export default function ScriptsClient({ initialScripts, pages, workspaceId, canM
         <div className="space-y-3">
           {scripts.map((script) => (
             <div key={script.id} className={`card p-5 flex items-center gap-4 ${!script.is_active ? 'opacity-50' : ''}`}>
-              <div className="w-9 h-9 rounded-lg bg-slate-700 flex items-center justify-center flex-shrink-0">
+              <div className="w-9 h-9 rounded-lg bg-slate-100 dark:bg-slate-700 flex items-center justify-center flex-shrink-0">
                 <Code2 size={15} className="text-indigo-400" />
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-0.5">
-                  <span className="font-medium text-slate-200">{script.name}</span>
-                  <span className="badge bg-slate-700 text-slate-400 text-[10px]">{typeLabel[script.type] || script.type}</span>
-                  <span className="badge bg-slate-700 text-slate-400 text-[10px]">{script.placement === 'head' ? '<head>' : '</body>'}</span>
+                  <span className="font-medium text-slate-800 dark:text-slate-200">{script.name}</span>
+                  <span className="badge bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 text-[10px]">{typeLabel[script.type] || script.type}</span>
+                  <span className="badge bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 text-[10px]">{script.placement === 'head' ? '<head>' : '</body>'}</span>
                   {script.pages && (
                     <span className="badge bg-blue-500/20 text-blue-400 border-blue-500/30 text-[10px]">{script.pages.name}</span>
                   )}
                 </div>
-                <p className="text-slate-500 text-xs font-mono truncate">{script.content.slice(0, 60)}{script.content.length > 60 ? '…' : ''}</p>
-                <p className="text-slate-600 text-xs mt-0.5">{formatDate(script.created_at)}</p>
+                <p className="text-slate-400 dark:text-slate-500 text-xs font-mono truncate">{script.content.slice(0, 60)}{script.content.length > 60 ? '…' : ''}</p>
+                <p className="text-slate-400 dark:text-slate-600 text-xs mt-0.5">{formatDate(script.created_at)}</p>
               </div>
               {canManage && (
                 <div className="flex items-center gap-2">
@@ -186,19 +186,19 @@ export default function ScriptsClient({ initialScripts, pages, workspaceId, canM
         <form onSubmit={handleCreate} className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-slate-300 mb-1.5">Script Type</label>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Script Type</label>
               <select value={sType} onChange={(e) => { setSType(e.target.value); setSContent(''); }} className="input-base">
                 {SCRIPT_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-slate-300 mb-1.5">Display Name</label>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Display Name</label>
               <input type="text" value={sName} onChange={(e) => setSName(e.target.value)} className="input-base" placeholder={`${selectedType.label} — Production`} required />
             </div>
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1.5">
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
               {sType === 'custom' ? 'Script Content' : 'ID / Tracking Code'}
             </label>
             {sType === 'custom' ? (
@@ -224,14 +224,14 @@ export default function ScriptsClient({ initialScripts, pages, workspaceId, canM
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-slate-300 mb-1.5">Placement</label>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Placement</label>
               <select value={sPlacement} onChange={(e) => setSPlacement(e.target.value as 'head' | 'body_end')} className="input-base">
                 <option value="head">In &lt;head&gt;</option>
                 <option value="body_end">Before &lt;/body&gt;</option>
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-slate-300 mb-1.5">Apply To</label>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Apply To</label>
               <select value={sPageId} onChange={(e) => setSPageId(e.target.value)} className="input-base">
                 <option value="">All Pages (workspace)</option>
                 {pages.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}

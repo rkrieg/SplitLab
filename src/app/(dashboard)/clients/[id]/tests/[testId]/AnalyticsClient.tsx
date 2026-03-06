@@ -460,17 +460,17 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
   return (
     <div>
       {/* ═══ HEADER ═══ */}
-      <div className="border-b border-slate-800 px-6 py-4 bg-slate-900/50 backdrop-blur-sm sticky top-0 z-10">
+      <div className="border-b border-slate-200 dark:border-slate-800 px-6 py-4 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm sticky top-0 z-10">
         <div className="flex items-center gap-1.5 text-xs text-slate-500 mb-3">
-          <Link href={`/clients/${clientId}/pages`} className="hover:text-slate-300 transition-colors">
+          <Link href={`/clients/${clientId}/pages`} className="hover:text-slate-700 dark:hover:text-slate-300 transition-colors">
             {clientName}
           </Link>
           <ChevronRight size={12} />
-          <Link href={`/clients/${clientId}/pages`} className="hover:text-slate-300 transition-colors">
+          <Link href={`/clients/${clientId}/pages`} className="hover:text-slate-700 dark:hover:text-slate-300 transition-colors">
             Pages
           </Link>
           <ChevronRight size={12} />
-          <span className="text-slate-400">{test.name}</span>
+          <span className="text-slate-500 dark:text-slate-400">{test.name}</span>
         </div>
 
         <div className="flex items-start justify-between gap-4">
@@ -494,7 +494,7 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
               />
             ) : (
               <h1
-                className="text-xl font-semibold text-slate-100 cursor-pointer hover:text-indigo-400 transition-colors inline-block"
+                className="text-xl font-semibold text-slate-900 dark:text-slate-100 cursor-pointer hover:text-indigo-400 transition-colors inline-block"
                 onClick={() => setEditingName(true)}
                 title="Click to edit"
               >
@@ -535,14 +535,14 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
                     {fullUrl}
                     <ExternalLink size={10} />
                   </a>
-                  <button onClick={() => setEditingPath(true)} className="text-slate-600 hover:text-slate-300 transition-colors p-0.5" title="Edit path">
+                  <button onClick={() => setEditingPath(true)} className="text-slate-400 dark:text-slate-600 hover:text-slate-700 dark:hover:text-slate-300 transition-colors p-0.5" title="Edit path">
                     <Pencil size={11} />
                   </button>
                 </div>
               ) : (
                 <button
                   onClick={() => setEditingPath(true)}
-                  className="text-sm font-mono text-slate-400 hover:text-indigo-400 transition-colors"
+                  className="text-sm font-mono text-slate-500 dark:text-slate-400 hover:text-indigo-400 transition-colors"
                   title="Click to edit path"
                 >
                   {test.url_path}
@@ -552,17 +552,17 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
           </div>
 
           <div className="flex items-center gap-4 flex-shrink-0">
-            <div className="flex items-center gap-4 text-sm border-r border-slate-700 pr-4">
+            <div className="flex items-center gap-4 text-sm border-r border-slate-200 dark:border-slate-700 pr-4">
               <div className="text-center">
-                <p className="text-slate-100 font-semibold">{totalViews.toLocaleString()}</p>
+                <p className="text-slate-900 dark:text-slate-100 font-semibold">{totalViews.toLocaleString()}</p>
                 <p className="text-slate-500 text-[10px]">Views</p>
               </div>
               <div className="text-center">
-                <p className="text-slate-100 font-semibold">{totalConversions.toLocaleString()}</p>
+                <p className="text-slate-900 dark:text-slate-100 font-semibold">{totalConversions.toLocaleString()}</p>
                 <p className="text-slate-500 text-[10px]">Conversions</p>
               </div>
               <div className="text-center">
-                <p className="text-slate-100 font-semibold">{formatPercent(overallCvr * 100)}</p>
+                <p className="text-slate-900 dark:text-slate-100 font-semibold">{formatPercent(overallCvr * 100)}</p>
                 <p className="text-slate-500 text-[10px]">CVR</p>
               </div>
             </div>
@@ -582,7 +582,7 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
       </div>
 
       {/* ═══ TABS ═══ */}
-      <div className="border-b border-slate-800 px-6 flex">
+      <div className="border-b border-slate-200 dark:border-slate-800 px-6 flex">
         {tabs.map(t => (
           <button
             key={t.key}
@@ -590,7 +590,7 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
             className={`flex items-center gap-1.5 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
               tab === t.key
                 ? 'border-indigo-500 text-indigo-400'
-                : 'border-transparent text-slate-500 hover:text-slate-300'
+                : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
             }`}
           >
             {t.icon}
@@ -610,18 +610,18 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
                 <Trophy size={20} className="text-green-400 flex-shrink-0" />
                 <div>
                   <p className="text-green-400 font-semibold text-sm">Winner: {winner.variant.name}</p>
-                  <p className="text-slate-400 text-xs mt-0.5">{formatPercent(winner.confidence)}% confidence</p>
+                  <p className="text-slate-500 dark:text-slate-400 text-xs mt-0.5">{formatPercent(winner.confidence)}% confidence</p>
                 </div>
               </div>
             )}
 
             <div className="flex flex-wrap items-center gap-3">
               <div className="flex items-center gap-2">
-                <span className="text-slate-400 text-sm">From</span>
+                <span className="text-slate-500 dark:text-slate-400 text-sm">From</span>
                 <input type="date" value={from} onChange={e => setFrom(e.target.value)} className="input-base w-36 text-sm" />
               </div>
               <div className="flex items-center gap-2">
-                <span className="text-slate-400 text-sm">To</span>
+                <span className="text-slate-500 dark:text-slate-400 text-sm">To</span>
                 <input type="date" value={to} onChange={e => setTo(e.target.value)} className="input-base w-36 text-sm" />
               </div>
               <button onClick={fetchAnalytics} disabled={loading} className="btn-secondary">
@@ -635,13 +635,13 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
             <div className="card overflow-hidden">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-slate-700">
-                    <th className="text-left px-5 py-3 text-slate-400 font-medium">Variant</th>
-                    <th className="text-left px-5 py-3 text-slate-400 font-medium w-24">Weight</th>
-                    <th className="text-right px-5 py-3 text-slate-400 font-medium">Views</th>
-                    <th className="text-right px-5 py-3 text-slate-400 font-medium">Conversions</th>
-                    <th className="text-right px-5 py-3 text-slate-400 font-medium">CVR</th>
-                    <th className="text-right px-5 py-3 text-slate-400 font-medium">Confidence</th>
+                  <tr className="border-b border-slate-200 dark:border-slate-700">
+                    <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">Variant</th>
+                    <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium w-24">Weight</th>
+                    <th className="text-right px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">Views</th>
+                    <th className="text-right px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">Conversions</th>
+                    <th className="text-right px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">CVR</th>
+                    <th className="text-right px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">Confidence</th>
                     <th className="text-center px-5 py-3 text-slate-400 font-medium w-24"></th>
                   </tr>
                 </thead>
@@ -673,8 +673,8 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
                         <tr className={`group ${rowBg}`}>
                           <td className="px-5 py-3.5">
                             <div className="flex items-center gap-2">
-                              <span className="font-medium text-slate-200">{stat.variant.name}</span>
-                              {stat.variant.is_control && <span className="badge bg-slate-700 text-slate-400 text-[10px]">control</span>}
+                              <span className="font-medium text-slate-800 dark:text-slate-200">{stat.variant.name}</span>
+                              {stat.variant.is_control && <span className="badge bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 text-[10px]">control</span>}
                               {stat.isWinner && <Trophy size={13} className="text-green-400" />}
                               {stat.variant.redirect_url && (
                                 verified === true ? <ShieldCheck size={11} className="text-green-400" /> :
@@ -712,9 +712,9 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
                               </button>
                             )}
                           </td>
-                          <td className={`px-5 py-3.5 text-right text-slate-300 ${rowBg}`}>{stat.views.toLocaleString()}</td>
-                          <td className={`px-5 py-3.5 text-right text-slate-300 ${rowBg}`}>{stat.conversions.toLocaleString()}</td>
-                          <td className={`px-5 py-3.5 text-right font-semibold text-slate-100 ${rowBg}`}>{formatPercent(cvr)}</td>
+                          <td className={`px-5 py-3.5 text-right text-slate-700 dark:text-slate-300 ${rowBg}`}>{stat.views.toLocaleString()}</td>
+                          <td className={`px-5 py-3.5 text-right text-slate-700 dark:text-slate-300 ${rowBg}`}>{stat.conversions.toLocaleString()}</td>
+                          <td className={`px-5 py-3.5 text-right font-semibold text-slate-900 dark:text-slate-100 ${rowBg}`}>{formatPercent(cvr)}</td>
                           <td className={`px-5 py-3.5 text-right ${rowBg}`}>
                             {stat.variant.is_control ? <span className="text-slate-500">—</span> :
                              stat.confidence !== null ? (
@@ -733,7 +733,7 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
                               )}
                               <button
                                 onClick={() => startEditVariant(stat.variant)}
-                                className={`p-1 rounded transition-colors ${isEditing ? 'bg-indigo-500/20 text-indigo-400' : 'text-slate-600 hover:text-slate-300'}`}
+                                className={`p-1 rounded transition-colors ${isEditing ? 'bg-indigo-500/20 text-indigo-400' : 'text-slate-400 dark:text-slate-600 hover:text-slate-700 dark:hover:text-slate-300'}`}
                                 title="Edit variant"
                               >
                                 <Pencil size={13} />
@@ -744,10 +744,10 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
 
                         {isEditing && (
                           <tr>
-                            <td colSpan={7} className="border-t border-slate-700 bg-slate-800/50 px-6 py-4">
+                            <td colSpan={7} className="border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 px-6 py-4">
                               <div className="grid grid-cols-2 gap-4 max-w-2xl">
                                 <div>
-                                  <label className="block text-xs font-medium text-slate-400 mb-1">Variant Name</label>
+                                  <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Variant Name</label>
                                   <input
                                     type="text"
                                     value={variantDraft.name}
@@ -756,7 +756,7 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
                                   />
                                 </div>
                                 <div>
-                                  <label className="block text-xs font-medium text-slate-400 mb-1">Destination URL</label>
+                                  <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Destination URL</label>
                                   <input
                                     type="url"
                                     value={variantDraft.redirect_url}
@@ -769,13 +769,13 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
 
                               <div className="flex items-center gap-4 mt-3">
                                 <div className="flex items-center gap-2">
-                                  <span className="text-xs text-slate-400">Mode:</span>
+                                  <span className="text-xs text-slate-500 dark:text-slate-400">Mode:</span>
                                   <button
                                     onClick={() => setVariantDraft({ ...variantDraft, proxy_mode: !variantDraft.proxy_mode })}
                                     className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-lg border transition-colors ${
                                       variantDraft.proxy_mode
                                         ? 'bg-indigo-500/20 text-indigo-400 border-indigo-500/30'
-                                        : 'bg-slate-700 text-slate-400 border-slate-600'
+                                        : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 border-slate-300 dark:border-slate-600'
                                     }`}
                                   >
                                     {variantDraft.proxy_mode ? <><Globe size={11} /> Proxy</> : <><ExternalLink size={11} /> Redirect</>}
@@ -822,7 +822,7 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
                 </tbody>
               </table>
 
-              <div className="border-t border-slate-700 px-5 py-3">
+              <div className="border-t border-slate-200 dark:border-slate-700 px-5 py-3">
                 <button
                   onClick={() => {
                     setNewVariantName(`Variant ${String.fromCharCode(65 + variants.length)}`);
@@ -849,45 +849,45 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
           <>
             {leadsLoading ? (
               <div className="flex items-center justify-center py-12">
-                <RefreshCw size={20} className="animate-spin text-slate-400" />
+                <RefreshCw size={20} className="animate-spin text-slate-500 dark:text-slate-400" />
               </div>
             ) : leads.length === 0 ? (
               <div className="text-center py-12">
                 <Users size={32} className="mx-auto text-slate-600 mb-3" />
-                <p className="text-slate-400 text-sm">No conversions recorded yet.</p>
+                <p className="text-slate-500 dark:text-slate-400 text-sm">No conversions recorded yet.</p>
                 <p className="text-slate-500 text-xs mt-1">Conversions will appear here once visitors trigger your goals.</p>
               </div>
             ) : (
               <div className="card overflow-hidden">
-                <div className="flex items-center justify-between px-5 py-3 border-b border-slate-700">
-                  <p className="text-sm text-slate-400">{leads.length} conversion{leads.length !== 1 ? 's' : ''}</p>
+                <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200 dark:border-slate-700">
+                  <p className="text-sm text-slate-500 dark:text-slate-400">{leads.length} conversion{leads.length !== 1 ? 's' : ''}</p>
                   <button onClick={fetchLeads} className="btn-secondary text-xs">
                     <RefreshCw size={12} /> Refresh
                   </button>
                 </div>
                 <table className="w-full text-sm">
                   <thead>
-                    <tr className="border-b border-slate-700">
-                      <th className="text-left px-5 py-3 text-slate-400 font-medium">Date</th>
-                      <th className="text-left px-5 py-3 text-slate-400 font-medium">Visitor</th>
-                      <th className="text-left px-5 py-3 text-slate-400 font-medium">Variant</th>
-                      <th className="text-left px-5 py-3 text-slate-400 font-medium">Goal</th>
-                      <th className="text-left px-5 py-3 text-slate-400 font-medium">Details</th>
+                    <tr className="border-b border-slate-200 dark:border-slate-700">
+                      <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">Date</th>
+                      <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">Visitor</th>
+                      <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">Variant</th>
+                      <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">Goal</th>
+                      <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">Details</th>
                     </tr>
                   </thead>
                   <tbody>
                     {leads.map(lead => (
-                      <tr key={lead.id} className="border-b border-slate-800 last:border-0">
-                        <td className="px-5 py-3 text-slate-300 text-xs">
+                      <tr key={lead.id} className="border-b border-slate-200 dark:border-slate-800 last:border-0">
+                        <td className="px-5 py-3 text-slate-700 dark:text-slate-300 text-xs">
                           {new Date(lead.created_at).toLocaleString()}
                         </td>
                         <td className="px-5 py-3 text-slate-500 font-mono text-xs">
                           {lead.visitor_hash.slice(0, 8)}...
                         </td>
-                        <td className="px-5 py-3 text-slate-300">
+                        <td className="px-5 py-3 text-slate-700 dark:text-slate-300">
                           {lead.test_variants?.name || '—'}
                         </td>
-                        <td className="px-5 py-3 text-slate-300">
+                        <td className="px-5 py-3 text-slate-700 dark:text-slate-300">
                           {lead.conversion_goals?.name || '—'}
                         </td>
                         <td className="px-5 py-3 text-slate-500 text-xs font-mono">
@@ -907,9 +907,9 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
           <>
             {/* Conversion Goals */}
             <div className="card overflow-hidden">
-              <div className="px-5 py-4 border-b border-slate-700">
+              <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700">
                 <div className="flex items-center justify-between">
-                  <h3 className="font-medium text-slate-200">Conversion Goals</h3>
+                  <h3 className="font-medium text-slate-800 dark:text-slate-200">Conversion Goals</h3>
                   <button
                     type="button"
                     onClick={() => setEditGoals([...editGoals, { id: '', name: '', type: 'form_submit', selector: '', url_pattern: '', is_primary: editGoals.length === 0 }])}
@@ -921,7 +921,7 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
               </div>
               <form onSubmit={handleSaveGoals} className="px-5 py-4 space-y-3">
                 {editGoals.map((g, i) => (
-                  <div key={i} className="rounded-lg border border-slate-700 p-3 space-y-2">
+                  <div key={i} className="rounded-lg border border-slate-200 dark:border-slate-700 p-3 space-y-2">
                     <div className="flex items-center gap-2">
                       <input
                         type="text"
@@ -967,9 +967,9 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
                           type="checkbox"
                           checked={g.is_primary}
                           onChange={e => { const c = [...editGoals]; c[i] = { ...c[i], is_primary: e.target.checked }; setEditGoals(c); }}
-                          className="rounded border-slate-600 bg-slate-700 text-indigo-500 focus:ring-indigo-500 focus:ring-offset-0 w-3.5 h-3.5"
+                          className="rounded border-slate-300 dark:border-slate-600 bg-slate-100 dark:bg-slate-700 text-indigo-500 focus:ring-indigo-500 focus:ring-offset-0 w-3.5 h-3.5"
                         />
-                        <span className="text-slate-400 text-xs">Primary</span>
+                        <span className="text-slate-500 dark:text-slate-400 text-xs">Primary</span>
                       </label>
                     </div>
                   </div>
@@ -983,25 +983,25 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
 
             {/* Tracking Setup */}
             <div className="card overflow-hidden">
-              <div className="px-5 py-4 border-b border-slate-700">
+              <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700">
                 <div className="flex items-center gap-3">
                   <div className="w-8 h-8 rounded-lg bg-indigo-500/20 flex items-center justify-center">
                     <Code2 size={16} className="text-indigo-400" />
                   </div>
                   <div>
-                    <p className="font-medium text-slate-200 text-sm">Tracking Snippet</p>
+                    <p className="font-medium text-slate-800 dark:text-slate-200 text-sm">Tracking Snippet</p>
                     <p className="text-slate-500 text-xs">Paste before &lt;/body&gt; on your external landing page (redirect mode only)</p>
                   </div>
                 </div>
               </div>
               <div className="px-5 py-4">
                 <div className="flex items-center justify-between mb-3">
-                  <p className="text-slate-400 text-xs">Tracking context is passed via URL parameters.</p>
+                  <p className="text-slate-500 dark:text-slate-400 text-xs">Tracking context is passed via URL parameters.</p>
                   <button onClick={() => { navigator.clipboard.writeText(snippet); toast.success('Copied'); }} className="btn-secondary text-xs">
                     <Copy size={12} /> Copy
                   </button>
                 </div>
-                <pre className="bg-slate-900 border border-slate-700 rounded-lg p-4 overflow-x-auto text-xs text-slate-300">
+                <pre className="bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-4 overflow-x-auto text-xs text-slate-700 dark:text-slate-300">
                   <code>{snippet}</code>
                 </pre>
               </div>
@@ -1009,8 +1009,8 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
 
             {/* Head Scripts (for proxy mode) */}
             <div className="card overflow-hidden">
-              <div className="px-5 py-4 border-b border-slate-700">
-                <h3 className="font-medium text-slate-200">Head Scripts</h3>
+              <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700">
+                <h3 className="font-medium text-slate-800 dark:text-slate-200">Head Scripts</h3>
                 <p className="text-slate-500 text-xs mt-1">
                   Custom scripts injected in the parent frame for proxy mode. Use this for Meta Pixel, Google Analytics, etc.
                 </p>
@@ -1035,36 +1035,36 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
       <Modal open={addVariantOpen} onClose={() => setAddVariantOpen(false)} title="Add Variant" size="sm">
         <form onSubmit={handleAddVariant} className="space-y-4">
           {/* Mode toggle */}
-          <div className="flex border border-slate-700 rounded-lg overflow-hidden">
+          <div className="flex border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
             <button
               type="button"
               onClick={() => setNewVariantMode('url')}
-              className={`flex-1 py-2 text-sm font-medium transition-colors ${newVariantMode === 'url' ? 'bg-indigo-500/20 text-indigo-400' : 'text-slate-400 hover:bg-slate-700/50'}`}
+              className={`flex-1 py-2 text-sm font-medium transition-colors ${newVariantMode === 'url' ? 'bg-indigo-500/20 text-indigo-400' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700/50'}`}
             >
               External URL
             </button>
             <button
               type="button"
               onClick={() => setNewVariantMode('html')}
-              className={`flex-1 py-2 text-sm font-medium transition-colors border-l border-slate-700 ${newVariantMode === 'html' ? 'bg-indigo-500/20 text-indigo-400' : 'text-slate-400 hover:bg-slate-700/50'}`}
+              className={`flex-1 py-2 text-sm font-medium transition-colors border-l border-slate-200 dark:border-slate-700 ${newVariantMode === 'html' ? 'bg-indigo-500/20 text-indigo-400' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700/50'}`}
             >
               Upload HTML
             </button>
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1.5">Variant Name</label>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Variant Name</label>
             <input type="text" value={newVariantName} onChange={e => setNewVariantName(e.target.value)} className="input-base" required autoFocus />
           </div>
 
           {newVariantMode === 'url' ? (
             <div>
-              <label className="block text-sm font-medium text-slate-300 mb-1.5">Destination URL</label>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Destination URL</label>
               <input type="url" value={newVariantUrl} onChange={e => setNewVariantUrl(e.target.value)} className="input-base font-mono text-sm" placeholder="https://..." required />
             </div>
           ) : (
             <div>
-              <label className="block text-sm font-medium text-slate-300 mb-1.5">HTML Content</label>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">HTML Content</label>
               <textarea
                 value={newVariantHtml}
                 onChange={e => setNewVariantHtml(e.target.value)}

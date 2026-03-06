@@ -22,9 +22,9 @@ export default function Button({
   const variants = {
     primary: 'bg-indigo-600 hover:bg-indigo-500 text-white',
     secondary:
-      'bg-slate-700 hover:bg-slate-600 text-slate-100 border border-slate-600',
+      'bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-100 border border-slate-300 dark:border-slate-600',
     danger: 'bg-red-600 hover:bg-red-500 text-white',
-    ghost: 'text-slate-400 hover:text-slate-200 hover:bg-slate-800',
+    ghost: 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800',
   };
 
   const sizes = {

@@ -14,9 +14,12 @@ import {
   ChevronDown,
   Plus,
   Check,
+  Sun,
+  Moon,
 } from 'lucide-react';
 import { cn, slugify } from '@/lib/utils';
 import { useState, useEffect, useRef } from 'react';
+import { useTheme } from 'next-themes';
 import toast from 'react-hot-toast';
 
 interface Client {
@@ -45,6 +48,8 @@ export default function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
   const { data: session } = useSession();
+  const { theme, setTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [clients, setClients] = useState<Client[]>([]);
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -52,6 +57,8 @@ export default function Sidebar() {
   const [newClientName, setNewClientName] = useState('');
   const [creating, setCreating] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => setMounted(true), []);
 
   // Parse selected client from pathname
   const clientMatch = pathname.match(/^\/clients\/([^/]+)/);
@@ -147,15 +154,15 @@ export default function Sidebar() {
   }
 
   return (
-    <aside className="w-60 min-h-screen bg-slate-900 border-r border-slate-800 flex flex-col">
+    <aside className="w-60 min-h-screen bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col">
       {/* Logo */}
-      <div className="h-16 flex items-center px-5 border-b border-slate-800">
+      <div className="h-16 flex items-center px-5 border-b border-slate-200 dark:border-slate-800">
         <Link href="/dashboard" className="flex items-center">
           <svg width="140" height="32" viewBox="0 0 220 48" fill="none" xmlns="http://www.w3.org/2000/svg">
             <circle cx="18" cy="24" r="16" fill="#3D8BDA" opacity="0.15"/>
             <circle cx="18" cy="24" r="14" stroke="#3D8BDA" strokeWidth="1.5"/>
             <path d="M20 12L13 26H18L15 36L24 22H19L20 12Z" fill="#3D8BDA"/>
-            <text x="42" y="21" fontFamily="system-ui, sans-serif" fontWeight="700" fontSize="24" fill="white" letterSpacing="-0.5">Split<tspan fill="#3D8BDA" fontWeight="600">Lab</tspan></text>
+            <text x="42" y="21" fontFamily="system-ui, sans-serif" fontWeight="700" fontSize="24" fill="currentColor" letterSpacing="-0.5" className="text-slate-900 dark:text-white">Split<tspan fill="#3D8BDA" fontWeight="600">Lab</tspan></text>
           </svg>
         </Link>
       </div>
@@ -164,17 +171,17 @@ export default function Sidebar() {
       <div className="px-3 pt-4 pb-2" ref={dropdownRef}>
         <button
           onClick={() => setDropdownOpen(!dropdownOpen)}
-          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 hover:border-slate-600 transition-colors text-sm"
+          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600 transition-colors text-sm"
         >
-          <Building2 size={14} className="text-slate-400 flex-shrink-0" />
-          <span className="flex-1 text-left text-slate-200 truncate">
+          <Building2 size={14} className="text-slate-500 dark:text-slate-400 flex-shrink-0" />
+          <span className="flex-1 text-left text-slate-800 dark:text-slate-200 truncate">
             {selectedClient ? selectedClient.name : 'All Clients'}
           </span>
-          <ChevronDown size={14} className={cn('text-slate-500 transition-transform flex-shrink-0', dropdownOpen && 'rotate-180')} />
+          <ChevronDown size={14} className={cn('text-slate-400 dark:text-slate-500 transition-transform flex-shrink-0', dropdownOpen && 'rotate-180')} />
         </button>
 
         {dropdownOpen && (
-          <div className="mt-1 bg-slate-800 border border-slate-700 rounded-lg overflow-hidden shadow-xl z-50 relative">
+          <div className="mt-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden shadow-xl z-50 relative">
             {/* All Clients option */}
             <button
               onClick={() => selectClient(null)}
@@ -182,7 +189,7 @@ export default function Sidebar() {
                 'w-full flex items-center gap-2 px-3 py-2 text-sm transition-colors',
                 !selectedClient
                   ? 'text-indigo-400 bg-indigo-600/10'
-                  : 'text-slate-300 hover:bg-slate-700'
+                  : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
               )}
             >
               <LayoutDashboard size={13} className="flex-shrink-0" />
@@ -191,7 +198,7 @@ export default function Sidebar() {
             </button>
 
             {/* Divider */}
-            <div className="border-t border-slate-700" />
+            <div className="border-t border-slate-200 dark:border-slate-700" />
 
             {/* Client list */}
             <div className="max-h-48 overflow-y-auto">
@@ -203,7 +210,7 @@ export default function Sidebar() {
                     'w-full flex items-center gap-2 px-3 py-2 text-sm transition-colors',
                     selectedClientId === client.id
                       ? 'text-indigo-400 bg-indigo-600/10'
-                      : 'text-slate-300 hover:bg-slate-700'
+                      : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
                   )}
                 >
                   <Building2 size={13} className="flex-shrink-0" />
@@ -214,10 +221,10 @@ export default function Sidebar() {
             </div>
 
             {/* New Client button */}
-            <div className="border-t border-slate-700">
+            <div className="border-t border-slate-200 dark:border-slate-700">
               <button
                 onClick={() => { setCreateModalOpen(true); setDropdownOpen(false); }}
-                className="w-full flex items-center gap-2 px-3 py-2 text-sm text-indigo-400 hover:bg-slate-700 transition-colors"
+                className="w-full flex items-center gap-2 px-3 py-2 text-sm text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
               >
                 <Plus size={13} />
                 New Client
@@ -237,7 +244,7 @@ export default function Sidebar() {
               'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
               isActive(href)
                 ? 'bg-indigo-600/20 text-indigo-400 border border-indigo-600/30'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
             )}
           >
             <Icon size={16} className="flex-shrink-0" />
@@ -247,30 +254,39 @@ export default function Sidebar() {
       </nav>
 
       {/* User menu */}
-      <div className="px-3 py-3 border-t border-slate-800">
+      <div className="px-3 py-3 border-t border-slate-200 dark:border-slate-800">
         <button
           onClick={() => setUserMenuOpen(!userMenuOpen)}
-          className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-slate-800 transition-colors"
+          className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
         >
           <div className="w-7 h-7 rounded-full bg-indigo-600 flex items-center justify-center text-xs font-bold text-white flex-shrink-0">
             {session?.user?.name?.[0]?.toUpperCase() || 'U'}
           </div>
           <div className="flex-1 text-left min-w-0">
-            <p className="text-sm font-medium text-slate-200 truncate">
+            <p className="text-sm font-medium text-slate-800 dark:text-slate-200 truncate">
               {session?.user?.name || 'User'}
             </p>
-            <p className="text-xs text-slate-500 capitalize truncate">
+            <p className="text-xs text-slate-400 dark:text-slate-500 capitalize truncate">
               {session?.user?.role || 'viewer'}
             </p>
           </div>
-          <ChevronDown size={14} className="text-slate-500 flex-shrink-0" />
+          <ChevronDown size={14} className="text-slate-400 dark:text-slate-500 flex-shrink-0" />
         </button>
 
         {userMenuOpen && (
-          <div className="mt-1 bg-slate-800 border border-slate-700 rounded-lg overflow-hidden">
+          <div className="mt-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
+            {mounted && (
+              <button
+                onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+              >
+                {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
+                {theme === 'dark' ? 'Light mode' : 'Dark mode'}
+              </button>
+            )}
             <button
               onClick={() => signOut({ callbackUrl: '/login' })}
-              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-400 hover:text-slate-200 hover:bg-slate-700 transition-colors"
+              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
             >
               <LogOut size={14} />
               Sign out
@@ -282,11 +298,11 @@ export default function Sidebar() {
       {/* Create Client Modal */}
       {createModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setCreateModalOpen(false)}>
-          <div className="bg-slate-900 border border-slate-700 rounded-xl p-6 w-full max-w-sm mx-4 shadow-2xl" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-lg font-semibold text-slate-100 mb-4">New Client</h3>
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl p-6 w-full max-w-sm mx-4 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100 mb-4">New Client</h3>
             <form onSubmit={handleCreateClient} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-slate-300 mb-1.5">Client Name</label>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Client Name</label>
                 <input
                   type="text"
                   value={newClientName}

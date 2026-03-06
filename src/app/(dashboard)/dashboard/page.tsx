@@ -85,8 +85,8 @@ export default async function DashboardPage() {
             <div key={stat.label} className="card p-5">
               <div className="flex items-start justify-between">
                 <div>
-                  <p className="text-slate-400 text-sm">{stat.label}</p>
-                  <p className="text-2xl font-bold text-slate-100 mt-1">
+                  <p className="text-slate-500 dark:text-slate-400 text-sm">{stat.label}</p>
+                  <p className="text-2xl font-bold text-slate-900 dark:text-slate-100 mt-1">
                     {stat.value}
                   </p>
                 </div>
@@ -109,7 +109,7 @@ export default async function DashboardPage() {
         {/* Recent active tests */}
         <div>
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-slate-100">Active Pages</h2>
+            <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Active Pages</h2>
             <Link href="/pages" className="text-sm text-indigo-400 hover:text-indigo-300">
               View all
             </Link>
@@ -118,7 +118,7 @@ export default async function DashboardPage() {
           {recentTests.length === 0 ? (
             <div className="card p-10 text-center">
               <FlaskConical className="mx-auto text-slate-600 mb-3" size={32} />
-              <p className="text-slate-400 text-sm">No active tests yet.</p>
+              <p className="text-slate-500 dark:text-slate-400 text-sm">No active tests yet.</p>
               <Link href="/clients" className="btn-primary mt-4 inline-flex">
                 Create your first test
               </Link>
@@ -127,21 +127,21 @@ export default async function DashboardPage() {
             <div className="card overflow-hidden">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-slate-700">
-                    <th className="text-left px-5 py-3 text-slate-400 font-medium">Test</th>
-                    <th className="text-left px-5 py-3 text-slate-400 font-medium">Client</th>
-                    <th className="text-left px-5 py-3 text-slate-400 font-medium">URL</th>
-                    <th className="text-left px-5 py-3 text-slate-400 font-medium">Status</th>
+                  <tr className="border-b border-slate-200 dark:border-slate-700">
+                    <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">Test</th>
+                    <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">Client</th>
+                    <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">URL</th>
+                    <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">Status</th>
                   </tr>
                 </thead>
                 <tbody>
                   {recentTests.map((test: Record<string, unknown>) => {
                     const ws = test.workspaces as { name: string; clients: { name: string } } | null;
                     return (
-                      <tr key={test.id as string} className="border-b border-slate-700/50 hover:bg-slate-700/30 transition-colors">
-                        <td className="px-5 py-3 text-slate-200 font-medium">{test.name as string}</td>
-                        <td className="px-5 py-3 text-slate-400">{ws?.clients?.name ?? '—'}</td>
-                        <td className="px-5 py-3 text-slate-400 font-mono text-xs">{test.url_path as string}</td>
+                      <tr key={test.id as string} className="border-b border-slate-100 dark:border-slate-700/50 hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors">
+                        <td className="px-5 py-3 text-slate-800 dark:text-slate-200 font-medium">{test.name as string}</td>
+                        <td className="px-5 py-3 text-slate-500 dark:text-slate-400">{ws?.clients?.name ?? '—'}</td>
+                        <td className="px-5 py-3 text-slate-500 dark:text-slate-400 font-mono text-xs">{test.url_path as string}</td>
                         <td className="px-5 py-3">
                           <span className="badge bg-green-500/20 text-green-400 border border-green-500/30">
                             {test.status as string}

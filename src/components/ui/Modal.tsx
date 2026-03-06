@@ -56,21 +56,21 @@ export default function Modal({
       {/* Dialog */}
       <div
         className={cn(
-          'relative w-full bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl',
+          'relative w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl shadow-2xl',
           sizes[size]
         )}
       >
         {/* Header */}
-        <div className="flex items-start justify-between p-6 border-b border-slate-700">
+        <div className="flex items-start justify-between p-6 border-b border-slate-200 dark:border-slate-700">
           <div>
-            <h2 className="text-lg font-semibold text-slate-100">{title}</h2>
+            <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">{title}</h2>
             {description && (
-              <p className="text-sm text-slate-400 mt-0.5">{description}</p>
+              <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">{description}</p>
             )}
           </div>
           <button
             onClick={onClose}
-            className="text-slate-400 hover:text-slate-200 transition-colors ml-4 mt-0.5"
+            className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors ml-4 mt-0.5"
           >
             <X size={18} />
           </button>

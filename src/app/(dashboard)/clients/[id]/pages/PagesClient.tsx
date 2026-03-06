@@ -235,7 +235,7 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
   return (
     <>
       <div className="flex items-center justify-between mb-6">
-        <p className="text-slate-400 text-sm">{tests.length} page{tests.length !== 1 ? 's' : ''}</p>
+        <p className="text-slate-500 dark:text-slate-400 text-sm">{tests.length} page{tests.length !== 1 ? 's' : ''}</p>
         {canManage && (
           <Button onClick={() => setCreateOpen(true)}>
             <Plus size={16} /> New Page
@@ -261,33 +261,33 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
             return (
               <div
                 key={test.id}
-                className="card p-5 cursor-pointer hover:border-slate-600 transition-colors"
+                className="card p-5 cursor-pointer hover:border-slate-300 dark:hover:border-slate-600 transition-colors"
                 onClick={() => router.push(`/clients/${clientId}/tests/${test.id}`)}
               >
                 <div className="flex items-start justify-between">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-3 mb-1">
-                      <h3 className="font-semibold text-slate-100">{test.name}</h3>
+                      <h3 className="font-semibold text-slate-900 dark:text-slate-100">{test.name}</h3>
                       <TestStatusBadge status={test.status} />
                       {variantCount > 1 && (
-                        <span className="text-slate-500 text-xs">{variantCount} variants</span>
+                        <span className="text-slate-400 dark:text-slate-500 text-xs">{variantCount} variants</span>
                       )}
                     </div>
                     <div className="flex items-center gap-2 mb-3">
                       {domain ? (
-                        <span className="flex items-center gap-1.5 text-xs text-slate-400 font-mono">
+                        <span className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 font-mono">
                           <Globe size={12} className="text-green-400" />
                           {fullUrl}
                         </span>
                       ) : (
-                        <span className="text-slate-400 text-xs font-mono">{test.url_path}</span>
+                        <span className="text-slate-500 dark:text-slate-400 text-xs font-mono">{test.url_path}</span>
                       )}
                     </div>
                     <div className="flex flex-wrap gap-2">
                       {(test.test_variants ?? []).map((v) => (
-                        <span key={v.id} className="badge bg-slate-700 text-slate-300 gap-1">
+                        <span key={v.id} className="badge bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 gap-1">
                           {v.name}
-                          <span className="text-slate-500">{v.traffic_weight}%</span>
+                          <span className="text-slate-400 dark:text-slate-500">{v.traffic_weight}%</span>
                           {v.is_control && <span className="text-indigo-400 text-[10px]">ctrl</span>}
                           {v.redirect_url && <Link2 size={10} className="text-amber-400" />}
                           {v.redirect_url && v.tracking_verified === true && <ShieldCheck size={10} className="text-green-400" />}
@@ -303,7 +303,7 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
                             key={v.id}
                             onClick={(e) => { e.stopPropagation(); checkTracking(v.id, v.redirect_url!); }}
                             disabled={checkingTracking === v.id}
-                            className="inline-flex items-center gap-1 text-[10px] text-slate-400 hover:text-slate-200 bg-slate-700/50 hover:bg-slate-700 border border-slate-600/50 rounded-full px-2 py-0.5 transition-colors disabled:opacity-50"
+                            className="inline-flex items-center gap-1 text-[10px] text-slate-400 hover:text-slate-200 bg-slate-100 dark:bg-slate-700/50 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-600/50 rounded-full px-2 py-0.5 transition-colors disabled:opacity-50"
                           >
                             {checkingTracking === v.id ? <Loader2 size={9} className="animate-spin" /> : v.tracking_verified === true ? <ShieldCheck size={9} className="text-green-400" /> : v.tracking_verified === false ? <ShieldX size={9} className="text-red-400" /> : <ShieldCheck size={9} />}
                             Check {v.name}
@@ -322,34 +322,34 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
                           <MoreHorizontal size={14} />
                         </button>
                         {activeMenu === test.id && (
-                          <div className="absolute right-0 top-full mt-1 w-44 bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-10 overflow-hidden">
+                          <div className="absolute right-0 top-full mt-1 w-44 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl z-10 overflow-hidden">
                             {test.status === 'draft' && (
-                              <button onClick={() => updateStatus(test.id, 'active')} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-300 hover:bg-slate-700">
+                              <button onClick={() => updateStatus(test.id, 'active')} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700">
                                 <Play size={14} className="text-green-400" /> Activate
                               </button>
                             )}
                             {test.status === 'active' && (
-                              <button onClick={() => updateStatus(test.id, 'paused')} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-300 hover:bg-slate-700">
+                              <button onClick={() => updateStatus(test.id, 'paused')} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700">
                                 <Pause size={14} className="text-amber-400" /> Pause
                               </button>
                             )}
                             {test.status === 'paused' && (
                               <>
-                                <button onClick={() => updateStatus(test.id, 'active')} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-300 hover:bg-slate-700">
+                                <button onClick={() => updateStatus(test.id, 'active')} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700">
                                   <Play size={14} className="text-green-400" /> Resume
                                 </button>
-                                <button onClick={() => updateStatus(test.id, 'completed')} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-300 hover:bg-slate-700">
+                                <button onClick={() => updateStatus(test.id, 'completed')} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700">
                                   <Check size={14} className="text-blue-400" /> Complete
                                 </button>
                               </>
                             )}
-                            <button onClick={() => openEditModal(test)} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-300 hover:bg-slate-700">
+                            <button onClick={() => openEditModal(test)} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700">
                               <Edit2 size={14} className="text-indigo-400" /> Edit
                             </button>
-                            <button onClick={() => openAddVariant(test)} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-300 hover:bg-slate-700">
+                            <button onClick={() => openAddVariant(test)} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700">
                               <Plus size={14} className="text-indigo-400" /> Add Variant
                             </button>
-                            <button onClick={() => { setDeleteId(test.id); setActiveMenu(null); }} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-400 hover:bg-slate-700 border-t border-slate-700">
+                            <button onClick={() => { setDeleteId(test.id); setActiveMenu(null); }} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-400 hover:bg-slate-100 dark:hover:bg-slate-700 border-t border-slate-200 dark:border-slate-700">
                               <Trash2 size={14} /> Delete
                             </button>
                           </div>
@@ -368,20 +368,20 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
       <Modal open={createOpen} onClose={() => { setCreateOpen(false); resetCreateForm(); }} title="New Page" size="sm">
         <form onSubmit={handleCreate} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1.5">Page Name</label>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Page Name</label>
             <input type="text" value={pageName} onChange={(e) => setPageName(e.target.value)} className="input-base" placeholder="Homepage" required autoFocus />
           </div>
           <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1.5">URL Path</label>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">URL Path</label>
             <input type="text" value={urlPath} onChange={(e) => setUrlPath(e.target.value)} className="input-base font-mono" placeholder="/" required />
             {domain && urlPath && (
-              <p className="text-slate-500 text-xs mt-1 font-mono">{domain}{urlPath}</p>
+              <p className="text-slate-400 dark:text-slate-500 text-xs mt-1 font-mono">{domain}{urlPath}</p>
             )}
           </div>
           <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1.5">Destination URL</label>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Destination URL</label>
             <input type="url" value={destinationUrl} onChange={(e) => setDestinationUrl(e.target.value)} className="input-base font-mono text-sm" placeholder="https://my-app.lovable.app/landing" required />
-            <p className="text-slate-500 text-xs mt-1">The page visitors will see when they hit your domain.</p>
+            <p className="text-slate-400 dark:text-slate-500 text-xs mt-1">The page visitors will see when they hit your domain.</p>
           </div>
           <div className="flex justify-end gap-3 pt-2">
             <Button variant="secondary" type="button" onClick={() => { setCreateOpen(false); resetCreateForm(); }}>Cancel</Button>
@@ -394,11 +394,11 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
       <Modal open={!!editTestId} onClose={() => setEditTestId(null)} title="Edit Page" size="sm">
         <form onSubmit={handleEdit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1.5">Page Name</label>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Page Name</label>
             <input type="text" value={editName} onChange={(e) => setEditName(e.target.value)} className="input-base" required />
           </div>
           <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1.5">URL Path</label>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">URL Path</label>
             <input type="text" value={editUrlPath} onChange={(e) => setEditUrlPath(e.target.value)} className="input-base font-mono" required />
           </div>
           <div className="flex justify-end gap-3 pt-2">
@@ -412,36 +412,36 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
       <Modal open={!!addVariantTestId} onClose={() => setAddVariantTestId(null)} title="Add Variant" size="sm">
         <form onSubmit={handleAddVariant} className="space-y-4">
           {/* Mode toggle */}
-          <div className="flex border border-slate-700 rounded-lg overflow-hidden">
+          <div className="flex border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
             <button
               type="button"
               onClick={() => setVariantMode('url')}
-              className={`flex-1 py-2 text-sm font-medium transition-colors ${variantMode === 'url' ? 'bg-indigo-500/20 text-indigo-400' : 'text-slate-400 hover:bg-slate-700/50'}`}
+              className={`flex-1 py-2 text-sm font-medium transition-colors ${variantMode === 'url' ? 'bg-indigo-500/20 text-indigo-400' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700/50'}`}
             >
               External URL
             </button>
             <button
               type="button"
               onClick={() => setVariantMode('html')}
-              className={`flex-1 py-2 text-sm font-medium transition-colors border-l border-slate-700 ${variantMode === 'html' ? 'bg-indigo-500/20 text-indigo-400' : 'text-slate-400 hover:bg-slate-700/50'}`}
+              className={`flex-1 py-2 text-sm font-medium transition-colors border-l border-slate-200 dark:border-slate-700 ${variantMode === 'html' ? 'bg-indigo-500/20 text-indigo-400' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700/50'}`}
             >
               Upload HTML
             </button>
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1.5">Variant Name</label>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Variant Name</label>
             <input type="text" value={variantName} onChange={(e) => setVariantName(e.target.value)} className="input-base" required />
           </div>
 
           {variantMode === 'url' ? (
             <div>
-              <label className="block text-sm font-medium text-slate-300 mb-1.5">Destination URL</label>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Destination URL</label>
               <input type="url" value={variantUrl} onChange={(e) => setVariantUrl(e.target.value)} className="input-base font-mono text-sm" placeholder="https://example.com/variant-b" required />
             </div>
           ) : (
             <div>
-              <label className="block text-sm font-medium text-slate-300 mb-1.5">HTML Content</label>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">HTML Content</label>
               <textarea
                 value={variantHtml}
                 onChange={(e) => setVariantHtml(e.target.value)}
@@ -471,7 +471,7 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
           )}
 
           <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1.5">Traffic Weight (%)</label>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Traffic Weight (%)</label>
             <input type="number" value={variantWeight} onChange={(e) => setVariantWeight(Number(e.target.value))} className="input-base w-24" min={1} max={100} required />
           </div>
 
