@@ -48,7 +48,7 @@ export async function GET(request: NextRequest) {
     // 3. Fetch variants
     const { data: variants, error: variantsError } = await db
       .from('test_variants')
-      .select('id, name, page_id, redirect_url, proxy_mode, traffic_weight, is_control, pages(html_url, html_content)')
+      .select('id, name, page_id, redirect_url, proxy_mode, traffic_weight, is_control, variant_type, hosted_url, pages(html_url, html_content)')
       .eq('test_id', test.id)
       .order('is_control', { ascending: false });
 
@@ -179,7 +179,82 @@ ${proxyTrackingSnippet}
       return redirectResponse;
     }
 
-    // 6b. Fetch HTML for variant
+    // 6b. Hosted AI variant — serve HTML directly with tracking injected
+    if (selectedVariant.variant_type === 'hosted') {
+      // Fetch variant_pages record for this variant
+      const { data: variantPage } = await db
+        .from('variant_pages')
+        .select('html_storage_path')
+        .eq('variant_id', selectedVariant.id)
+        .eq('status', 'ready')
+        .order('version', { ascending: false })
+        .limit(1)
+        .single();
+
+      if (variantPage) {
+        const { data: fileData } = await db.storage
+          .from('variants')
+          .download(variantPage.html_storage_path);
+
+        if (fileData) {
+          let hostedHtml = await fileData.text();
+
+          // Fetch workspace scripts
+          const { data: hostedScripts } = await db
+            .from('scripts')
+            .select('*')
+            .eq('workspace_id', workspaceId)
+            .eq('is_active', true)
+            .is('page_id', null);
+
+          const hostedHeadScripts: string[] = [];
+          const hostedBodyScripts: string[] = [];
+          for (const script of hostedScripts || []) {
+            const tag = buildScriptTag(script.type, script.content);
+            if (script.placement === 'head') hostedHeadScripts.push(tag);
+            else hostedBodyScripts.push(tag);
+          }
+
+          // Fetch conversion goals
+          const { data: hostedGoals } = await db
+            .from('conversion_goals')
+            .select('*')
+            .eq('test_id', test.id);
+
+          const hostedTracking = buildTrackingSnippet(
+            test.id, selectedVariant.id, visitorId, hostedGoals || [], APP_URL
+          );
+
+          hostedHtml = injectIntoHtml(hostedHtml, hostedHeadScripts, hostedBodyScripts, hostedTracking);
+
+          // Record pageview
+          await db.from('events').insert({
+            test_id: test.id,
+            variant_id: selectedVariant.id,
+            visitor_hash: visitorId,
+            type: 'pageview',
+            metadata: { variant_type: 'hosted' },
+          });
+
+          const hostedResponse = new NextResponse(hostedHtml, {
+            status: 200,
+            headers: {
+              'Content-Type': 'text/html; charset=utf-8',
+              'Cache-Control': 'public, max-age=300, s-maxage=300',
+            },
+          });
+
+          const hostedCookieOptions = { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax' as const, maxAge: 60 * 60 * 24 * 90, path: '/' };
+          if (!existingCookie) hostedResponse.cookies.set(COOKIE_NAME, visitorId, hostedCookieOptions);
+          if (!stickyVariantId) hostedResponse.cookies.set(stickyCookieName, selectedVariant.id, hostedCookieOptions);
+
+          return hostedResponse;
+        }
+      }
+      // Fall through to regular HTML serving if hosted page not found
+    }
+
+    // 6c. Fetch HTML for variant
     let html = '';
     const pageData = (selectedVariant.pages as unknown) as { html_url: string; html_content: string | null } | null;
 
