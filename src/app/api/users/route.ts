@@ -4,7 +4,8 @@ import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
-import { sendInvitationEmail } from '@/lib/email';
+
+export const dynamic = 'force-dynamic';
 
 const createSchema = z.object({
   name: z.string().min(1).max(255),
@@ -68,6 +69,7 @@ export async function POST(request: NextRequest) {
     // Send invitation email
     let emailError: string | null = null;
     try {
+      const { sendInvitationEmail } = await import('@/lib/email');
       await sendInvitationEmail({
         toName: data.name,
         toEmail: data.email,
