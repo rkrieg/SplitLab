@@ -10,6 +10,9 @@ const nextConfig = {
     ],
   },
   // CORS headers handled by middleware and route handlers (dynamic origin echo)
+  experimental: {
+    serverComponentsExternalPackages: ['puppeteer-core', '@sparticuz/chromium'],
+  },
 };
 
 module.exports = nextConfig;
