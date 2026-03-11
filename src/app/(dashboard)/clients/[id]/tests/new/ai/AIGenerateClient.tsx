@@ -1,11 +1,12 @@
 'use client';
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
 import {
   Sparkles, Globe, Loader2, Check, X, RotateCcw,
   ChevronDown, ChevronUp, Rocket, ArrowLeft, Wand2,
+  Monitor, Smartphone, Save, Download, Bold, Italic, Type,
 } from 'lucide-react';
 import Button from '@/components/ui/Button';
 
@@ -43,6 +44,7 @@ interface Props {
 }
 
 type Step = 'input' | 'analyzed' | 'generating' | 'review';
+type PreviewMode = 'desktop' | 'mobile';
 
 export default function AIGenerateClient({ workspaceId, clientId, domain }: Props) {
   const router = useRouter();
@@ -67,6 +69,19 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
   const [activeTab, setActiveTab] = useState(0);
   const [expandedChanges, setExpandedChanges] = useState<Set<number>>(new Set());
 
+  // Preview & editing
+  const [previewMode, setPreviewMode] = useState<PreviewMode>('desktop');
+  const [editMode, setEditMode] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [regenerating, setRegenerating] = useState(false);
+  const [regenInstructions, setRegenInstructions] = useState('');
+  const [showRegenInput, setShowRegenInput] = useState(false);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+
+  // Floating toolbar
+  const [toolbarPos, setToolbarPos] = useState<{ x: number; y: number } | null>(null);
+  const toolbarRef = useRef<HTMLDivElement>(null);
+
   // Test creation
   const [testName, setTestName] = useState('');
   const [urlPath, setUrlPath] = useState('/');
@@ -74,7 +89,161 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
 
   const abortRef = useRef<AbortController | null>(null);
 
-  // ─── Step 1: Analyze Page ──────────────────────────────────────────────
+  // ─── Inline Editor: listen for selection in iframe ──────────────────
+
+  useEffect(() => {
+    if (!editMode) {
+      setToolbarPos(null);
+      return;
+    }
+
+    const iframe = iframeRef.current;
+    if (!iframe) return;
+
+    function handleIframeLoad() {
+      const iframeDoc = iframe!.contentDocument;
+      if (!iframeDoc) return;
+
+      // Make editable elements contentEditable
+      const editables = iframeDoc.querySelectorAll('[data-sl-editable]');
+      editables.forEach((el) => {
+        (el as HTMLElement).contentEditable = 'true';
+        (el as HTMLElement).style.outline = 'none';
+        (el as HTMLElement).style.cursor = 'text';
+      });
+
+      // Listen for selection changes to show toolbar
+      iframeDoc.addEventListener('selectionchange', () => {
+        const sel = iframeDoc.getSelection();
+        if (!sel || sel.isCollapsed || !sel.rangeCount) {
+          setToolbarPos(null);
+          return;
+        }
+        const range = sel.getRangeAt(0);
+        const rect = range.getBoundingClientRect();
+        const iframeRect = iframe!.getBoundingClientRect();
+        setToolbarPos({
+          x: iframeRect.left + rect.left + rect.width / 2,
+          y: iframeRect.top + rect.top - 48,
+        });
+      });
+    }
+
+    iframe.addEventListener('load', handleIframeLoad);
+    // Also try immediately in case already loaded
+    handleIframeLoad();
+
+    return () => {
+      iframe.removeEventListener('load', handleIframeLoad);
+    };
+  }, [editMode, activeTab]);
+
+  // ─── Toolbar commands ───────────────────────────────────────────────
+
+  function execCommand(command: string, value?: string) {
+    const iframeDoc = iframeRef.current?.contentDocument;
+    if (!iframeDoc) return;
+    iframeDoc.execCommand(command, false, value);
+  }
+
+  // ─── Save edited HTML ───────────────────────────────────────────────
+
+  async function handleSave() {
+    const iframe = iframeRef.current;
+    if (!iframe?.contentDocument) return;
+    const variant = variants[activeTab];
+    if (!variant || variant.status !== 'ready') return;
+
+    setSaving(true);
+    try {
+      const html = '<!DOCTYPE html>' + iframe.contentDocument.documentElement.outerHTML;
+      const res = await fetch(`/api/ai/variants/${variant.variant_id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ html }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        toast.error(err.error || 'Failed to save');
+        return;
+      }
+      const data = await res.json();
+      toast.success(`Saved (v${data.version})`);
+    } catch {
+      toast.error('Failed to save');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // ─── Regenerate variant ─────────────────────────────────────────────
+
+  async function handleRegenerate() {
+    const variant = variants[activeTab];
+    if (!variant || variant.status !== 'ready') return;
+
+    setRegenerating(true);
+    try {
+      const res = await fetch(`/api/ai/variants/${variant.variant_id}/regenerate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          instructions: regenInstructions.trim() || undefined,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        toast.error(err.error || 'Regeneration failed');
+        return;
+      }
+      const data = await res.json();
+      // Update variant in state
+      setVariants(prev => prev.map(v =>
+        v.variant_id === variant.variant_id
+          ? {
+              ...v,
+              label: data.label || v.label,
+              impact_hypothesis: data.impact_hypothesis || v.impact_hypothesis,
+              changes_summary: data.changes_summary || v.changes_summary,
+            }
+          : v
+      ));
+      // Reload iframe
+      if (iframeRef.current) {
+        iframeRef.current.src = variant.hosted_url + '?v=' + data.version;
+      }
+      toast.success('Variant regenerated!');
+      setShowRegenInput(false);
+      setRegenInstructions('');
+    } catch {
+      toast.error('Regeneration failed');
+    } finally {
+      setRegenerating(false);
+    }
+  }
+
+  // ─── Export HTML ────────────────────────────────────────────────────
+
+  function handleExport() {
+    const iframe = iframeRef.current;
+    if (!iframe?.contentDocument) return;
+    const variant = variants[activeTab];
+    if (!variant) return;
+
+    const html = '<!DOCTYPE html>' + iframe.contentDocument.documentElement.outerHTML;
+    const blob = new Blob([html], { type: 'text/html' });
+    const downloadUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    a.download = `variant-${variant.label.toLowerCase().replace(/\s+/g, '-')}.html`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(downloadUrl);
+    toast.success('HTML exported');
+  }
+
+  // ─── Step 1: Analyze Page ──────────────────────────────────────────
 
   const handleAnalyze = useCallback(async () => {
     if (!url.trim()) return;
@@ -94,7 +263,6 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
       setScrapedPageId(data.scraped_page_id);
       setScreenshotDesktop(data.screenshot_desktop);
       setAnalysis(data.analysis);
-      // Pre-fill test name from analysis
       const offer = (data.analysis as Analysis)?.primary_offer;
       if (offer) setTestName(offer.slice(0, 60));
       setStep('analyzed');
@@ -105,7 +273,7 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
     }
   }, [url]);
 
-  // ─── Step 2: Generate Variants ─────────────────────────────────────────
+  // ─── Step 2: Generate Variants ─────────────────────────────────────
 
   const handleGenerate = useCallback(async (testId: string) => {
     setGenerating(true);
@@ -193,7 +361,7 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
           changes_summary: data.changes_summary as ChangeItem[],
           hosted_url: data.hosted_url as string,
           status: 'ready',
-          approved: true, // default approved
+          approved: true,
         }]);
         setActiveTab(data.index as number);
         setGenProgress(`Variant "${data.label}" ready!`);
@@ -217,7 +385,7 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
     }
   }
 
-  // ─── Step 3: Launch Test ───────────────────────────────────────────────
+  // ─── Step 3: Launch Test ───────────────────────────────────────────
 
   const approvedCount = variants.filter(v => v.approved && v.status === 'ready').length;
 
@@ -228,9 +396,8 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
     }
     setLaunching(true);
     try {
-      // Create the test
       const approved = variants.filter(v => v.approved && v.status === 'ready');
-      const weight = Math.floor(100 / (approved.length + 1)); // +1 for control
+      const weight = Math.floor(100 / (approved.length + 1));
       const controlWeight = 100 - weight * approved.length;
 
       const res = await fetch(`/api/workspaces/${workspaceId}/tests`, {
@@ -259,7 +426,6 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
 
       const test = await res.json();
 
-      // Add each approved AI variant
       for (const variant of approved) {
         await fetch(`/api/tests/${test.id}/variants`, {
           method: 'POST',
@@ -282,10 +448,9 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
     }
   }, [variants, approvedCount, testName, urlPath, url, workspaceId, clientId, router]);
 
-  // ─── First test creation for generate ──────────────────────────────────
+  // ─── First test creation for generate ──────────────────────────────
 
   const handleStartGeneration = useCallback(async () => {
-    // Create a draft test first to get a test_id for the generate endpoint
     try {
       const res = await fetch(`/api/workspaces/${workspaceId}/tests`, {
         method: 'POST',
@@ -314,7 +479,7 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
     }
   }, [workspaceId, testName, urlPath, url, handleGenerate]);
 
-  // ─── Toggle helpers ────────────────────────────────────────────────────
+  // ─── Toggle helpers ────────────────────────────────────────────────
 
   function toggleApproval(index: number) {
     setVariants(prev => prev.map(v =>
@@ -331,7 +496,9 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
     });
   }
 
-  // ─── Render ────────────────────────────────────────────────────────────
+  // ─── Render ────────────────────────────────────────────────────────
+
+  const activeVariant = variants[activeTab];
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
@@ -471,7 +638,7 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
               </div>
             </div>
 
-            {/* Test config before generating */}
+            {/* Test config */}
             <div className="border-t border-slate-200 dark:border-slate-700 pt-4 space-y-3">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div>
@@ -576,7 +743,7 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
                 {variants.map((v, i) => (
                   <button
                     key={i}
-                    onClick={() => setActiveTab(i)}
+                    onClick={() => { setActiveTab(i); setEditMode(false); setShowRegenInput(false); }}
                     className={`flex-1 px-4 py-3 text-sm font-medium transition-colors border-b-2 ${
                       activeTab === i
                         ? 'border-[#3D8BDA] text-[#3D8BDA]'
@@ -602,41 +769,41 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
             </div>
 
             {/* Active variant content */}
-            {variants[activeTab] && (
+            {activeVariant && (
               <div className="p-5 space-y-4">
-                {variants[activeTab].status === 'error' ? (
+                {activeVariant.status === 'error' ? (
                   <div className="text-center py-8">
                     <X size={32} className="mx-auto text-red-400 mb-2" />
                     <p className="text-red-400 font-medium">Generation Failed</p>
-                    <p className="text-sm text-slate-500 mt-1">{variants[activeTab].error}</p>
+                    <p className="text-sm text-slate-500 mt-1">{activeVariant.error}</p>
                   </div>
                 ) : (
                   <>
-                    {/* Strategy & hypothesis */}
+                    {/* Strategy & hypothesis + action buttons */}
                     <div className="flex items-start justify-between gap-4">
                       <div>
                         <h3 className="font-semibold text-slate-900 dark:text-slate-100">
-                          {variants[activeTab].label}
+                          {activeVariant.label}
                         </h3>
                         <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-                          {variants[activeTab].impact_hypothesis}
+                          {activeVariant.impact_hypothesis}
                         </p>
                       </div>
                       <div className="flex items-center gap-2 flex-shrink-0">
                         <button
                           onClick={() => toggleApproval(activeTab)}
                           className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                            variants[activeTab].approved
+                            activeVariant.approved
                               ? 'bg-green-500/20 text-green-400 border border-green-500/30'
                               : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 border border-slate-300 dark:border-slate-600'
                           }`}
                         >
-                          <Check size={12} /> {variants[activeTab].approved ? 'Approved' : 'Approve'}
+                          <Check size={12} /> {activeVariant.approved ? 'Approved' : 'Approve'}
                         </button>
                         <button
                           onClick={() => toggleApproval(activeTab)}
                           className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                            !variants[activeTab].approved
+                            !activeVariant.approved
                               ? 'bg-red-500/20 text-red-400 border border-red-500/30'
                               : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 border border-slate-300 dark:border-slate-600'
                           }`}
@@ -646,25 +813,166 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
                       </div>
                     </div>
 
-                    {/* Preview iframe */}
-                    <div className="rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden bg-white">
-                      <div className="bg-slate-100 dark:bg-slate-800 px-4 py-2 flex items-center gap-2 border-b border-slate-200 dark:border-slate-700">
-                        <div className="flex gap-1.5">
-                          <div className="w-2.5 h-2.5 rounded-full bg-red-400/50" />
-                          <div className="w-2.5 h-2.5 rounded-full bg-yellow-400/50" />
-                          <div className="w-2.5 h-2.5 rounded-full bg-green-400/50" />
-                        </div>
-                        <span className="text-xs text-slate-400 font-mono truncate flex-1 text-center">
-                          {variants[activeTab].hosted_url}
-                        </span>
+                    {/* Toolbar row: preview mode, edit toggle, actions */}
+                    <div className="flex items-center justify-between gap-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg px-4 py-2 border border-slate-200 dark:border-slate-700">
+                      {/* Preview mode toggle */}
+                      <div className="flex items-center gap-1 bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 p-0.5">
+                        <button
+                          onClick={() => setPreviewMode('desktop')}
+                          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                            previewMode === 'desktop'
+                              ? 'bg-[#3D8BDA] text-white'
+                              : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
+                          }`}
+                        >
+                          <Monitor size={13} /> Desktop
+                        </button>
+                        <button
+                          onClick={() => setPreviewMode('mobile')}
+                          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                            previewMode === 'mobile'
+                              ? 'bg-[#3D8BDA] text-white'
+                              : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
+                          }`}
+                        >
+                          <Smartphone size={13} /> Mobile
+                        </button>
                       </div>
-                      <iframe
-                        src={variants[activeTab].hosted_url}
-                        className="w-full h-[500px] border-0"
-                        title={`Preview: ${variants[activeTab].label}`}
-                        sandbox="allow-scripts allow-same-origin"
-                      />
+
+                      {/* Action buttons */}
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => setEditMode(!editMode)}
+                          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                            editMode
+                              ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                              : 'bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600'
+                          }`}
+                        >
+                          <Type size={12} /> {editMode ? 'Editing' : 'Edit Text'}
+                        </button>
+                        {editMode && (
+                          <Button
+                            variant="primary"
+                            size="sm"
+                            loading={saving}
+                            onClick={handleSave}
+                            className="!bg-[#3D8BDA] hover:!bg-[#3578c0]"
+                          >
+                            <Save size={12} /> Save
+                          </Button>
+                        )}
+                        <button
+                          onClick={() => setShowRegenInput(!showRegenInput)}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600 transition-colors"
+                        >
+                          <RotateCcw size={12} /> Regenerate
+                        </button>
+                        <button
+                          onClick={handleExport}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600 transition-colors"
+                        >
+                          <Download size={12} /> Export
+                        </button>
+                      </div>
                     </div>
+
+                    {/* Regenerate instructions input */}
+                    {showRegenInput && (
+                      <div className="flex gap-3 items-end bg-slate-50 dark:bg-slate-800/50 rounded-lg p-4 border border-slate-200 dark:border-slate-700">
+                        <div className="flex-1">
+                          <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">
+                            Regeneration instructions (optional)
+                          </label>
+                          <textarea
+                            value={regenInstructions}
+                            onChange={(e) => setRegenInstructions(e.target.value)}
+                            className="input-base w-full h-16 resize-y text-sm"
+                            placeholder="E.g., Make the headline more urgent, change CTA color to red..."
+                          />
+                        </div>
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          loading={regenerating}
+                          onClick={handleRegenerate}
+                          className="!bg-[#3D8BDA] hover:!bg-[#3578c0] flex-shrink-0"
+                        >
+                          <RotateCcw size={12} /> Regenerate
+                        </Button>
+                      </div>
+                    )}
+
+                    {/* Preview iframe */}
+                    <div className="rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden bg-white flex justify-center">
+                      <div className={previewMode === 'mobile' ? 'w-[390px]' : 'w-full'}>
+                        <div className="bg-slate-100 dark:bg-slate-800 px-4 py-2 flex items-center gap-2 border-b border-slate-200 dark:border-slate-700">
+                          <div className="flex gap-1.5">
+                            <div className="w-2.5 h-2.5 rounded-full bg-red-400/50" />
+                            <div className="w-2.5 h-2.5 rounded-full bg-yellow-400/50" />
+                            <div className="w-2.5 h-2.5 rounded-full bg-green-400/50" />
+                          </div>
+                          <span className="text-xs text-slate-400 font-mono truncate flex-1 text-center">
+                            {activeVariant.hosted_url}
+                          </span>
+                          {editMode && (
+                            <span className="text-[10px] font-medium text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded">
+                              EDIT MODE
+                            </span>
+                          )}
+                        </div>
+                        <iframe
+                          ref={iframeRef}
+                          src={activeVariant.hosted_url}
+                          className="w-full h-[600px] border-0"
+                          title={`Preview: ${activeVariant.label}`}
+                          sandbox="allow-scripts allow-same-origin"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Floating toolbar for text editing */}
+                    {editMode && toolbarPos && (
+                      <div
+                        ref={toolbarRef}
+                        className="fixed z-50 flex items-center gap-1 bg-slate-900 rounded-lg shadow-xl px-2 py-1.5 border border-slate-700"
+                        style={{
+                          left: `${toolbarPos.x}px`,
+                          top: `${toolbarPos.y}px`,
+                          transform: 'translateX(-50%)',
+                        }}
+                      >
+                        <button
+                          onClick={() => execCommand('bold')}
+                          className="p-1.5 rounded hover:bg-slate-700 text-white transition-colors"
+                          title="Bold"
+                        >
+                          <Bold size={14} />
+                        </button>
+                        <button
+                          onClick={() => execCommand('italic')}
+                          className="p-1.5 rounded hover:bg-slate-700 text-white transition-colors"
+                          title="Italic"
+                        >
+                          <Italic size={14} />
+                        </button>
+                        <div className="w-px h-5 bg-slate-600 mx-1" />
+                        <button
+                          onClick={() => execCommand('fontSize', '5')}
+                          className="p-1.5 rounded hover:bg-slate-700 text-white transition-colors text-xs font-bold"
+                          title="Increase size"
+                        >
+                          A+
+                        </button>
+                        <button
+                          onClick={() => execCommand('fontSize', '2')}
+                          className="p-1.5 rounded hover:bg-slate-700 text-white transition-colors text-xs"
+                          title="Decrease size"
+                        >
+                          A-
+                        </button>
+                      </div>
+                    )}
 
                     {/* Changes summary */}
                     <div>
@@ -673,11 +981,11 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
                         className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100 transition-colors"
                       >
                         {expandedChanges.has(activeTab) ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                        Changes Summary ({variants[activeTab].changes_summary.length} changes)
+                        Changes Summary ({activeVariant.changes_summary.length} changes)
                       </button>
                       {expandedChanges.has(activeTab) && (
                         <div className="mt-3 space-y-2">
-                          {variants[activeTab].changes_summary.map((item, i) => (
+                          {activeVariant.changes_summary.map((item, i) => (
                             <div
                               key={i}
                               className="flex gap-3 p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700"
