@@ -10,68 +10,33 @@ export const dynamic = 'force-dynamic';
 const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
-const SCREENSHOTS_BUCKET = 'screenshots';
-
-async function uploadScreenshot(
-  buffer: Buffer,
-  path: string
-): Promise<string> {
-  const { error } = await db.storage
-    .from(SCREENSHOTS_BUCKET)
-    .upload(path, buffer, {
-      contentType: 'image/png',
-      upsert: true,
-    });
-
-  if (error) throw new Error(`Screenshot upload failed: ${error.message}`);
-
-  const { data } = db.storage.from(SCREENSHOTS_BUCKET).getPublicUrl(path);
-  return data.publicUrl;
-}
-
-async function scrapeWithPuppeteer(url: string) {
-  /* eslint-disable @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any */
-  const chromium: any = require('@sparticuz/chromium');
-  const puppeteer: any = require('puppeteer-core');
-  /* eslint-enable @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any */
-
-  const browser = await puppeteer.launch({
-    args: chromium.args,
-    defaultViewport: null,
-    executablePath: await chromium.executablePath(),
-    headless: 'shell' as const,
-  });
+async function scrapeWithFetch(url: string): Promise<string> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20_000);
 
   try {
-    const page = await browser.newPage();
-    await page.setUserAgent(USER_AGENT);
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': USER_AGENT,
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
+      signal: controller.signal,
+      redirect: 'follow',
+    });
 
-    // Desktop viewport for initial load
-    await page.setViewport({ width: 1440, height: 900 });
-    await page.goto(url, { waitUntil: 'networkidle0', timeout: 30_000 });
+    if (!res.ok) {
+      throw new Error(`Page returned HTTP ${res.status}`);
+    }
 
-    // Capture full rendered HTML
-    const html = await page.evaluate(
-      () => document.documentElement.outerHTML
-    );
+    const html = await res.text();
+    if (!html || html.length < 100) {
+      throw new Error('Page returned empty or minimal content');
+    }
 
-    // Desktop screenshot
-    const desktopScreenshot = (await page.screenshot({
-      fullPage: true,
-      type: 'png',
-    })) as Buffer;
-
-    // Mobile screenshot
-    await page.setViewport({ width: 390, height: 844 });
-    await new Promise((r) => setTimeout(r, 1000)); // let layout reflow
-    const mobileScreenshot = (await page.screenshot({
-      fullPage: true,
-      type: 'png',
-    })) as Buffer;
-
-    return { html, desktopScreenshot, mobileScreenshot };
+    return html;
   } finally {
-    await browser.close();
+    clearTimeout(timeout);
   }
 }
 
@@ -147,26 +112,16 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Scrape the page
-    const { html, desktopScreenshot, mobileScreenshot } = await scrapeWithPuppeteer(url);
+    // Scrape the page using fetch
+    const html = await scrapeWithFetch(url);
 
     // Generate a temporary ID for storage paths
     const tempId = crypto.randomUUID();
 
-    // Upload screenshots and analyze in parallel
-    const [desktopUrl, mobileUrl, analysis] = await Promise.all([
-      uploadScreenshot(
-        Buffer.from(desktopScreenshot),
-        `scraped-pages/${tempId}/desktop.png`
-      ),
-      uploadScreenshot(
-        Buffer.from(mobileScreenshot),
-        `scraped-pages/${tempId}/mobile.png`
-      ),
-      analyzeWithClaude(html),
-    ]);
+    // Analyze with Claude (no screenshots with fetch-based approach)
+    const analysis = await analyzeWithClaude(html);
 
-    // Upsert into scraped_pages (update if URL already exists but is stale)
+    // Upsert into scraped_pages
     const { data: row, error: insertError } = await db
       .from('scraped_pages')
       .upsert(
@@ -175,8 +130,8 @@ export async function POST(request: NextRequest) {
           url,
           html,
           analysis,
-          screenshot_desktop: desktopUrl,
-          screenshot_mobile: mobileUrl,
+          screenshot_desktop: null,
+          screenshot_mobile: null,
           scraped_at: new Date().toISOString(),
         },
         { onConflict: 'url' }
@@ -191,8 +146,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       scraped_page_id: row.id,
       analysis,
-      screenshot_desktop: desktopUrl,
-      screenshot_mobile: mobileUrl,
+      screenshot_desktop: null,
+      screenshot_mobile: null,
       cached: false,
     });
   } catch (err: unknown) {
