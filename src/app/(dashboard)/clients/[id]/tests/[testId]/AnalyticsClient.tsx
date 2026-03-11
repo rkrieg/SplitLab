@@ -7,7 +7,7 @@ import {
   Download, RefreshCw, Trophy, TrendingUp, Code2, Copy,
   ChevronRight, ShieldCheck, ShieldX, FileCode2,
   Loader2, Globe, ExternalLink, Plus, Trash2, Check, X,
-  Pencil, BarChart3, Users, Settings as SettingsIcon,
+  Pencil, BarChart3, Users, Settings as SettingsIcon, Sparkles,
 } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import Modal from '@/components/ui/Modal';
@@ -30,6 +30,9 @@ interface Variant {
   proxy_mode?: boolean;
   pages?: { id: string; name: string } | null;
   tracking_verified?: boolean | null;
+  is_ai_generated?: boolean;
+  variant_type?: string;
+  hosted_url?: string | null;
 }
 
 interface Goal {
@@ -675,13 +678,23 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
                             <div className="flex items-center gap-2">
                               <span className="font-medium text-slate-800 dark:text-slate-200">{stat.variant.name}</span>
                               {stat.variant.is_control && <span className="badge bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 text-[10px]">control</span>}
+                              {stat.variant.is_ai_generated && (
+                                <span className="inline-flex items-center gap-1 badge bg-[#3D8BDA]/10 text-[#3D8BDA] border border-[#3D8BDA]/20 text-[10px]">
+                                  <Sparkles size={9} /> AI Generated
+                                </span>
+                              )}
                               {stat.isWinner && <Trophy size={13} className="text-green-400" />}
                               {stat.variant.redirect_url && (
                                 verified === true ? <ShieldCheck size={11} className="text-green-400" /> :
                                 verified === false ? <ShieldX size={11} className="text-red-400" /> : null
                               )}
                             </div>
-                            {stat.variant.redirect_url && !isEditing && (
+                            {stat.variant.variant_type === 'hosted' && stat.variant.hosted_url && !isEditing && (
+                              <p className="text-slate-500 text-xs font-mono truncate max-w-[250px] mt-0.5">
+                                {stat.variant.hosted_url}
+                              </p>
+                            )}
+                            {stat.variant.variant_type !== 'hosted' && stat.variant.redirect_url && !isEditing && (
                               <p className="text-slate-500 text-xs font-mono truncate max-w-[250px] mt-0.5">
                                 {stat.variant.redirect_url}
                               </p>
