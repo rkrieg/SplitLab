@@ -56,6 +56,7 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
   const [url, setUrl] = useState('');
   const [instructions, setInstructions] = useState('');
   const [scraping, setScraping] = useState(false);
+  const [scrapeError, setScrapeError] = useState('');
 
   // Analysis result
   const [scrapedPageId, setScrapedPageId] = useState('');
@@ -248,6 +249,7 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
   const handleAnalyze = useCallback(async () => {
     if (!url.trim()) return;
     setScraping(true);
+    setScrapeError('');
     try {
       const res = await fetch('/api/ai/scrape', {
         method: 'POST',
@@ -255,8 +257,13 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
         body: JSON.stringify({ url: url.trim() }),
       });
       if (!res.ok) {
-        const err = await res.json();
-        toast.error(err.error || 'Failed to analyze page');
+        let errMsg = 'Failed to analyze page';
+        try {
+          const err = await res.json();
+          errMsg = err.error || errMsg;
+        } catch { /* non-JSON error body */ }
+        setScrapeError(errMsg);
+        toast.error(errMsg);
         return;
       }
       const data = await res.json();
@@ -266,8 +273,10 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
       const offer = (data.analysis as Analysis)?.primary_offer;
       if (offer) setTestName(offer.slice(0, 60));
       setStep('analyzed');
-    } catch {
-      toast.error('Network error');
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Network error — check your connection';
+      setScrapeError(msg);
+      toast.error(msg);
     } finally {
       setScraping(false);
     }
@@ -556,6 +565,11 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
                 )}
               </button>
             </div>
+            {scrapeError && (
+              <div className="mt-2 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
+                <strong>Error:</strong> {scrapeError}
+              </div>
+            )}
           </div>
 
           {/* Optional instructions */}

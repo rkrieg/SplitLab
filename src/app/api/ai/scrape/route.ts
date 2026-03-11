@@ -10,68 +10,33 @@ export const dynamic = 'force-dynamic';
 const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
-const SCREENSHOTS_BUCKET = 'screenshots';
-
-async function uploadScreenshot(
-  buffer: Buffer,
-  path: string
-): Promise<string> {
-  const { error } = await db.storage
-    .from(SCREENSHOTS_BUCKET)
-    .upload(path, buffer, {
-      contentType: 'image/png',
-      upsert: true,
-    });
-
-  if (error) throw new Error(`Screenshot upload failed: ${error.message}`);
-
-  const { data } = db.storage.from(SCREENSHOTS_BUCKET).getPublicUrl(path);
-  return data.publicUrl;
-}
-
-async function scrapeWithPuppeteer(url: string) {
-  /* eslint-disable @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any */
-  const chromium: any = require('@sparticuz/chromium');
-  const puppeteer: any = require('puppeteer-core');
-  /* eslint-enable @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any */
-
-  const browser = await puppeteer.launch({
-    args: chromium.args,
-    defaultViewport: null,
-    executablePath: await chromium.executablePath(),
-    headless: 'shell' as const,
-  });
+async function scrapeWithFetch(url: string): Promise<string> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20_000);
 
   try {
-    const page = await browser.newPage();
-    await page.setUserAgent(USER_AGENT);
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': USER_AGENT,
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
+      signal: controller.signal,
+      redirect: 'follow',
+    });
 
-    // Desktop viewport for initial load
-    await page.setViewport({ width: 1440, height: 900 });
-    await page.goto(url, { waitUntil: 'networkidle0', timeout: 30_000 });
+    if (!res.ok) {
+      throw new Error(`Page returned HTTP ${res.status}`);
+    }
 
-    // Capture full rendered HTML
-    const html = await page.evaluate(
-      () => document.documentElement.outerHTML
-    );
+    const html = await res.text();
+    if (!html || html.length < 100) {
+      throw new Error('Page returned empty or minimal content');
+    }
 
-    // Desktop screenshot
-    const desktopScreenshot = (await page.screenshot({
-      fullPage: true,
-      type: 'png',
-    })) as Buffer;
-
-    // Mobile screenshot
-    await page.setViewport({ width: 390, height: 844 });
-    await new Promise((r) => setTimeout(r, 1000)); // let layout reflow
-    const mobileScreenshot = (await page.screenshot({
-      fullPage: true,
-      type: 'png',
-    })) as Buffer;
-
-    return { html, desktopScreenshot, mobileScreenshot };
+    return html;
   } finally {
-    await browser.close();
+    clearTimeout(timeout);
   }
 }
 
@@ -111,6 +76,15 @@ async function analyzeWithClaude(html: string) {
   }
 }
 
+// Check if scraped_pages table exists
+async function tableExists(): Promise<boolean> {
+  const { error } = await db
+    .from('scraped_pages')
+    .select('id')
+    .limit(0);
+  return !error;
+}
+
 export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) {
@@ -128,71 +102,94 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid or missing URL' }, { status: 400 });
   }
 
-  try {
-    // Check cache — return if scraped within the last 24 hours
-    const { data: cached } = await db
-      .from('scraped_pages')
-      .select('*')
-      .eq('url', url)
-      .gte('scraped_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
-      .maybeSingle();
+  // Pre-flight: check if ANTHROPIC_API_KEY is set
+  if (!process.env.ANTHROPIC_API_KEY) {
+    return NextResponse.json(
+      { error: 'ANTHROPIC_API_KEY is not configured. Add it to your Vercel environment variables.' },
+      { status: 500 }
+    );
+  }
 
-    if (cached) {
-      return NextResponse.json({
-        scraped_page_id: cached.id,
-        analysis: cached.analysis,
-        screenshot_desktop: cached.screenshot_desktop,
-        screenshot_mobile: cached.screenshot_mobile,
-        cached: true,
-      });
+  try {
+    // Check if the DB table exists
+    const hasTable = await tableExists();
+
+    // Check cache if table exists
+    if (hasTable) {
+      const { data: cached } = await db
+        .from('scraped_pages')
+        .select('*')
+        .eq('url', url)
+        .gte('scraped_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
+        .maybeSingle();
+
+      if (cached) {
+        return NextResponse.json({
+          scraped_page_id: cached.id,
+          analysis: cached.analysis,
+          screenshot_desktop: cached.screenshot_desktop,
+          screenshot_mobile: cached.screenshot_mobile,
+          cached: true,
+        });
+      }
     }
 
-    // Scrape the page
-    const { html, desktopScreenshot, mobileScreenshot } = await scrapeWithPuppeteer(url);
+    // Scrape the page using fetch
+    let html: string;
+    try {
+      html = await scrapeWithFetch(url);
+    } catch (scrapeErr) {
+      const msg = scrapeErr instanceof Error ? scrapeErr.message : 'Unknown scrape error';
+      return NextResponse.json(
+        { error: `Could not fetch the page: ${msg}. Make sure the URL is accessible.` },
+        { status: 422 }
+      );
+    }
 
-    // Generate a temporary ID for storage paths
-    const tempId = crypto.randomUUID();
+    // Analyze with Claude
+    let analysis;
+    try {
+      analysis = await analyzeWithClaude(html);
+    } catch (aiErr) {
+      const msg = aiErr instanceof Error ? aiErr.message : 'Unknown AI error';
+      return NextResponse.json(
+        { error: `AI analysis failed: ${msg}` },
+        { status: 500 }
+      );
+    }
 
-    // Upload screenshots and analyze in parallel
-    const [desktopUrl, mobileUrl, analysis] = await Promise.all([
-      uploadScreenshot(
-        Buffer.from(desktopScreenshot),
-        `scraped-pages/${tempId}/desktop.png`
-      ),
-      uploadScreenshot(
-        Buffer.from(mobileScreenshot),
-        `scraped-pages/${tempId}/mobile.png`
-      ),
-      analyzeWithClaude(html),
-    ]);
+    // Try to save to DB (non-fatal if table doesn't exist)
+    let scrapedPageId = crypto.randomUUID();
+    if (hasTable) {
+      const { data: row, error: insertError } = await db
+        .from('scraped_pages')
+        .upsert(
+          {
+            id: scrapedPageId,
+            url,
+            html,
+            analysis,
+            screenshot_desktop: null,
+            screenshot_mobile: null,
+            scraped_at: new Date().toISOString(),
+          },
+          { onConflict: 'url' }
+        )
+        .select('id')
+        .single();
 
-    // Upsert into scraped_pages (update if URL already exists but is stale)
-    const { data: row, error: insertError } = await db
-      .from('scraped_pages')
-      .upsert(
-        {
-          id: tempId,
-          url,
-          html,
-          analysis,
-          screenshot_desktop: desktopUrl,
-          screenshot_mobile: mobileUrl,
-          scraped_at: new Date().toISOString(),
-        },
-        { onConflict: 'url' }
-      )
-      .select('id')
-      .single();
-
-    if (insertError) {
-      throw new Error(`Database insert failed: ${insertError.message}`);
+      if (!insertError && row) {
+        scrapedPageId = row.id;
+      } else {
+        console.warn('DB insert failed (non-fatal):', insertError?.message);
+      }
     }
 
     return NextResponse.json({
-      scraped_page_id: row.id,
+      scraped_page_id: scrapedPageId,
       analysis,
-      screenshot_desktop: desktopUrl,
-      screenshot_mobile: mobileUrl,
+      screenshot_desktop: null,
+      screenshot_mobile: null,
       cached: false,
     });
   } catch (err: unknown) {
