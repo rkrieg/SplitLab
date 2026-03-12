@@ -208,34 +208,49 @@ export async function POST(request: NextRequest) {
         strategies: strategies.map((s) => s.label),
       });
 
-      // Generate variants sequentially (each needs its own time within the 60s window)
+      // Generate all variants in PARALLEL to fit within 60s timeout
+      sendEvent('generating', {
+        strategies: strategies.map((s, i) => ({ index: i, label: s.label, status: 'in_progress' })),
+      });
+
+      // Build prompts and fire all Claude calls concurrently
+      const variantPromises = strategies.map(async (strategy, index) => {
+        const prompt = buildPrompt(
+          scrapedPage.html,
+          scrapedPage.analysis || {},
+          strategy,
+          scrapedPage.url,
+          instructions
+        );
+
+        const response = await ask(prompt, {
+          model: 'claude-sonnet-4-20250514',
+          maxTokens: 8192,
+        });
+
+        return { index, strategy, prompt, response };
+      });
+
+      const results = await Promise.allSettled(variantPromises);
       const completed: unknown[] = [];
 
-      for (let index = 0; index < strategies.length; index++) {
-        const strategy = strategies[index];
+      // Process results and persist to DB
+      for (const result of results) {
+        if (result.status === 'rejected') {
+          const idx = results.indexOf(result);
+          console.error(`Variant ${idx} failed:`, result.reason);
+          sendEvent('variant_error', {
+            index: idx,
+            label: strategies[idx]?.label,
+            error: result.reason?.message || 'Generation failed',
+          });
+          continue;
+        }
+
+        const { index, strategy, prompt, response } = result.value;
         try {
-          sendEvent('generating', {
-            index,
-            label: strategy.label,
-            status: 'in_progress',
-          });
-
-          const prompt = buildPrompt(
-            scrapedPage.html,
-            scrapedPage.analysis || {},
-            strategy,
-            scrapedPage.url,
-            instructions
-          );
-
-          const response = await ask(prompt, {
-            model: 'claude-sonnet-4-20250514',
-            maxTokens: 8192,
-          });
-
           const parsed = parseClaudeResponse(response);
 
-          // Create test_variant record
           const variantId = crypto.randomUUID();
           const weight = Math.floor(100 / (strategies.length + 1));
 
@@ -249,11 +264,8 @@ export async function POST(request: NextRequest) {
             variant_type: 'hosted',
           });
 
-          if (variantErr) {
-            throw new Error(`Failed to create variant: ${variantErr.message}`);
-          }
+          if (variantErr) throw new Error(`Failed to create variant: ${variantErr.message}`);
 
-          // Upload HTML to Supabase Storage
           const storagePath = `${testId}/${variantId}.html`;
           const { error: uploadErr } = await db.storage
             .from(VARIANTS_BUCKET)
@@ -262,21 +274,17 @@ export async function POST(request: NextRequest) {
               upsert: true,
             });
 
-          if (uploadErr) {
-            throw new Error(`Failed to upload HTML: ${uploadErr.message}`);
-          }
+          if (uploadErr) throw new Error(`Failed to upload HTML: ${uploadErr.message}`);
 
           const { data: urlData } = db.storage
             .from(VARIANTS_BUCKET)
             .getPublicUrl(storagePath);
 
-          // Update variant with hosted_url
           await db
             .from('test_variants')
             .update({ hosted_url: urlData.publicUrl })
             .eq('id', variantId);
 
-          // Create variant_pages record
           const { error: pageErr } = await db.from('variant_pages').insert({
             variant_id: variantId,
             html_storage_path: storagePath,
@@ -286,11 +294,9 @@ export async function POST(request: NextRequest) {
             status: 'ready',
           });
 
-          if (pageErr) {
-            throw new Error(`Failed to create variant_page: ${pageErr.message}`);
-          }
+          if (pageErr) throw new Error(`Failed to create variant_page: ${pageErr.message}`);
 
-          const result = {
+          const variantResult = {
             index,
             variant_id: variantId,
             label: parsed.variant_label,
@@ -300,16 +306,12 @@ export async function POST(request: NextRequest) {
             status: 'ready',
           };
 
-          sendEvent('variant_ready', result);
-          completed.push(result);
+          sendEvent('variant_ready', variantResult);
+          completed.push(variantResult);
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : 'Generation failed';
           console.error(`Variant ${index} (${strategy.label}) failed:`, err);
-          sendEvent('variant_error', {
-            index,
-            label: strategy.label,
-            error: message,
-          });
+          sendEvent('variant_error', { index, label: strategy.label, error: message });
         }
       }
 
