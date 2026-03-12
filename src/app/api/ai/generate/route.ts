@@ -51,6 +51,24 @@ const STRATEGIES: VariantStrategy[] = [
   },
 ];
 
+// Strip HTML to essentials — remove scripts, large style blocks, SVGs, comments
+function stripHtml(html: string): string {
+  let s = html;
+  // Remove script tags and contents
+  s = s.replace(/<script[\s\S]*?<\/script>/gi, '');
+  // Remove SVGs
+  s = s.replace(/<svg[\s\S]*?<\/svg>/gi, '<svg/>');
+  // Remove HTML comments
+  s = s.replace(/<!--[\s\S]*?-->/g, '');
+  // Remove inline styles longer than 200 chars (keep short ones)
+  s = s.replace(/style="[^"]{200,}"/gi, 'style="..."');
+  // Collapse whitespace
+  s = s.replace(/\s{2,}/g, ' ');
+  // Truncate to 20K chars max
+  if (s.length > 20_000) s = s.slice(0, 20_000) + '\n<!-- truncated -->';
+  return s;
+}
+
 function buildPrompt(
   html: string,
   analysis: Record<string, unknown>,
@@ -58,44 +76,33 @@ function buildPrompt(
   sourceUrl: string,
   instructions?: string
 ): string {
-  const truncatedHtml =
-    html.length > 60_000 ? html.slice(0, 60_000) + '\n<!-- truncated -->' : html;
+  const strippedHtml = stripHtml(html);
 
-  let prompt = `You are an expert conversion rate optimization specialist. You have been given an original landing page and its analysis. Your job is to create a complete, modified variant of this page using the "${strategy.label}" strategy.
+  let prompt = `You are a CRO specialist. Create a variant of this landing page using the "${strategy.label}" strategy.
 
-## Strategy: ${strategy.label}
+## Strategy
 ${strategy.directives}
 
-## Original Page Analysis
+## Page Analysis
 ${JSON.stringify(analysis, null, 2)}
 
-## Original Page Source URL
-${sourceUrl}
+## Source URL: ${sourceUrl}
 
-## Requirements for the generated HTML
-1. Return a COMPLETE, self-contained HTML page with ALL CSS inlined (in <style> tags, not external stylesheets)
-2. Keep ALL original image URLs exactly as they are — do not modify src attributes for images
-3. The page MUST be fully responsive (mobile-first, works at 390px through 1440px+)
-4. Add data-sl-editable="true" attribute on all text-containing elements (headings, paragraphs, buttons, links with text, list items) so they can be edited later
-5. Preserve any tracking scripts or meta tags from the original
-6. Do NOT add any external CSS frameworks or JS libraries that weren't in the original
+## Requirements
+- Return a COMPLETE self-contained HTML page with ALL CSS inlined in <style> tags
+- Keep ALL original image URLs exactly as-is
+- Must be responsive (390px to 1440px+)
+- Add data-sl-editable="true" on text elements (h1-h6, p, a, button, li, span with text)
+- Do NOT add external CSS/JS libraries
 
-## Response Format
-Return ONLY valid JSON (no markdown fences, no explanation) with this exact structure:
-{
-  "html": "<!DOCTYPE html>...complete HTML page...",
-  "changes_summary": [
-    { "change": "description of what was changed", "reason": "why this change improves conversions" }
-  ],
-  "variant_label": "${strategy.label}",
-  "impact_hypothesis": "A clear hypothesis about how this variant will impact conversion rates"
-}
+## Response: ONLY valid JSON, no markdown fences
+{"html":"<!DOCTYPE html>...","changes_summary":[{"change":"...","reason":"..."}],"variant_label":"${strategy.label}","impact_hypothesis":"..."}
 
-## Original HTML
-${truncatedHtml}`;
+## Original HTML (stripped)
+${strippedHtml}`;
 
   if (instructions) {
-    prompt += `\n\n## Additional Instructions from User\n${instructions}`;
+    prompt += `\n\n## User Instructions\n${instructions}`;
   }
 
   return prompt;
@@ -223,7 +230,7 @@ export async function POST(request: NextRequest) {
 
           const response = await ask(prompt, {
             model: 'claude-sonnet-4-20250514',
-            maxTokens: 16384,
+            maxTokens: 8192,
           });
 
           const parsed = parseClaudeResponse(response);
