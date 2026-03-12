@@ -23,12 +23,15 @@ export async function ask(
 ): Promise<string> {
   const anthropic = getClient();
 
-  const response = await anthropic.messages.create({
+  // Use streaming to avoid 10-minute timeout on long-running requests
+  const stream = anthropic.messages.stream({
     model: options?.model ?? "claude-sonnet-4-20250514",
     max_tokens: options?.maxTokens ?? 1024,
     ...(options?.system ? { system: options.system } : {}),
     messages: [{ role: "user", content: prompt }],
   });
+
+  const response = await stream.finalMessage();
 
   const block = response.content[0];
   if (block.type === "text") {
