@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import toast from 'react-hot-toast';
-import { User, Lock, Info } from 'lucide-react';
+import { User, Lock, Info, Cpu } from 'lucide-react';
 import Button from '@/components/ui/Button';
 
 interface Props {
@@ -15,6 +15,29 @@ export default function SettingsClient({ user }: Props) {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [savingProfile, setSavingProfile] = useState(false);
   const [savingPassword, setSavingPassword] = useState(false);
+  const [aiDebug, setAiDebug] = useState<Record<string, unknown> | null>(null);
+  const [testingAi, setTestingAi] = useState(false);
+
+  async function handleTestAI() {
+    setTestingAi(true);
+    setAiDebug(null);
+    try {
+      const res = await fetch('/api/ai/debug');
+      const data = await res.json();
+      setAiDebug(data);
+      if (data.api_test === 'SUCCESS') {
+        toast.success('AI API key is working!');
+      } else if (data.api_test === 'FAILED') {
+        toast.error(`AI API failed: ${data.api_error}`);
+      } else if (!data.key_exists) {
+        toast.error('ANTHROPIC_API_KEY not set in environment');
+      }
+    } catch {
+      toast.error('Failed to reach debug endpoint');
+    } finally {
+      setTestingAi(false);
+    }
+  }
 
   async function handleSaveProfile(e: React.FormEvent) {
     e.preventDefault();
@@ -101,6 +124,22 @@ export default function SettingsClient({ user }: Props) {
             <Button type="submit" loading={savingPassword}>Update Password</Button>
           </div>
         </form>
+      </div>
+      {/* AI API Key Debug */}
+      <div className="card p-6">
+        <div className="flex items-center gap-2 mb-5">
+          <Cpu size={16} className="text-slate-500 dark:text-slate-400" />
+          <h2 className="font-semibold text-slate-900 dark:text-slate-100">AI Configuration</h2>
+        </div>
+        <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
+          Test the Anthropic API key configured in your environment.
+        </p>
+        <Button onClick={handleTestAI} loading={testingAi}>Test AI API Key</Button>
+        {aiDebug && (
+          <pre className="mt-4 p-4 bg-slate-900 text-green-400 rounded-lg text-xs overflow-auto max-h-64">
+            {JSON.stringify(aiDebug, null, 2)}
+          </pre>
+        )}
       </div>
     </div>
   );

@@ -1,16 +1,8 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth';
-import Anthropic from '@anthropic-ai/sdk';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
-  const session = await getServerSession(authOptions);
-  if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
   const raw = process.env.ANTHROPIC_API_KEY;
   const trimmed = raw?.trim();
 
@@ -20,27 +12,41 @@ export async function GET() {
     trimmed_length: trimmed?.length ?? 0,
     has_whitespace: raw !== trimmed,
     starts_with_sk: trimmed?.startsWith('sk-') ?? false,
-    prefix: trimmed ? trimmed.slice(0, 12) + '...' : 'N/A',
+    // Show first 20 chars so we can verify it's the right key
+    prefix: trimmed ? trimmed.slice(0, 20) + '...' : 'N/A',
+    suffix: trimmed ? '...' + trimmed.slice(-6) : 'N/A',
     has_quotes: trimmed?.startsWith('"') || trimmed?.startsWith("'") || false,
-    sdk_version: '0.78.0',
   };
 
-  // Try a minimal API call
+  // Try raw fetch (bypass SDK entirely)
   if (trimmed) {
     try {
-      const client = new Anthropic({ apiKey: trimmed });
-      const res = await client.messages.create({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 10,
-        messages: [{ role: 'user', content: 'Say "ok"' }],
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': trimmed,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 10,
+          messages: [{ role: 'user', content: 'Say ok' }],
+        }),
       });
-      diagnostics.api_test = 'SUCCESS';
-      diagnostics.api_response = res.content[0];
+      const data = await res.json();
+      diagnostics.raw_fetch_status = res.status;
+      diagnostics.raw_fetch_ok = res.ok;
+      if (res.ok) {
+        diagnostics.api_test = 'SUCCESS';
+        diagnostics.api_response = data.content?.[0];
+      } else {
+        diagnostics.api_test = 'FAILED';
+        diagnostics.api_error = data;
+      }
     } catch (err: unknown) {
-      const e = err as { status?: number; message?: string; error?: unknown };
-      diagnostics.api_test = 'FAILED';
-      diagnostics.api_status = e.status;
-      diagnostics.api_error = e.message;
+      diagnostics.api_test = 'FETCH_ERROR';
+      diagnostics.api_error = (err as Error).message;
     }
   }
 
