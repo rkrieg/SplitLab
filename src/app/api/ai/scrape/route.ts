@@ -150,7 +150,16 @@ export async function POST(request: NextRequest) {
     let analysis;
     try {
       analysis = await analyzeWithClaude(html);
-    } catch (aiErr) {
+    } catch (aiErr: unknown) {
+      console.error('AI analysis error:', aiErr);
+      // Check for Anthropic authentication errors
+      const errObj = aiErr as { status?: number; message?: string };
+      if (errObj.status === 401) {
+        return NextResponse.json(
+          { error: 'Anthropic API key is invalid. Please update ANTHROPIC_API_KEY in your Vercel environment variables with a valid key.' },
+          { status: 500 }
+        );
+      }
       const msg = aiErr instanceof Error ? aiErr.message : 'Unknown AI error';
       return NextResponse.json(
         { error: `AI analysis failed: ${msg}` },
