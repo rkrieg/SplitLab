@@ -201,8 +201,11 @@ export async function POST(request: NextRequest) {
         strategies: strategies.map((s) => s.label),
       });
 
-      // Launch all variant generations in parallel
-      const promises = strategies.map(async (strategy, index) => {
+      // Generate variants sequentially (each needs its own time within the 60s window)
+      const completed: unknown[] = [];
+
+      for (let index = 0; index < strategies.length; index++) {
+        const strategy = strategies[index];
         try {
           sendEvent('generating', {
             index,
@@ -219,7 +222,7 @@ export async function POST(request: NextRequest) {
           );
 
           const response = await ask(prompt, {
-            model: 'claude-opus-4-20250514',
+            model: 'claude-sonnet-4-20250514',
             maxTokens: 16384,
           });
 
@@ -227,7 +230,7 @@ export async function POST(request: NextRequest) {
 
           // Create test_variant record
           const variantId = crypto.randomUUID();
-          const weight = Math.floor(100 / (strategies.length + 1)); // leave room for control
+          const weight = Math.floor(100 / (strategies.length + 1));
 
           const { error: variantErr } = await db.from('test_variants').insert({
             id: variantId,
@@ -271,7 +274,7 @@ export async function POST(request: NextRequest) {
             variant_id: variantId,
             html_storage_path: storagePath,
             source_url: scrapedPage.url,
-            generation_prompt: prompt.slice(0, 10000), // truncate for storage
+            generation_prompt: prompt.slice(0, 10000),
             changes_summary: parsed.changes_summary,
             status: 'ready',
           });
@@ -291,7 +294,7 @@ export async function POST(request: NextRequest) {
           };
 
           sendEvent('variant_ready', result);
-          return result;
+          completed.push(result);
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : 'Generation failed';
           console.error(`Variant ${index} (${strategy.label}) failed:`, err);
@@ -300,14 +303,8 @@ export async function POST(request: NextRequest) {
             label: strategy.label,
             error: message,
           });
-          return null;
         }
-      });
-
-      const results = await Promise.allSettled(promises);
-      const completed = results
-        .map((r) => (r.status === 'fulfilled' ? r.value : null))
-        .filter(Boolean);
+      }
 
       sendEvent('complete', {
         total: strategies.length,
