@@ -193,6 +193,24 @@ export async function POST(request: NextRequest) {
 
   const strategies = STRATEGIES.slice(0, numVariants);
 
+  // Ensure the variants storage bucket exists
+  const { data: buckets } = await db.storage.listBuckets();
+  const bucketExists = buckets?.some((b) => b.name === VARIANTS_BUCKET);
+  if (!bucketExists) {
+    const { error: createErr } = await db.storage.createBucket(VARIANTS_BUCKET, {
+      public: true,
+      fileSizeLimit: 5 * 1024 * 1024, // 5MB
+    });
+    if (createErr) {
+      console.error('Failed to create variants bucket:', createErr);
+      return new Response(
+        JSON.stringify({ error: `Storage setup failed: ${createErr.message}` }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    console.log('[AI Generate] Created variants storage bucket');
+  }
+
   // SSE stream
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
