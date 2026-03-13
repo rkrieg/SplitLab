@@ -223,10 +223,12 @@ export async function POST(request: NextRequest) {
           instructions
         );
 
+        console.log(`[AI Generate] Starting variant ${index} (${strategy.label}), prompt length: ${prompt.length} chars`);
         const response = await ask(prompt, {
           model: 'claude-sonnet-4-20250514',
-          maxTokens: 8192,
+          maxTokens: 16384,
         });
+        console.log(`[AI Generate] Variant ${index} response length: ${response.length} chars`);
 
         return { index, strategy, prompt, response };
       });
@@ -249,7 +251,9 @@ export async function POST(request: NextRequest) {
 
         const { index, strategy, prompt, response } = result.value;
         try {
+          console.log(`[AI Generate] Parsing variant ${index} response...`);
           const parsed = parseClaudeResponse(response);
+          console.log(`[AI Generate] Variant ${index} parsed OK, HTML length: ${parsed.html?.length || 0}`);
 
           const variantId = crypto.randomUUID();
           const weight = Math.floor(100 / (strategies.length + 1));
