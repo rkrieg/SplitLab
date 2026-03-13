@@ -300,7 +300,7 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
         body: JSON.stringify({
           scraped_page_id: scrapedPageId,
           test_id: testId,
-          num_variants: 3,
+          num_variants: 1,
           instructions: instructions.trim() || undefined,
         }),
         signal: controller.signal,
@@ -721,11 +721,11 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
               <div className="h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
                 <div
                   className="h-full bg-[#3D8BDA] rounded-full transition-all duration-500"
-                  style={{ width: `${Math.max(10, (variants.length / 3) * 100)}%` }}
+                  style={{ width: `${Math.max(10, (variants.length / 1) * 100)}%` }}
                 />
               </div>
               <p className="text-xs text-slate-400 text-center mt-2">
-                {variants.length}/3 variants complete
+                {variants.length}/1 variants complete
               </p>
             </div>
 
