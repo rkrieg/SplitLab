@@ -386,6 +386,7 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
         setGenProgress(`Variant "${data.label}" ready!`);
         break;
       case 'variant_error':
+        toast.error(`Variant "${data.label}" failed: ${data.error}`);
         setVariants(prev => [...prev, {
           index: data.index as number,
           variant_id: '',
