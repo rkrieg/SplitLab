@@ -4,7 +4,7 @@ import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { ask } from '@/lib/claude';
 
-export const maxDuration = 60;
+export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
 
 const USER_AGENT =
