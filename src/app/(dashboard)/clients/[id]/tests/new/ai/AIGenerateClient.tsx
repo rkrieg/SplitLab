@@ -341,7 +341,17 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
         }
       }
 
-      setStep('review');
+      // Check if any variants were actually generated
+      setVariants(prev => {
+        const ready = prev.filter(v => v.status === 'ready');
+        if (ready.length > 0) {
+          setStep('review');
+        } else {
+          toast.error('All variants failed to generate. Please try again.');
+          setStep('analyzed');
+        }
+        return prev;
+      });
     } catch (err) {
       if ((err as Error).name !== 'AbortError') {
         toast.error('Generation failed');
