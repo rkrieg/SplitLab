@@ -293,6 +293,9 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
     const controller = new AbortController();
     abortRef.current = controller;
 
+    // Track variants locally so we don't depend on React state batching
+    const collectedVariants: GeneratedVariant[] = [];
+
     try {
       const res = await fetch('/api/ai/generate', {
         method: 'POST',
@@ -307,8 +310,12 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
       });
 
       if (!res.ok) {
-        const err = await res.json();
-        toast.error(err.error || 'Generation failed');
+        let errMsg = 'Generation failed';
+        try {
+          const err = await res.json();
+          errMsg = err.error || errMsg;
+        } catch { /* non-JSON body */ }
+        toast.error(errMsg);
         setStep('analyzed');
         return;
       }
@@ -334,6 +341,18 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
           } else if (line.startsWith('data: ') && eventType) {
             try {
               const data = JSON.parse(line.slice(6));
+              if (eventType === 'variant_ready') {
+                collectedVariants.push({
+                  index: data.index as number,
+                  variant_id: data.variant_id as string,
+                  label: data.label as string,
+                  impact_hypothesis: data.impact_hypothesis as string,
+                  changes_summary: data.changes_summary as ChangeItem[],
+                  hosted_url: data.hosted_url as string,
+                  status: 'ready',
+                  approved: true,
+                });
+              }
               handleSSEEvent(eventType, data);
             } catch { /* skip malformed */ }
             eventType = '';
@@ -341,17 +360,14 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
         }
       }
 
-      // Check if any variants were actually generated
-      setVariants(prev => {
-        const ready = prev.filter(v => v.status === 'ready');
-        if (ready.length > 0) {
-          setStep('review');
-        } else {
-          toast.error('All variants failed to generate. Please try again.');
-          setStep('analyzed');
-        }
-        return prev;
-      });
+      // Use locally tracked variants instead of React state
+      const ready = collectedVariants.filter(v => v.status === 'ready');
+      if (ready.length > 0) {
+        setStep('review');
+      } else {
+        toast.error('All variants failed to generate. Please try again.');
+        setStep('analyzed');
+      }
     } catch (err) {
       if ((err as Error).name !== 'AbortError') {
         toast.error('Generation failed');

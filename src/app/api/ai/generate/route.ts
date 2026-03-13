@@ -231,6 +231,11 @@ export async function POST(request: NextRequest) {
         strategies: strategies.map((s, i) => ({ index: i, label: s.label, status: 'in_progress' })),
       });
 
+      // Send keepalive events every 10s to prevent Vercel proxy timeout
+      const keepalive = setInterval(() => {
+        sendEvent('keepalive', { timestamp: Date.now() });
+      }, 10_000);
+
       // Build prompts and fire all Claude calls concurrently
       const variantPromises = strategies.map(async (strategy, index) => {
         const prompt = buildPrompt(
@@ -252,6 +257,7 @@ export async function POST(request: NextRequest) {
       });
 
       const results = await Promise.allSettled(variantPromises);
+      clearInterval(keepalive);
       const completed: unknown[] = [];
 
       // Process results and persist to DB
