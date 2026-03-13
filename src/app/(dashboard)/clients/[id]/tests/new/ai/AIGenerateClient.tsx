@@ -359,7 +359,7 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
         setGenProgress(`Generating ${data.total_variants} variants...`);
         break;
       case 'generating':
-        setGenProgress(`Generating "${data.label}"...`);
+        setGenProgress('Generating all variants...');
         break;
       case 'variant_ready':
         setVariants(prev => [...prev, {

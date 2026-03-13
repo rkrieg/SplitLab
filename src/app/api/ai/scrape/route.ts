@@ -40,29 +40,32 @@ async function scrapeWithFetch(url: string): Promise<string> {
   }
 }
 
-async function analyzeWithClaude(html: string) {
-  // Truncate HTML to avoid token limits — keep first 80k chars
-  const truncatedHtml = html.length > 80_000 ? html.slice(0, 80_000) + '\n<!-- truncated -->' : html;
+// Strip HTML to essentials for faster analysis
+function stripForAnalysis(html: string): string {
+  let s = html;
+  s = s.replace(/<script[\s\S]*?<\/script>/gi, '');
+  s = s.replace(/<style[\s\S]*?<\/style>/gi, '');
+  s = s.replace(/<svg[\s\S]*?<\/svg>/gi, '');
+  s = s.replace(/<!--[\s\S]*?-->/g, '');
+  s = s.replace(/style="[^"]*"/gi, '');
+  s = s.replace(/class="[^"]*"/gi, '');
+  s = s.replace(/\s{2,}/g, ' ');
+  if (s.length > 15_000) s = s.slice(0, 15_000) + '\n<!-- truncated -->';
+  return s;
+}
 
-  const systemPrompt = `You are an expert landing page analyst. Analyze the provided HTML and return ONLY valid JSON (no markdown fences, no explanation) with this exact structure:
-{
-  "page_type": "landing_page | product_page | homepage | blog | form | other",
-  "primary_offer": "string describing the main offer or value proposition",
-  "target_audience": "string describing who this page targets",
-  "sections": [
-    { "type": "hero | navigation | features | testimonials | pricing | cta | footer | form | other", "content": "brief description", "position": "top | middle | bottom" }
-  ],
-  "cta_strategy": "string describing the call-to-action approach",
-  "color_palette": ["#hex1", "#hex2", "#hex3"],
-  "tone_of_voice": "professional | casual | urgent | friendly | technical | other"
-}`;
+async function analyzeWithClaude(html: string) {
+  const stripped = stripForAnalysis(html);
+
+  const systemPrompt = `Analyze the HTML and return ONLY valid JSON:
+{"page_type":"landing_page|product_page|homepage|blog|form|other","primary_offer":"...","target_audience":"...","sections":[{"type":"hero|navigation|features|testimonials|pricing|cta|footer|form|other","content":"brief","position":"top|middle|bottom"}],"cta_strategy":"...","color_palette":["#hex1","#hex2"],"tone_of_voice":"professional|casual|urgent|friendly|technical"}`;
 
   const response = await ask(
-    `Analyze this landing page HTML:\n\n${truncatedHtml}`,
+    `Analyze this landing page:\n\n${stripped}`,
     {
       system: systemPrompt,
-      maxTokens: 2048,
-      model: 'claude-sonnet-4-20250514',
+      maxTokens: 1024,
+      model: 'claude-haiku-4-5-20251001',
     }
   );
 
