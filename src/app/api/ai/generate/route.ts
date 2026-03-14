@@ -19,35 +19,35 @@ const STRATEGIES: VariantStrategy[] = [
   {
     label: 'Urgency & Scarcity',
     angle: 'urgency_scarcity',
-    directives: `Focus on URGENCY and SCARCITY tactics:
-- Add time-limited language (e.g. "Limited time", "Only X left", "Offer ends soon")
-- Make CTAs stronger and more action-oriented (e.g. "Claim Your Spot Now", "Get It Before It's Gone")
-- Emphasize social proof (e.g. "Join 10,000+ customers", "Selling fast")
-- Use bolder, more attention-grabbing colors for CTAs and key sections
-- Add countdown-style urgency elements where appropriate
-- Keep the overall structure but make the emotional tone more pressing`,
+    directives: `Apply subtle urgency and scarcity to the EXISTING copy and CTAs:
+- Adjust existing CTA text to be slightly more action-oriented (e.g. "Get Started" → "Get Started Today")
+- Add subtle time-sensitivity to existing headlines or subheadings where natural
+- If testimonials exist, reorder to place the strongest one first
+- Make existing CTA buttons slightly more prominent (bigger, bolder color)
+- NEVER add countdown timers, fake stock counters, or pop-ups
+- NEVER fabricate statistics, customer counts, or social proof that isn't in the original`,
   },
   {
     label: 'Trust & Authority',
     angle: 'trust_authority',
-    directives: `Focus on TRUST and AUTHORITY building:
-- Move testimonials and social proof to more prominent positions
-- Add or emphasize credentials, certifications, awards, and trust badges
-- Include case study references or specific results/numbers
-- Use a softer, more consultative CTA approach (e.g. "Schedule a Consultation", "Learn More")
-- Adopt a more professional, authoritative tone throughout
-- Add trust signals near forms and CTAs (e.g. "No spam", "Cancel anytime", security icons)`,
+    directives: `Reorganize existing content to emphasize trust and credibility:
+- If testimonials/reviews exist, move them higher on the page
+- If credentials or logos exist, make them more prominent
+- Adjust CTA tone to be more consultative (e.g. "Buy Now" → "See How It Works")
+- Add a small trust line near existing CTAs (e.g. "No commitment required")
+- Make the layout feel more premium — more whitespace, cleaner typography
+- NEVER invent testimonials, case studies, awards, or credentials not in the original`,
   },
   {
     label: 'Simplified & Direct',
     angle: 'simplified_direct',
-    directives: `Focus on SIMPLIFICATION and DIRECTNESS:
-- Remove or consolidate sections — aim for fewer, more impactful sections
-- Use a single, clear, repeated CTA throughout the page
-- Minimize visual distractions — cleaner layout, more whitespace
-- Shorten copy — make every word earn its place
-- Remove secondary navigation, sidebars, or anything that diverts from the main goal
-- Make the value proposition immediately clear in the first viewport`,
+    directives: `Streamline the existing page by removing clutter:
+- Consolidate repetitive sections — combine or remove the weakest ones
+- Reduce copy length — tighten every paragraph, cut filler words
+- Use one clear, consistent CTA repeated 2-3 times max
+- Increase whitespace between sections for better visual breathing room
+- Remove secondary navigation, sidebars, or distracting elements
+- Make the core value proposition unmistakable in the first viewport`,
   },
 ];
 
@@ -78,9 +78,23 @@ function buildPrompt(
 ): string {
   const strippedHtml = stripHtml(html);
 
-  let prompt = `You are a CRO specialist. Create a variant of this landing page using the "${strategy.label}" strategy.
+  let prompt = `You are a senior CRO specialist creating an A/B test variant of a landing page.
 
-## Strategy
+## YOUR TASK
+Create a variant using the "${strategy.label}" strategy. This is a VARIATION of the original page — NOT a redesign.
+
+## STRICT RULES — VIOLATIONS WILL REJECT THE OUTPUT
+1. PRESERVE the original page's visual identity: colors, fonts, layout structure, branding, logo
+2. PRESERVE every image URL exactly as-is — do not remove, replace, or add images
+3. PRESERVE all existing links and their destinations
+4. NEVER fabricate content: no fake statistics, fake testimonials, fake customer counts, fake awards, fake countdown timers, or any claims not present in the original
+5. NEVER add emojis to headlines or CTAs
+6. NEVER add JavaScript animations, popups, modals, or countdown timers
+7. Changes should be SUBTLE and STRATEGIC — a visitor should recognize it as the same page
+8. Only modify: headline/subhead copy, CTA text/styling, section ordering, spacing, copy length, element emphasis
+9. Keep the same overall page length (±20%)
+
+## Strategy: ${strategy.label}
 ${strategy.directives}
 
 ## Page Analysis
@@ -88,15 +102,15 @@ ${JSON.stringify(analysis, null, 2)}
 
 ## Source URL: ${sourceUrl}
 
-## Requirements
+## Technical Requirements
 - Return a COMPLETE self-contained HTML page with ALL CSS inlined in <style> tags
-- Keep ALL original image URLs exactly as-is
 - Must be responsive (390px to 1440px+)
 - Add data-sl-editable="true" on text elements (h1-h6, p, a, button, li, span with text)
 - Do NOT add external CSS/JS libraries
+- Reproduce the original page's styling as faithfully as possible — this is a variation, not a new design
 
-## Response: ONLY valid JSON, no markdown fences
-{"html":"<!DOCTYPE html>...","changes_summary":[{"change":"...","reason":"..."}],"variant_label":"${strategy.label}","impact_hypothesis":"..."}
+## Response Format: ONLY valid JSON, no markdown fences
+{"html":"<!DOCTYPE html>...","changes_summary":[{"change":"what changed","reason":"CRO rationale for this change"}],"variant_label":"${strategy.label}","impact_hypothesis":"concise hypothesis about why this variant may convert better"}
 
 ## Original HTML (stripped)
 ${strippedHtml}`;
