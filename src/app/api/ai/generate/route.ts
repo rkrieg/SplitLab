@@ -324,13 +324,16 @@ export async function POST(request: NextRequest) {
 
           if (pageErr) throw new Error(`Failed to create variant_page: ${pageErr.message}`);
 
+          const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://www.trysplitlab.com';
+          const previewUrl = `${APP_URL}/api/variants/${testId}/${variantId}`;
+
           const variantResult = {
             index,
             variant_id: variantId,
             label: parsed.variant_label,
             impact_hypothesis: parsed.impact_hypothesis,
             changes_summary: parsed.changes_summary,
-            hosted_url: urlData.publicUrl,
+            hosted_url: previewUrl,
             status: 'ready',
           };
 
