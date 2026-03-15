@@ -246,7 +246,7 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
 
   // ─── Step 1: Analyze Page ──────────────────────────────────────────
 
-  const handleAnalyze = useCallback(async () => {
+  const handleAnalyze = useCallback(async (forceRefresh = false) => {
     if (!url.trim()) return;
     setScraping(true);
     setScrapeError('');
@@ -254,7 +254,7 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
       const res = await fetch('/api/ai/scrape', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: url.trim() }),
+        body: JSON.stringify({ url: url.trim(), force: forceRefresh }),
       });
       if (!res.ok) {
         let errMsg = 'Failed to analyze page';
@@ -618,8 +618,15 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
       {/* ═══ STEP 2: ANALYSIS RESULT ═══ */}
       {step === 'analyzed' && analysis && (
         <div className="card overflow-hidden">
-          <div className="p-5 border-b border-slate-200 dark:border-slate-700">
+          <div className="p-5 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
             <h3 className="font-semibold text-slate-900 dark:text-slate-100">Page Analysis</h3>
+            <button
+              onClick={() => handleAnalyze(true)}
+              disabled={scraping}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600 transition-colors disabled:opacity-50"
+            >
+              <RotateCcw size={12} /> Re-analyze
+            </button>
           </div>
           <div className="p-5 space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-5">

@@ -151,9 +151,11 @@ export async function POST(request: NextRequest) {
   }
 
   let url: string;
+  let force = false;
   try {
     const body = await request.json();
     url = body.url?.trim();
+    force = body.force === true;
     if (!url) throw new Error('Missing url');
     if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
     new URL(url); // validate
@@ -173,8 +175,8 @@ export async function POST(request: NextRequest) {
     // Check if the DB table exists
     const hasTable = await tableExists();
 
-    // Check cache if table exists
-    if (hasTable) {
+    // Check cache if table exists (skip if force refresh)
+    if (hasTable && !force) {
       const { data: cached } = await db
         .from('scraped_pages')
         .select('*')
