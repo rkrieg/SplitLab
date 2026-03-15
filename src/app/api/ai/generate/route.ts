@@ -20,35 +20,39 @@ const STRATEGIES: VariantStrategy[] = [
   {
     label: 'Urgency & Scarcity',
     angle: 'urgency_scarcity',
-    directives: `Apply subtle urgency and scarcity to the EXISTING copy and CTAs:
-- Adjust existing CTA text to be slightly more action-oriented (e.g. "Get Started" → "Get Started Today")
-- Add subtle time-sensitivity to existing headlines or subheadings where natural
-- If testimonials exist, reorder to place the strongest one first
-- Make existing CTA buttons slightly more prominent (bigger, bolder color)
-- NEVER add countdown timers, fake stock counters, or pop-ups
-- NEVER fabricate statistics, customer counts, or social proof that isn't in the original`,
+    directives: `Make the page feel time-sensitive and high-stakes — the visitor should feel they need to act NOW:
+- REWRITE the main headline to lead with a bold, outcome-driven claim that creates urgency (e.g. "Marketing Solutions" → "Stop Losing Leads — Your Competitors Aren't Waiting")
+- REWRITE subheadlines to reinforce urgency with specific, tangible stakes
+- REWRITE every CTA button to be commanding and time-bound (e.g. "Contact Us" → "Claim Your Free Strategy Call Today")
+- Make CTA buttons significantly larger (increase padding by 30-50%) and use the page's boldest brand color
+- Tighten all paragraph copy — cut by 30-40%, keep only the most compelling sentences
+- Add a trust/urgency line directly under each CTA (e.g. "Limited spots available this month" — only if plausible for the business type)
+- NEVER add countdown timers, pop-ups, or fabricate specific numbers/statistics`,
   },
   {
     label: 'Trust & Authority',
     angle: 'trust_authority',
-    directives: `Reorganize existing content to emphasize trust and credibility:
-- If testimonials/reviews exist, move them higher on the page
-- If credentials or logos exist, make them more prominent
-- Adjust CTA tone to be more consultative (e.g. "Buy Now" → "See How It Works")
-- Add a small trust line near existing CTAs (e.g. "No commitment required")
-- Make the layout feel more premium — more whitespace, cleaner typography
-- NEVER invent testimonials, case studies, awards, or credentials not in the original`,
+    directives: `Reposition the page to feel like the undisputed expert — visitors should feel confident and reassured:
+- REWRITE the main headline to lead with authority and credibility (e.g. "Marketing Services" → "The Growth Partner Behind LA's Top Brands")
+- REWRITE subheadlines to emphasize expertise, track record, and results
+- REWRITE every CTA button to feel consultative and low-risk (e.g. "Get Started" → "Schedule Your Free Consultation")
+- If testimonials exist, move the most results-oriented testimonial to appear directly after the hero section
+- Add trust micro-copy under each CTA: "No commitment required • Free consultation • Cancel anytime"
+- Increase section spacing by 20-30% to create a premium, authoritative feel
+- NEVER invent testimonials, awards, credentials, or statistics not in the original`,
   },
   {
     label: 'Simplified & Direct',
     angle: 'simplified_direct',
-    directives: `Streamline the existing page by removing clutter:
-- Consolidate repetitive sections — combine or remove the weakest ones
-- Reduce copy length — tighten every paragraph, cut filler words
-- Use one clear, consistent CTA repeated 2-3 times max
-- Increase whitespace between sections for better visual breathing room
-- Remove secondary navigation, sidebars, or distracting elements
-- Make the core value proposition unmistakable in the first viewport`,
+    directives: `Strip the page to its most powerful core — every word and element must earn its place:
+- REWRITE the main headline to be short, punchy, and benefit-first (max 8 words, e.g. "We Offer Solutions" → "Grow Faster. Waste Less.")
+- REWRITE subheadlines to be single-sentence, scannable, and direct
+- REWRITE every CTA button to use the same clear, consistent action phrase across the entire page
+- Cut ALL paragraph copy by 40-50% — remove every filler word, hedge, and redundancy
+- Remove or hide secondary navigation elements in the hero area
+- Increase whitespace significantly (30-50% more padding between sections)
+- Consolidate any repetitive sections — if two sections say similar things, merge them into one
+- The first viewport should contain ONLY: headline + one subheadline + one CTA button`,
   },
 ];
 
@@ -87,10 +91,13 @@ You are NOT rebuilding the page. You are specifying targeted text replacements t
 ## RULES FOR REPLACEMENTS
 - Each "find" string must be an EXACT substring of the original HTML (case-sensitive, character-for-character)
 - Each "find" must be unique enough to match only once in the HTML
-- Keep replacements surgical: change only what's needed for the strategy
-- Aim for 5-15 replacements total
-- You may change: headline/subhead text, CTA button text, paragraph copy, CSS property values (colors, sizes, padding)
-- You MUST NOT: add new sections, invent content/stats/testimonials, add countdown timers, change image URLs, add external libraries, add emoji
+- Make BOLD, MEANINGFUL changes — a visitor should notice the difference immediately. Swapping one word is not enough.
+- Aim for 10-25 replacements total
+- REWRITE headlines and subheadlines completely — don't just swap a single word
+- REWRITE CTA button text to be compelling and strategy-aligned
+- REWRITE paragraph copy — tighten, sharpen, make every sentence punch harder
+- You may also change CSS property values (colors, font-sizes, padding, margins) within the existing brand palette
+- You MUST NOT: add entirely new HTML sections, invent statistics/testimonials, add countdown timers, change image URLs, add external libraries, add emoji
 - To reorder sections: use one replacement that moves a block (find the full section, replace with empty, then insert it elsewhere)
 
 ## Strategy: ${strategy.label}
