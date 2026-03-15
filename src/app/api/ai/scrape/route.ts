@@ -59,11 +59,52 @@ function stripForAnalysis(html: string): string {
   return s;
 }
 
+// Extract actual colors from CSS and inline styles in the HTML
+function extractColors(html: string): string[] {
+  const colorMap = new Map<string, number>();
+
+  // Match hex colors (#rgb, #rrggbb, #rrggbbaa)
+  const hexMatches = html.matchAll(/#(?:[0-9a-fA-F]{3,4}){1,2}\b/g);
+  for (const m of hexMatches) {
+    let hex = m[0].toLowerCase();
+    // Expand shorthand #abc → #aabbcc
+    if (hex.length === 4) {
+      hex = `#${hex[1]}${hex[1]}${hex[2]}${hex[2]}${hex[3]}${hex[3]}`;
+    }
+    // Skip near-black (#000-#111), near-white (#eee-#fff), and grays
+    if (/^#(000|111|222|333|eee|fff|fafafa|f[0-9a-f]f[0-9a-f]f[0-9a-f])/.test(hex)) continue;
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    // Skip grays (r ≈ g ≈ b)
+    if (Math.max(r, g, b) - Math.min(r, g, b) < 15 && r > 30 && r < 230) continue;
+    colorMap.set(hex, (colorMap.get(hex) || 0) + 1);
+  }
+
+  // Match rgb/rgba colors
+  const rgbMatches = html.matchAll(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/g);
+  for (const m of rgbMatches) {
+    const r = parseInt(m[1]), g = parseInt(m[2]), b = parseInt(m[3]);
+    if (Math.max(r, g, b) - Math.min(r, g, b) < 15) continue;
+    const hex = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+    colorMap.set(hex, (colorMap.get(hex) || 0) + 1);
+  }
+
+  // Return top colors sorted by frequency
+  return [...colorMap.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6)
+    .map(([color]) => color);
+}
+
 async function analyzeWithClaude(html: string) {
   const stripped = stripForAnalysis(html);
+  const extractedColors = extractColors(html);
 
   const systemPrompt = `Analyze the HTML and return ONLY valid JSON:
-{"page_type":"landing_page|product_page|homepage|blog|form|other","primary_offer":"...","target_audience":"...","sections":[{"type":"hero|navigation|features|testimonials|pricing|cta|footer|form|other","content":"brief","position":"top|middle|bottom"}],"cta_strategy":"...","color_palette":["#hex1","#hex2"],"tone_of_voice":"professional|casual|urgent|friendly|technical"}`;
+{"page_type":"landing_page|product_page|homepage|blog|form|other","primary_offer":"...","target_audience":"...","sections":[{"type":"hero|navigation|features|testimonials|pricing|cta|footer|form|other","content":"brief","position":"top|middle|bottom"}],"cta_strategy":"...","color_palette":["#hex1","#hex2"],"tone_of_voice":"professional|casual|urgent|friendly|technical"}
+
+IMPORTANT: For color_palette, use these ACTUAL colors extracted from the page CSS: ${JSON.stringify(extractedColors)}. Pick the 3-5 most representative brand colors from this list. Do NOT guess or invent colors.`;
 
   const response = await ask(
     `Analyze this landing page:\n\n${stripped}`,
