@@ -43,11 +43,30 @@ function applyReplacements(html: string, replacements: Array<{ find: string; rep
   let applied = 0;
   for (const { find, replace } of replacements) {
     if (!find || find === replace) continue;
+
     if (result.includes(find)) {
       result = result.replace(find, replace);
       applied++;
-    } else {
+      continue;
+    }
+
+    // Whitespace-flexible match for collapsed-whitespace find strings
+    const parts = find.split(/\s+/).filter(Boolean);
+    if (parts.length < 2) {
       console.warn(`[Regenerate] Replacement not found: "${find.slice(0, 80)}..."`);
+      continue;
+    }
+    const pattern = parts.map(p => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+');
+    try {
+      const regex = new RegExp(pattern);
+      if (regex.test(result)) {
+        result = result.replace(regex, replace);
+        applied++;
+      } else {
+        console.warn(`[Regenerate] Replacement not found (flex): "${find.slice(0, 80)}..."`);
+      }
+    } catch {
+      console.warn(`[Regenerate] Invalid regex for replacement: "${find.slice(0, 80)}..."`);
     }
   }
   console.log(`[Regenerate] Applied ${applied}/${replacements.length} replacements`);
@@ -204,9 +223,8 @@ ${preparedHtml}`;
     const parsed = parseDiffResponse(response);
     console.log(`[Regenerate] Parsed OK, ${parsed.replacements?.length || 0} replacements`);
 
-    // Apply replacements to the same prepared HTML that Claude saw
-    const baseHtml = prepareHtml(scrapedPage.html);
-    const modifiedHtml = applyReplacements(baseHtml, parsed.replacements || []);
+    // Apply replacements to the ORIGINAL HTML so all content is preserved
+    const modifiedHtml = applyReplacements(scrapedPage.html, parsed.replacements || []);
     const variantHtml = absolutifyUrls(modifiedHtml, scrapedPage.url);
 
     // Upload new HTML

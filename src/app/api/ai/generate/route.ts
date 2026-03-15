@@ -183,16 +183,41 @@ function absolutifyUrls(html: string, sourceUrl: string): string {
   return result;
 }
 
+// Apply replacements to the ORIGINAL HTML using whitespace-flexible matching.
+// Claude sees whitespace-collapsed HTML (prepareHtml), so its find strings
+// have single spaces where the original may have newlines/tabs/multiple spaces.
+// We convert each find string into a regex where single spaces match \s+.
 function applyReplacements(html: string, replacements: Array<{ find: string; replace: string }>): string {
   let result = html;
   let applied = 0;
   for (const { find, replace } of replacements) {
     if (!find || find === replace) continue;
+
+    // First try exact match
     if (result.includes(find)) {
       result = result.replace(find, replace);
       applied++;
-    } else {
-      console.warn(`[AI Generate] Replacement not found in HTML: "${find.slice(0, 80)}..."`);
+      continue;
+    }
+
+    // Whitespace-flexible match: split find on whitespace, escape each part for regex,
+    // then join with \s+ so "foo bar" matches "foo\n  bar" in the original
+    const parts = find.split(/\s+/).filter(Boolean);
+    if (parts.length < 2) {
+      console.warn(`[AI Generate] Replacement not found: "${find.slice(0, 80)}..."`);
+      continue;
+    }
+    const pattern = parts.map(p => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+');
+    try {
+      const regex = new RegExp(pattern);
+      if (regex.test(result)) {
+        result = result.replace(regex, replace);
+        applied++;
+      } else {
+        console.warn(`[AI Generate] Replacement not found (flex): "${find.slice(0, 80)}..."`);
+      }
+    } catch {
+      console.warn(`[AI Generate] Invalid regex for replacement: "${find.slice(0, 80)}..."`);
     }
   }
   console.log(`[AI Generate] Applied ${applied}/${replacements.length} replacements`);
@@ -356,10 +381,12 @@ export async function POST(request: NextRequest) {
           const parsed = parseDiffResponse(response);
           console.log(`[AI Generate] Variant ${index} parsed OK, ${parsed.replacements?.length || 0} replacements`);
 
-          // Apply replacements to the same prepared HTML that Claude saw
-          // (whitespace-collapsed, scripts removed) so find strings match exactly
-          const baseHtml = prepareHtml(scrapedPage.html);
-          const modifiedHtml = applyReplacements(baseHtml, parsed.replacements || []);
+          // Apply replacements to the ORIGINAL HTML (not prepareHtml output)
+          // so scripts, SVGs, and full content are preserved in the variant.
+          // The whitespace-flexible matching in applyReplacements handles the
+          // mismatch between Claude's collapsed-whitespace find strings and
+          // the original HTML's formatting.
+          const modifiedHtml = applyReplacements(scrapedPage.html, parsed.replacements || []);
           const variantHtml = absolutifyUrls(modifiedHtml, scrapedPage.url);
 
           const variantId = crypto.randomUUID();
