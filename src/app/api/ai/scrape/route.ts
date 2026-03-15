@@ -186,7 +186,8 @@ export async function POST(request: NextRequest) {
     const hasTable = await tableExists();
 
     // Check cache if table exists (skip if force refresh)
-    if (hasTable && !force) {
+    // Cache disabled temporarily to ensure fresh color extraction
+    if (false && hasTable && !force) {
       const { data: cached } = await db
         .from('scraped_pages')
         .select('*')
