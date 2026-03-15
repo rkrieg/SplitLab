@@ -356,8 +356,10 @@ export async function POST(request: NextRequest) {
           const parsed = parseDiffResponse(response);
           console.log(`[AI Generate] Variant ${index} parsed OK, ${parsed.replacements?.length || 0} replacements`);
 
-          // Apply replacements to the original HTML, then fix relative URLs
-          const modifiedHtml = applyReplacements(scrapedPage.html, parsed.replacements || []);
+          // Apply replacements to the same prepared HTML that Claude saw
+          // (whitespace-collapsed, scripts removed) so find strings match exactly
+          const baseHtml = prepareHtml(scrapedPage.html);
+          const modifiedHtml = applyReplacements(baseHtml, parsed.replacements || []);
           const variantHtml = absolutifyUrls(modifiedHtml, scrapedPage.url);
 
           const variantId = crypto.randomUUID();
