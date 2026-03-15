@@ -169,7 +169,7 @@ export async function POST(request: NextRequest) {
         .from('scraped_pages')
         .select('*')
         .eq('url', url)
-        .gte('scraped_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
+        .gte('scraped_at', new Date(Date.now() - 60 * 60 * 1000).toISOString())
         .maybeSingle();
 
       if (cached) {
