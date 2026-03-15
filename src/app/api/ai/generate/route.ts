@@ -18,41 +18,37 @@ interface VariantStrategy {
 
 const STRATEGIES: VariantStrategy[] = [
   {
-    label: 'Urgency & Scarcity',
-    angle: 'urgency_scarcity',
-    directives: `Make the page feel time-sensitive and high-stakes — the visitor should feel they need to act NOW:
-- REWRITE the main headline to lead with a bold, outcome-driven claim that creates urgency (e.g. "Marketing Solutions" → "Stop Losing Leads — Your Competitors Aren't Waiting")
-- REWRITE subheadlines to reinforce urgency with specific, tangible stakes
-- REWRITE every CTA button to be commanding and time-bound (e.g. "Contact Us" → "Claim Your Free Strategy Call Today")
-- Make CTA buttons significantly larger (increase padding by 30-50%) and use the page's boldest brand color
-- Tighten all paragraph copy — cut by 30-40%, keep only the most compelling sentences
-- Add a trust/urgency line directly under each CTA (e.g. "Limited spots available this month" — only if plausible for the business type)
-- NEVER add countdown timers, pop-ups, or fabricate specific numbers/statistics`,
+    label: 'Conversion-Focused',
+    angle: 'conversion_focused',
+    directives: `Optimize the page for higher conversion without changing the design:
+- Rewrite CTA buttons to be specific and outcome-focused (e.g. "Contact Us" → "Get Your Free Strategy Call")
+- Tighten paragraph copy — cut filler words and weak sentences by 20-30%
+- Rewrite subheadlines to be benefit-driven (focus on what the visitor gets, not what the company does)
+- If the page has vague headlines like "Our Services" or "What We Do", rewrite to be specific and compelling
+- Make the value proposition clearer in the first section — what does the visitor get and why should they care?
+- Strengthen any weak or generic body copy with more specific, concrete language`,
   },
   {
     label: 'Trust & Authority',
     angle: 'trust_authority',
-    directives: `Reposition the page to feel like the undisputed expert — visitors should feel confident and reassured:
-- REWRITE the main headline to lead with authority and credibility (e.g. "Marketing Services" → "The Growth Partner Behind LA's Top Brands")
-- REWRITE subheadlines to emphasize expertise, track record, and results
-- REWRITE every CTA button to feel consultative and low-risk (e.g. "Get Started" → "Schedule Your Free Consultation")
-- If testimonials exist, move the most results-oriented testimonial to appear directly after the hero section
-- Add trust micro-copy under each CTA: "No commitment required • Free consultation • Cancel anytime"
-- Increase section spacing by 20-30% to create a premium, authoritative feel
-- NEVER invent testimonials, awards, credentials, or statistics not in the original`,
+    directives: `Reorganize and refine the page to build more credibility:
+- Rewrite CTA buttons to feel lower-risk and consultative (e.g. "Buy Now" → "See How It Works")
+- Rewrite vague subheadlines to emphasize expertise and results
+- If testimonials exist, rewrite the surrounding context to draw more attention to them
+- Add a brief trust line near CTAs: "No commitment required" or "Free consultation"
+- Tighten any wordy paragraphs to feel more confident and direct — experts don't ramble
+- Rewrite any "about us" type copy to lead with client outcomes, not company history`,
   },
   {
     label: 'Simplified & Direct',
     angle: 'simplified_direct',
-    directives: `Strip the page to its most powerful core — every word and element must earn its place:
-- REWRITE the main headline to be short, punchy, and benefit-first (max 8 words, e.g. "We Offer Solutions" → "Grow Faster. Waste Less.")
-- REWRITE subheadlines to be single-sentence, scannable, and direct
-- REWRITE every CTA button to use the same clear, consistent action phrase across the entire page
-- Cut ALL paragraph copy by 40-50% — remove every filler word, hedge, and redundancy
-- Remove or hide secondary navigation elements in the hero area
-- Increase whitespace significantly (30-50% more padding between sections)
-- Consolidate any repetitive sections — if two sections say similar things, merge them into one
-- The first viewport should contain ONLY: headline + one subheadline + one CTA button`,
+    directives: `Streamline the page — cut the fat, sharpen the message:
+- Rewrite all CTA buttons to use one consistent, clear action phrase across the page
+- Cut paragraph copy by 30-40% — remove filler, hedging, and redundancy
+- Rewrite long or wordy headlines to be shorter and punchier
+- Rewrite subheadlines to be single clear sentences
+- If sections repeat similar ideas, combine their copy into one tighter version
+- Remove any "fluff" sentences that don't advance the reader toward the CTA`,
   },
 ];
 
@@ -91,14 +87,33 @@ You are NOT rebuilding the page. You are specifying targeted text replacements t
 ## RULES FOR REPLACEMENTS
 - Each "find" string must be an EXACT substring of the original HTML (case-sensitive, character-for-character)
 - Each "find" must be unique enough to match only once in the HTML
-- Make BOLD, MEANINGFUL changes — a visitor should notice the difference immediately. Swapping one word is not enough.
-- Aim for 10-25 replacements total
-- REWRITE headlines and subheadlines completely — don't just swap a single word
-- REWRITE CTA button text to be compelling and strategy-aligned
-- REWRITE paragraph copy — tighten, sharpen, make every sentence punch harder
-- You may also change CSS property values (colors, font-sizes, padding, margins) within the existing brand palette
-- You MUST NOT: add entirely new HTML sections, invent statistics/testimonials, add countdown timers, change image URLs, add external libraries, add emoji
-- To reorder sections: use one replacement that moves a block (find the full section, replace with empty, then insert it elsewhere)
+- Aim for 8-20 replacements total
+- Focus on: CTA button text, subheadlines, paragraph body copy, and descriptive text
+- Replacement text must be SIMILAR LENGTH to the original — never dramatically longer or shorter, as this breaks CSS layouts
+- You may also change CSS property values (padding, margins) but ONLY for spacing, never colors or fonts
+
+## CRITICAL: DO NOT BREAK THE LAYOUT
+- NEVER change text inside elements that use background-clip, text-fill, image-masked text, or decorative CSS text effects — these are sized for specific text and will break visually
+- NEVER change very short text (1-2 words) inside heavily styled elements — these are likely decorative
+- When in doubt about whether text has special styling, SKIP IT
+- Replacement text should be approximately the same character count as the original (within ±20%)
+
+## COPY QUALITY RULES
+- Write like a professional copywriter, NOT a used car salesman
+- NEVER use words like: URGENT, TIME-SENSITIVE, ACT NOW, DON'T MISS, EXCLUSIVE, WINNERS, GAME-CHANGER, REVOLUTIONARY, SKYROCKET
+- NEVER prefix text with labels like "URGENT:" or "TIME-SENSITIVE:" or "LIMITED:"
+- NEVER use ALL CAPS for emphasis (unless the original text was all caps)
+- Keep the same tone and voice as the original page — if it's professional, stay professional
+- Be specific and concrete, not hyperbolic
+- Good example: "Contact Us" → "Get Your Free Strategy Call"
+- Bad example: "Contact Us" → "CLAIM YOUR SPOT NOW BEFORE IT'S TOO LATE"
+
+## WHAT YOU MUST NOT DO
+- Add entirely new HTML sections or elements
+- Invent statistics, testimonials, customer counts, or claims
+- Add countdown timers, popups, or animations
+- Change image URLs or remove images
+- Add external CSS/JS libraries or emoji
 
 ## Strategy: ${strategy.label}
 ${strategy.directives}
