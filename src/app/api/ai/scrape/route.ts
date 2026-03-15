@@ -59,48 +59,58 @@ function stripForAnalysis(html: string): string {
   return s;
 }
 
-// Extract actual visible colors from inline styles only (not CSS variables/presets)
+// Extract visible colors from CSS and inline styles, skipping theme presets
 function extractColors(html: string): string[] {
   const colorMap = new Map<string, number>();
 
-  // Strip CSS variable/preset definitions (WordPress themes define unused color palettes)
-  // Only look at inline style="" attributes for actually-used colors
-  const styleRegex = /style="([^"]*)"/g;
-  let styleMatch: RegExpExecArray | null;
-  const inlineStyles: string[] = [];
-  while ((styleMatch = styleRegex.exec(html)) !== null) {
-    inlineStyles.push(styleMatch[1]);
+  // 1. Collect inline style="" attribute values
+  const inlineRegex = /style="([^"]*)"/g;
+  let sm: RegExpExecArray | null;
+  const sources: string[] = [];
+  while ((sm = inlineRegex.exec(html)) !== null) {
+    sources.push(sm[1]);
   }
-  const styleText = inlineStyles.join(' ');
 
-  // Match hex colors from inline styles
+  // 2. Collect <style> tag contents, but strip CSS variable definitions
+  //    (WordPress/theme presets define --wp--preset--color--xxx with colors never used visibly)
+  const styleTagRegex = /<style[^>]*>([\s\S]*?)<\/style>/gi;
+  while ((sm = styleTagRegex.exec(html)) !== null) {
+    let css = sm[1];
+    // Remove CSS custom property definitions (--xxx: #color)
+    css = css.replace(/--[a-zA-Z0-9_-]+\s*:\s*[^;]+;/g, '');
+    // Remove @font-face blocks
+    css = css.replace(/@font-face\s*\{[^}]*\}/g, '');
+    sources.push(css);
+  }
+
+  const sourceText = sources.join(' ');
+
+  // 3. Extract hex colors
   const hexRegex = /#(?:[0-9a-fA-F]{3,4}){1,2}\b/g;
   let m: RegExpExecArray | null;
-  while ((m = hexRegex.exec(styleText)) !== null) {
+  while ((m = hexRegex.exec(sourceText)) !== null) {
     let hex = m[0].toLowerCase();
     if (hex.length === 4) {
       hex = `#${hex[1]}${hex[1]}${hex[2]}${hex[2]}${hex[3]}${hex[3]}`;
     }
-    // Skip blacks, whites, near-grays
     if (/^#(0{3,6}|f{3,6}|000000|ffffff)$/i.test(hex)) continue;
     const r = parseInt(hex.slice(1, 3), 16);
     const g = parseInt(hex.slice(3, 5), 16);
     const b = parseInt(hex.slice(5, 7), 16);
-    if (Math.max(r, g, b) - Math.min(r, g, b) < 20) continue; // skip grays
+    if (Math.max(r, g, b) - Math.min(r, g, b) < 20) continue;
     colorMap.set(hex, (colorMap.get(hex) || 0) + 1);
   }
 
-  // Match rgb/rgba from inline styles
+  // 4. Extract rgb/rgba colors
   const rgbRegex = /rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/g;
   let rm: RegExpExecArray | null;
-  while ((rm = rgbRegex.exec(styleText)) !== null) {
+  while ((rm = rgbRegex.exec(sourceText)) !== null) {
     const r = parseInt(rm[1]), g = parseInt(rm[2]), b = parseInt(rm[3]);
     if (Math.max(r, g, b) - Math.min(r, g, b) < 20) continue;
     const hex = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
     colorMap.set(hex, (colorMap.get(hex) || 0) + 1);
   }
 
-  // Return top colors sorted by frequency
   return Array.from(colorMap.entries())
     .sort((a, b) => b[1] - a[1])
     .slice(0, 6)
