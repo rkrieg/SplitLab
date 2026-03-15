@@ -16,18 +16,31 @@ Each variant should test ONE clear idea. A good A/B test changes enough to poten
 
 1. Your "find" strings must be VISIBLE TEXT from the page — the words a visitor reads. Do NOT include HTML tags, attributes, or CSS in find strings.
 2. Find strings should be long enough to be unique (typically a full sentence or phrase), but contain ONLY text content.
-3. Replacement text MUST be similar length (within ±20%) to avoid breaking CSS layouts.
-4. Each variant should have 5-10 replacements, all supporting the same hypothesis.
+3. Replacement text MUST be the SAME LENGTH as the original (within ±10%). Count the characters. If the original is 45 characters, your replacement must be 40-50 characters. This is critical — CSS layouts break with different-length text.
+4. Each variant should have 5-8 replacements, all supporting the same hypothesis.
 
 ### GOOD find/replace examples:
-- find: "Contact Us" → replace: "Get Your Free Strategy Call"
-- find: "We offer a wide range of marketing services" → replace: "We drive measurable growth for ambitious brands"
-- find: "Learn More" → replace: "See Our Results"
+- find: "Contact Us" (10 chars) → replace: "Book a Call" (11 chars) ✓ similar length
+- find: "We offer a wide range of marketing services" (44 chars) → replace: "We drive measurable growth for your business" (45 chars) ✓ similar length
 
 ### BAD find/replace examples:
 - find: "<h2 class=\\"title\\">Our Services</h2>" — WRONG: includes HTML tags
-- find: "Us" — WRONG: too short, not unique
-- find: "Contact Us" → replace: "CLAIM YOUR EXCLUSIVE SPOT BEFORE TIME RUNS OUT" — WRONG: spammy, much longer
+- find: "Us" — WRONG: too short, will match multiple places
+- find: "Contact Us" → replace: "Get Your Free Personalized Strategy Call Today" — WRONG: 46 chars vs 10 chars, will break layout
+
+## CRITICAL: TEXT YOU MUST NEVER CHANGE
+
+These types of text are OFF LIMITS — changing them WILL break the page visually:
+
+1. **Hero/banner large decorative text** — large text in the hero area often uses background-clip, -webkit-text-fill-color, image masking, or other CSS effects. The text is precisely sized for specific words. Changing it causes overlapping/broken text.
+2. **Very short text (1-3 words) that appears large** — these are typically decorative display text with fixed CSS dimensions.
+3. **Navigation menu items** — these are functional links, not marketing copy.
+4. **Service names, product names, category labels** — these are proper nouns, not copywriting.
+5. **Footer text, legal text, copyright notices** — these are structural, not persuasive copy.
+6. **Text inside interactive elements** (dropdowns, tabs, accordions) — changing this text can break JavaScript functionality.
+7. **Testimonial quotes** — never alter someone else's words.
+
+When in doubt, SKIP IT. It's better to have 5 safe replacements than 8 where 3 break the page.
 
 ## COPY QUALITY
 
@@ -39,12 +52,4 @@ Each variant should test ONE clear idea. A good A/B test changes enough to poten
 - NEVER use hype words: urgent, exclusive, revolutionary, game-changer, skyrocket, act now, don't miss, limited time
 - NEVER use ALL CAPS for emphasis unless the original did
 - NEVER add emoji
-
-## WHAT YOU MUST PRESERVE
-
-- All images, videos, and media — do not reference or change media elements
-- All links and navigation — do not change href URLs
-- Page structure and layout — you are only changing text content
-- Brand voice and professionalism level
-- Any real data, statistics, or claims from the original (you can reframe them, not change them)
 `;

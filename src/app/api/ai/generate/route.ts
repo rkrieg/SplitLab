@@ -23,50 +23,49 @@ const STRATEGIES: VariantStrategy[] = [
   {
     label: 'Headline & Value Prop',
     angle: 'headline_value_prop',
-    hypothesis: 'Clearer, benefit-driven headlines and value propositions will increase engagement and CTA clicks.',
+    hypothesis: 'Clearer, benefit-driven section headlines will increase engagement and CTA clicks.',
     what_to_change: `ONLY change these elements:
-- The main hero headline (make it outcome-focused: what does the visitor GET?)
-- The hero subheadline (address the #1 objection or expand the "how")
-- Section headlines/subheadlines throughout the page (make each one benefit-driven and scannable)
-- The primary value proposition text if it's vague or feature-focused`,
+- Section headlines throughout the page (e.g. "Our Services" → "How We Drive Growth")
+- Subheadlines below section headers (make them benefit-driven and scannable)
+- The primary value proposition text if it appears as a regular paragraph near the top`,
     what_NOT_to_change: `Leave these UNTOUCHED:
+- The hero/banner area — large decorative text, image-masked text, or animated text in the hero is OFF LIMITS
+- Any text that is very short (1-3 words) and appears large/decorative — this likely has special CSS sizing
 - CTA button text (that's a different test)
 - Body paragraph copy
 - Testimonials, quotes, or social proof
-- Navigation, footer, or legal text
-- Any numbers, statistics, or specific claims`,
+- Navigation menu items, footer, or legal text
+- Any numbers, statistics, or specific claims
+- Service names, product names, or category labels`,
     examples: `Before: "Our Services"
 After: "How We Drive Growth for Your Business"
 
 Before: "What We Do"
 After: "Marketing That Delivers Measurable Results"
 
-Before: "Welcome to Infinity Media"
-After: "Scale Your Brand With a Team That Delivers"`,
+Before: "Why Choose Us"
+After: "Why Leading Brands Trust Our Team"`,
   },
   {
     label: 'CTA & Action Copy',
     angle: 'cta_action',
-    hypothesis: 'More specific, outcome-focused CTAs with supporting micro-copy will increase click-through rates.',
+    hypothesis: 'More specific, outcome-focused CTAs will increase click-through rates.',
     what_to_change: `ONLY change these elements:
-- All CTA button text (make each one specific: what happens when they click?)
+- CTA button text (make each one specific: what happens when they click?)
 - Text immediately adjacent to CTAs (1 sentence before or after) to reinforce the action
-- Any "Contact Us" or "Learn More" style generic actions → make them specific
-- Ensure CTA text is consistent in tone across the page (all consultative OR all action-oriented)`,
+- Any generic actions like "Contact Us", "Learn More", "Submit" → make specific`,
     what_NOT_to_change: `Leave these UNTOUCHED:
-- Headlines and subheadlines (that's a different test)
+- ALL headlines, subheadlines, and hero text (that's a different test)
 - Body paragraph copy
 - Testimonials or social proof
-- Navigation, footer, or legal text
-- Page structure or layout`,
+- Navigation menu items, service names, category labels
+- Footer, legal text, or any structural text
+- Any decorative or large-format text`,
     examples: `Before: "Contact Us"
 After: "Get Your Free Strategy Call"
 
 Before: "Learn More"
 After: "See How It Works"
-
-Before: "Submit"
-After: "Send My Request"
 
 Before: "Get Started"
 After: "Start Your Free Consultation"`,
@@ -76,15 +75,16 @@ After: "Start Your Free Consultation"`,
     angle: 'benefit_copy',
     hypothesis: 'Rewriting feature-focused body copy to lead with client benefits will better communicate value.',
     what_to_change: `ONLY change these elements:
-- Body paragraphs that describe services or features → rewrite to lead with the client benefit
-- "About us" copy that talks about the company → rewrite to talk about what clients get
-- Service descriptions → reframe from "we do X" to "you get X"
-- Any vague or generic descriptions → make them specific and concrete`,
+- Body paragraphs (2+ sentences) that describe services or features → reframe to lead with the client benefit
+- "About us" paragraphs that talk about the company → rewrite to focus on what clients get
+- Service description paragraphs → reframe from "we do X" to "you get X"`,
     what_NOT_to_change: `Leave these UNTOUCHED:
-- Headlines and subheadlines (that's a different test)
-- CTA button text (that's a different test)
+- ALL headlines, subheadlines, and hero text
+- CTA button text
 - Testimonials or quotes (never alter someone else's words)
-- Navigation, footer, or legal text
+- Navigation menu items, service names, category labels
+- Short text, labels, or list items — only change full paragraphs
+- Footer, legal text, or any structural text
 - Any specific numbers, statistics, or claims`,
     examples: `Before: "We offer a wide range of digital marketing services including SEO, PPC, and social media management."
 After: "Grow your traffic, leads, and revenue with data-driven SEO, PPC, and social media campaigns."
