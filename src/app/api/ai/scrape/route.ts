@@ -59,35 +59,43 @@ function stripForAnalysis(html: string): string {
   return s;
 }
 
-// Extract actual colors from CSS and inline styles in the HTML
+// Extract actual visible colors from inline styles only (not CSS variables/presets)
 function extractColors(html: string): string[] {
   const colorMap = new Map<string, number>();
 
-  // Match hex colors (#rgb, #rrggbb, #rrggbbaa)
+  // Strip CSS variable/preset definitions (WordPress themes define unused color palettes)
+  // Only look at inline style="" attributes for actually-used colors
+  const styleRegex = /style="([^"]*)"/g;
+  let styleMatch: RegExpExecArray | null;
+  const inlineStyles: string[] = [];
+  while ((styleMatch = styleRegex.exec(html)) !== null) {
+    inlineStyles.push(styleMatch[1]);
+  }
+  const styleText = inlineStyles.join(' ');
+
+  // Match hex colors from inline styles
   const hexRegex = /#(?:[0-9a-fA-F]{3,4}){1,2}\b/g;
   let m: RegExpExecArray | null;
-  while ((m = hexRegex.exec(html)) !== null) {
+  while ((m = hexRegex.exec(styleText)) !== null) {
     let hex = m[0].toLowerCase();
-    // Expand shorthand #abc → #aabbcc
     if (hex.length === 4) {
       hex = `#${hex[1]}${hex[1]}${hex[2]}${hex[2]}${hex[3]}${hex[3]}`;
     }
-    // Skip near-black (#000-#111), near-white (#eee-#fff), and grays
-    if (/^#(000|111|222|333|eee|fff|fafafa|f[0-9a-f]f[0-9a-f]f[0-9a-f])/.test(hex)) continue;
+    // Skip blacks, whites, near-grays
+    if (/^#(0{3,6}|f{3,6}|000000|ffffff)$/i.test(hex)) continue;
     const r = parseInt(hex.slice(1, 3), 16);
     const g = parseInt(hex.slice(3, 5), 16);
     const b = parseInt(hex.slice(5, 7), 16);
-    // Skip grays (r ≈ g ≈ b)
-    if (Math.max(r, g, b) - Math.min(r, g, b) < 15 && r > 30 && r < 230) continue;
+    if (Math.max(r, g, b) - Math.min(r, g, b) < 20) continue; // skip grays
     colorMap.set(hex, (colorMap.get(hex) || 0) + 1);
   }
 
-  // Match rgb/rgba colors
+  // Match rgb/rgba from inline styles
   const rgbRegex = /rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/g;
   let rm: RegExpExecArray | null;
-  while ((rm = rgbRegex.exec(html)) !== null) {
+  while ((rm = rgbRegex.exec(styleText)) !== null) {
     const r = parseInt(rm[1]), g = parseInt(rm[2]), b = parseInt(rm[3]);
-    if (Math.max(r, g, b) - Math.min(r, g, b) < 15) continue;
+    if (Math.max(r, g, b) - Math.min(r, g, b) < 20) continue;
     const hex = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
     colorMap.set(hex, (colorMap.get(hex) || 0) + 1);
   }
