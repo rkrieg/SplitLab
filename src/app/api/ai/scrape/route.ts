@@ -44,13 +44,18 @@ async function scrapeWithFetch(url: string): Promise<string> {
 function stripForAnalysis(html: string): string {
   let s = html;
   s = s.replace(/<script[\s\S]*?<\/script>/gi, '');
-  s = s.replace(/<style[\s\S]*?<\/style>/gi, '');
   s = s.replace(/<svg[\s\S]*?<\/svg>/gi, '');
   s = s.replace(/<!--[\s\S]*?-->/g, '');
-  s = s.replace(/style="[^"]*"/gi, '');
+  // Keep short inline styles (colors, backgrounds) but strip long ones
+  s = s.replace(/style="[^"]{200,}"/gi, 'style="..."');
   s = s.replace(/class="[^"]*"/gi, '');
+  // Keep <style> blocks but truncate overly long ones
+  s = s.replace(/<style[^>]*>([\s\S]*?)<\/style>/gi, (_match, css: string) => {
+    if (css.length > 3000) return `<style>${css.slice(0, 3000)}/* truncated */</style>`;
+    return `<style>${css}</style>`;
+  });
   s = s.replace(/\s{2,}/g, ' ');
-  if (s.length > 15_000) s = s.slice(0, 15_000) + '\n<!-- truncated -->';
+  if (s.length > 20_000) s = s.slice(0, 20_000) + '\n<!-- truncated -->';
   return s;
 }
 

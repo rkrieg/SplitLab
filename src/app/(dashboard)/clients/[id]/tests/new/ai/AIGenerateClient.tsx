@@ -734,14 +734,30 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
               <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">{genProgress}</p>
             </div>
             <div className="w-full max-w-md">
-              <div className="h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-[#3D8BDA] rounded-full transition-all duration-500"
-                  style={{ width: `${Math.max(10, (variants.length / 1) * 100)}%` }}
-                />
+              <div className="h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden relative">
+                {variants.filter(v => v.status === 'ready').length === 0 ? (
+                  <div
+                    className="h-full bg-[#3D8BDA] rounded-full absolute"
+                    style={{
+                      width: '30%',
+                      animation: 'indeterminate 1.5s ease-in-out infinite',
+                    }}
+                  />
+                ) : (
+                  <div
+                    className="h-full bg-[#3D8BDA] rounded-full transition-all duration-500"
+                    style={{ width: '100%' }}
+                  />
+                )}
               </div>
+              <style>{`
+                @keyframes indeterminate {
+                  0% { left: -30%; }
+                  100% { left: 100%; }
+                }
+              `}</style>
               <p className="text-xs text-slate-400 text-center mt-2">
-                {variants.length}/1 variants complete
+                {variants.filter(v => v.status === 'ready').length}/1 variants complete
               </p>
             </div>
 
