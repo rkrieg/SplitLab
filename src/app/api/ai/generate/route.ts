@@ -161,6 +161,28 @@ function parseDiffResponse(response: string): DiffResponse {
   }
 }
 
+// Convert relative URLs to absolute so assets load when served from trysplitlab.com
+function absolutifyUrls(html: string, sourceUrl: string): string {
+  const parsed = new URL(sourceUrl);
+  const origin = parsed.origin; // e.g. https://www.infinitymediala.com
+
+  let result = html;
+
+  // href="/..." and src="/..." (root-relative)
+  result = result.replace(/((?:href|src|action|poster)\s*=\s*["'])\/((?!\/)[^"']*["'])/gi, `$1${origin}/$2`);
+
+  // url(/...) in CSS (root-relative, with or without quotes)
+  result = result.replace(/url\(\s*(['"]?)\/((?!\/)[^)'"]*)\1\s*\)/gi, `url($1${origin}/$2$1)`);
+
+  // srcset="/..." entries
+  result = result.replace(/(srcset\s*=\s*["'])([^"']+)(["'])/gi, (_match, pre: string, value: string, post: string) => {
+    const fixed = value.replace(/(^|,\s*)\/((?!\/)[^\s,]+)/g, `$1${origin}/$2`);
+    return pre + fixed + post;
+  });
+
+  return result;
+}
+
 function applyReplacements(html: string, replacements: Array<{ find: string; replace: string }>): string {
   let result = html;
   let applied = 0;
@@ -334,8 +356,9 @@ export async function POST(request: NextRequest) {
           const parsed = parseDiffResponse(response);
           console.log(`[AI Generate] Variant ${index} parsed OK, ${parsed.replacements?.length || 0} replacements`);
 
-          // Apply replacements to the original HTML
-          const variantHtml = applyReplacements(scrapedPage.html, parsed.replacements || []);
+          // Apply replacements to the original HTML, then fix relative URLs
+          const modifiedHtml = applyReplacements(scrapedPage.html, parsed.replacements || []);
+          const variantHtml = absolutifyUrls(modifiedHtml, scrapedPage.url);
 
           const variantId = crypto.randomUUID();
           const weight = Math.floor(100 / (strategies.length + 1));
