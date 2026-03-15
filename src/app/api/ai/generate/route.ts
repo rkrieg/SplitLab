@@ -80,35 +80,18 @@ function buildPrompt(
   const preparedHtml = prepareHtml(html);
 
   let prompt = `## YOUR TASK
-Take the ORIGINAL HTML below and MODIFY it to create an A/B test variant using the "${strategy.label}" strategy.
+You will receive the HTML of a landing page. Produce a list of find-and-replace operations to create an A/B test variant using the "${strategy.label}" strategy.
 
-You are NOT creating a new page. You are taking the existing HTML and making targeted changes to it. The output must contain EVERY section, image, link, and element from the original — with only strategic modifications applied.
+You are NOT rebuilding the page. You are specifying targeted text replacements that will be applied to the original HTML. The original page stays intact except for your replacements.
 
-## HOW TO APPROACH THIS
-1. Start with the original HTML as your base
-2. Keep ALL existing CSS, styles, layout, colors, fonts, and structure
-3. Keep ALL images with their exact original URLs
-4. Keep ALL sections — do not remove any
-5. Apply ONLY the strategic modifications described below
-6. The result should be the original page with 5-15 specific changes, not a rebuilt page
-
-## WHAT YOU MAY CHANGE
-- Headline and subheadline text (refine wording, not completely rewrite)
-- CTA button text and button styling (color, size, padding — within the existing palette)
-- Section ordering (swap adjacent sections if strategically justified)
-- Copy length (tighten paragraphs, cut filler words)
-- Spacing and whitespace between sections
-- Emphasis on existing elements (make testimonials more prominent, etc.)
-
-## WHAT YOU MUST NOT CHANGE
-- Brand colors, fonts, or visual identity
-- Image URLs (keep every single one exactly as-is)
-- Page layout structure (grid/flex arrangements)
-- Navigation and footer content
-- Any external link destinations
-- Do NOT add new content, sections, testimonials, stats, or claims that aren't in the original
-- Do NOT add countdown timers, popups, animations, or emoji
-- Do NOT add external CSS/JS libraries
+## RULES FOR REPLACEMENTS
+- Each "find" string must be an EXACT substring of the original HTML (case-sensitive, character-for-character)
+- Each "find" must be unique enough to match only once in the HTML
+- Keep replacements surgical: change only what's needed for the strategy
+- Aim for 5-15 replacements total
+- You may change: headline/subhead text, CTA button text, paragraph copy, CSS property values (colors, sizes, padding)
+- You MUST NOT: add new sections, invent content/stats/testimonials, add countdown timers, change image URLs, add external libraries, add emoji
+- To reorder sections: use one replacement that moves a block (find the full section, replace with empty, then insert it elsewhere)
 
 ## Strategy: ${strategy.label}
 ${strategy.directives}
@@ -118,17 +101,18 @@ ${JSON.stringify(analysis, null, 2)}
 
 ## Source URL: ${sourceUrl}
 
-## Technical Requirements
-- Return the COMPLETE modified HTML page — every section from the original must be present
-- All CSS must be inlined in <style> tags (copy the original styles faithfully)
-- Must be responsive (390px to 1440px+)
-- Add data-sl-editable="true" on text elements (h1-h6, p, a, button, li, span with text)
-- Do NOT add external CSS/JS libraries
-
 ## Response Format: ONLY valid JSON, no markdown fences
-{"html":"<!DOCTYPE html>...THE FULL MODIFIED PAGE...","changes_summary":[{"change":"specific change made","reason":"CRO rationale"}],"variant_label":"${strategy.label}","impact_hypothesis":"why this variant may convert better"}
+{
+  "replacements": [
+    {"find": "exact string from original HTML", "replace": "replacement string"},
+    ...
+  ],
+  "changes_summary": [{"change": "what changed", "reason": "CRO rationale"}],
+  "variant_label": "${strategy.label}",
+  "impact_hypothesis": "why this variant may convert better"
+}
 
-## ORIGINAL HTML — MODIFY THIS (do not rebuild from scratch)
+## ORIGINAL HTML
 ${preparedHtml}`;
 
   if (instructions) {
@@ -138,12 +122,14 @@ ${preparedHtml}`;
   return prompt;
 }
 
-function parseClaudeResponse(response: string): {
-  html: string;
+interface DiffResponse {
+  replacements: Array<{ find: string; replace: string }>;
   changes_summary: Array<{ change: string; reason: string }>;
   variant_label: string;
   impact_hypothesis: string;
-} {
+}
+
+function parseDiffResponse(response: string): DiffResponse {
   try {
     return JSON.parse(response);
   } catch {
@@ -151,6 +137,22 @@ function parseClaudeResponse(response: string): {
     if (match) return JSON.parse(match[0]);
     throw new Error('Claude returned invalid JSON for variant generation');
   }
+}
+
+function applyReplacements(html: string, replacements: Array<{ find: string; replace: string }>): string {
+  let result = html;
+  let applied = 0;
+  for (const { find, replace } of replacements) {
+    if (!find || find === replace) continue;
+    if (result.includes(find)) {
+      result = result.replace(find, replace);
+      applied++;
+    } else {
+      console.warn(`[AI Generate] Replacement not found in HTML: "${find.slice(0, 80)}..."`);
+    }
+  }
+  console.log(`[AI Generate] Applied ${applied}/${replacements.length} replacements`);
+  return result;
 }
 
 export async function POST(request: NextRequest) {
@@ -307,8 +309,11 @@ export async function POST(request: NextRequest) {
         const { index, strategy, prompt, response } = result.value;
         try {
           console.log(`[AI Generate] Parsing variant ${index} response...`);
-          const parsed = parseClaudeResponse(response);
-          console.log(`[AI Generate] Variant ${index} parsed OK, HTML length: ${parsed.html?.length || 0}`);
+          const parsed = parseDiffResponse(response);
+          console.log(`[AI Generate] Variant ${index} parsed OK, ${parsed.replacements?.length || 0} replacements`);
+
+          // Apply replacements to the original HTML
+          const variantHtml = applyReplacements(scrapedPage.html, parsed.replacements || []);
 
           const variantId = crypto.randomUUID();
           const weight = Math.floor(100 / (strategies.length + 1));
@@ -328,7 +333,7 @@ export async function POST(request: NextRequest) {
           const storagePath = `${testId}/${variantId}.html`;
           const { error: uploadErr } = await db.storage
             .from(VARIANTS_BUCKET)
-            .upload(storagePath, parsed.html, {
+            .upload(storagePath, variantHtml, {
               contentType: 'text/html; charset=utf-8',
               upsert: true,
             });
