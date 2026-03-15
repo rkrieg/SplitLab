@@ -581,7 +581,7 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
                 />
               </div>
               <button
-                onClick={handleAnalyze}
+                onClick={() => handleAnalyze()}
                 disabled={!url.trim() || scraping}
                 className="inline-flex items-center gap-2 px-5 py-2 rounded-lg font-medium text-sm text-white bg-[#3D8BDA] hover:bg-[#3578c0] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
