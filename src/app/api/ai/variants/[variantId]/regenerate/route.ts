@@ -10,12 +10,12 @@ export const dynamic = 'force-dynamic';
 
 const VARIANTS_BUCKET = 'variants';
 
-// Keep in sync with generate/route.ts
+// Prepare HTML for Claude's context — strip non-text elements to reduce tokens
 function prepareHtml(html: string): string {
   let s = html;
   s = s.replace(/<script[\s\S]*?<\/script>/gi, '');
   s = s.replace(/<svg[\s\S]*?<\/svg>/gi, (match) => {
-    return match.length > 500 ? '<!-- svg-placeholder -->' : match;
+    return match.length > 500 ? '<!-- svg -->' : match;
   });
   s = s.replace(/<!--[\s\S]*?-->/g, '');
   s = s.replace(/\s{2,}/g, ' ');
@@ -50,7 +50,6 @@ function applyReplacements(html: string, replacements: Array<{ find: string; rep
       continue;
     }
 
-    // Whitespace-flexible match for collapsed-whitespace find strings
     const parts = find.split(/\s+/).filter(Boolean);
     if (parts.length < 2) {
       console.warn(`[Regenerate] Replacement not found: "${find.slice(0, 80)}..."`);
@@ -110,7 +109,6 @@ export async function POST(
     // No body is fine — instructions are optional
   }
 
-  // Fetch variant_pages to get source_url and previous prompt
   const { data: variantPage, error: vpErr } = await db
     .from('variant_pages')
     .select('*')
@@ -123,7 +121,6 @@ export async function POST(
     return NextResponse.json({ error: 'Variant page not found' }, { status: 404 });
   }
 
-  // Fetch original scraped page by source_url
   const { data: scrapedPage, error: scrapeErr } = await db
     .from('scraped_pages')
     .select('*')
@@ -136,7 +133,6 @@ export async function POST(
     return NextResponse.json({ error: 'Original scraped page not found' }, { status: 404 });
   }
 
-  // Fetch the variant record for its name/label
   const { data: variant } = await db
     .from('test_variants')
     .select('name')
@@ -144,90 +140,62 @@ export async function POST(
     .single();
 
   const variantName = variant?.name || 'Variant';
-
-  // Determine the strategy from variant name (e.g. "AI: Conversion-Focused")
   const strategyLabel = variantName.replace(/^AI:\s*/, '');
 
   const preparedHtml = prepareHtml(scrapedPage.html);
 
   let prompt = `## YOUR TASK
-You will receive the HTML of a landing page. Produce a list of find-and-replace operations to create an A/B test variant using the "${strategyLabel}" strategy.
 
-You are NOT rebuilding the page. You are specifying targeted text replacements that will be applied to the original HTML. The original page stays intact except for your replacements.
+Regenerate an A/B test variant of this landing page using the "${strategyLabel}" strategy. This is a REGENERATION — produce DIFFERENT changes than before, with a fresh creative angle while staying within the strategy.
 
-This is a REGENERATION — produce DIFFERENT changes than the previous version. Be creative with new angles while staying within the strategy.
+You will produce a list of find-and-replace operations. These replacements will be applied to the original HTML. The page structure, design, and layout stay EXACTLY the same — only text content changes.
 
-## RULES FOR REPLACEMENTS
-- Each "find" string must be an EXACT substring of the original HTML (case-sensitive, character-for-character)
-- Each "find" must be unique enough to match only once in the HTML
-- Aim for 8-20 replacements total
-- Focus on: CTA button text, subheadlines, paragraph body copy, and descriptive text
-- Replacement text must be SIMILAR LENGTH to the original — never dramatically longer or shorter, as this breaks CSS layouts
-- You may also change CSS property values (padding, margins) but ONLY for spacing, never colors or fonts
+Your "find" strings must be VISIBLE TEXT from the page — the words a visitor reads. Do NOT include HTML tags, CSS, or attributes in find strings. Find strings should be long enough to be unique (a full phrase or sentence).
 
-## CRITICAL: DO NOT BREAK THE LAYOUT
-- NEVER change text inside elements that use background-clip, text-fill, image-masked text, or decorative CSS text effects — these are sized for specific text and will break visually
-- NEVER change very short text (1-2 words) inside heavily styled elements — these are likely decorative
-- When in doubt about whether text has special styling, SKIP IT
-- Replacement text should be approximately the same character count as the original (within ±20%)
-
-## COPY QUALITY RULES
-- Write like a professional copywriter, NOT a used car salesman
-- NEVER use words like: URGENT, TIME-SENSITIVE, ACT NOW, DON'T MISS, EXCLUSIVE, WINNERS, GAME-CHANGER, REVOLUTIONARY, SKYROCKET
-- NEVER prefix text with labels like "URGENT:" or "TIME-SENSITIVE:" or "LIMITED:"
-- NEVER use ALL CAPS for emphasis (unless the original text was all caps)
-- Keep the same tone and voice as the original page — if it's professional, stay professional
-- Be specific and concrete, not hyperbolic
-- Good example: "Contact Us" → "Get Your Free Strategy Call"
-- Bad example: "Contact Us" → "CLAIM YOUR SPOT NOW BEFORE IT'S TOO LATE"
-
-## WHAT YOU MUST NOT DO
-- Add entirely new HTML sections or elements
-- Invent statistics, testimonials, customer counts, or claims
-- Add countdown timers, popups, or animations
-- Change image URLs or remove images
-- Add external CSS/JS libraries or emoji
+- Keep replacement text within ±20% of the original length
+- Produce 5-8 focused replacements
+- Match the page's original tone and voice
 
 ## Page Analysis
 ${JSON.stringify(scrapedPage.analysis || {}, null, 2)}
 
 ## Source URL: ${scrapedPage.url}
 
-## Response Format: ONLY valid JSON, no markdown fences
+## Response Format
+Return ONLY valid JSON, no markdown code fences:
 {
   "replacements": [
-    {"find": "exact string from original HTML", "replace": "replacement string"},
+    {"find": "exact visible text from the page", "replace": "improved text"},
     ...
   ],
-  "changes_summary": [{"change": "what changed", "reason": "CRO rationale"}],
+  "changes_summary": [{"change": "what was changed", "reason": "why"}],
   "variant_label": "${strategyLabel}",
-  "impact_hypothesis": "why this variant may convert better"
+  "impact_hypothesis": "specific prediction about performance"
 }
 
-## ORIGINAL HTML
+## ORIGINAL HTML (for context — find strings should be VISIBLE TEXT only)
 ${preparedHtml}`;
 
   if (instructions) {
-    prompt += `\n\n## Additional User Instructions\n${instructions}`;
+    prompt += `\n\n## Additional Instructions\n${instructions}`;
   }
 
   try {
-    console.log(`[Regenerate] Starting regeneration for variant ${variantId}, prompt length: ${prompt.length} chars`);
+    console.log(`[Regenerate] Starting, prompt length: ${prompt.length} chars`);
     const response = await ask(prompt, {
-      system: `You are a senior CRO specialist creating A/B test variants of landing pages. Follow the framework below precisely.\n\n${LANDING_PAGE_FRAMEWORK}`,
+      system: `You are a senior CRO specialist creating A/B test variants. You make precise, focused text changes. Follow the framework below.\n\n${LANDING_PAGE_FRAMEWORK}`,
       model: 'claude-sonnet-4-20250514',
-      maxTokens: 16384,
+      maxTokens: 4096,
     });
 
     console.log(`[Regenerate] Response length: ${response.length} chars`);
     const parsed = parseDiffResponse(response);
     console.log(`[Regenerate] Parsed OK, ${parsed.replacements?.length || 0} replacements`);
 
-    // Apply replacements to the ORIGINAL HTML so all content is preserved
+    // Apply text replacements to the ORIGINAL HTML
     const modifiedHtml = applyReplacements(scrapedPage.html, parsed.replacements || []);
     const variantHtml = absolutifyUrls(modifiedHtml, scrapedPage.url);
 
-    // Upload new HTML
     const { error: uploadErr } = await db.storage
       .from(VARIANTS_BUCKET)
       .upload(variantPage.html_storage_path, variantHtml, {
@@ -239,7 +207,6 @@ ${preparedHtml}`;
       return NextResponse.json({ error: `Upload failed: ${uploadErr.message}` }, { status: 500 });
     }
 
-    // Update variant_pages
     const newVersion = variantPage.version + 1;
     await db
       .from('variant_pages')
