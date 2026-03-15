@@ -52,21 +52,21 @@ const STRATEGIES: VariantStrategy[] = [
   },
 ];
 
-// Strip HTML to essentials — remove scripts, large style blocks, SVGs, comments
-function stripHtml(html: string): string {
+// Prepare HTML for variant generation — keep as much as possible for faithful reproduction
+function prepareHtml(html: string): string {
   let s = html;
-  // Remove script tags and contents
+  // Remove script tags (tracking, analytics, etc.) — not needed for visual reproduction
   s = s.replace(/<script[\s\S]*?<\/script>/gi, '');
-  // Remove SVGs
-  s = s.replace(/<svg[\s\S]*?<\/svg>/gi, '<svg/>');
+  // Replace large SVGs with placeholder but keep small ones (icons)
+  s = s.replace(/<svg[\s\S]*?<\/svg>/gi, (match) => {
+    return match.length > 500 ? '<!-- svg-placeholder -->' : match;
+  });
   // Remove HTML comments
   s = s.replace(/<!--[\s\S]*?-->/g, '');
-  // Remove inline styles longer than 200 chars (keep short ones)
-  s = s.replace(/style="[^"]{200,}"/gi, 'style="..."');
   // Collapse whitespace
   s = s.replace(/\s{2,}/g, ' ');
-  // Truncate to 20K chars max
-  if (s.length > 20_000) s = s.slice(0, 20_000) + '\n<!-- truncated -->';
+  // Keep up to 100K chars — Claude Sonnet handles 200K context
+  if (s.length > 100_000) s = s.slice(0, 100_000) + '\n<!-- truncated -->';
   return s;
 }
 
@@ -77,21 +77,38 @@ function buildPrompt(
   sourceUrl: string,
   instructions?: string
 ): string {
-  const strippedHtml = stripHtml(html);
+  const preparedHtml = prepareHtml(html);
 
   let prompt = `## YOUR TASK
-Create a variant of this landing page using the "${strategy.label}" strategy. This is a VARIATION — NOT a redesign.
+Take the ORIGINAL HTML below and MODIFY it to create an A/B test variant using the "${strategy.label}" strategy.
 
-## STRICT RULES — VIOLATIONS WILL REJECT THE OUTPUT
-1. PRESERVE the original page's visual identity: colors, fonts, layout structure, branding, logo
-2. PRESERVE every image URL exactly as-is — do not remove, replace, or add images
-3. PRESERVE all existing links and their destinations
-4. NEVER fabricate content: no fake statistics, fake testimonials, fake customer counts, fake awards, fake countdown timers, or any claims not present in the original
-5. NEVER add emojis to headlines or CTAs
-6. NEVER add JavaScript animations, popups, modals, or countdown timers
-7. Changes should be SUBTLE and STRATEGIC — a visitor should recognize it as the same page
-8. Only modify: headline/subhead copy, CTA text/styling, section ordering, spacing, copy length, element emphasis
-9. Keep the same overall page length (±20%)
+You are NOT creating a new page. You are taking the existing HTML and making targeted changes to it. The output must contain EVERY section, image, link, and element from the original — with only strategic modifications applied.
+
+## HOW TO APPROACH THIS
+1. Start with the original HTML as your base
+2. Keep ALL existing CSS, styles, layout, colors, fonts, and structure
+3. Keep ALL images with their exact original URLs
+4. Keep ALL sections — do not remove any
+5. Apply ONLY the strategic modifications described below
+6. The result should be the original page with 5-15 specific changes, not a rebuilt page
+
+## WHAT YOU MAY CHANGE
+- Headline and subheadline text (refine wording, not completely rewrite)
+- CTA button text and button styling (color, size, padding — within the existing palette)
+- Section ordering (swap adjacent sections if strategically justified)
+- Copy length (tighten paragraphs, cut filler words)
+- Spacing and whitespace between sections
+- Emphasis on existing elements (make testimonials more prominent, etc.)
+
+## WHAT YOU MUST NOT CHANGE
+- Brand colors, fonts, or visual identity
+- Image URLs (keep every single one exactly as-is)
+- Page layout structure (grid/flex arrangements)
+- Navigation and footer content
+- Any external link destinations
+- Do NOT add new content, sections, testimonials, stats, or claims that aren't in the original
+- Do NOT add countdown timers, popups, animations, or emoji
+- Do NOT add external CSS/JS libraries
 
 ## Strategy: ${strategy.label}
 ${strategy.directives}
@@ -102,20 +119,20 @@ ${JSON.stringify(analysis, null, 2)}
 ## Source URL: ${sourceUrl}
 
 ## Technical Requirements
-- Return a COMPLETE self-contained HTML page with ALL CSS inlined in <style> tags
+- Return the COMPLETE modified HTML page — every section from the original must be present
+- All CSS must be inlined in <style> tags (copy the original styles faithfully)
 - Must be responsive (390px to 1440px+)
 - Add data-sl-editable="true" on text elements (h1-h6, p, a, button, li, span with text)
 - Do NOT add external CSS/JS libraries
-- Reproduce the original page's styling as faithfully as possible — this is a variation, not a new design
 
 ## Response Format: ONLY valid JSON, no markdown fences
-{"html":"<!DOCTYPE html>...","changes_summary":[{"change":"what changed","reason":"CRO rationale for this change"}],"variant_label":"${strategy.label}","impact_hypothesis":"concise hypothesis about why this variant may convert better"}
+{"html":"<!DOCTYPE html>...THE FULL MODIFIED PAGE...","changes_summary":[{"change":"specific change made","reason":"CRO rationale"}],"variant_label":"${strategy.label}","impact_hypothesis":"why this variant may convert better"}
 
-## Original HTML (stripped)
-${strippedHtml}`;
+## ORIGINAL HTML — MODIFY THIS (do not rebuild from scratch)
+${preparedHtml}`;
 
   if (instructions) {
-    prompt += `\n\n## User Instructions\n${instructions}`;
+    prompt += `\n\n## Additional User Instructions\n${instructions}`;
   }
 
   return prompt;
