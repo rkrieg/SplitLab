@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { ask } from '@/lib/claude';
+import { LANDING_PAGE_FRAMEWORK } from '@/lib/landing-page-framework';
 
 export const maxDuration = 60;
 export const dynamic = 'force-dynamic';
@@ -85,7 +86,7 @@ export async function POST(
       ? scrapedPage.html.slice(0, 60_000) + '\n<!-- truncated -->'
       : scrapedPage.html;
 
-  let prompt = `You are an expert conversion rate optimization specialist. Regenerate a variant of this landing page. The variant name is "${variantName}".
+  let prompt = `Regenerate a variant of this landing page. The variant name is "${variantName}". This is a VARIATION of the original — NOT a redesign.
 
 ## Original Page Analysis
 ${JSON.stringify(scrapedPage.analysis || {}, null, 2)}
@@ -121,7 +122,8 @@ ${truncatedHtml}`;
 
   try {
     const response = await ask(prompt, {
-      model: 'claude-opus-4-20250514',
+      system: `You are a senior CRO specialist creating A/B test variants of landing pages. Follow the framework below precisely.\n\n${LANDING_PAGE_FRAMEWORK}`,
+      model: 'claude-sonnet-4-20250514',
       maxTokens: 16384,
     });
 

@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { ask } from '@/lib/claude';
+import { LANDING_PAGE_FRAMEWORK } from '@/lib/landing-page-framework';
 
 export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
@@ -78,10 +79,8 @@ function buildPrompt(
 ): string {
   const strippedHtml = stripHtml(html);
 
-  let prompt = `You are a senior CRO specialist creating an A/B test variant of a landing page.
-
-## YOUR TASK
-Create a variant using the "${strategy.label}" strategy. This is a VARIATION of the original page — NOT a redesign.
+  let prompt = `## YOUR TASK
+Create a variant of this landing page using the "${strategy.label}" strategy. This is a VARIATION — NOT a redesign.
 
 ## STRICT RULES — VIOLATIONS WILL REJECT THE OUTPUT
 1. PRESERVE the original page's visual identity: colors, fonts, layout structure, branding, logo
@@ -262,6 +261,7 @@ export async function POST(request: NextRequest) {
 
         console.log(`[AI Generate] Starting variant ${index} (${strategy.label}), prompt length: ${prompt.length} chars`);
         const response = await ask(prompt, {
+          system: `You are a senior CRO specialist creating A/B test variants of landing pages. Follow the framework below precisely.\n\n${LANDING_PAGE_FRAMEWORK}`,
           model: 'claude-sonnet-4-20250514',
           maxTokens: 16384,
         });
