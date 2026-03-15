@@ -64,8 +64,9 @@ function extractColors(html: string): string[] {
   const colorMap = new Map<string, number>();
 
   // Match hex colors (#rgb, #rrggbb, #rrggbbaa)
-  const hexMatches = html.matchAll(/#(?:[0-9a-fA-F]{3,4}){1,2}\b/g);
-  for (const m of hexMatches) {
+  const hexRegex = /#(?:[0-9a-fA-F]{3,4}){1,2}\b/g;
+  let m: RegExpExecArray | null;
+  while ((m = hexRegex.exec(html)) !== null) {
     let hex = m[0].toLowerCase();
     // Expand shorthand #abc → #aabbcc
     if (hex.length === 4) {
@@ -82,9 +83,10 @@ function extractColors(html: string): string[] {
   }
 
   // Match rgb/rgba colors
-  const rgbMatches = html.matchAll(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/g);
-  for (const m of rgbMatches) {
-    const r = parseInt(m[1]), g = parseInt(m[2]), b = parseInt(m[3]);
+  const rgbRegex = /rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/g;
+  let rm: RegExpExecArray | null;
+  while ((rm = rgbRegex.exec(html)) !== null) {
+    const r = parseInt(rm[1]), g = parseInt(rm[2]), b = parseInt(rm[3]);
     if (Math.max(r, g, b) - Math.min(r, g, b) < 15) continue;
     const hex = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
     colorMap.set(hex, (colorMap.get(hex) || 0) + 1);
