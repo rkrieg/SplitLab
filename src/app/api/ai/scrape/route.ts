@@ -93,7 +93,7 @@ function extractColors(html: string): string[] {
   }
 
   // Return top colors sorted by frequency
-  return [...colorMap.entries()]
+  return Array.from(colorMap.entries())
     .sort((a, b) => b[1] - a[1])
     .slice(0, 6)
     .map(([color]) => color);
