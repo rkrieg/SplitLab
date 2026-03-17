@@ -23,19 +23,19 @@ function prepareHtml(html: string): string {
   return s;
 }
 
-function absolutifyUrls(html: string, sourceUrl: string): string {
+function injectBaseTag(html: string, sourceUrl: string): string {
   const parsed = new URL(sourceUrl);
-  const origin = parsed.origin;
+  const pathDir = parsed.pathname.replace(/\/[^/]*$/, '/');
+  const base = parsed.origin + pathDir;
+  const baseTag = `<base href="${base}">`;
 
-  let result = html;
-  result = result.replace(/((?:href|src|action|poster)\s*=\s*["'])\/((?!\/)[^"']*["'])/gi, `$1${origin}/$2`);
-  result = result.replace(/url\(\s*(['"]?)\/((?!\/)[^)'"]*)\1\s*\)/gi, `url($1${origin}/$2$1)`);
-  result = result.replace(/(srcset\s*=\s*["'])([^"']+)(["'])/gi, (_match, pre: string, value: string, post: string) => {
-    const fixed = value.replace(/(^|,\s*)\/((?!\/)[^\s,]+)/g, `$1${origin}/$2`);
-    return pre + fixed + post;
-  });
-
-  return result;
+  if (/<head[^>]*>/i.test(html)) {
+    return html.replace(/<head[^>]*>/i, `$&\n${baseTag}`);
+  }
+  if (/<html[^>]*>/i.test(html)) {
+    return html.replace(/<html[^>]*>/i, `$&\n<head>${baseTag}</head>`);
+  }
+  return `${baseTag}\n${html}`;
 }
 
 function applyReplacements(html: string, replacements: Array<{ find: string; replace: string }>): string {
@@ -194,7 +194,7 @@ ${preparedHtml}`;
 
     // Apply text replacements to the ORIGINAL HTML
     const modifiedHtml = applyReplacements(scrapedPage.html, parsed.replacements || []);
-    const variantHtml = absolutifyUrls(modifiedHtml, scrapedPage.url);
+    const variantHtml = injectBaseTag(modifiedHtml, scrapedPage.url);
 
     const { error: uploadErr } = await db.storage
       .from(VARIANTS_BUCKET)

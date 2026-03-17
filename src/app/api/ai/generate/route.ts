@@ -125,7 +125,15 @@ You are creating an A/B test variant of a landing page using the "${strategy.lab
 
 **Hypothesis:** ${strategy.hypothesis}
 
-You will produce a list of find-and-replace operations. These replacements will be applied to the original HTML to create the variant. The page structure, design, and layout stay EXACTLY the same — only the text content changes.
+You will produce a list of find-and-replace operations. These will be applied to the ORIGINAL HTML. The page structure, design, images, and layout MUST stay exactly the same — you are ONLY changing specific text content.
+
+## ABSOLUTE RULES — VIOLATING THESE BREAKS THE PAGE
+1. NEVER change text in the hero/banner area — large decorative headlines use CSS effects (background-clip, text-fill, image masks) and WILL break if text changes
+2. NEVER change text that is 1-4 words and appears large/bold — it's decorative with fixed CSS sizing
+3. NEVER change navigation items, service names, category labels, or tab/dropdown text
+4. NEVER change testimonials, quotes, or attributed text
+5. ONLY change full sentences or phrases in body copy, section subheadlines, or CTA buttons
+6. Replacement text MUST be within ±10% character count of the original
 
 ## WHAT TO CHANGE
 ${strategy.what_to_change}
@@ -141,8 +149,8 @@ ${strategy.examples}
 Your "find" strings must be the VISIBLE TEXT that appears on the page — the actual words a visitor reads. Do NOT include HTML tags, CSS classes, or attributes in your find strings.
 
 - Find the exact text as it appears in the HTML (between tags, not including tags)
-- Make find strings long enough to be unique (a full phrase or sentence)
-- Keep replacement text within ±20% of the original length
+- Make find strings long enough to be unique on the page (a full phrase or sentence, minimum 20 characters)
+- Keep replacement text within ±10% character count of the original (count the characters!)
 - Produce 5-8 focused replacements that all support the hypothesis
 
 ## Page Analysis
@@ -190,26 +198,27 @@ function parseDiffResponse(response: string): DiffResponse {
   }
 }
 
-// Convert relative URLs to absolute so assets load when served from trysplitlab.com
-function absolutifyUrls(html: string, sourceUrl: string): string {
+// Inject a <base> tag so ALL relative URLs (CSS, JS, images, fonts) resolve
+// against the original domain. This is far more reliable than regex-based
+// URL rewriting because it handles every URL type the browser encounters.
+function injectBaseTag(html: string, sourceUrl: string): string {
   const parsed = new URL(sourceUrl);
-  const origin = parsed.origin;
+  // Use the full origin + path directory as base (not just origin)
+  // so relative URLs like "styles.css" resolve correctly
+  const pathDir = parsed.pathname.replace(/\/[^/]*$/, '/');
+  const base = parsed.origin + pathDir;
+  const baseTag = `<base href="${base}">`;
 
-  let result = html;
-
-  // href="/..." and src="/..." (root-relative)
-  result = result.replace(/((?:href|src|action|poster)\s*=\s*["'])\/((?!\/)[^"']*["'])/gi, `$1${origin}/$2`);
-
-  // url(/...) in CSS (root-relative, with or without quotes)
-  result = result.replace(/url\(\s*(['"]?)\/((?!\/)[^)'"]*)\1\s*\)/gi, `url($1${origin}/$2$1)`);
-
-  // srcset="/..." entries
-  result = result.replace(/(srcset\s*=\s*["'])([^"']+)(["'])/gi, (_match, pre: string, value: string, post: string) => {
-    const fixed = value.replace(/(^|,\s*)\/((?!\/)[^\s,]+)/g, `$1${origin}/$2`);
-    return pre + fixed + post;
-  });
-
-  return result;
+  // Insert <base> as the first child of <head>
+  if (/<head[^>]*>/i.test(html)) {
+    return html.replace(/<head[^>]*>/i, `$&\n${baseTag}`);
+  }
+  // If no <head>, insert before first tag
+  if (/<html[^>]*>/i.test(html)) {
+    return html.replace(/<html[^>]*>/i, `$&\n<head>${baseTag}</head>`);
+  }
+  // Fallback: prepend
+  return `${baseTag}\n${html}`;
 }
 
 // Apply text replacements to the original HTML.
@@ -410,9 +419,9 @@ export async function POST(request: NextRequest) {
           const parsed = parseDiffResponse(response);
           console.log(`[AI Generate] Variant ${index} parsed OK, ${parsed.replacements?.length || 0} replacements`);
 
-          // Apply text replacements to the ORIGINAL HTML
+          // Apply text replacements to the ORIGINAL HTML, then inject <base> for asset loading
           const modifiedHtml = applyReplacements(scrapedPage.html, parsed.replacements || []);
-          const variantHtml = absolutifyUrls(modifiedHtml, scrapedPage.url);
+          const variantHtml = injectBaseTag(modifiedHtml, scrapedPage.url);
 
           const variantId = crypto.randomUUID();
           const weight = Math.floor(100 / (strategies.length + 1));
