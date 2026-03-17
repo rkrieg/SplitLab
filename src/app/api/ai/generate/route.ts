@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { ask } from '@/lib/claude';
 import { LANDING_PAGE_FRAMEWORK } from '@/lib/landing-page-framework';
+import { applyReplacements, prepareHtml, injectBaseTag } from '@/lib/variant-utils';
 
 export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
@@ -97,19 +98,6 @@ After: "Our clients see measurable growth in traffic, leads, and revenue within 
   },
 ];
 
-// Prepare HTML for Claude's context — strip non-text elements to reduce tokens
-function prepareHtml(html: string): string {
-  let s = html;
-  s = s.replace(/<script[\s\S]*?<\/script>/gi, '');
-  s = s.replace(/<svg[\s\S]*?<\/svg>/gi, (match) => {
-    return match.length > 500 ? '<!-- svg -->' : match;
-  });
-  s = s.replace(/<!--[\s\S]*?-->/g, '');
-  s = s.replace(/\s{2,}/g, ' ');
-  if (s.length > 100_000) s = s.slice(0, 100_000) + '\n<!-- truncated -->';
-  return s;
-}
-
 function buildPrompt(
   html: string,
   analysis: Record<string, unknown>,
@@ -196,71 +184,6 @@ function parseDiffResponse(response: string): DiffResponse {
     if (match) return JSON.parse(match[0]);
     throw new Error('Claude returned invalid JSON for variant generation');
   }
-}
-
-// Inject a <base> tag so ALL relative URLs (CSS, JS, images, fonts) resolve
-// against the original domain. This is far more reliable than regex-based
-// URL rewriting because it handles every URL type the browser encounters.
-function injectBaseTag(html: string, sourceUrl: string): string {
-  const parsed = new URL(sourceUrl);
-  // Use the full origin + path directory as base (not just origin)
-  // so relative URLs like "styles.css" resolve correctly
-  const pathDir = parsed.pathname.replace(/\/[^/]*$/, '/');
-  const base = parsed.origin + pathDir;
-  const baseTag = `<base href="${base}">`;
-
-  // Insert <base> as the first child of <head>
-  if (/<head[^>]*>/i.test(html)) {
-    return html.replace(/<head[^>]*>/i, `$&\n${baseTag}`);
-  }
-  // If no <head>, insert before first tag
-  if (/<html[^>]*>/i.test(html)) {
-    return html.replace(/<html[^>]*>/i, `$&\n<head>${baseTag}</head>`);
-  }
-  // Fallback: prepend
-  return `${baseTag}\n${html}`;
-}
-
-// Apply text replacements to the original HTML.
-// Find strings are VISIBLE TEXT (no HTML tags), so we search for them
-// as literal text content within the HTML. We try exact match first,
-// then whitespace-flexible match for multi-word strings.
-function applyReplacements(html: string, replacements: Array<{ find: string; replace: string }>): string {
-  let result = html;
-  let applied = 0;
-  for (const { find, replace } of replacements) {
-    if (!find || find === replace) continue;
-
-    // First try exact match (text may appear verbatim in the HTML)
-    if (result.includes(find)) {
-      result = result.replace(find, replace);
-      applied++;
-      continue;
-    }
-
-    // Whitespace-flexible match: the text in the HTML may have newlines/extra spaces
-    // between words that were collapsed when Claude read the prepared version
-    const parts = find.split(/\s+/).filter(Boolean);
-    if (parts.length < 2) {
-      console.warn(`[AI Generate] Replacement not found: "${find.slice(0, 80)}..."`);
-      continue;
-    }
-    // Escape each word for regex, join with flexible whitespace
-    const pattern = parts.map(p => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+');
-    try {
-      const regex = new RegExp(pattern);
-      if (regex.test(result)) {
-        result = result.replace(regex, replace);
-        applied++;
-      } else {
-        console.warn(`[AI Generate] Replacement not found (flex): "${find.slice(0, 80)}..."`);
-      }
-    } catch {
-      console.warn(`[AI Generate] Invalid regex for replacement: "${find.slice(0, 80)}..."`);
-    }
-  }
-  console.log(`[AI Generate] Applied ${applied}/${replacements.length} replacements`);
-  return result;
 }
 
 export async function POST(request: NextRequest) {

@@ -4,73 +4,12 @@ import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { ask } from '@/lib/claude';
 import { LANDING_PAGE_FRAMEWORK } from '@/lib/landing-page-framework';
+import { applyReplacements, prepareHtml, injectBaseTag } from '@/lib/variant-utils';
 
 export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
 
 const VARIANTS_BUCKET = 'variants';
-
-// Prepare HTML for Claude's context — strip non-text elements to reduce tokens
-function prepareHtml(html: string): string {
-  let s = html;
-  s = s.replace(/<script[\s\S]*?<\/script>/gi, '');
-  s = s.replace(/<svg[\s\S]*?<\/svg>/gi, (match) => {
-    return match.length > 500 ? '<!-- svg -->' : match;
-  });
-  s = s.replace(/<!--[\s\S]*?-->/g, '');
-  s = s.replace(/\s{2,}/g, ' ');
-  if (s.length > 100_000) s = s.slice(0, 100_000) + '\n<!-- truncated -->';
-  return s;
-}
-
-function injectBaseTag(html: string, sourceUrl: string): string {
-  const parsed = new URL(sourceUrl);
-  const pathDir = parsed.pathname.replace(/\/[^/]*$/, '/');
-  const base = parsed.origin + pathDir;
-  const baseTag = `<base href="${base}">`;
-
-  if (/<head[^>]*>/i.test(html)) {
-    return html.replace(/<head[^>]*>/i, `$&\n${baseTag}`);
-  }
-  if (/<html[^>]*>/i.test(html)) {
-    return html.replace(/<html[^>]*>/i, `$&\n<head>${baseTag}</head>`);
-  }
-  return `${baseTag}\n${html}`;
-}
-
-function applyReplacements(html: string, replacements: Array<{ find: string; replace: string }>): string {
-  let result = html;
-  let applied = 0;
-  for (const { find, replace } of replacements) {
-    if (!find || find === replace) continue;
-
-    if (result.includes(find)) {
-      result = result.replace(find, replace);
-      applied++;
-      continue;
-    }
-
-    const parts = find.split(/\s+/).filter(Boolean);
-    if (parts.length < 2) {
-      console.warn(`[Regenerate] Replacement not found: "${find.slice(0, 80)}..."`);
-      continue;
-    }
-    const pattern = parts.map(p => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+');
-    try {
-      const regex = new RegExp(pattern);
-      if (regex.test(result)) {
-        result = result.replace(regex, replace);
-        applied++;
-      } else {
-        console.warn(`[Regenerate] Replacement not found (flex): "${find.slice(0, 80)}..."`);
-      }
-    } catch {
-      console.warn(`[Regenerate] Invalid regex for replacement: "${find.slice(0, 80)}..."`);
-    }
-  }
-  console.log(`[Regenerate] Applied ${applied}/${replacements.length} replacements`);
-  return result;
-}
 
 interface DiffResponse {
   replacements: Array<{ find: string; replace: string }>;
