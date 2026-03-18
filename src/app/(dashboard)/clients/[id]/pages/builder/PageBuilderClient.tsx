@@ -54,6 +54,8 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
   const [saving, setSaving] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
   const [showQuality, setShowQuality] = useState(false);
+  const [changeRequest, setChangeRequest] = useState('');
+  const [showChangeBar, setShowChangeBar] = useState(false);
 
   // Section regeneration
   const [hoveredSection, setHoveredSection] = useState<string | null>(null);
@@ -303,24 +305,25 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
 
   // ─── Regenerate full page ──────────────────────────────────────────
 
-  async function handleRegenerate() {
+  async function handleRegenerate(instructions?: string) {
     setRegenerating(true);
     try {
       const res = await fetch(`/api/pages/${pageId}/regenerate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ instructions: instructions || undefined }),
       });
       if (!res.ok) {
         toast.error('Regeneration failed');
         return;
       }
       const data = await res.json();
-      // Reload iframe
       if (iframeRef.current) {
         iframeRef.current.src = previewUrl + '?v=' + data.version;
       }
-      toast.success('Page regenerated!');
+      toast.success(instructions ? 'Changes applied!' : 'Page regenerated!');
+      setChangeRequest('');
+      setShowChangeBar(false);
     } catch {
       toast.error('Regeneration failed');
     } finally {
@@ -666,7 +669,10 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
                 <Button variant="secondary" size="sm" onClick={() => setEditMode(true)}>
                   <Pencil size={14} /> Edit
                 </Button>
-                <Button variant="secondary" size="sm" onClick={handleRegenerate} loading={regenerating}>
+                <Button variant="secondary" size="sm" onClick={() => setShowChangeBar(!showChangeBar)}>
+                  <Wand2 size={14} /> Request Changes
+                </Button>
+                <Button variant="secondary" size="sm" onClick={() => handleRegenerate()} loading={regenerating}>
                   <RotateCcw size={14} /> Regenerate
                 </Button>
                 <Button size="sm" onClick={handlePublish} loading={publishing}>
@@ -692,6 +698,37 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
                   <span className="text-slate-400 dark:text-slate-500 ml-auto">+{check.score}</span>
                 </div>
               ))}
+            </div>
+          </div>
+        )}
+
+        {/* Change request bar */}
+        {showChangeBar && (
+          <div className="bg-gradient-to-r from-purple-500/5 to-indigo-500/5 border border-indigo-500/20 rounded-xl p-4">
+            <label className="block text-xs font-medium text-indigo-400 mb-2">
+              Describe what you want changed
+            </label>
+            <div className="flex gap-3">
+              <textarea
+                value={changeRequest}
+                onChange={(e) => setChangeRequest(e.target.value)}
+                className="input-base text-sm flex-1 h-20 resize-none"
+                placeholder="e.g., Make the hero section darker with a gradient background. Add more testimonials. Make the CTA buttons larger and red. Remove the FAQ section."
+                autoFocus
+              />
+              <div className="flex flex-col gap-2 justify-end">
+                <Button
+                  size="sm"
+                  onClick={() => handleRegenerate(changeRequest)}
+                  loading={regenerating}
+                  disabled={!changeRequest.trim()}
+                >
+                  <Wand2 size={14} /> Apply Changes
+                </Button>
+                <Button variant="secondary" size="sm" onClick={() => { setShowChangeBar(false); setChangeRequest(''); }}>
+                  Cancel
+                </Button>
+              </div>
             </div>
           </div>
         )}
