@@ -70,6 +70,7 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
 
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const completedRef = useRef(false);
 
   // ─── Generate Page ──────────────────────────────────────────────────
 
@@ -78,6 +79,7 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
 
     setStep('generating');
     setGenStatus('Starting...');
+    completedRef.current = false;
     abortRef.current = new AbortController();
 
     try {
@@ -95,8 +97,15 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
       });
 
       if (!res.ok) {
-        const err = await res.json();
-        toast.error(err.error || 'Generation failed');
+        let errMsg = 'Generation failed';
+        try {
+          const err = await res.json();
+          errMsg = err.error || errMsg;
+        } catch {
+          errMsg = `Server error (${res.status})`;
+        }
+        console.error('[PageBuilder] API error:', res.status, errMsg);
+        toast.error(errMsg);
         setStep('prompt');
         return;
       }
@@ -115,22 +124,40 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
         const lines = buffer.split('\n');
         buffer = lines.pop() || '';
 
-        for (const line of lines) {
+        // Parse SSE event/data pairs correctly
+        let i = 0;
+        while (i < lines.length) {
+          const line = lines[i];
           if (line.startsWith('event: ')) {
             const eventType = line.slice(7);
-            const dataLine = lines[lines.indexOf(line) + 1];
-            if (dataLine?.startsWith('data: ')) {
+            if (i + 1 < lines.length && lines[i + 1].startsWith('data: ')) {
               try {
-                const data = JSON.parse(dataLine.slice(6));
+                const data = JSON.parse(lines[i + 1].slice(6));
                 handleSSEEvent(eventType, data);
-              } catch { /* skip parse errors */ }
+              } catch (e) {
+                console.error('[PageBuilder] SSE parse error:', e, lines[i + 1]);
+              }
+              i += 2;
+              continue;
             }
           }
+          i++;
         }
+      }
+
+      // Stream ended — if we never got a 'complete' event, handleSSEEvent
+      // would not have called setStep('preview'), so the component stays
+      // on 'generating'. We can't read the React state here (stale closure),
+      // so we use a ref to track whether complete was received.
+      if (!completedRef.current) {
+        console.error('[PageBuilder] Stream ended without complete event');
+        toast.error('Generation ended unexpectedly. Check server logs.');
+        setStep('prompt');
       }
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return;
       const msg = err instanceof Error ? err.message : 'Generation failed';
+      console.error('[PageBuilder] Error:', err);
       toast.error(msg);
       setStep('prompt');
     }
@@ -154,6 +181,7 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
         setGenStatus('Page generated! Saving...');
         break;
       case 'complete':
+        completedRef.current = true;
         setPageId(data.page_id as string);
         setPreviewUrl(data.preview_url as string);
         setQualityScore(data.quality_score as number);
@@ -163,7 +191,8 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
         toast.success('Page generated!');
         break;
       case 'error':
-        toast.error(data.error as string);
+        console.error('[PageBuilder] Server error event:', data.error);
+        toast.error(String(data.error));
         setStep('prompt');
         break;
     }

@@ -148,7 +148,9 @@ export async function POST(request: NextRequest) {
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Generation failed';
-        console.error('[page-generate]', err);
+        const stack = err instanceof Error ? err.stack : '';
+        console.error('[page-generate] Error:', message);
+        console.error('[page-generate] Stack:', stack);
         sendEvent('error', { error: message });
       } finally {
         clearInterval(keepalive);
