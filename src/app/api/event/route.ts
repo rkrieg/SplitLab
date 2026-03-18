@@ -71,6 +71,60 @@ export async function POST(request: NextRequest) {
 
     if (error) throw error;
 
+    // Aggregate AI page performance data
+    if (data.type === 'pageview' || data.type === 'conversion') {
+      try {
+        const { data: variant } = await db
+          .from('test_variants')
+          .select('page_id')
+          .eq('id', data.variantId)
+          .single();
+
+        if (variant?.page_id) {
+          const { data: page } = await db
+            .from('pages')
+            .select('id, vertical, source_type')
+            .eq('id', variant.page_id)
+            .eq('source_type', 'ai_generated')
+            .single();
+
+          if (page) {
+            const { data: existing } = await db
+              .from('page_performance')
+              .select('id, total_views, total_conversions')
+              .eq('page_id', page.id)
+              .order('recorded_at', { ascending: false })
+              .limit(1)
+              .single();
+
+            if (existing) {
+              const updates: Record<string, unknown> = {};
+              if (data.type === 'pageview') {
+                updates.total_views = existing.total_views + 1;
+              } else {
+                updates.total_conversions = existing.total_conversions + 1;
+              }
+              const views = data.type === 'pageview' ? existing.total_views + 1 : existing.total_views;
+              const convs = data.type === 'conversion' ? existing.total_conversions + 1 : existing.total_conversions;
+              updates.conversion_rate = views > 0 ? convs / views : 0;
+
+              await db.from('page_performance').update(updates).eq('id', existing.id);
+            } else {
+              await db.from('page_performance').insert({
+                page_id: page.id,
+                vertical: page.vertical,
+                total_views: data.type === 'pageview' ? 1 : 0,
+                total_conversions: data.type === 'conversion' ? 1 : 0,
+                conversion_rate: 0,
+              });
+            }
+          }
+        }
+      } catch (perfErr) {
+        console.error('[event] page_performance error:', perfErr);
+      }
+    }
+
     return NextResponse.json({ ok: true }, { headers });
   } catch (err) {
     if (err instanceof z.ZodError) {

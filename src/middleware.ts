@@ -28,8 +28,18 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url, 301);
   }
 
+  // ── Pages subdomain serving ────────────────────────────────────────────
+  if (host === 'pages.trysplitlab.com') {
+    const pageId = pathname.split('/')[1];
+    if (pageId && pageId !== '_next' && !pageId.startsWith('api')) {
+      const url = request.nextUrl.clone();
+      url.pathname = `/api/pages/${pageId}/serve`;
+      return NextResponse.rewrite(url);
+    }
+  }
+
   // ── Public tracking routes: bypass ALL middleware logic ────────────────
-  const PUBLIC_PATHS = ['/api/event', '/api/resolve', '/tracker.js'];
+  const PUBLIC_PATHS = ['/api/event', '/api/resolve', '/tracker.js', '/api/pages/'];
   if (PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(p + '/'))) {
     const origin = request.headers.get('origin') || '*';
     if (request.method === 'OPTIONS') {

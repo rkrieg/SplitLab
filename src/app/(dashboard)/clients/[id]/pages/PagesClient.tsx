@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
 import {
   Plus, FileCode2, MoreHorizontal, Play, Pause, Check, Trash2,
-  Globe, Link2, ShieldCheck, ShieldX, Loader2, Edit2, Sparkles,
+  Globe, Link2, ShieldCheck, ShieldX, Loader2, Edit2, Sparkles, Wand2,
 } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
@@ -238,6 +238,12 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
         <p className="text-slate-500 dark:text-slate-400 text-sm">{tests.length} page{tests.length !== 1 ? 's' : ''}</p>
         {canManage && (
           <div className="flex items-center gap-2">
+            <Link
+              href={`/clients/${clientId}/pages/builder`}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm text-white bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-600 hover:to-indigo-600 transition-colors"
+            >
+              <Wand2 size={16} /> Build with AI
+            </Link>
             <Link
               href={`/clients/${clientId}/tests/new/ai`}
               className="inline-flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm text-white bg-[#3D8BDA] hover:bg-[#3578c0] transition-colors"

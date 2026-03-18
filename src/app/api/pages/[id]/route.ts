@@ -79,6 +79,59 @@ export async function PATCH(
   }
 }
 
+export async function PUT(
+  request: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  const session = await getServerSession(authOptions);
+  if (!session || (session.user.role !== 'admin' && session.user.role !== 'manager')) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const pageId = params.id;
+  const { html, name } = await request.json();
+
+  const { data: page, error } = await db
+    .from('pages')
+    .select('workspace_id, version')
+    .eq('id', pageId)
+    .single();
+
+  if (error || !page) {
+    return NextResponse.json({ error: 'Page not found' }, { status: 404 });
+  }
+
+  const updates: Record<string, unknown> = {};
+
+  if (html) {
+    const storagePath = `pages/${page.workspace_id}/${pageId}.html`;
+    const publicUrl = await uploadHtml(storagePath, html);
+    updates.html_url = publicUrl;
+    updates.html_content = html.length < 500_000 ? html : null;
+    updates.version = (page.version || 1) + 1;
+  }
+
+  if (name) {
+    updates.name = name;
+  }
+
+  if (Object.keys(updates).length > 0) {
+    const { error: updateErr } = await db
+      .from('pages')
+      .update(updates)
+      .eq('id', pageId);
+
+    if (updateErr) {
+      return NextResponse.json({ error: updateErr.message }, { status: 500 });
+    }
+  }
+
+  return NextResponse.json({
+    page_id: pageId,
+    version: updates.version || page.version,
+  });
+}
+
 export async function DELETE(
   _req: NextRequest,
   { params }: { params: { id: string } }

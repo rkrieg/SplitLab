@@ -1,0 +1,801 @@
+'use client';
+
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
+import toast from 'react-hot-toast';
+import {
+  Wand2, Sparkles, Loader2, Check, Monitor, Smartphone, Tablet,
+  Copy, ExternalLink, RotateCcw, Save, Bold, Italic, Type,
+  ChevronDown, ChevronUp, RefreshCw, Pencil, FlaskConical,
+} from 'lucide-react';
+import Button from '@/components/ui/Button';
+import type { BuilderStep, Vertical, BrandSettings, QualityCheck } from '@/types/page-builder';
+
+interface Props {
+  workspaceId: string;
+  clientId: string;
+}
+
+const VERTICALS: { value: Vertical; label: string; description: string; icon: string }[] = [
+  { value: 'legal', label: 'Legal', description: 'Law firms, attorneys, legal services', icon: '⚖️' },
+  { value: 'real_estate_financial', label: 'Real Estate / Financial', description: 'Agents, mortgage, financial planning', icon: '🏠' },
+  { value: 'saas', label: 'SaaS', description: 'Software products, tech platforms', icon: '💻' },
+  { value: 'local_services', label: 'Local Services', description: 'Plumbing, HVAC, cleaning, contractors', icon: '🔧' },
+];
+
+const TONES = ['professional', 'friendly', 'urgent', 'luxury', 'casual'] as const;
+
+type PreviewDevice = 'desktop' | 'tablet' | 'mobile';
+
+export default function PageBuilderClient({ workspaceId, clientId }: Props) {
+  const router = useRouter();
+
+  // Step state
+  const [step, setStep] = useState<BuilderStep>('prompt');
+
+  // Prompt step
+  const [prompt, setPrompt] = useState('');
+  const [vertical, setVertical] = useState<Vertical | null>(null);
+  const [showBrand, setShowBrand] = useState(false);
+  const [brandSettings, setBrandSettings] = useState<BrandSettings>({});
+
+  // Generating step
+  const [genStatus, setGenStatus] = useState('');
+  const [imageCount, setImageCount] = useState(0);
+
+  // Preview step
+  const [pageId, setPageId] = useState('');
+  const [previewUrl, setPreviewUrl] = useState('');
+  const [qualityScore, setQualityScore] = useState(0);
+  const [qualityDetails, setQualityDetails] = useState<QualityCheck[]>([]);
+  const [pageName, setPageName] = useState('');
+  const [previewDevice, setPreviewDevice] = useState<PreviewDevice>('desktop');
+  const [editMode, setEditMode] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [regenerating, setRegenerating] = useState(false);
+  const [showQuality, setShowQuality] = useState(false);
+
+  // Section regeneration
+  const [hoveredSection, setHoveredSection] = useState<string | null>(null);
+  const [regenSection, setRegenSection] = useState<string | null>(null);
+  const [sectionInstructions, setSectionInstructions] = useState('');
+  const [regeningSec, setRegeningSec] = useState(false);
+
+  // Published step
+  const [publishedUrl, setPublishedUrl] = useState('');
+  const [publishing, setPublishing] = useState(false);
+
+  // Floating toolbar
+  const [toolbarPos, setToolbarPos] = useState<{ x: number; y: number } | null>(null);
+
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  // ─── Generate Page ──────────────────────────────────────────────────
+
+  const handleGenerate = useCallback(async () => {
+    if (!prompt.trim() || !vertical) return;
+
+    setStep('generating');
+    setGenStatus('Starting...');
+    abortRef.current = new AbortController();
+
+    try {
+      const res = await fetch('/api/pages/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          workspace_id: workspaceId,
+          client_id: clientId,
+          prompt: prompt.trim(),
+          vertical,
+          brand_settings: Object.keys(brandSettings).length > 0 ? brandSettings : undefined,
+        }),
+        signal: abortRef.current.signal,
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        toast.error(err.error || 'Generation failed');
+        setStep('prompt');
+        return;
+      }
+
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error('No response body');
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('event: ')) {
+            const eventType = line.slice(7);
+            const dataLine = lines[lines.indexOf(line) + 1];
+            if (dataLine?.startsWith('data: ')) {
+              try {
+                const data = JSON.parse(dataLine.slice(6));
+                handleSSEEvent(eventType, data);
+              } catch { /* skip parse errors */ }
+            }
+          }
+        }
+      }
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return;
+      const msg = err instanceof Error ? err.message : 'Generation failed';
+      toast.error(msg);
+      setStep('prompt');
+    }
+  }, [prompt, vertical, brandSettings, workspaceId, clientId]);
+
+  function handleSSEEvent(event: string, data: Record<string, unknown>) {
+    switch (event) {
+      case 'started':
+        setGenStatus('Fetching images...');
+        break;
+      case 'images_fetched':
+        setImageCount(data.count as number);
+        setGenStatus(`Found ${data.count} images. Building prompt...`);
+        break;
+      case 'generating':
+        setGenStatus(data.status === 'calling_claude' ? 'Generating page with Claude Opus...' : 'Building prompt...');
+        break;
+      case 'quality_scored':
+        setQualityScore(data.score as number);
+        setQualityDetails(data.details as QualityCheck[]);
+        setGenStatus('Page generated! Saving...');
+        break;
+      case 'complete':
+        setPageId(data.page_id as string);
+        setPreviewUrl(data.preview_url as string);
+        setQualityScore(data.quality_score as number);
+        setQualityDetails(data.quality_details as QualityCheck[]);
+        setPageName(`AI Page - ${vertical}`);
+        setStep('preview');
+        toast.success('Page generated!');
+        break;
+      case 'error':
+        toast.error(data.error as string);
+        setStep('prompt');
+        break;
+    }
+  }
+
+  // ─── Inline Editor ──────────────────────────────────────────────────
+
+  useEffect(() => {
+    if (!editMode) {
+      setToolbarPos(null);
+      return;
+    }
+
+    const iframe = iframeRef.current;
+    if (!iframe) return;
+
+    function handleIframeLoad() {
+      const iframeDoc = iframe!.contentDocument;
+      if (!iframeDoc) return;
+
+      iframeDoc.querySelectorAll('[data-sl-editable]').forEach((el) => {
+        (el as HTMLElement).contentEditable = 'true';
+        (el as HTMLElement).style.outline = 'none';
+        (el as HTMLElement).style.cursor = 'text';
+      });
+
+      iframeDoc.addEventListener('selectionchange', () => {
+        const sel = iframeDoc.getSelection();
+        if (!sel || sel.isCollapsed || !sel.rangeCount) {
+          setToolbarPos(null);
+          return;
+        }
+        const range = sel.getRangeAt(0);
+        const rect = range.getBoundingClientRect();
+        const iframeRect = iframe!.getBoundingClientRect();
+        setToolbarPos({
+          x: iframeRect.left + rect.left + rect.width / 2,
+          y: iframeRect.top + rect.top - 48,
+        });
+      });
+    }
+
+    iframe.addEventListener('load', handleIframeLoad);
+    handleIframeLoad();
+    return () => iframe.removeEventListener('load', handleIframeLoad);
+  }, [editMode]);
+
+  // ─── Section hover detection ────────────────────────────────────────
+
+  useEffect(() => {
+    if (editMode || step !== 'preview') return;
+    const iframe = iframeRef.current;
+    if (!iframe) return;
+
+    function setupHover() {
+      const iframeDoc = iframe!.contentDocument;
+      if (!iframeDoc) return;
+
+      const sections = iframeDoc.querySelectorAll('[data-sl-section]');
+      sections.forEach((section) => {
+        const el = section as HTMLElement;
+        el.addEventListener('mouseenter', () => {
+          setHoveredSection(el.getAttribute('data-sl-section'));
+        });
+        el.addEventListener('mouseleave', () => {
+          setHoveredSection(null);
+        });
+      });
+    }
+
+    iframe.addEventListener('load', setupHover);
+    setupHover();
+    return () => iframe.removeEventListener('load', setupHover);
+  }, [step, editMode]);
+
+  function execCommand(command: string, value?: string) {
+    const iframeDoc = iframeRef.current?.contentDocument;
+    if (!iframeDoc) return;
+    iframeDoc.execCommand(command, false, value);
+  }
+
+  // ─── Save edited HTML ──────────────────────────────────────────────
+
+  async function handleSaveEdit() {
+    const iframe = iframeRef.current;
+    if (!iframe?.contentDocument) return;
+
+    setSaving(true);
+    try {
+      const html = '<!DOCTYPE html>' + iframe.contentDocument.documentElement.outerHTML;
+      const res = await fetch(`/api/pages/${pageId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ html, name: pageName }),
+      });
+      if (!res.ok) {
+        toast.error('Failed to save');
+        return;
+      }
+      toast.success('Changes saved');
+      setEditMode(false);
+    } catch {
+      toast.error('Failed to save');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // ─── Regenerate full page ──────────────────────────────────────────
+
+  async function handleRegenerate() {
+    setRegenerating(true);
+    try {
+      const res = await fetch(`/api/pages/${pageId}/regenerate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) {
+        toast.error('Regeneration failed');
+        return;
+      }
+      const data = await res.json();
+      // Reload iframe
+      if (iframeRef.current) {
+        iframeRef.current.src = previewUrl + '?v=' + data.version;
+      }
+      toast.success('Page regenerated!');
+    } catch {
+      toast.error('Regeneration failed');
+    } finally {
+      setRegenerating(false);
+    }
+  }
+
+  // ─── Regenerate section ────────────────────────────────────────────
+
+  async function handleRegenSection() {
+    if (!regenSection || !sectionInstructions.trim()) return;
+    setRegeningSec(true);
+    try {
+      const res = await fetch(`/api/pages/${pageId}/regenerate-section`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          section_id: regenSection,
+          instructions: sectionInstructions.trim(),
+        }),
+      });
+      if (!res.ok) {
+        toast.error('Section regeneration failed');
+        return;
+      }
+      const data = await res.json();
+      if (iframeRef.current) {
+        iframeRef.current.src = previewUrl + '?v=' + data.version;
+      }
+      toast.success(`Section "${regenSection}" regenerated`);
+      setRegenSection(null);
+      setSectionInstructions('');
+    } catch {
+      toast.error('Section regeneration failed');
+    } finally {
+      setRegeningSec(false);
+    }
+  }
+
+  // ─── Publish ──────────────────────────────────────────────────────
+
+  async function handlePublish() {
+    setPublishing(true);
+    try {
+      const res = await fetch(`/api/pages/${pageId}/publish`, { method: 'POST' });
+      if (!res.ok) {
+        toast.error('Publishing failed');
+        return;
+      }
+      const data = await res.json();
+      setPublishedUrl(data.published_url);
+      setStep('published');
+      toast.success('Page published!');
+    } catch {
+      toast.error('Publishing failed');
+    } finally {
+      setPublishing(false);
+    }
+  }
+
+  // ─── Create A/B Test ──────────────────────────────────────────────
+
+  async function handleCreateTest() {
+    try {
+      const res = await fetch(`/api/pages/${pageId}/create-test`, { method: 'POST' });
+      if (!res.ok) {
+        toast.error('Failed to create test');
+        return;
+      }
+      const data = await res.json();
+      router.push(`/clients/${clientId}/tests/${data.test_id}`);
+    } catch {
+      toast.error('Failed to create test');
+    }
+  }
+
+  // ─── Render: Prompt Step ──────────────────────────────────────────
+
+  if (step === 'prompt') {
+    return (
+      <div className="max-w-3xl mx-auto space-y-6">
+        {/* Vertical selector */}
+        <div>
+          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-3">
+            Choose a vertical
+          </label>
+          <div className="grid grid-cols-2 gap-3">
+            {VERTICALS.map((v) => (
+              <button
+                key={v.value}
+                onClick={() => setVertical(v.value)}
+                className={`p-4 rounded-xl border-2 text-left transition-all ${
+                  vertical === v.value
+                    ? 'border-indigo-500 bg-indigo-500/10'
+                    : 'border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600'
+                }`}
+              >
+                <div className="text-2xl mb-2">{v.icon}</div>
+                <div className="font-semibold text-slate-900 dark:text-slate-100">{v.label}</div>
+                <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">{v.description}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Prompt textarea */}
+        <div>
+          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+            Describe your landing page
+          </label>
+          <textarea
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            className="input-base w-full h-32 resize-y"
+            placeholder="e.g., A landing page for a personal injury law firm in Miami. They specialize in car accidents and slip-and-fall cases. Target audience: accident victims looking for legal representation. Include a free consultation form and highlight their $50M+ in recovered settlements."
+          />
+        </div>
+
+        {/* Brand settings (collapsible) */}
+        <div className="border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden">
+          <button
+            onClick={() => setShowBrand(!showBrand)}
+            className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
+          >
+            <span>Brand Settings (optional)</span>
+            {showBrand ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+          </button>
+          {showBrand && (
+            <div className="px-4 pb-4 space-y-3 border-t border-slate-200 dark:border-slate-700 pt-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">Company Name</label>
+                  <input
+                    type="text"
+                    value={brandSettings.company_name || ''}
+                    onChange={(e) => setBrandSettings({ ...brandSettings, company_name: e.target.value })}
+                    className="input-base text-sm"
+                    placeholder="Acme Law"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">Phone</label>
+                  <input
+                    type="text"
+                    value={brandSettings.phone || ''}
+                    onChange={(e) => setBrandSettings({ ...brandSettings, phone: e.target.value })}
+                    className="input-base text-sm"
+                    placeholder="(555) 123-4567"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">Primary Color</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="color"
+                      value={brandSettings.primary_color || '#3D8BDA'}
+                      onChange={(e) => setBrandSettings({ ...brandSettings, primary_color: e.target.value })}
+                      className="w-10 h-9 rounded cursor-pointer border border-slate-200 dark:border-slate-700"
+                    />
+                    <input
+                      type="text"
+                      value={brandSettings.primary_color || ''}
+                      onChange={(e) => setBrandSettings({ ...brandSettings, primary_color: e.target.value })}
+                      className="input-base text-sm flex-1"
+                      placeholder="#3D8BDA"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">Secondary Color</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="color"
+                      value={brandSettings.secondary_color || '#1e293b'}
+                      onChange={(e) => setBrandSettings({ ...brandSettings, secondary_color: e.target.value })}
+                      className="w-10 h-9 rounded cursor-pointer border border-slate-200 dark:border-slate-700"
+                    />
+                    <input
+                      type="text"
+                      value={brandSettings.secondary_color || ''}
+                      onChange={(e) => setBrandSettings({ ...brandSettings, secondary_color: e.target.value })}
+                      className="input-base text-sm flex-1"
+                      placeholder="#1e293b"
+                    />
+                  </div>
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">Logo URL</label>
+                <input
+                  type="url"
+                  value={brandSettings.logo_url || ''}
+                  onChange={(e) => setBrandSettings({ ...brandSettings, logo_url: e.target.value })}
+                  className="input-base text-sm"
+                  placeholder="https://example.com/logo.png"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">Tone</label>
+                <select
+                  value={brandSettings.tone || ''}
+                  onChange={(e) => setBrandSettings({ ...brandSettings, tone: e.target.value as BrandSettings['tone'] })}
+                  className="input-base text-sm"
+                >
+                  <option value="">Select tone...</option>
+                  {TONES.map((t) => (
+                    <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Generate button */}
+        <div className="flex justify-end">
+          <Button
+            onClick={handleGenerate}
+            disabled={!prompt.trim() || !vertical}
+            className="px-6"
+          >
+            <Wand2 size={16} /> Generate Page
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── Render: Generating Step ──────────────────────────────────────
+
+  if (step === 'generating') {
+    return (
+      <div className="max-w-lg mx-auto text-center py-20">
+        <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-indigo-500/10 mb-6">
+          <Sparkles size={28} className="text-indigo-400 animate-pulse" />
+        </div>
+        <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100 mb-2">
+          Building your landing page
+        </h2>
+        <p className="text-slate-500 dark:text-slate-400 mb-6">{genStatus}</p>
+
+        {/* Progress bar */}
+        <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-2 overflow-hidden">
+          <div
+            className="h-full bg-indigo-500 rounded-full transition-all duration-1000"
+            style={{
+              width: step === 'generating' ? '70%' : '100%',
+              animation: 'indeterminate 2s ease-in-out infinite',
+            }}
+          />
+        </div>
+        <style>{`
+          @keyframes indeterminate {
+            0% { margin-left: -30%; width: 30%; }
+            50% { margin-left: 20%; width: 50%; }
+            100% { margin-left: 100%; width: 30%; }
+          }
+        `}</style>
+
+        {imageCount > 0 && (
+          <p className="text-xs text-slate-400 dark:text-slate-500 mt-4">
+            Using {imageCount} images from Unsplash
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  // ─── Render: Preview Step ─────────────────────────────────────────
+
+  if (step === 'preview') {
+    const deviceWidths: Record<PreviewDevice, string> = {
+      desktop: '100%',
+      tablet: '768px',
+      mobile: '390px',
+    };
+
+    return (
+      <div className="space-y-4">
+        {/* Top bar */}
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div className="flex items-center gap-3">
+            {/* Page name input */}
+            <input
+              type="text"
+              value={pageName}
+              onChange={(e) => setPageName(e.target.value)}
+              className="input-base text-sm w-64"
+              placeholder="Page name"
+            />
+
+            {/* Quality badge */}
+            <button
+              onClick={() => setShowQuality(!showQuality)}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium ${
+                qualityScore >= 80
+                  ? 'bg-green-500/10 text-green-400'
+                  : qualityScore >= 50
+                  ? 'bg-amber-500/10 text-amber-400'
+                  : 'bg-red-500/10 text-red-400'
+              }`}
+            >
+              Quality: {qualityScore}/100
+              {showQuality ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {/* Device toggle */}
+            <div className="flex border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
+              {([
+                { value: 'desktop' as PreviewDevice, icon: Monitor, label: 'Desktop' },
+                { value: 'tablet' as PreviewDevice, icon: Tablet, label: 'Tablet' },
+                { value: 'mobile' as PreviewDevice, icon: Smartphone, label: 'Mobile' },
+              ]).map(({ value, icon: Icon, label }) => (
+                <button
+                  key={value}
+                  onClick={() => setPreviewDevice(value)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors ${
+                    previewDevice === value
+                      ? 'bg-indigo-500/20 text-indigo-400'
+                      : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700/50'
+                  }`}
+                  title={label}
+                >
+                  <Icon size={14} />
+                </button>
+              ))}
+            </div>
+
+            {/* Action buttons */}
+            {editMode ? (
+              <>
+                <Button variant="secondary" size="sm" onClick={() => setEditMode(false)}>Cancel</Button>
+                <Button size="sm" onClick={handleSaveEdit} loading={saving}>
+                  <Save size={14} /> Done
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button variant="secondary" size="sm" onClick={() => setEditMode(true)}>
+                  <Pencil size={14} /> Edit
+                </Button>
+                <Button variant="secondary" size="sm" onClick={handleRegenerate} loading={regenerating}>
+                  <RotateCcw size={14} /> Regenerate
+                </Button>
+                <Button size="sm" onClick={handlePublish} loading={publishing}>
+                  <ExternalLink size={14} /> Publish
+                </Button>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Quality details dropdown */}
+        {showQuality && (
+          <div className="bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-xl p-4">
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+              {qualityDetails.map((check) => (
+                <div key={check.name} className="flex items-center gap-2 text-xs">
+                  {check.passed ? (
+                    <Check size={12} className="text-green-400 flex-shrink-0" />
+                  ) : (
+                    <span className="w-3 h-3 rounded-full bg-red-400/20 border border-red-400/50 flex-shrink-0" />
+                  )}
+                  <span className="text-slate-600 dark:text-slate-400">{check.name}</span>
+                  <span className="text-slate-400 dark:text-slate-500 ml-auto">+{check.score}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Section regen modal */}
+        {regenSection && (
+          <div className="bg-indigo-500/5 border border-indigo-500/20 rounded-xl p-4 flex items-end gap-3">
+            <div className="flex-1">
+              <label className="block text-xs font-medium text-indigo-400 mb-1">
+                Regenerate "{regenSection}" section
+              </label>
+              <textarea
+                value={sectionInstructions}
+                onChange={(e) => setSectionInstructions(e.target.value)}
+                className="input-base text-sm w-full h-20 resize-none"
+                placeholder="Describe what you want changed in this section..."
+                autoFocus
+              />
+            </div>
+            <div className="flex gap-2 pb-0.5">
+              <Button variant="secondary" size="sm" onClick={() => { setRegenSection(null); setSectionInstructions(''); }}>
+                Cancel
+              </Button>
+              <Button size="sm" onClick={handleRegenSection} loading={regeningSec} disabled={!sectionInstructions.trim()}>
+                <RefreshCw size={14} /> Regenerate
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* Hovered section indicator */}
+        {hoveredSection && !editMode && !regenSection && (
+          <div className="flex items-center justify-between bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-lg px-4 py-2">
+            <span className="text-xs text-slate-500 dark:text-slate-400">
+              Section: <span className="font-medium text-slate-700 dark:text-slate-300">{hoveredSection}</span>
+            </span>
+            <button
+              onClick={() => setRegenSection(hoveredSection)}
+              className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1"
+            >
+              <RefreshCw size={12} /> Regenerate section
+            </button>
+          </div>
+        )}
+
+        {/* Preview iframe */}
+        <div className="flex justify-center">
+          <div
+            className="bg-white rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden transition-all duration-300"
+            style={{ width: deviceWidths[previewDevice], maxWidth: '100%' }}
+          >
+            <iframe
+              ref={iframeRef}
+              src={previewUrl}
+              className="w-full border-0"
+              style={{ height: '80vh' }}
+              title="Page Preview"
+            />
+          </div>
+        </div>
+
+        {/* Floating toolbar */}
+        {editMode && toolbarPos && (
+          <div
+            className="fixed z-50 bg-slate-900 rounded-lg shadow-xl border border-slate-700 px-2 py-1.5 flex items-center gap-1"
+            style={{
+              left: `${toolbarPos.x}px`,
+              top: `${toolbarPos.y}px`,
+              transform: 'translateX(-50%)',
+            }}
+          >
+            <button onClick={() => execCommand('bold')} className="p-1.5 hover:bg-slate-700 rounded" title="Bold">
+              <Bold size={14} className="text-slate-300" />
+            </button>
+            <button onClick={() => execCommand('italic')} className="p-1.5 hover:bg-slate-700 rounded" title="Italic">
+              <Italic size={14} className="text-slate-300" />
+            </button>
+            <button onClick={() => execCommand('removeFormat')} className="p-1.5 hover:bg-slate-700 rounded" title="Clear formatting">
+              <Type size={14} className="text-slate-300" />
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ─── Render: Published Step ───────────────────────────────────────
+
+  if (step === 'published') {
+    return (
+      <div className="max-w-lg mx-auto text-center py-16">
+        <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-green-500/10 mb-6">
+          <Check size={28} className="text-green-400" />
+        </div>
+        <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100 mb-2">
+          Page Published!
+        </h2>
+        <p className="text-slate-500 dark:text-slate-400 mb-6">
+          Your landing page is now live and ready to receive traffic.
+        </p>
+
+        {/* Published URL */}
+        <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800 rounded-xl p-4 mb-6">
+          <code className="flex-1 text-sm text-indigo-400 font-mono truncate text-left">
+            {publishedUrl}
+          </code>
+          <button
+            onClick={() => { navigator.clipboard.writeText(publishedUrl); toast.success('URL copied!'); }}
+            className="p-2 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors"
+          >
+            <Copy size={16} className="text-slate-400" />
+          </button>
+          <a
+            href={publishedUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="p-2 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors"
+          >
+            <ExternalLink size={16} className="text-slate-400" />
+          </a>
+        </div>
+
+        <div className="flex justify-center gap-3">
+          <Button variant="secondary" onClick={() => setStep('preview')}>
+            Back to Preview
+          </Button>
+          <Button onClick={handleCreateTest}>
+            <FlaskConical size={16} /> Create A/B Test
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  return null;
+}
