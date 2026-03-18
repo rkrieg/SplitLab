@@ -112,7 +112,7 @@ const BASE_SYSTEM_PROMPT = `You are an expert landing page designer and CRO (Con
 3. Add \`data-sl-section="hero|features|testimonials|cta|process|faq|about|services|stats|pricing|footer"\` on each major \`<section>\`
 4. Add \`data-sl-editable="true"\` on ALL text elements (headings, paragraphs, list items, button text, spans with text)
 5. Responsive design with breakpoints at 768px and 480px
-6. NO navigation menu — keep the visitor focused on conversion
+6. **ABSOLUTELY NO navigation menu or header nav links** — no hamburger menu, no nav bar, no header links. The ONLY clickable elements should be CTA buttons. This is a landing page, not a website — keep the visitor focused on ONE action.
 7. Include a sticky/fixed CTA element (floating button or bar) for mobile
 8. Use semantic HTML5 elements
 9. All images use placeholder URLs from the provided image list, with descriptive alt text
@@ -121,13 +121,17 @@ const BASE_SYSTEM_PROMPT = `You are an expert landing page designer and CRO (Con
 
 ## DESIGN PRINCIPLES
 
+- **Modern, premium aesthetic** — this should look like a $5,000+ custom landing page, not a template
 - Above-the-fold must contain: headline, value proposition, and primary CTA
-- Use high contrast for CTAs (bright color on dark or vice versa)
-- White space is important — don't overcrowd sections
-- Use a consistent 2-3 color palette throughout
-- Typography hierarchy: large headlines, medium subheads, readable body text
-- Mobile-first thinking: touch-friendly buttons (min 44px tap targets)
-- Form fields should have clear labels and be easy to fill on mobile
+- Use high contrast for CTAs (bright color on dark or vice versa) — CTA buttons should be large (min 48px height, 200px+ width) with bold text
+- Generous white space — sections should have 80-120px vertical padding, don't overcrowd
+- Use a consistent 2-3 color palette derived from brand settings (if provided)
+- Typography: use Google Font pairings (e.g. Inter + DM Sans, Poppins + Open Sans). Headlines 36-56px, subheads 20-24px, body 16-18px, line-height 1.6
+- Subtle design touches: soft gradients, subtle shadows (box-shadow), rounded corners (8-16px), section dividers
+- Use CSS grid or flexbox for clean layouts — no tables
+- Hero section should be visually striking: full-width, min 70vh height, with gradient or image overlay
+- Mobile-first: touch-friendly buttons (min 48px tap targets), single-column on mobile
+- Form fields: large inputs (48px height), clear labels, rounded corners, visible focus states
 
 ## COPY PRINCIPLES
 
@@ -150,13 +154,13 @@ export function buildPageGenerationPrompt(input: PromptInput): { system: string;
   let user = `## PAGE REQUEST\n\n${userPrompt}`;
 
   if (brandSettings) {
-    user += '\n\n## BRAND SETTINGS\n';
-    if (brandSettings.company_name) user += `- Company Name: ${brandSettings.company_name}\n`;
-    if (brandSettings.primary_color) user += `- Primary Color: ${brandSettings.primary_color}\n`;
-    if (brandSettings.secondary_color) user += `- Secondary Color: ${brandSettings.secondary_color}\n`;
-    if (brandSettings.logo_url) user += `- Logo URL: ${brandSettings.logo_url}\n`;
-    if (brandSettings.phone) user += `- Phone: ${brandSettings.phone}\n`;
-    if (brandSettings.tone) user += `- Tone: ${brandSettings.tone}\n`;
+    user += '\n\n## BRAND SETTINGS — YOU MUST USE THESE EXACTLY\n';
+    if (brandSettings.company_name) user += `- **Company Name: "${brandSettings.company_name}"** — Use this EXACT name everywhere on the page. Do NOT invent a different company name.\n`;
+    if (brandSettings.primary_color) user += `- Primary Brand Color: ${brandSettings.primary_color} — Use as the main accent color for CTAs, headings, and highlights\n`;
+    if (brandSettings.secondary_color) user += `- Secondary Brand Color: ${brandSettings.secondary_color} — Use for backgrounds, borders, and secondary elements\n`;
+    if (brandSettings.logo_url) user += `- Logo URL: ${brandSettings.logo_url} — Use as an <img> tag in the header area\n`;
+    if (brandSettings.phone) user += `- Phone Number: ${brandSettings.phone} — Display prominently, use tel: link for click-to-call\n`;
+    if (brandSettings.tone) user += `- Tone of Voice: ${brandSettings.tone}\n`;
   }
 
   if (imageUrls && imageUrls.length > 0) {
