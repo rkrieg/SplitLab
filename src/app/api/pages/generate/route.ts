@@ -4,15 +4,29 @@ import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { ask } from '@/lib/claude';
 import { searchImages } from '@/lib/unsplash';
-import { buildPageGenerationPrompt } from '@/lib/page-builder-prompts';
+import {
+  buildPageGenerationPrompt,
+  buildStitchDesignPrompt,
+  buildRefinementPrompt,
+} from '@/lib/page-builder-prompts';
 import { scorePage } from '@/lib/page-quality';
 import { uploadHtml } from '@/lib/storage';
+import { createProject, generateScreen, downloadScreenHtml } from '@/lib/stitch';
 import type { Vertical, BrandSettings } from '@/types/page-builder';
 
 export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
 
-const VALID_VERTICALS: Vertical[] = ['legal', 'real_estate_financial', 'saas', 'local_services'];
+const VALID_VERTICALS: Vertical[] = [
+  'legal', 'real_estate_financial', 'saas', 'local_services',
+  'healthcare', 'ecommerce', 'education', 'automotive',
+  'hospitality', 'fitness', 'insurance', 'nonprofit',
+  'agency', 'construction', 'other',
+];
+
+function isStitchConfigured(): boolean {
+  return !!process.env.STITCH_API_KEY?.trim();
+}
 
 export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -33,6 +47,7 @@ export async function POST(request: NextRequest) {
   let clientId: string;
   let prompt: string;
   let vertical: Vertical;
+  let customVertical: string | undefined;
   let brandSettings: BrandSettings | undefined;
 
   try {
@@ -41,6 +56,7 @@ export async function POST(request: NextRequest) {
     clientId = body.client_id;
     prompt = body.prompt;
     vertical = body.vertical;
+    customVertical = body.custom_vertical;
     brandSettings = body.brand_settings;
 
     if (!workspaceId || !prompt || !vertical) {
@@ -55,6 +71,8 @@ export async function POST(request: NextRequest) {
       { status: 400, headers: { 'Content-Type': 'application/json' } }
     );
   }
+
+  const useStitch = isStitchConfigured();
 
   // SSE stream
   const encoder = new TextEncoder();
@@ -77,25 +95,74 @@ export async function POST(request: NextRequest) {
         const imageUrls = await searchImages(prompt, vertical);
         sendEvent('images_fetched', { count: imageUrls.length });
 
-        // 2. Build prompt
-        sendEvent('generating', { status: 'building_prompt' });
-        const { system, user } = buildPageGenerationPrompt({
-          userPrompt: prompt,
-          vertical,
-          brandSettings,
-          imageUrls,
-        });
+        let finalHtml: string;
 
-        // 3. Call Claude Opus
-        sendEvent('generating', { status: 'calling_claude' });
-        const html = await ask(user, {
-          system,
-          model: 'claude-opus-4-20250514',
-          maxTokens: 16384,
-        });
+        if (useStitch) {
+          // ═══════════════════════════════════════════
+          // STITCH-FIRST PIPELINE: Stitch designs → Claude refines
+          // ═══════════════════════════════════════════
+
+          // 2a. Create Stitch project
+          sendEvent('generating', { status: 'designing_with_stitch' });
+          const project = await createProject(`SplitLab - ${vertical} - ${Date.now()}`);
+
+          // 2b. Generate design with Stitch
+          const designPrompt = buildStitchDesignPrompt({
+            userPrompt: prompt,
+            vertical,
+            brandSettings,
+          });
+          const result = await generateScreen(project.projectId, designPrompt);
+
+          // 2c. Download the generated HTML
+          const screen = result.screens[0];
+          if (!screen?.htmlCode?.downloadUrl) {
+            throw new Error('Stitch did not return HTML for the generated design');
+          }
+          const stitchHtml = await downloadScreenHtml(screen.htmlCode.downloadUrl);
+          sendEvent('generating', { status: 'design_complete' });
+
+          // 2d. Claude refines the Stitch design
+          sendEvent('generating', { status: 'refining_with_claude' });
+          const { system, user } = buildRefinementPrompt({
+            stitchHtml,
+            vertical,
+            brandSettings,
+            imageUrls,
+          });
+
+          const refined = await ask(user, {
+            system,
+            model: 'claude-sonnet-4-20250514',
+            maxTokens: 16384,
+          });
+
+          finalHtml = refined.trim();
+        } else {
+          // ═══════════════════════════════════════════
+          // FALLBACK: Claude-only pipeline (original behavior)
+          // ═══════════════════════════════════════════
+
+          sendEvent('generating', { status: 'building_prompt' });
+          const { system, user } = buildPageGenerationPrompt({
+            userPrompt: prompt,
+            vertical,
+            customVertical,
+            brandSettings,
+            imageUrls,
+          });
+
+          sendEvent('generating', { status: 'calling_claude' });
+          const html = await ask(user, {
+            system,
+            model: 'claude-opus-4-20250514',
+            maxTokens: 16384,
+          });
+
+          finalHtml = html.trim();
+        }
 
         // 4. Validate & clean HTML
-        let finalHtml = html.trim();
         if (finalHtml.startsWith('```')) {
           finalHtml = finalHtml.replace(/^```html?\n?/, '').replace(/\n?```$/, '');
         }
@@ -118,7 +185,7 @@ export async function POST(request: NextRequest) {
         const { error: insertErr } = await db.from('pages').insert({
           id: pageId,
           workspace_id: workspaceId,
-          name: `AI Page - ${vertical}`,
+          name: `AI Page - ${customVertical || vertical}`,
           slug: pageId,
           html_url: publicUrl,
           html_content: finalHtml.length < 500_000 ? finalHtml : null,
@@ -128,7 +195,7 @@ export async function POST(request: NextRequest) {
           brand_settings: brandSettings || null,
           quality_score: quality.score,
           quality_details: quality.details,
-          source_type: 'ai_generated',
+          source_type: useStitch ? 'stitch_generated' : 'ai_generated',
           version: 1,
         });
 

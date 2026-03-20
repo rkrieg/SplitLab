@@ -21,6 +21,17 @@ const VERTICALS: { value: Vertical; label: string; description: string; icon: st
   { value: 'real_estate_financial', label: 'Real Estate / Financial', description: 'Agents, mortgage, financial planning', icon: '🏠' },
   { value: 'saas', label: 'SaaS', description: 'Software products, tech platforms', icon: '💻' },
   { value: 'local_services', label: 'Local Services', description: 'Plumbing, HVAC, cleaning, contractors', icon: '🔧' },
+  { value: 'healthcare', label: 'Healthcare', description: 'Doctors, clinics, medical practices', icon: '🏥' },
+  { value: 'ecommerce', label: 'E-Commerce', description: 'Online stores, retail brands, DTC', icon: '🛒' },
+  { value: 'education', label: 'Education', description: 'Courses, training, schools, coaching', icon: '🎓' },
+  { value: 'automotive', label: 'Automotive', description: 'Dealerships, car services, detailing', icon: '🚗' },
+  { value: 'hospitality', label: 'Hospitality', description: 'Restaurants, hotels, travel, events', icon: '🍽️' },
+  { value: 'fitness', label: 'Fitness / Wellness', description: 'Gyms, studios, personal trainers', icon: '💪' },
+  { value: 'insurance', label: 'Insurance', description: 'Insurance agencies, brokerages', icon: '🛡️' },
+  { value: 'nonprofit', label: 'Nonprofit', description: 'Charities, foundations, causes', icon: '❤️' },
+  { value: 'agency', label: 'Agency', description: 'Marketing, creative, digital agencies', icon: '📈' },
+  { value: 'construction', label: 'Construction', description: 'Contractors, remodeling, builders', icon: '🏗️' },
+  { value: 'other', label: 'Other', description: 'Any other industry or business type', icon: '🏢' },
 ];
 
 const TONES = ['professional', 'friendly', 'urgent', 'luxury', 'casual'] as const;
@@ -36,6 +47,7 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
   // Prompt step
   const [prompt, setPrompt] = useState('');
   const [vertical, setVertical] = useState<Vertical | null>(null);
+  const [customVertical, setCustomVertical] = useState('');
   const [showBrand, setShowBrand] = useState(false);
   const [brandSettings, setBrandSettings] = useState<BrandSettings>({});
 
@@ -56,6 +68,8 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
   const [showQuality, setShowQuality] = useState(false);
   const [changeRequest, setChangeRequest] = useState('');
   const [showChangeBar, setShowChangeBar] = useState(false);
+  const [changePlan, setChangePlan] = useState<{ summary: string; changes: string[]; warnings: string[] } | null>(null);
+  const [planLoading, setPlanLoading] = useState(false);
 
   // Section regeneration
   const [hoveredSection, setHoveredSection] = useState<string | null>(null);
@@ -93,6 +107,7 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
           client_id: clientId,
           prompt: prompt.trim(),
           vertical,
+          custom_vertical: vertical === 'other' && customVertical.trim() ? customVertical.trim() : undefined,
           brand_settings: Object.keys(brandSettings).length > 0 ? brandSettings : undefined,
         }),
         signal: abortRef.current.signal,
@@ -174,9 +189,17 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
         setImageCount(data.count as number);
         setGenStatus(`Found ${data.count} images. Building prompt...`);
         break;
-      case 'generating':
-        setGenStatus(data.status === 'calling_claude' ? 'Generating page with Claude Opus...' : 'Building prompt...');
+      case 'generating': {
+        const statusMessages: Record<string, string> = {
+          building_prompt: 'Building prompt...',
+          calling_claude: 'Generating page with Claude Opus...',
+          designing_with_stitch: 'Designing page with Google Stitch AI...',
+          design_complete: 'Design ready! Optimizing for production...',
+          refining_with_claude: 'Refining design with Claude...',
+        };
+        setGenStatus(statusMessages[data.status as string] || 'Generating...');
         break;
+      }
       case 'quality_scored':
         setQualityScore(data.score as number);
         setQualityDetails(data.details as QualityCheck[]);
@@ -303,6 +326,31 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
     }
   }
 
+  // ─── Plan changes before applying ─────────────────────────────────
+
+  async function handlePlanChanges() {
+    if (!changeRequest.trim()) return;
+    setPlanLoading(true);
+    setChangePlan(null);
+    try {
+      const res = await fetch(`/api/pages/${pageId}/regenerate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ instructions: changeRequest.trim(), plan_only: true }),
+      });
+      if (!res.ok) {
+        toast.error('Failed to generate plan');
+        return;
+      }
+      const data = await res.json();
+      setChangePlan(data.plan);
+    } catch {
+      toast.error('Failed to generate plan');
+    } finally {
+      setPlanLoading(false);
+    }
+  }
+
   // ─── Regenerate full page ──────────────────────────────────────────
 
   async function handleRegenerate(instructions?: string) {
@@ -324,6 +372,7 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
       toast.success(instructions ? 'Changes applied!' : 'Page regenerated!');
       setChangeRequest('');
       setShowChangeBar(false);
+      setChangePlan(null);
     } catch {
       toast.error('Regeneration failed');
     } finally {
@@ -427,6 +476,20 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
               </button>
             ))}
           </div>
+          {vertical === 'other' && (
+            <div className="mt-3">
+              <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">
+                Describe your industry / business type
+              </label>
+              <input
+                type="text"
+                value={customVertical}
+                onChange={(e) => setCustomVertical(e.target.value)}
+                className="input-base text-sm w-full"
+                placeholder="e.g., Pet grooming salon, Music production studio, Solar panel installation..."
+              />
+            </div>
+          )}
         </div>
 
         {/* Prompt textarea */}
@@ -704,32 +767,76 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
 
         {/* Change request bar */}
         {showChangeBar && (
-          <div className="bg-gradient-to-r from-purple-500/5 to-indigo-500/5 border border-indigo-500/20 rounded-xl p-4">
+          <div className="bg-gradient-to-r from-purple-500/5 to-indigo-500/5 border border-indigo-500/20 rounded-xl p-4 space-y-3">
             <label className="block text-xs font-medium text-indigo-400 mb-2">
               Describe what you want changed
             </label>
             <div className="flex gap-3">
               <textarea
                 value={changeRequest}
-                onChange={(e) => setChangeRequest(e.target.value)}
+                onChange={(e) => { setChangeRequest(e.target.value); setChangePlan(null); }}
                 className="input-base text-sm flex-1 h-20 resize-none"
                 placeholder="e.g., Make the hero section darker with a gradient background. Add more testimonials. Make the CTA buttons larger and red. Remove the FAQ section."
                 autoFocus
               />
               <div className="flex flex-col gap-2 justify-end">
-                <Button
-                  size="sm"
-                  onClick={() => handleRegenerate(changeRequest)}
-                  loading={regenerating}
-                  disabled={!changeRequest.trim()}
-                >
-                  <Wand2 size={14} /> Apply Changes
-                </Button>
-                <Button variant="secondary" size="sm" onClick={() => { setShowChangeBar(false); setChangeRequest(''); }}>
+                {!changePlan ? (
+                  <Button
+                    size="sm"
+                    onClick={handlePlanChanges}
+                    loading={planLoading}
+                    disabled={!changeRequest.trim()}
+                  >
+                    <Wand2 size={14} /> Preview Changes
+                  </Button>
+                ) : (
+                  <Button
+                    size="sm"
+                    onClick={() => handleRegenerate(changeRequest)}
+                    loading={regenerating}
+                  >
+                    <Check size={14} /> Apply Changes
+                  </Button>
+                )}
+                <Button variant="secondary" size="sm" onClick={() => { setShowChangeBar(false); setChangeRequest(''); setChangePlan(null); }}>
                   Cancel
                 </Button>
               </div>
             </div>
+
+            {/* Change plan confirmation */}
+            {changePlan && (
+              <div className="bg-slate-900/50 border border-slate-700 rounded-lg p-4 space-y-3">
+                <div>
+                  <h4 className="text-xs font-semibold text-slate-300 uppercase tracking-wide mb-1">What I&apos;ll do</h4>
+                  <p className="text-sm text-slate-400">{changePlan.summary}</p>
+                </div>
+                <div>
+                  <h4 className="text-xs font-semibold text-green-400 uppercase tracking-wide mb-1">Changes</h4>
+                  <ul className="space-y-1">
+                    {changePlan.changes.map((change, i) => (
+                      <li key={i} className="text-sm text-slate-400 flex items-start gap-2">
+                        <span className="text-green-400 mt-0.5 flex-shrink-0">+</span>
+                        {change}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                {changePlan.warnings.length > 0 && (
+                  <div>
+                    <h4 className="text-xs font-semibold text-amber-400 uppercase tracking-wide mb-1">Won&apos;t change</h4>
+                    <ul className="space-y-1">
+                      {changePlan.warnings.map((warning, i) => (
+                        <li key={i} className="text-sm text-slate-500 flex items-start gap-2">
+                          <span className="text-amber-400 mt-0.5 flex-shrink-0">—</span>
+                          {warning}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 

@@ -1,4 +1,19 @@
-export type Vertical = 'legal' | 'real_estate_financial' | 'saas' | 'local_services';
+export type Vertical =
+  | 'legal'
+  | 'real_estate_financial'
+  | 'saas'
+  | 'local_services'
+  | 'healthcare'
+  | 'ecommerce'
+  | 'education'
+  | 'automotive'
+  | 'hospitality'
+  | 'fitness'
+  | 'insurance'
+  | 'nonprofit'
+  | 'agency'
+  | 'construction'
+  | 'other';
 
 export interface BrandSettings {
   company_name?: string;
@@ -26,6 +41,7 @@ export interface PageGenerationRequest {
   client_id: string;
   prompt: string;
   vertical: Vertical;
+  custom_vertical?: string;
   brand_settings?: BrandSettings;
 }
 
