@@ -196,6 +196,7 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
           designing_with_stitch: 'Designing page with Google Stitch AI...',
           design_complete: 'Design ready! Optimizing for production...',
           refining_with_claude: 'Refining design with Claude...',
+          stitch_fallback: 'Stitch unavailable, generating with Claude...',
         };
         setGenStatus(statusMessages[data.status as string] || 'Generating...');
         break;

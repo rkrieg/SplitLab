@@ -95,50 +95,65 @@ export async function POST(request: NextRequest) {
         const imageUrls = await searchImages(prompt, vertical);
         sendEvent('images_fetched', { count: imageUrls.length });
 
-        let finalHtml: string;
+        let finalHtml = '';
+        let usedStitch = false;
 
         if (useStitch) {
           // ═══════════════════════════════════════════
           // STITCH-FIRST PIPELINE: Stitch designs → Claude refines
+          // Falls back to Claude-only if Stitch fails or times out
           // ═══════════════════════════════════════════
+          try {
+            sendEvent('generating', { status: 'designing_with_stitch' });
 
-          // 2a. Create Stitch project
-          sendEvent('generating', { status: 'designing_with_stitch' });
-          const project = await createProject(`SplitLab - ${vertical} - ${Date.now()}`);
+            // 30s timeout for entire Stitch pipeline
+            const stitchTimeout = new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error('Stitch API timed out after 30s')), 30_000)
+            );
 
-          // 2b. Generate design with Stitch
-          const designPrompt = buildStitchDesignPrompt({
-            userPrompt: prompt,
-            vertical,
-            brandSettings,
-          });
-          const result = await generateScreen(project.projectId, designPrompt);
+            const stitchPipeline = async () => {
+              const project = await createProject(`SplitLab - ${vertical} - ${Date.now()}`);
+              const designPrompt = buildStitchDesignPrompt({
+                userPrompt: prompt,
+                vertical,
+                brandSettings,
+              });
+              const result = await generateScreen(project.projectId, designPrompt);
+              const screen = result.screens[0];
+              if (!screen?.htmlCode?.downloadUrl) {
+                throw new Error('Stitch did not return HTML');
+              }
+              return downloadScreenHtml(screen.htmlCode.downloadUrl);
+            };
 
-          // 2c. Download the generated HTML
-          const screen = result.screens[0];
-          if (!screen?.htmlCode?.downloadUrl) {
-            throw new Error('Stitch did not return HTML for the generated design');
+            const stitchHtml = await Promise.race([stitchPipeline(), stitchTimeout]);
+            sendEvent('generating', { status: 'design_complete' });
+
+            // Claude refines the Stitch design
+            sendEvent('generating', { status: 'refining_with_claude' });
+            const { system, user } = buildRefinementPrompt({
+              stitchHtml,
+              vertical,
+              brandSettings,
+              imageUrls,
+            });
+
+            const refined = await ask(user, {
+              system,
+              model: 'claude-sonnet-4-20250514',
+              maxTokens: 16384,
+            });
+
+            finalHtml = refined.trim();
+            usedStitch = true;
+          } catch (stitchErr) {
+            const msg = stitchErr instanceof Error ? stitchErr.message : 'Stitch failed';
+            console.error('[page-generate] Stitch failed, falling back to Claude-only:', msg);
+            sendEvent('generating', { status: 'stitch_fallback', message: msg });
           }
-          const stitchHtml = await downloadScreenHtml(screen.htmlCode.downloadUrl);
-          sendEvent('generating', { status: 'design_complete' });
+        }
 
-          // 2d. Claude refines the Stitch design
-          sendEvent('generating', { status: 'refining_with_claude' });
-          const { system, user } = buildRefinementPrompt({
-            stitchHtml,
-            vertical,
-            brandSettings,
-            imageUrls,
-          });
-
-          const refined = await ask(user, {
-            system,
-            model: 'claude-sonnet-4-20250514',
-            maxTokens: 16384,
-          });
-
-          finalHtml = refined.trim();
-        } else {
+        if (!usedStitch) {
           // ═══════════════════════════════════════════
           // FALLBACK: Claude-only pipeline (original behavior)
           // ═══════════════════════════════════════════
