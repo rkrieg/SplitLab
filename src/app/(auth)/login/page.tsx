@@ -4,6 +4,7 @@ import { Suspense, useState } from 'react';
 import { signIn } from 'next-auth/react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Eye, EyeOff } from 'lucide-react';
+import Link from 'next/link';
 import toast from 'react-hot-toast';
 
 function LoginForm() {
@@ -110,8 +111,11 @@ function LoginForm() {
         </form>
       </div>
 
-      <p className="text-center text-slate-400 dark:text-slate-500 text-xs mt-6">
-        Account access is managed by your agency administrator.
+      <p className="text-center text-slate-500 dark:text-slate-400 text-sm mt-6">
+        Don&apos;t have an account?{' '}
+        <Link href="/signup" className="text-indigo-500 hover:text-indigo-400 font-medium transition-colors">
+          Sign up
+        </Link>
       </p>
     </div>
   );

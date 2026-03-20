@@ -5,6 +5,17 @@ const VERTICAL_KEYWORDS: Record<Vertical, string[]> = {
   real_estate_financial: ['modern home', 'real estate', 'luxury property', 'financial planning'],
   saas: ['technology', 'software dashboard', 'team collaboration', 'modern workspace'],
   local_services: ['local business', 'home repair', 'plumber electrician', 'service professional'],
+  healthcare: ['medical office', 'doctor patient', 'hospital', 'healthcare professional'],
+  ecommerce: ['online shopping', 'product photography', 'retail store', 'packaging'],
+  education: ['classroom', 'online learning', 'student studying', 'graduation'],
+  automotive: ['car dealership', 'luxury car', 'auto repair', 'new vehicle'],
+  hospitality: ['restaurant interior', 'hotel lobby', 'fine dining', 'travel destination'],
+  fitness: ['gym workout', 'fitness training', 'yoga studio', 'personal trainer'],
+  insurance: ['family protection', 'business insurance', 'security shield', 'peace of mind'],
+  nonprofit: ['community service', 'volunteer', 'charity event', 'helping hands'],
+  agency: ['creative office', 'marketing team', 'digital strategy', 'modern agency'],
+  construction: ['construction site', 'home remodeling', 'architecture', 'building project'],
+  other: ['professional business', 'modern office', 'team meeting', 'business growth'],
 };
 
 export async function searchImages(

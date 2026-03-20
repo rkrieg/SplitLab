@@ -78,7 +78,7 @@ export async function middleware(request: NextRequest) {
   }
 
   // ── Auth protection for dashboard routes ────────────────────────────────
-  const isAuthRoute = pathname.startsWith('/login');
+  const isAuthRoute = pathname.startsWith('/login') || pathname.startsWith('/signup');
   const isDashboardRoute =
     pathname.startsWith('/dashboard') ||
     pathname.startsWith('/clients') ||
