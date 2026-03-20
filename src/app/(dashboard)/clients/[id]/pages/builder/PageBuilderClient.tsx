@@ -77,6 +77,11 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
   const [sectionInstructions, setSectionInstructions] = useState('');
   const [regeningSec, setRegeningSec] = useState(false);
 
+  // Plan step
+  const [planData, setPlanData] = useState<{ summary: string; sections: Array<{ title: string; description: string }>; design_notes: string; editable_prompt: string } | null>(null);
+  const [editablePrompt, setEditablePrompt] = useState('');
+  const [planLoading2, setPlanLoading2] = useState(false);
+
   // Published step
   const [publishedUrl, setPublishedUrl] = useState('');
   const [publishing, setPublishing] = useState(false);
@@ -88,10 +93,44 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
   const abortRef = useRef<AbortController | null>(null);
   const completedRef = useRef(false);
 
+  // ─── Preview Plan ─────────────────────────────────────────────────
+
+  const handlePreviewPlan = useCallback(async () => {
+    if (!prompt.trim() || !vertical) return;
+    setPlanLoading2(true);
+    try {
+      const res = await fetch('/api/ai/plan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'page',
+          prompt: prompt.trim(),
+          vertical,
+          custom_vertical: vertical === 'other' && customVertical.trim() ? customVertical.trim() : undefined,
+          brand_settings: Object.keys(brandSettings).length > 0 ? brandSettings : undefined,
+        }),
+      });
+      if (!res.ok) {
+        toast.error('Failed to generate plan');
+        return;
+      }
+      const data = await res.json();
+      setPlanData(data.plan);
+      setEditablePrompt(data.plan.editable_prompt || prompt);
+      setStep('plan');
+    } catch {
+      toast.error('Failed to generate plan');
+    } finally {
+      setPlanLoading2(false);
+    }
+  }, [prompt, vertical, customVertical, brandSettings]);
+
   // ─── Generate Page ──────────────────────────────────────────────────
 
   const handleGenerate = useCallback(async () => {
-    if (!prompt.trim() || !vertical) return;
+    if (!vertical) return;
+    const finalPrompt = editablePrompt.trim() || prompt.trim();
+    if (!finalPrompt) return;
 
     setStep('generating');
     setGenStatus('Starting...');
@@ -105,7 +144,7 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
         body: JSON.stringify({
           workspace_id: workspaceId,
           client_id: clientId,
-          prompt: prompt.trim(),
+          prompt: finalPrompt,
           vertical,
           custom_vertical: vertical === 'other' && customVertical.trim() ? customVertical.trim() : undefined,
           brand_settings: Object.keys(brandSettings).length > 0 ? brandSettings : undefined,
@@ -123,7 +162,7 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
         }
         console.error('[PageBuilder] API error:', res.status, errMsg);
         toast.error(errMsg);
-        setStep('prompt');
+        setStep('plan');
         return;
       }
 
@@ -178,7 +217,7 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
       toast.error(msg);
       setStep('prompt');
     }
-  }, [prompt, vertical, brandSettings, workspaceId, clientId]);
+  }, [editablePrompt, prompt, vertical, brandSettings, workspaceId, clientId]);
 
   function handleSSEEvent(event: string, data: Record<string, unknown>) {
     switch (event) {
@@ -604,15 +643,88 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
           )}
         </div>
 
-        {/* Generate button */}
+        {/* Preview Plan button */}
         <div className="flex justify-end">
           <Button
-            onClick={handleGenerate}
-            disabled={!prompt.trim() || !vertical}
+            onClick={handlePreviewPlan}
+            disabled={!prompt.trim() || !vertical || planLoading2}
             className="px-6"
           >
-            <Wand2 size={16} /> Generate Page
+            {planLoading2 ? (
+              <><Loader2 size={16} className="animate-spin" /> Building Plan...</>
+            ) : (
+              <><Wand2 size={16} /> Preview Plan</>
+            )}
           </Button>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── Render: Plan Step ──────────────────────────────────────────────
+
+  if (step === 'plan' && planData) {
+    return (
+      <div className="max-w-3xl mx-auto space-y-6">
+        <div className="card overflow-hidden">
+          <div className="p-5 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
+            <div>
+              <h3 className="font-semibold text-slate-900 dark:text-slate-100">Build Plan</h3>
+              <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">{planData.summary}</p>
+            </div>
+            <button
+              onClick={() => setStep('prompt')}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600 transition-colors"
+            >
+              <RotateCcw size={12} /> Back
+            </button>
+          </div>
+
+          <div className="p-5 space-y-4">
+            {/* Planned sections */}
+            <div>
+              <h4 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2">Planned Sections</h4>
+              <div className="space-y-2">
+                {planData.sections.map((section, i) => (
+                  <div key={i} className="flex items-start gap-3 p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
+                    <span className="text-xs font-bold text-[#3D8BDA] bg-[#3D8BDA]/10 rounded-full w-6 h-6 flex items-center justify-center flex-shrink-0 mt-0.5">{i + 1}</span>
+                    <div>
+                      <p className="text-sm font-medium text-slate-800 dark:text-slate-200">{section.title}</p>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{section.description}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Design notes */}
+            {planData.design_notes && (
+              <div>
+                <h4 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">Design Direction</h4>
+                <p className="text-sm text-slate-600 dark:text-slate-300">{planData.design_notes}</p>
+              </div>
+            )}
+
+            {/* Editable prompt */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1.5">
+                Detailed Brief (edit to refine)
+              </label>
+              <textarea
+                value={editablePrompt}
+                onChange={(e) => setEditablePrompt(e.target.value)}
+                className="input-base w-full h-40 resize-y text-sm"
+                placeholder="Edit this brief to refine what gets built..."
+              />
+            </div>
+
+            {/* Generate button */}
+            <div className="flex justify-end">
+              <Button onClick={handleGenerate} className="px-6">
+                <Sparkles size={16} /> Generate Page
+              </Button>
+            </div>
+          </div>
         </div>
       </div>
     );

@@ -51,4 +51,4 @@ export interface UnsplashImage {
   credit: string;
 }
 
-export type BuilderStep = 'prompt' | 'generating' | 'preview' | 'published';
+export type BuilderStep = 'prompt' | 'plan' | 'generating' | 'preview' | 'published';
