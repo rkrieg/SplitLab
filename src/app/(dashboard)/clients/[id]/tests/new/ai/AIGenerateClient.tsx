@@ -635,45 +635,12 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
             </label>
             <textarea
               value={instructions}
-              onChange={(e) => { setInstructions(e.target.value); setInstructionPlan(null); }}
+              onChange={(e) => setInstructions(e.target.value)}
               className="input-base w-full h-20 resize-y text-sm"
-              placeholder="E.g., Focus on making the CTAs more action-oriented, test different headline angles, reframe benefits to be more specific..."
+              placeholder="E.g., Redesign the hero section with a high-end look, make CTAs more action-oriented, change the color scheme to dark mode..."
               disabled={scraping}
             />
-            <p className="text-xs text-slate-500 dark:text-slate-500 mt-1">
-              Note: The variant generator makes <strong>text-only changes</strong> (headlines, CTAs, body copy). For visual redesigns, use the Page Builder instead.
-            </p>
           </div>
-
-          {/* Instruction validation plan */}
-          {instructionPlan && (
-            <div className={`rounded-lg border p-4 space-y-2 ${instructionPlan.valid ? 'bg-green-500/5 border-green-500/20' : 'bg-amber-500/5 border-amber-500/20'}`}>
-              <div>
-                <h4 className="text-xs font-semibold text-slate-300 uppercase tracking-wide mb-1">
-                  {instructionPlan.valid ? 'Here\'s what I\'ll do' : 'Heads up'}
-                </h4>
-                <p className="text-sm text-slate-400">{instructionPlan.interpretation}</p>
-              </div>
-              {instructionPlan.will_do.length > 0 && (
-                <ul className="space-y-1">
-                  {instructionPlan.will_do.map((item, i) => (
-                    <li key={i} className="text-sm text-slate-400 flex items-start gap-2">
-                      <span className="text-green-400 mt-0.5 flex-shrink-0">+</span> {item}
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {instructionPlan.warnings.length > 0 && (
-                <ul className="space-y-1">
-                  {instructionPlan.warnings.map((item, i) => (
-                    <li key={i} className="text-sm text-amber-400 flex items-start gap-2">
-                      <span className="mt-0.5 flex-shrink-0">!</span> {item}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          )}
         </div>
       )}
 
@@ -777,24 +744,10 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
               </div>
             </div>
 
-            <div className="flex justify-end gap-3">
-              {instructions.trim() && !instructionPlan && (
-                <button
-                  onClick={handleValidateInstructions}
-                  disabled={validating}
-                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg font-medium text-sm text-slate-300 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 transition-colors"
-                >
-                  {validating ? (
-                    <><Loader2 size={16} className="animate-spin" /> Checking...</>
-                  ) : (
-                    <><Wand2 size={16} /> Preview Plan</>
-                  )}
-                </button>
-              )}
+            <div className="flex justify-end">
               <button
                 onClick={handleStartGeneration}
-                disabled={instructions.trim() !== '' && !instructionPlan}
-                className="inline-flex items-center gap-2 px-6 py-2.5 rounded-lg font-medium text-sm text-white bg-[#3D8BDA] hover:bg-[#3578c0] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                className="inline-flex items-center gap-2 px-6 py-2.5 rounded-lg font-medium text-sm text-white bg-[#3D8BDA] hover:bg-[#3578c0] transition-colors"
               >
                 <Sparkles size={16} /> Generate Variants
               </button>

@@ -3,187 +3,138 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { ask } from '@/lib/claude';
-import { LANDING_PAGE_FRAMEWORK } from '@/lib/landing-page-framework';
-import { applyReplacements, prepareHtml, injectBaseTag } from '@/lib/variant-utils';
+import { prepareHtml, injectBaseTag } from '@/lib/variant-utils';
 
 export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
 
 const VARIANTS_BUCKET = 'variants';
 
-interface VariantStrategy {
+interface VariantAngle {
   label: string;
-  angle: string;
+  focus: string;
   hypothesis: string;
-  what_to_change: string;
-  what_NOT_to_change: string;
-  examples: string;
+  guidance: string;
 }
 
-const STRATEGIES: VariantStrategy[] = [
+const DEFAULT_ANGLES: VariantAngle[] = [
   {
     label: 'Headline & Value Prop',
-    angle: 'headline_value_prop',
-    hypothesis: 'Clearer, benefit-driven section headlines will increase engagement and CTA clicks.',
-    what_to_change: `ONLY change these elements:
-- Section headlines throughout the page (e.g. "Our Services" → "How We Drive Growth")
-- Subheadlines below section headers (make them benefit-driven and scannable)
-- The primary value proposition text if it appears as a regular paragraph near the top`,
-    what_NOT_to_change: `Leave these UNTOUCHED:
-- The hero/banner area — large decorative text, image-masked text, or animated text in the hero is OFF LIMITS
-- Any text that is very short (1-3 words) and appears large/decorative — this likely has special CSS sizing
-- CTA button text (that's a different test)
-- Body paragraph copy
-- Testimonials, quotes, or social proof
-- Navigation menu items, footer, or legal text
-- Any numbers, statistics, or specific claims
-- Service names, product names, or category labels`,
-    examples: `Before: "Our Services"
-After: "How We Drive Growth for Your Business"
-
-Before: "What We Do"
-After: "Marketing That Delivers Measurable Results"
-
-Before: "Why Choose Us"
-After: "Why Leading Brands Trust Our Team"`,
+    focus: 'headlines and value proposition',
+    hypothesis: 'Clearer, benefit-driven headlines and value propositions will increase engagement and CTA clicks.',
+    guidance: `Focus your changes on:
+- Section headlines → make them benefit-driven and outcome-focused
+- Subheadlines → make them scannable and compelling
+- The primary value proposition → lead with what the visitor gets
+Do NOT touch: navigation, footer, testimonials/quotes, specific numbers/stats, images`,
   },
   {
     label: 'CTA & Action Copy',
-    angle: 'cta_action',
+    focus: 'calls-to-action and action-oriented copy',
     hypothesis: 'More specific, outcome-focused CTAs will increase click-through rates.',
-    what_to_change: `ONLY change these elements:
-- CTA button text (make each one specific: what happens when they click?)
-- Text immediately adjacent to CTAs (1 sentence before or after) to reinforce the action
-- Any generic actions like "Contact Us", "Learn More", "Submit" → make specific`,
-    what_NOT_to_change: `Leave these UNTOUCHED:
-- ALL headlines, subheadlines, and hero text (that's a different test)
-- Body paragraph copy
-- Testimonials or social proof
-- Navigation menu items, service names, category labels
-- Footer, legal text, or any structural text
-- Any decorative or large-format text`,
-    examples: `Before: "Contact Us"
-After: "Get Your Free Strategy Call"
-
-Before: "Learn More"
-After: "See How It Works"
-
-Before: "Get Started"
-After: "Start Your Free Consultation"`,
+    guidance: `Focus your changes on:
+- CTA button text → make each one specific about what happens when clicked
+- Text near CTAs → reinforce the action and reduce friction
+- Generic actions like "Contact Us", "Learn More" → make specific and compelling
+Do NOT touch: headlines, body paragraphs, navigation, testimonials, images`,
   },
   {
     label: 'Benefit-Driven Body Copy',
-    angle: 'benefit_copy',
-    hypothesis: 'Rewriting feature-focused body copy to lead with client benefits will better communicate value.',
-    what_to_change: `ONLY change these elements:
-- Body paragraphs (2+ sentences) that describe services or features → reframe to lead with the client benefit
-- "About us" paragraphs that talk about the company → rewrite to focus on what clients get
-- Service description paragraphs → reframe from "we do X" to "you get X"`,
-    what_NOT_to_change: `Leave these UNTOUCHED:
-- ALL headlines, subheadlines, and hero text
-- CTA button text
-- Testimonials or quotes (never alter someone else's words)
-- Navigation menu items, service names, category labels
-- Short text, labels, or list items — only change full paragraphs
-- Footer, legal text, or any structural text
-- Any specific numbers, statistics, or claims`,
-    examples: `Before: "We offer a wide range of digital marketing services including SEO, PPC, and social media management."
-After: "Grow your traffic, leads, and revenue with data-driven SEO, PPC, and social media campaigns."
-
-Before: "Our team of experts has over 20 years of combined experience."
-After: "Your campaigns are led by specialists who have driven results for over 20 years."
-
-Before: "We pride ourselves on delivering exceptional results for our clients."
-After: "Our clients see measurable growth in traffic, leads, and revenue within 90 days."`,
+    focus: 'body copy and service descriptions',
+    hypothesis: 'Rewriting feature-focused copy to lead with client benefits will better communicate value.',
+    guidance: `Focus your changes on:
+- Body paragraphs that describe services/features → lead with the client benefit
+- "About us" copy → reframe to focus on what clients get
+- Service descriptions → change from "we do X" to "you get X"
+Do NOT touch: headlines, CTA buttons, testimonials/quotes, navigation, specific stats`,
   },
 ];
 
-function buildPrompt(
+function buildDirectEditPrompt(
   html: string,
-  analysis: Record<string, unknown>,
-  strategy: VariantStrategy,
+  angle: VariantAngle,
   sourceUrl: string,
   instructions?: string
 ): string {
   const preparedHtml = prepareHtml(html);
 
-  let prompt = `## YOUR TASK
+  return `You are a senior CRO specialist creating an A/B test variant of a landing page.
 
-You are creating an A/B test variant of a landing page using the "${strategy.label}" strategy.
+## Strategy: ${angle.label}
+**Hypothesis:** ${angle.hypothesis}
 
-**Hypothesis:** ${strategy.hypothesis}
+## Your Task
+Modify the HTML below to create a variant that tests this hypothesis. Return the COMPLETE modified HTML document.
 
-You will produce a list of find-and-replace operations. These will be applied to the ORIGINAL HTML. The page structure, design, images, and layout MUST stay exactly the same — you are ONLY changing specific text content.
+${angle.guidance}
 
-## ABSOLUTE RULES — VIOLATING THESE BREAKS THE PAGE
-1. NEVER change text in the hero/banner area — large decorative headlines use CSS effects (background-clip, text-fill, image masks) and WILL break if text changes
-2. NEVER change text that is 1-4 words and appears large/bold — it's decorative with fixed CSS sizing
-3. NEVER change navigation items, service names, category labels, or tab/dropdown text
-4. NEVER change testimonials, quotes, or attributed text
-5. ONLY change full sentences or phrases in body copy, section subheadlines, or CTA buttons
-6. Replacement text MUST be within ±10% character count of the original
-
-## WHAT TO CHANGE
-${strategy.what_to_change}
-
-## WHAT NOT TO CHANGE
-${strategy.what_NOT_to_change}
-
-## EXAMPLES OF GOOD CHANGES
-${strategy.examples}
-
-## HOW TO FORMAT REPLACEMENTS
-
-Your "find" strings must be the VISIBLE TEXT that appears on the page — the actual words a visitor reads. Do NOT include HTML tags, CSS classes, or attributes in your find strings.
-
-- Find the exact text as it appears in the HTML (between tags, not including tags)
-- Make find strings long enough to be unique on the page (a full phrase or sentence, minimum 20 characters)
-- Keep replacement text within ±10% character count of the original (count the characters!)
-- Produce 5-8 focused replacements that all support the hypothesis
-
-## Page Analysis
-${JSON.stringify(analysis, null, 2)}
+${instructions ? `## Custom Instructions (HIGHEST PRIORITY)\n${instructions}\n\nApply these instructions in addition to the strategy above. If they conflict, the custom instructions take priority.\n` : ''}
+## Critical Rules
+1. Return the COMPLETE HTML document — every tag, every style, every script
+2. Keep the same overall page structure and layout
+3. Preserve all images, links, forms, and interactive elements
+4. Preserve all CSS classes, IDs, and data attributes
+5. Do NOT add or remove sections — modify existing content
+6. Do NOT change the <head> section, scripts, or meta tags
+7. Keep text changes within ±20% character count of originals to maintain layout
+8. Make 4-8 meaningful changes that support the hypothesis
 
 ## Source URL: ${sourceUrl}
 
+## HTML to modify:
+${preparedHtml}
+
 ## Response Format
-Return ONLY valid JSON, no markdown code fences:
+Return ONLY the complete modified HTML document. No explanations, no markdown fences, no JSON — just the raw HTML starting with <!DOCTYPE html> or <html>.
+
+After the HTML, on a new line, add a JSON block with this exact format:
+<!--CHANGES_JSON
 {
-  "replacements": [
-    {"find": "exact visible text from the page", "replace": "improved text"},
-    ...
-  ],
-  "changes_summary": [{"change": "what was changed", "reason": "why this supports the hypothesis"}],
-  "variant_label": "${strategy.label}",
-  "hypothesis": "${strategy.hypothesis}",
-  "impact_hypothesis": "specific prediction about how this variant will perform differently"
+  "changes_summary": [{"change": "what was changed", "reason": "why"}],
+  "variant_label": "${angle.label}",
+  "impact_hypothesis": "specific prediction about performance"
+}
+-->`;
 }
 
-## ORIGINAL HTML (for context — find strings should be VISIBLE TEXT, not raw HTML)
-${preparedHtml}`;
-
-  if (instructions) {
-    prompt += `\n\n## Additional User Instructions\n${instructions}`;
-  }
-
-  return prompt;
-}
-
-interface DiffResponse {
-  replacements: Array<{ find: string; replace: string }>;
+interface ParsedVariant {
+  html: string;
   changes_summary: Array<{ change: string; reason: string }>;
   variant_label: string;
   impact_hypothesis: string;
 }
 
-function parseDiffResponse(response: string): DiffResponse {
-  try {
-    return JSON.parse(response);
-  } catch {
-    const match = response.match(/\{[\s\S]*\}/);
-    if (match) return JSON.parse(match[0]);
-    throw new Error('Claude returned invalid JSON for variant generation');
+function parseDirectEditResponse(response: string, fallbackLabel: string): ParsedVariant {
+  let html = response.trim();
+  let changes_summary: Array<{ change: string; reason: string }> = [];
+  let variant_label = fallbackLabel;
+  let impact_hypothesis = '';
+
+  // Extract the CHANGES_JSON block if present
+  const jsonMatch = html.match(/<!--CHANGES_JSON\s*([\s\S]*?)-->/);
+  if (jsonMatch) {
+    html = html.replace(/<!--CHANGES_JSON[\s\S]*?-->/, '').trim();
+    try {
+      const meta = JSON.parse(jsonMatch[1].trim());
+      changes_summary = meta.changes_summary || [];
+      variant_label = meta.variant_label || fallbackLabel;
+      impact_hypothesis = meta.impact_hypothesis || '';
+    } catch {
+      console.warn('[AI Generate] Failed to parse CHANGES_JSON block');
+    }
   }
+
+  // Strip markdown fences if present
+  if (html.startsWith('```')) {
+    html = html.replace(/^```html?\n?/, '').replace(/\n?```$/, '');
+  }
+
+  // Ensure it starts with doctype or html tag
+  if (!html.startsWith('<!DOCTYPE') && !html.startsWith('<html') && !html.startsWith('<HTML')) {
+    html = '<!DOCTYPE html>\n' + html;
+  }
+
+  return { html, changes_summary, variant_label, impact_hypothesis };
 }
 
 export async function POST(request: NextRequest) {
@@ -254,7 +205,7 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  const strategies = STRATEGIES.slice(0, numVariants);
+  const angles = DEFAULT_ANGLES.slice(0, numVariants);
 
   // Ensure the variants storage bucket exists
   const { data: buckets } = await db.storage.listBuckets();
@@ -262,7 +213,7 @@ export async function POST(request: NextRequest) {
   if (!bucketExists) {
     const { error: createErr } = await db.storage.createBucket(VARIANTS_BUCKET, {
       public: true,
-      fileSizeLimit: 5 * 1024 * 1024, // 5MB
+      fileSizeLimit: 5 * 1024 * 1024,
     });
     if (createErr) {
       console.error('Failed to create variants bucket:', createErr);
@@ -271,7 +222,6 @@ export async function POST(request: NextRequest) {
         { status: 500, headers: { 'Content-Type': 'application/json' } }
       );
     }
-    console.log('[AI Generate] Created variants storage bucket');
   }
 
   // SSE stream
@@ -285,74 +235,68 @@ export async function POST(request: NextRequest) {
       }
 
       sendEvent('started', {
-        total_variants: strategies.length,
-        strategies: strategies.map((s) => s.label),
+        total_variants: angles.length,
+        strategies: angles.map((a) => a.label),
       });
 
       sendEvent('generating', {
-        strategies: strategies.map((s, i) => ({ index: i, label: s.label, status: 'in_progress' })),
+        strategies: angles.map((a, i) => ({ index: i, label: a.label, status: 'in_progress' })),
       });
 
-      // Send keepalive events every 10s to prevent Vercel proxy timeout
       const keepalive = setInterval(() => {
         sendEvent('keepalive', { timestamp: Date.now() });
       }, 10_000);
 
-      // Build prompts and fire all Claude calls concurrently
-      const variantPromises = strategies.map(async (strategy, index) => {
-        const prompt = buildPrompt(
+      // Generate all variants concurrently — each gets the full HTML back
+      const variantPromises = angles.map(async (angle, index) => {
+        const prompt = buildDirectEditPrompt(
           scrapedPage.html,
-          scrapedPage.analysis || {},
-          strategy,
+          angle,
           scrapedPage.url,
           instructions
         );
 
-        console.log(`[AI Generate] Starting variant ${index} (${strategy.label}), prompt length: ${prompt.length} chars`);
+        console.log(`[AI Generate] Starting variant ${index} (${angle.label}), prompt length: ${prompt.length} chars`);
         const response = await ask(prompt, {
-          system: `You are a senior CRO specialist creating A/B test variants. You make precise, focused text changes to test specific hypotheses. Follow the framework below.\n\n${LANDING_PAGE_FRAMEWORK}`,
+          system: 'You are a senior CRO specialist. You modify landing page HTML to create A/B test variants. You return complete, valid HTML documents with meaningful conversion-focused changes.',
           model: 'claude-sonnet-4-20250514',
-          maxTokens: 4096,
+          maxTokens: 32768,
         });
         console.log(`[AI Generate] Variant ${index} response length: ${response.length} chars`);
 
-        return { index, strategy, prompt, response };
+        return { index, angle, prompt, response };
       });
 
       const results = await Promise.allSettled(variantPromises);
       clearInterval(keepalive);
       const completed: unknown[] = [];
 
-      // Process results and persist to DB
       for (const result of results) {
         if (result.status === 'rejected') {
           const idx = results.indexOf(result);
           console.error(`Variant ${idx} failed:`, result.reason);
           sendEvent('variant_error', {
             index: idx,
-            label: strategies[idx]?.label,
+            label: angles[idx]?.label,
             error: result.reason?.message || 'Generation failed',
           });
           continue;
         }
 
-        const { index, strategy, prompt, response } = result.value;
+        const { index, angle, prompt, response } = result.value;
         try {
-          console.log(`[AI Generate] Parsing variant ${index} response...`);
-          const parsed = parseDiffResponse(response);
-          console.log(`[AI Generate] Variant ${index} parsed OK, ${parsed.replacements?.length || 0} replacements`);
+          const parsed = parseDirectEditResponse(response, angle.label);
 
-          // Apply text replacements to the ORIGINAL HTML, then inject <base> for asset loading
-          const modifiedHtml = applyReplacements(scrapedPage.html, parsed.replacements || []);
-          const variantHtml = injectBaseTag(modifiedHtml, scrapedPage.url);
+          // Inject <base> tag for asset loading from original domain
+          const variantHtml = injectBaseTag(parsed.html, scrapedPage.url);
 
           const variantId = crypto.randomUUID();
-          const weight = Math.floor(100 / (strategies.length + 1));
+          const weight = Math.floor(100 / (angles.length + 1));
 
           const { error: variantErr } = await db.from('test_variants').insert({
             id: variantId,
             test_id: testId,
-            name: `AI: ${strategy.label}`,
+            name: `AI: ${angle.label}`,
             traffic_weight: weight,
             is_control: false,
             is_ai_generated: true,
@@ -408,15 +352,15 @@ export async function POST(request: NextRequest) {
           completed.push(variantResult);
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : 'Generation failed';
-          console.error(`Variant ${index} (${strategy.label}) failed:`, err);
-          sendEvent('variant_error', { index, label: strategy.label, error: message });
+          console.error(`Variant ${index} (${angle.label}) failed:`, err);
+          sendEvent('variant_error', { index, label: angle.label, error: message });
         }
       }
 
       sendEvent('complete', {
-        total: strategies.length,
+        total: angles.length,
         succeeded: completed.length,
-        failed: strategies.length - completed.length,
+        failed: angles.length - completed.length,
       });
 
       controller.close();
