@@ -459,20 +459,20 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
           <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-3">
             Choose a vertical
           </label>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="flex flex-wrap gap-2">
             {VERTICALS.map((v) => (
               <button
                 key={v.value}
                 onClick={() => setVertical(v.value)}
-                className={`p-4 rounded-xl border-2 text-left transition-all ${
+                className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border text-sm transition-all ${
                   vertical === v.value
-                    ? 'border-indigo-500 bg-indigo-500/10'
-                    : 'border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600'
+                    ? 'border-indigo-500 bg-indigo-500/10 text-indigo-400 font-medium'
+                    : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-slate-300 dark:hover:border-slate-600'
                 }`}
+                title={v.description}
               >
-                <div className="text-2xl mb-2">{v.icon}</div>
-                <div className="font-semibold text-slate-900 dark:text-slate-100">{v.label}</div>
-                <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">{v.description}</div>
+                <span>{v.icon}</span>
+                {v.label}
               </button>
             ))}
           </div>
