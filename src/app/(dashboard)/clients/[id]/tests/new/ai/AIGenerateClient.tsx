@@ -4,7 +4,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
 import {
-  Sparkles, Globe, Loader2, Check, X, RotateCcw,
+  Sparkles, Globe, Loader2, Check, X, RotateCcw, RefreshCw,
   ChevronDown, ChevronUp, Rocket, ArrowLeft, Wand2,
   Monitor, Smartphone, Save, Download, Bold, Italic, Type,
 } from 'lucide-react';
@@ -59,9 +59,10 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
   const [scrapeError, setScrapeError] = useState('');
 
   // Plan step
-  const [variantPlan, setVariantPlan] = useState<{ summary: string; variants: Array<{ title: string; hypothesis: string; changes: string[]; preserves: string[] }>; editable_prompt: string } | null>(null);
+  const [variantPlan, setVariantPlan] = useState<{ summary: string; variants: Array<{ title: string; hypothesis: string; changes: string[] }>; editable_prompt: string } | null>(null);
   const [editableInstructions, setEditableInstructions] = useState('');
   const [planLoading, setPlanLoading] = useState(false);
+  const [planFeedback, setPlanFeedback] = useState('');
 
   // Analysis result
   const [scrapedPageId, setScrapedPageId] = useState('');
@@ -491,7 +492,7 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
 
   // ─── Preview Plan ───────────────────────────────────────────────────
 
-  async function handlePreviewPlan() {
+  async function handlePreviewPlan(feedback?: string) {
     setPlanLoading(true);
     try {
       const res = await fetch('/api/ai/plan', {
@@ -500,7 +501,10 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
         body: JSON.stringify({
           type: 'variant',
           page_analysis: analysis,
+          scraped_page_id: scrapedPageId,
           instructions: instructions.trim() || undefined,
+          previous_plan: feedback ? variantPlan : undefined,
+          feedback: feedback || undefined,
         }),
       });
       if (!res.ok) {
@@ -510,6 +514,7 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
       const data = await res.json();
       setVariantPlan(data.plan);
       setEditableInstructions(data.plan.editable_prompt || instructions);
+      setPlanFeedback('');
       setStep('plan');
     } catch {
       toast.error('Failed to generate plan');
@@ -751,7 +756,7 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
 
             <div className="flex justify-end">
               <button
-                onClick={handlePreviewPlan}
+                onClick={() => handlePreviewPlan()}
                 disabled={planLoading}
                 className="inline-flex items-center gap-2 px-6 py-2.5 rounded-lg font-medium text-sm text-white bg-[#3D8BDA] hover:bg-[#3578c0] disabled:opacity-50 transition-colors"
               >
@@ -792,15 +797,41 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
                     <h4 className="text-sm font-semibold text-slate-800 dark:text-slate-200">{v.title}</h4>
                   </div>
                   <p className="text-xs text-slate-500 dark:text-slate-400">{v.hypothesis}</p>
-                  <div className="flex flex-wrap gap-1.5">
+                  <ul className="space-y-1 ml-8">
                     {v.changes.map((c, j) => (
-                      <span key={j} className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-green-500/10 text-green-400 border border-green-500/20">
+                      <li key={j} className="text-sm text-slate-300 list-disc">
                         {c}
-                      </span>
+                      </li>
                     ))}
-                  </div>
+                  </ul>
                 </div>
               ))}
+            </div>
+
+            {/* Feedback input to refine the plan */}
+            <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 p-4 space-y-2">
+              <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                Request Changes to Plan
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={planFeedback}
+                  onChange={(e) => setPlanFeedback(e.target.value)}
+                  className="input-base text-sm flex-1"
+                  placeholder="e.g., Also change the hero image/video, add a dark background, make CTAs red..."
+                  onKeyDown={(e) => e.key === 'Enter' && planFeedback.trim() && handlePreviewPlan(planFeedback.trim())}
+                  disabled={planLoading}
+                />
+                <button
+                  onClick={() => handlePreviewPlan(planFeedback.trim())}
+                  disabled={!planFeedback.trim() || planLoading}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium text-white bg-slate-600 hover:bg-slate-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  {planLoading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                  Refine
+                </button>
+              </div>
             </div>
 
             {/* Editable instructions */}
@@ -820,7 +851,8 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
             <div className="flex justify-end">
               <button
                 onClick={handleStartGeneration}
-                className="inline-flex items-center gap-2 px-6 py-2.5 rounded-lg font-medium text-sm text-white bg-[#3D8BDA] hover:bg-[#3578c0] transition-colors"
+                disabled={planLoading}
+                className="inline-flex items-center gap-2 px-6 py-2.5 rounded-lg font-medium text-sm text-white bg-[#3D8BDA] hover:bg-[#3578c0] disabled:opacity-50 transition-colors"
               >
                 <Sparkles size={16} /> Generate Variants
               </button>

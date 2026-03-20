@@ -81,6 +81,7 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
   const [planData, setPlanData] = useState<{ summary: string; sections: Array<{ title: string; description: string }>; design_notes: string; editable_prompt: string } | null>(null);
   const [editablePrompt, setEditablePrompt] = useState('');
   const [planLoading2, setPlanLoading2] = useState(false);
+  const [planFeedback, setPlanFeedback] = useState('');
 
   // Published step
   const [publishedUrl, setPublishedUrl] = useState('');
@@ -95,7 +96,7 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
 
   // ─── Preview Plan ─────────────────────────────────────────────────
 
-  const handlePreviewPlan = useCallback(async () => {
+  const handlePreviewPlan = useCallback(async (feedback?: string) => {
     if (!prompt.trim() || !vertical) return;
     setPlanLoading2(true);
     try {
@@ -108,6 +109,8 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
           vertical,
           custom_vertical: vertical === 'other' && customVertical.trim() ? customVertical.trim() : undefined,
           brand_settings: Object.keys(brandSettings).length > 0 ? brandSettings : undefined,
+          previous_plan: feedback ? planData : undefined,
+          feedback: feedback || undefined,
         }),
       });
       if (!res.ok) {
@@ -117,13 +120,14 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
       const data = await res.json();
       setPlanData(data.plan);
       setEditablePrompt(data.plan.editable_prompt || prompt);
+      setPlanFeedback('');
       setStep('plan');
     } catch {
       toast.error('Failed to generate plan');
     } finally {
       setPlanLoading2(false);
     }
-  }, [prompt, vertical, customVertical, brandSettings]);
+  }, [prompt, vertical, customVertical, brandSettings, planData]);
 
   // ─── Generate Page ──────────────────────────────────────────────────
 
@@ -646,7 +650,7 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
         {/* Preview Plan button */}
         <div className="flex justify-end">
           <Button
-            onClick={handlePreviewPlan}
+            onClick={() => handlePreviewPlan()}
             disabled={!prompt.trim() || !vertical || planLoading2}
             className="px-6"
           >
@@ -705,6 +709,32 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
               </div>
             )}
 
+            {/* Feedback input to refine the plan */}
+            <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 p-4 space-y-2">
+              <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                Request Changes to Plan
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={planFeedback}
+                  onChange={(e) => setPlanFeedback(e.target.value)}
+                  className="input-base text-sm flex-1"
+                  placeholder="e.g., Add a video hero, use a dark luxury theme, include client logos section..."
+                  onKeyDown={(e) => e.key === 'Enter' && planFeedback.trim() && handlePreviewPlan(planFeedback.trim())}
+                  disabled={planLoading2}
+                />
+                <button
+                  onClick={() => handlePreviewPlan(planFeedback.trim())}
+                  disabled={!planFeedback.trim() || planLoading2}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium text-white bg-slate-600 hover:bg-slate-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  {planLoading2 ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                  Refine
+                </button>
+              </div>
+            </div>
+
             {/* Editable prompt */}
             <div>
               <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1.5">
@@ -720,7 +750,7 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
 
             {/* Generate button */}
             <div className="flex justify-end">
-              <Button onClick={handleGenerate} className="px-6">
+              <Button onClick={handleGenerate} disabled={planLoading2} className="px-6">
                 <Sparkles size={16} /> Generate Page
               </Button>
             </div>

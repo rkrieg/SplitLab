@@ -22,35 +22,26 @@ const DEFAULT_ANGLES: VariantAngle[] = [
     label: 'Headline & Value Prop',
     focus: 'headlines and value proposition',
     hypothesis: 'Clearer, benefit-driven headlines and value propositions will increase engagement and CTA clicks.',
-    guidance: `Focus your changes on:
-- Section headlines → make them benefit-driven and outcome-focused
-- Subheadlines → make them scannable and compelling
-- The primary value proposition → lead with what the visitor gets
-Do NOT touch: navigation, footer, testimonials/quotes, specific numbers/stats, images`,
+    guidance: `Focus on: section headlines, subheadlines, primary value proposition text.
+Leave alone: navigation, footer, testimonials, specific numbers/stats.`,
   },
   {
     label: 'CTA & Action Copy',
     focus: 'calls-to-action and action-oriented copy',
     hypothesis: 'More specific, outcome-focused CTAs will increase click-through rates.',
-    guidance: `Focus your changes on:
-- CTA button text → make each one specific about what happens when clicked
-- Text near CTAs → reinforce the action and reduce friction
-- Generic actions like "Contact Us", "Learn More" → make specific and compelling
-Do NOT touch: headlines, body paragraphs, navigation, testimonials, images`,
+    guidance: `Focus on: CTA button text, text near CTAs, generic actions like "Contact Us"/"Learn More".
+Leave alone: headlines, body paragraphs, navigation, testimonials.`,
   },
   {
     label: 'Benefit-Driven Body Copy',
     focus: 'body copy and service descriptions',
     hypothesis: 'Rewriting feature-focused copy to lead with client benefits will better communicate value.',
-    guidance: `Focus your changes on:
-- Body paragraphs that describe services/features → lead with the client benefit
-- "About us" copy → reframe to focus on what clients get
-- Service descriptions → change from "we do X" to "you get X"
-Do NOT touch: headlines, CTA buttons, testimonials/quotes, navigation, specific stats`,
+    guidance: `Focus on: body paragraphs, service descriptions, "about us" copy.
+Leave alone: headlines, CTA buttons, testimonials, navigation.`,
   },
 ];
 
-function buildDirectEditPrompt(
+function buildPatchPrompt(
   html: string,
   angle: VariantAngle,
   sourceUrl: string,
@@ -62,79 +53,92 @@ function buildDirectEditPrompt(
 
 ## Strategy: ${angle.label}
 **Hypothesis:** ${angle.hypothesis}
-
-## Your Task
-Modify the HTML below to create a variant that tests this hypothesis. Return the COMPLETE modified HTML document.
-
 ${angle.guidance}
 
-${instructions ? `## Custom Instructions (HIGHEST PRIORITY)\n${instructions}\n\nApply these instructions in addition to the strategy above. If they conflict, the custom instructions take priority.\n` : ''}
-## Critical Rules
-1. Return the COMPLETE HTML document — every tag, every style, every script
-2. Keep the same overall page structure and layout
-3. Preserve all images, links, forms, and interactive elements
-4. Preserve all CSS classes, IDs, and data attributes
-5. Do NOT add or remove sections — modify existing content
-6. Do NOT change the <head> section, scripts, or meta tags
-7. Keep text changes within ±20% character count of originals to maintain layout
-8. Make 4-8 meaningful changes that support the hypothesis
+${instructions ? `## Custom Instructions (HIGHEST PRIORITY)\n${instructions}\n\nApply these instructions. If they conflict with the strategy, custom instructions win. You CAN make visual/structural changes (CSS, backgrounds, images, layout) if the instructions ask for them.\n` : ''}
+
+## Your Task
+Produce 4-10 HTML search-and-replace patches. Each patch replaces a chunk of the original HTML with a modified version.
+
+## Rules
+1. Each "find" must be an EXACT substring from the HTML below (copy-paste, including tags and attributes)
+2. Each "find" must be unique in the document — include enough surrounding HTML to be unambiguous
+3. The "replace" is the modified version of that same HTML chunk
+4. You can change text, CSS styles, classes, attributes, images, structure — anything within the chunk
+5. Keep changes focused on supporting the hypothesis
+6. Do NOT change scripts, meta tags, or analytics code
+7. Make "find" strings at least 50 characters long for reliable matching
 
 ## Source URL: ${sourceUrl}
 
-## HTML to modify:
+## Original HTML:
 ${preparedHtml}
 
 ## Response Format
-Return ONLY the complete modified HTML document. No explanations, no markdown fences, no JSON — just the raw HTML starting with <!DOCTYPE html> or <html>.
-
-After the HTML, on a new line, add a JSON block with this exact format:
-<!--CHANGES_JSON
+Return ONLY valid JSON (no markdown fences):
 {
-  "changes_summary": [{"change": "what was changed", "reason": "why"}],
+  "patches": [
+    {
+      "find": "<exact HTML substring from the original>",
+      "replace": "<modified HTML>",
+      "description": "What was changed and why"
+    }
+  ],
+  "changes_summary": [{"change": "what was changed", "reason": "why this helps conversion"}],
   "variant_label": "${angle.label}",
-  "impact_hypothesis": "specific prediction about performance"
-}
--->`;
+  "impact_hypothesis": "specific prediction about how this variant will perform"
+}`;
 }
 
-interface ParsedVariant {
-  html: string;
+interface PatchResponse {
+  patches: Array<{ find: string; replace: string; description: string }>;
   changes_summary: Array<{ change: string; reason: string }>;
   variant_label: string;
   impact_hypothesis: string;
 }
 
-function parseDirectEditResponse(response: string, fallbackLabel: string): ParsedVariant {
-  let html = response.trim();
-  let changes_summary: Array<{ change: string; reason: string }> = [];
-  let variant_label = fallbackLabel;
-  let impact_hypothesis = '';
+function parsePatchResponse(response: string): PatchResponse {
+  let cleaned = response.trim();
+  if (cleaned.startsWith('```')) {
+    cleaned = cleaned.replace(/^```json?\n?/, '').replace(/\n?```$/, '');
+  }
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    const match = cleaned.match(/\{[\s\S]*\}/);
+    if (match) return JSON.parse(match[0]);
+    throw new Error('Claude returned invalid JSON for variant generation');
+  }
+}
 
-  // Extract the CHANGES_JSON block if present
-  const jsonMatch = html.match(/<!--CHANGES_JSON\s*([\s\S]*?)-->/);
-  if (jsonMatch) {
-    html = html.replace(/<!--CHANGES_JSON[\s\S]*?-->/, '').trim();
-    try {
-      const meta = JSON.parse(jsonMatch[1].trim());
-      changes_summary = meta.changes_summary || [];
-      variant_label = meta.variant_label || fallbackLabel;
-      impact_hypothesis = meta.impact_hypothesis || '';
-    } catch {
-      console.warn('[AI Generate] Failed to parse CHANGES_JSON block');
+function applyPatches(html: string, patches: Array<{ find: string; replace: string; description: string }>): string {
+  let result = html;
+  let applied = 0;
+
+  for (const patch of patches) {
+    if (!patch.find || patch.find === patch.replace) continue;
+
+    if (result.includes(patch.find)) {
+      result = result.replace(patch.find, patch.replace);
+      applied++;
+      console.log(`[AI Generate] Patch applied: ${patch.description?.slice(0, 80)}`);
+    } else {
+      // Try with normalized whitespace
+      const normalizedFind = patch.find.replace(/\s+/g, '\\s+');
+      const regex = new RegExp(normalizedFind.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\\s\+/g, '\\s+'));
+      const match = result.match(regex);
+      if (match) {
+        result = result.replace(match[0], patch.replace);
+        applied++;
+        console.log(`[AI Generate] Patch applied (fuzzy): ${patch.description?.slice(0, 80)}`);
+      } else {
+        console.warn(`[AI Generate] Patch NOT found: ${patch.find.slice(0, 100)}`);
+      }
     }
   }
 
-  // Strip markdown fences if present
-  if (html.startsWith('```')) {
-    html = html.replace(/^```html?\n?/, '').replace(/\n?```$/, '');
-  }
-
-  // Ensure it starts with doctype or html tag
-  if (!html.startsWith('<!DOCTYPE') && !html.startsWith('<html') && !html.startsWith('<HTML')) {
-    html = '<!DOCTYPE html>\n' + html;
-  }
-
-  return { html, changes_summary, variant_label, impact_hypothesis };
+  console.log(`[AI Generate] Applied ${applied}/${patches.length} patches`);
+  return result;
 }
 
 export async function POST(request: NextRequest) {
@@ -177,7 +181,6 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Verify test exists
   const { data: test, error: testErr } = await db
     .from('tests')
     .select('id, workspace_id')
@@ -191,7 +194,6 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  // Fetch scraped page data
   const { data: scrapedPage, error: scrapeErr } = await db
     .from('scraped_pages')
     .select('*')
@@ -207,7 +209,6 @@ export async function POST(request: NextRequest) {
 
   const angles = DEFAULT_ANGLES.slice(0, numVariants);
 
-  // Ensure the variants storage bucket exists
   const { data: buckets } = await db.storage.listBuckets();
   const bucketExists = buckets?.some((b) => b.name === VARIANTS_BUCKET);
   if (!bucketExists) {
@@ -224,7 +225,6 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // SSE stream
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     async start(controller) {
@@ -247,9 +247,8 @@ export async function POST(request: NextRequest) {
         sendEvent('keepalive', { timestamp: Date.now() });
       }, 10_000);
 
-      // Generate all variants concurrently — each gets the full HTML back
       const variantPromises = angles.map(async (angle, index) => {
-        const prompt = buildDirectEditPrompt(
+        const prompt = buildPatchPrompt(
           scrapedPage.html,
           angle,
           scrapedPage.url,
@@ -258,9 +257,9 @@ export async function POST(request: NextRequest) {
 
         console.log(`[AI Generate] Starting variant ${index} (${angle.label}), prompt length: ${prompt.length} chars`);
         const response = await ask(prompt, {
-          system: 'You are a senior CRO specialist. You modify landing page HTML to create A/B test variants. You return complete, valid HTML documents with meaningful conversion-focused changes.',
+          system: 'You are a senior CRO specialist. You create A/B test variants by producing precise HTML patches. Your patches must use exact HTML substrings from the original document as "find" values.',
           model: 'claude-sonnet-4-20250514',
-          maxTokens: 32768,
+          maxTokens: 8192,
         });
         console.log(`[AI Generate] Variant ${index} response length: ${response.length} chars`);
 
@@ -285,10 +284,11 @@ export async function POST(request: NextRequest) {
 
         const { index, angle, prompt, response } = result.value;
         try {
-          const parsed = parseDirectEditResponse(response, angle.label);
+          const parsed = parsePatchResponse(response);
 
-          // Inject <base> tag for asset loading from original domain
-          const variantHtml = injectBaseTag(parsed.html, scrapedPage.url);
+          // Apply HTML patches to the original
+          const modifiedHtml = applyPatches(scrapedPage.html, parsed.patches || []);
+          const variantHtml = injectBaseTag(modifiedHtml, scrapedPage.url);
 
           const variantId = crypto.randomUUID();
           const weight = Math.floor(100 / (angles.length + 1));
