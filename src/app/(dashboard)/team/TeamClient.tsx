@@ -39,8 +39,8 @@ export default function TeamClient({ initialUsers, currentUserId }: Props) {
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
   const [role, setRole] = useState<'admin' | 'manager' | 'viewer'>('viewer');
+  const [inviteLink, setInviteLink] = useState('');
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -49,7 +49,7 @@ export default function TeamClient({ initialUsers, currentUserId }: Props) {
       const res = await fetch('/api/users', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email, password, role }),
+        body: JSON.stringify({ name, email, role }),
       });
       if (!res.ok) {
         const err = await res.json();
@@ -58,12 +58,14 @@ export default function TeamClient({ initialUsers, currentUserId }: Props) {
       }
       const user = await res.json();
       setUsers((prev) => [user, ...prev]);
-      setModalOpen(false);
       resetForm();
       if (user.emailError) {
-        toast.error(`User created but invite email failed: ${user.emailError}`);
+        // Email failed — show the invite link so admin can share it manually
+        setInviteLink(user.inviteUrl || '');
+        toast.error('Invite email failed — copy the link below to share manually');
       } else {
-        toast.success('User created and invite email sent');
+        setModalOpen(false);
+        toast.success('Invite sent!');
       }
     } finally {
       setSaving(false);
@@ -85,7 +87,7 @@ export default function TeamClient({ initialUsers, currentUserId }: Props) {
   }
 
   function resetForm() {
-    setName(''); setEmail(''); setPassword(''); setRole('viewer');
+    setName(''); setEmail(''); setRole('viewer'); setInviteLink('');
   }
 
   return (
@@ -175,10 +177,6 @@ export default function TeamClient({ initialUsers, currentUserId }: Props) {
             <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="input-base" placeholder="jane@agency.com" required />
           </div>
           <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Temporary Password</label>
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="input-base" placeholder="Min. 8 characters" required minLength={8} />
-          </div>
-          <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Role</label>
             <select value={role} onChange={(e) => setRole(e.target.value as 'admin' | 'manager' | 'viewer')} className="input-base">
               <option value="viewer">Viewer — read-only access</option>
@@ -186,9 +184,24 @@ export default function TeamClient({ initialUsers, currentUserId }: Props) {
               <option value="admin">Admin — full access + user management</option>
             </select>
           </div>
+          {inviteLink && (
+            <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-3">
+              <p className="text-xs font-medium text-green-400 mb-1">Invite link (share manually):</p>
+              <div className="flex gap-2">
+                <input type="text" readOnly value={inviteLink} className="input-base text-xs font-mono flex-1" />
+                <button
+                  type="button"
+                  onClick={() => { navigator.clipboard.writeText(inviteLink); toast.success('Copied!'); }}
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium text-white bg-green-600 hover:bg-green-500 transition-colors"
+                >
+                  Copy
+                </button>
+              </div>
+            </div>
+          )}
           <div className="flex justify-end gap-3 pt-2">
             <Button variant="secondary" type="button" onClick={() => { setModalOpen(false); resetForm(); }}>Cancel</Button>
-            <Button type="submit" loading={saving}>Create User</Button>
+            <Button type="submit" loading={saving}>Send Invite</Button>
           </div>
         </form>
       </Modal>

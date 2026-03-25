@@ -1,7 +1,6 @@
 import { Resend } from 'resend';
 
 const FROM = 'SplitLab <renny@infinitymediala.com>';
-const LOGIN_URL = process.env.NEXT_PUBLIC_APP_URL ? `${process.env.NEXT_PUBLIC_APP_URL}/login` : 'https://www.trysplitlab.com/login';
 
 function getResend(): Resend {
   const key = process.env.RESEND_API_KEY;
@@ -12,12 +11,12 @@ function getResend(): Resend {
 export async function sendInvitationEmail({
   toName,
   toEmail,
-  temporaryPassword,
+  inviteUrl,
   role,
 }: {
   toName: string;
   toEmail: string;
-  temporaryPassword: string;
+  inviteUrl: string;
   role: string;
 }) {
   const resend = getResend();
@@ -37,11 +36,7 @@ export async function sendInvitationEmail({
     .header h1 { margin: 0; color: #fff; font-size: 22px; font-weight: 700; letter-spacing: -0.5px; }
     .body { padding: 32px; }
     .body p { margin: 0 0 16px; color: #94a3b8; line-height: 1.6; }
-    .creds { background: #0f172a; border-radius: 8px; padding: 20px; margin: 24px 0; }
-    .creds div { margin-bottom: 10px; font-size: 14px; }
-    .creds span.label { color: #64748b; display: inline-block; width: 80px; }
-    .creds span.value { color: #e2e8f0; font-family: monospace; }
-    .btn { display: inline-block; background: #3D8BDA; color: #fff; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-weight: 600; font-size: 15px; }
+    .btn { display: inline-block; background: #3D8BDA; color: #fff; text-decoration: none; padding: 14px 32px; border-radius: 8px; font-weight: 600; font-size: 15px; }
     .footer { text-align: center; padding: 20px 32px; color: #475569; font-size: 12px; border-top: 1px solid #334155; }
   </style>
 </head>
@@ -52,18 +47,13 @@ export async function sendInvitationEmail({
     </div>
     <div class="body">
       <p>Hi ${toName},</p>
-      <p>You've been invited to join <strong style="color:#e2e8f0">SplitLab</strong> as a <strong style="color:#e2e8f0; text-transform:capitalize">${role}</strong>. Use the credentials below to log in and get started.</p>
+      <p>You've been invited to join <strong style="color:#e2e8f0">SplitLab</strong> as a <strong style="color:#e2e8f0; text-transform:capitalize">${role}</strong>. Click below to set your password and get started.</p>
 
-      <div class="creds">
-        <div><span class="label">Email</span> <span class="value">${toEmail}</span></div>
-        <div><span class="label">Password</span> <span class="value">${temporaryPassword}</span></div>
-      </div>
-
-      <p style="text-align:center">
-        <a href="${LOGIN_URL}" class="btn">Log in to SplitLab</a>
+      <p style="text-align:center; margin: 28px 0">
+        <a href="${inviteUrl}" class="btn">Set Up Your Account</a>
       </p>
 
-      <p style="font-size:13px; color:#64748b; margin-top:24px;">Please change your password after your first login. If you weren't expecting this invitation, you can ignore this email.</p>
+      <p style="font-size:13px; color:#64748b;">This link expires in 7 days. If you weren't expecting this invitation, you can ignore this email.</p>
     </div>
     <div class="footer">SplitLab &mdash; A/B Testing &amp; Landing Page Platform</div>
   </div>

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
-import bcrypt from 'bcryptjs';
+import { randomBytes } from 'crypto';
 import { z } from 'zod';
 
 export const dynamic = 'force-dynamic';
@@ -10,7 +10,6 @@ export const dynamic = 'force-dynamic';
 const createSchema = z.object({
   name: z.string().min(1).max(255),
   email: z.string().email(),
-  password: z.string().min(8),
   role: z.enum(['admin', 'manager', 'viewer']),
 });
 
@@ -51,29 +50,38 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Email already in use' }, { status: 409 });
     }
 
-    const passwordHash = await bcrypt.hash(data.password, 12);
+    // Generate a secure invite token (48 bytes = 64 chars base64url)
+    const inviteToken = randomBytes(48).toString('base64url');
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 days
 
     const { data: user, error } = await db
       .from('users')
       .insert({
         name: data.name,
         email: data.email.toLowerCase(),
-        password_hash: passwordHash,
+        password_hash: '', // No password yet — set via invite link
         role: data.role,
+        status: 'invited',
+        invite_token: inviteToken,
+        invite_expires_at: expiresAt,
       })
       .select('id, name, email, role, status, created_at')
       .single();
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-    // Send invitation email
+    // Build the invite URL
+    const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://www.trysplitlab.com';
+    const inviteUrl = `${APP_URL}/invite/${inviteToken}`;
+
+    // Send invitation email with setup link
     let emailError: string | null = null;
     try {
       const { sendInvitationEmail } = await import('@/lib/email');
       await sendInvitationEmail({
         toName: data.name,
         toEmail: data.email,
-        temporaryPassword: data.password,
+        inviteUrl,
         role: data.role,
       });
     } catch (err) {
@@ -81,7 +89,7 @@ export async function POST(request: NextRequest) {
       console.error('[email] invitation failed:', err);
     }
 
-    return NextResponse.json({ ...user, emailError }, { status: 201 });
+    return NextResponse.json({ ...user, inviteUrl, emailError }, { status: 201 });
   } catch (err) {
     if (err instanceof z.ZodError) {
       return NextResponse.json({ error: err.errors }, { status: 400 });
