@@ -1,0 +1,42 @@
+modules = ["nodejs-20", "web"]
+[agent]
+expertMode = true
+
+[nix]
+channel = "stable-25_05"
+
+[workflows]
+runButton = "Project"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Start application"
+
+[[workflows.workflow]]
+name = "Start application"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "npm run dev"
+waitForPort = 5000
+
+[workflows.workflow.metadata]
+outputType = "webview"
+
+[[ports]]
+localPort = 5000
+externalPort = 80
+
+[userenv]
+
+[userenv.shared]
+NEXTAUTH_URL = "https://64ae0227-d49e-4ac6-a7a4-b577a466d735-00-1vewbqheyel9z.picard.replit.dev"
+APP_HOSTNAME = "64ae0227-d49e-4ac6-a7a4-b577a466d735-00-1vewbqheyel9z.picard.replit.dev"
+STORAGE_PROVIDER = "supabase"
+SUPABASE_STORAGE_BUCKET = "pages"
