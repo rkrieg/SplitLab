@@ -1,60 +1,68 @@
-import { createClient } from '@supabase/supabase-js';
+import fs from 'fs';
+import path from 'path';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-const BUCKET = process.env.SUPABASE_STORAGE_BUCKET || 'pages';
+const STORAGE_DIR = path.join(process.cwd(), '.html-storage');
 
-function getStorageClient() {
-  return createClient(supabaseUrl, supabaseServiceKey, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  });
+function ensureDir(filePath: string) {
+  const dir = path.dirname(filePath);
+  fs.mkdirSync(dir, { recursive: true });
 }
 
+function localPath(fileName: string): string {
+  return path.join(STORAGE_DIR, fileName);
+}
+
+const LOCAL_PREFIX = '/__html_storage__/';
+const LOCAL_BUCKET_PREFIX = '/__html_storage__/';
+
 /**
- * Upload HTML content to Supabase Storage.
- * Returns the public URL of the uploaded file.
+ * Upload HTML content to local filesystem storage.
+ * Returns a URL that the serve endpoint can use to retrieve the file.
  */
 export async function uploadHtml(
   fileName: string,
   htmlContent: string
 ): Promise<string> {
-  const client = getStorageClient();
-
-  const { error } = await client.storage
-    .from(BUCKET)
-    .upload(fileName, htmlContent, {
-      contentType: 'text/html; charset=utf-8',
-      upsert: true,
-    });
-
-  if (error) throw new Error(`Storage upload failed: ${error.message}`);
-
-  const { data } = client.storage.from(BUCKET).getPublicUrl(fileName);
-  return data.publicUrl;
+  const filePath = localPath(fileName);
+  ensureDir(filePath);
+  fs.writeFileSync(filePath, htmlContent, 'utf-8');
+  return `${LOCAL_PREFIX}${fileName}`;
 }
 
 /**
- * Download HTML content from Supabase Storage by public URL.
+ * Download HTML content from a URL or local storage path.
  */
 export async function downloadHtml(url: string): Promise<string> {
+  if (url.startsWith(LOCAL_PREFIX) || url.startsWith(LOCAL_BUCKET_PREFIX)) {
+    const fileName = url.slice(LOCAL_PREFIX.length);
+    const filePath = path.join(STORAGE_DIR, fileName);
+    if (fs.existsSync(filePath)) {
+      return fs.readFileSync(filePath, 'utf-8');
+    }
+    throw new Error(`Local HTML file not found: ${fileName}`);
+  }
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Failed to fetch HTML: ${res.statusText}`);
   return res.text();
 }
 
 /**
- * Delete a file from storage by its fileName (path in bucket).
+ * Delete a file from local storage by its fileName (path in storage).
  */
 export async function deleteHtmlFile(fileName: string): Promise<void> {
-  const client = getStorageClient();
-  const { error } = await client.storage.from(BUCKET).remove([fileName]);
-  if (error) throw new Error(`Storage delete failed: ${error.message}`);
+  const filePath = localPath(fileName);
+  if (fs.existsSync(filePath)) {
+    fs.unlinkSync(filePath);
+  }
 }
 
 /**
- * Extract the file name (path) from a Supabase Storage public URL.
+ * Extract the file name (path) from a storage URL.
  */
 export function fileNameFromUrl(url: string): string {
-  const parts = url.split(`/${BUCKET}/`);
-  return parts[1] || '';
+  if (url.startsWith(LOCAL_PREFIX)) {
+    return url.slice(LOCAL_PREFIX.length);
+  }
+  const parts = url.split('/pages/');
+  return parts[1] || url.split('/').pop() || '';
 }
