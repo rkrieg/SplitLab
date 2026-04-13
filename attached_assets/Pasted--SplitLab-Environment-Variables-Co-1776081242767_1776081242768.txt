@@ -1,0 +1,59 @@
+# ============================================================
+# SplitLab Environment Variables
+# Copy this file to .env.local and fill in your values
+# ============================================================
+
+# ---- NextAuth ----
+# Generate with: openssl rand -base64 32
+NEXTAUTH_SECRET=ekKTIGTJ5NwZj/RbCjW//3HHIjgn7htVtwcLtb0Q4Bk=
+NEXTAUTH_URL=http://localhost:3000
+
+# ---- Supabase ----
+NEXT_PUBLIC_SUPABASE_URL=https://atbhqnboljbuceaxojrm.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=sb_publishable_4bRONmF7BmZqNQsT8PtOug_xKBgcJ_e
+SUPABASE_SERVICE_ROLE_KEY=sb_secret_zSksnZ4tSpSBriXrnt3i5Q_bInHf3zN
+
+# ---- App Config ----
+# The hostname of this app (used to detect custom client domains in middleware)
+APP_HOSTNAME=splitlab.agency
+
+# The public URL of this app (used for tracking snippet injection)
+NEXT_PUBLIC_APP_URL=http://localhost:3000
+
+# ---- Storage ----
+# Storage provider: 'supabase' (default) or 's3'
+STORAGE_PROVIDER=supabase
+
+# Supabase Storage bucket name for HTML pages
+SUPABASE_STORAGE_BUCKET=pages
+
+# AWS S3 (optional — only required if STORAGE_PROVIDER=s3)
+AWS_ACCESS_KEY_ID=
+AWS_SECRET_ACCESS_KEY=
+AWS_REGION=us-east-1
+AWS_S3_BUCKET=
+
+# ---- Vercel Domain API ----
+# Required for custom domain management
+# Get your token from https://vercel.com/account/tokens
+VERCEL_API_TOKEN=your-vercel-api-token
+# Find in Vercel project settings > General > Project ID
+VERCEL_PROJECT_ID=your-vercel-project-id
+
+# ---- Email (Resend) ----
+RESEND_API_KEY=re_...
+
+# ---- AI Page Builder ----
+# Anthropic API key for Claude (required for page generation)
+ANTHROPIC_API_KEY=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
+
+# Google Stitch API key (optional — enables Stitch-first design pipeline)
+# When set, pages are designed by Stitch AI then refined by Claude
+# When unset, pages fall back to Claude-only generation
+STITCH_API_KEY=AQ.Ab8RN6KvVWdB5IDLxPpAywxD8GtSCYf_6n7XvePNPsbgN0z28g
+
+# ---- Admin Bootstrap ----
+# Used to create the first admin user on first boot
+BOOTSTRAP_ADMIN_EMAIL=admin@youragency.com
+BOOTSTRAP_ADMIN_PASSWORD=changeme123!
+BOOTSTRAP_ADMIN_NAME=Agency Admin
