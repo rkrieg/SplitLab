@@ -336,7 +336,7 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
                           <MoreHorizontal size={14} />
                         </button>
                         {activeMenu === test.id && (
-                          <div className="absolute right-0 top-full mt-1 w-44 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl z-10 overflow-hidden">
+                          <div onClick={(e) => e.stopPropagation()} className="absolute right-0 top-full mt-1 w-44 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl z-10 overflow-hidden">
                             {test.status === 'draft' && (
                               <button onClick={() => updateStatus(test.id, 'active')} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700">
                                 <Play size={14} className="text-green-400" /> Activate
