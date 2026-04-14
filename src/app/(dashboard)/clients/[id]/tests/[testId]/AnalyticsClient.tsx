@@ -758,6 +758,15 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
                                   {uplift > 0 ? '+' : ''}{formatPercent(uplift)}
                                 </span>
                               )}
+                              {!stat.variant.is_control && variants.length > 1 && (
+                                <button
+                                  onClick={() => setDeleteVariantId(stat.variant.id)}
+                                  className="p-1 rounded transition-colors text-slate-400 dark:text-slate-600 hover:text-red-500 dark:hover:text-red-400"
+                                  title="Delete variant"
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              )}
                               <button
                                 onClick={() => startEditVariant(stat.variant)}
                                 className={`p-1 rounded transition-colors ${isEditing ? 'bg-indigo-500/20 text-indigo-400' : 'text-slate-400 dark:text-slate-600 hover:text-slate-700 dark:hover:text-slate-300'}`}
