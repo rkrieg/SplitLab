@@ -344,6 +344,7 @@ export async function POST(request: NextRequest) {
             impact_hypothesis: parsed.impact_hypothesis,
             changes_summary: parsed.changes_summary,
             hosted_url: previewUrl,
+            html: variantHtml,
             status: 'ready',
           };
 

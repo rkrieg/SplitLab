@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import type { BuilderStep, Vertical, BrandSettings, QualityCheck } from '@/types/page-builder';
+import HtmlPreview, { type HtmlPreviewHandle } from '@/components/HtmlPreview';
 
 function fixUrl(url: string): string {
   if (typeof window === 'undefined' || !url) return url;
@@ -70,6 +71,7 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
   // Preview step
   const [pageId, setPageId] = useState('');
   const [previewUrl, setPreviewUrl] = useState('');
+  const [previewHtml, setPreviewHtml] = useState('');
   const [qualityScore, setQualityScore] = useState(0);
   const [qualityDetails, setQualityDetails] = useState<QualityCheck[]>([]);
   const [pageName, setPageName] = useState('');
@@ -102,7 +104,7 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
   // Floating toolbar
   const [toolbarPos, setToolbarPos] = useState<{ x: number; y: number } | null>(null);
 
-  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const previewRef = useRef<HtmlPreviewHandle>(null);
   const abortRef = useRef<AbortController | null>(null);
   const completedRef = useRef(false);
 
@@ -265,6 +267,7 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
         completedRef.current = true;
         setPageId(data.page_id as string);
         setPreviewUrl(fixUrl(data.preview_url as string));
+        setPreviewHtml((data.html as string) || '');
         setQualityScore(data.quality_score as number);
         setQualityDetails(data.quality_details as QualityCheck[]);
         setPageName(`AI Page - ${vertical}`);
@@ -279,91 +282,27 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
     }
   }
 
-  // ─── Inline Editor ──────────────────────────────────────────────────
-
-  useEffect(() => {
-    if (!editMode) {
-      setToolbarPos(null);
-      return;
-    }
-
-    const iframe = iframeRef.current;
-    if (!iframe) return;
-
-    function handleIframeLoad() {
-      const iframeDoc = iframe!.contentDocument;
-      if (!iframeDoc) return;
-
-      iframeDoc.querySelectorAll('[data-sl-editable]').forEach((el) => {
-        (el as HTMLElement).contentEditable = 'true';
-        (el as HTMLElement).style.outline = 'none';
-        (el as HTMLElement).style.cursor = 'text';
-      });
-
-      iframeDoc.addEventListener('selectionchange', () => {
-        const sel = iframeDoc.getSelection();
-        if (!sel || sel.isCollapsed || !sel.rangeCount) {
-          setToolbarPos(null);
-          return;
-        }
-        const range = sel.getRangeAt(0);
-        const rect = range.getBoundingClientRect();
-        const iframeRect = iframe!.getBoundingClientRect();
-        setToolbarPos({
-          x: iframeRect.left + rect.left + rect.width / 2,
-          y: iframeRect.top + rect.top - 48,
-        });
-      });
-    }
-
-    iframe.addEventListener('load', handleIframeLoad);
-    handleIframeLoad();
-    return () => iframe.removeEventListener('load', handleIframeLoad);
-  }, [editMode]);
-
-  // ─── Section hover detection ────────────────────────────────────────
-
-  useEffect(() => {
-    if (editMode || step !== 'preview') return;
-    const iframe = iframeRef.current;
-    if (!iframe) return;
-
-    function setupHover() {
-      const iframeDoc = iframe!.contentDocument;
-      if (!iframeDoc) return;
-
-      const sections = iframeDoc.querySelectorAll('[data-sl-section]');
-      sections.forEach((section) => {
-        const el = section as HTMLElement;
-        el.addEventListener('mouseenter', () => {
-          setHoveredSection(el.getAttribute('data-sl-section'));
-        });
-        el.addEventListener('mouseleave', () => {
-          setHoveredSection(null);
-        });
-      });
-    }
-
-    iframe.addEventListener('load', setupHover);
-    setupHover();
-    return () => iframe.removeEventListener('load', setupHover);
-  }, [step, editMode]);
+  // ─── Toolbar commands ───────────────────────────────────────────────
 
   function execCommand(command: string, value?: string) {
-    const iframeDoc = iframeRef.current?.contentDocument;
-    if (!iframeDoc) return;
-    iframeDoc.execCommand(command, false, value);
+    previewRef.current?.execFormat(command, value);
   }
+
+  const handleSelectionChange = useCallback(
+    (active: boolean, pos?: { x: number; y: number }) => {
+      setToolbarPos(active && pos ? pos : null);
+    },
+    []
+  );
 
   // ─── Save edited HTML ──────────────────────────────────────────────
 
   async function handleSaveEdit() {
-    const iframe = iframeRef.current;
-    if (!iframe?.contentDocument) return;
+    if (!previewRef.current) return;
 
     setSaving(true);
     try {
-      const html = '<!DOCTYPE html>' + iframe.contentDocument.documentElement.outerHTML;
+      const html = previewRef.current.getHtml();
       const res = await fetch(`/api/pages/${pageId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -422,9 +361,7 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
         return;
       }
       const data = await res.json();
-      if (iframeRef.current) {
-        iframeRef.current.src = previewUrl + '?v=' + data.version;
-      }
+      if (data.html) setPreviewHtml(data.html);
       toast.success(instructions ? 'Changes applied!' : 'Page regenerated!');
       setChangeRequest('');
       setShowChangeBar(false);
@@ -455,9 +392,7 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
         return;
       }
       const data = await res.json();
-      if (iframeRef.current) {
-        iframeRef.current.src = previewUrl + '?v=' + data.version;
-      }
+      if (data.html) setPreviewHtml(data.html);
       toast.success(`Section "${regenSection}" regenerated`);
       setRegenSection(null);
       setSectionInstructions('');
@@ -1042,13 +977,19 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
             className="bg-white rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden transition-all duration-300"
             style={{ width: deviceWidths[previewDevice], maxWidth: '100%' }}
           >
-            <iframe
-              ref={iframeRef}
-              src={previewUrl}
-              className="w-full border-0"
-              style={{ height: '80vh' }}
-              title="Page Preview"
-            />
+            {previewHtml ? (
+              <HtmlPreview
+                ref={previewRef}
+                html={previewHtml}
+                editMode={editMode}
+                className="w-full"
+                onSelectionChange={handleSelectionChange}
+              />
+            ) : (
+              <div className="w-full flex items-center justify-center" style={{ height: '80vh' }}>
+                <Loader2 size={24} className="animate-spin text-slate-400" />
+              </div>
+            )}
           </div>
         </div>
 

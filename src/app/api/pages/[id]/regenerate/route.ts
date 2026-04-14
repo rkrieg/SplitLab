@@ -173,5 +173,6 @@ ${instructions}
     page_id: pageId,
     version: newVersion,
     quality_score: quality.score,
+    html: finalHtml,
   });
 }

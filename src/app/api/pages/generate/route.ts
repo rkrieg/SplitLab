@@ -226,6 +226,7 @@ export async function POST(request: NextRequest) {
           storage_url: publicUrl,
           quality_score: quality.score,
           quality_details: quality.details,
+          html: finalHtml,
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Generation failed';

@@ -98,5 +98,6 @@ ${instructions}
     page_id: pageId,
     version: newVersion,
     section_id,
+    html: updatedHtml,
   });
 }

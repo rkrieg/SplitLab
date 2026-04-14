@@ -163,6 +163,7 @@ ${preparedHtml}`;
       label: parsed.variant_label,
       impact_hypothesis: parsed.impact_hypothesis,
       changes_summary: parsed.changes_summary,
+      html: variantHtml,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Regeneration failed';
