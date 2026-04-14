@@ -10,6 +10,19 @@ import {
 } from 'lucide-react';
 import Button from '@/components/ui/Button';
 
+function fixUrl(url: string): string {
+  if (typeof window === 'undefined' || !url) return url;
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname === '0.0.0.0') {
+      parsed.host = window.location.host;
+      parsed.protocol = window.location.protocol;
+      return parsed.toString();
+    }
+  } catch { /* not a valid URL */ }
+  return url;
+}
+
 interface ChangeItem {
   change: string;
   reason: string;
@@ -354,7 +367,7 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
                   label: data.label as string,
                   impact_hypothesis: data.impact_hypothesis as string,
                   changes_summary: data.changes_summary as ChangeItem[],
-                  hosted_url: data.hosted_url as string,
+                  hosted_url: fixUrl(data.hosted_url as string),
                   status: 'ready',
                   approved: true,
                 });
@@ -400,7 +413,7 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
           label: data.label as string,
           impact_hypothesis: data.impact_hypothesis as string,
           changes_summary: data.changes_summary as ChangeItem[],
-          hosted_url: data.hosted_url as string,
+          hosted_url: fixUrl(data.hosted_url as string),
           status: 'ready',
           approved: true,
         }]);

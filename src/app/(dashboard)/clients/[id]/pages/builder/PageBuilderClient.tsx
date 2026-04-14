@@ -11,6 +11,19 @@ import {
 import Button from '@/components/ui/Button';
 import type { BuilderStep, Vertical, BrandSettings, QualityCheck } from '@/types/page-builder';
 
+function fixUrl(url: string): string {
+  if (typeof window === 'undefined' || !url) return url;
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname === '0.0.0.0') {
+      parsed.host = window.location.host;
+      parsed.protocol = window.location.protocol;
+      return parsed.toString();
+    }
+  } catch { /* not a valid URL */ }
+  return url;
+}
+
 interface Props {
   workspaceId: string;
   clientId: string;
@@ -252,7 +265,7 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
       case 'complete':
         completedRef.current = true;
         setPageId(data.page_id as string);
-        setPreviewUrl(data.preview_url as string);
+        setPreviewUrl(fixUrl(data.preview_url as string));
         setQualityScore(data.quality_score as number);
         setQualityDetails(data.quality_details as QualityCheck[]);
         setPageName(`AI Page - ${vertical}`);
