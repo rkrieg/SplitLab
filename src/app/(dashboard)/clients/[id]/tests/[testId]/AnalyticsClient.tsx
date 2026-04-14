@@ -689,15 +689,29 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
                                 verified === false ? <ShieldX size={11} className="text-red-400" /> : null
                               )}
                             </div>
-                            {stat.variant.variant_type === 'hosted' && stat.variant.hosted_url && !isEditing && (
-                              <p className="text-slate-500 text-xs font-mono truncate max-w-[250px] mt-0.5">
-                                {stat.variant.hosted_url}
-                              </p>
+                            {stat.variant.variant_type === 'hosted' && !isEditing && (
+                              <a
+                                href={`/api/variants/${test.id}/${stat.variant.id}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={e => e.stopPropagation()}
+                                className="flex items-center gap-1 text-indigo-400 hover:text-indigo-300 text-xs font-mono truncate max-w-[250px] mt-0.5"
+                              >
+                                <ExternalLink size={10} className="shrink-0" />
+                                /api/variants/{test.id.slice(0, 8)}…/{stat.variant.id.slice(0, 8)}…
+                              </a>
                             )}
                             {stat.variant.variant_type !== 'hosted' && stat.variant.redirect_url && !isEditing && (
-                              <p className="text-slate-500 text-xs font-mono truncate max-w-[250px] mt-0.5">
+                              <a
+                                href={stat.variant.redirect_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={e => e.stopPropagation()}
+                                className="flex items-center gap-1 text-indigo-400 hover:text-indigo-300 text-xs font-mono truncate max-w-[250px] mt-0.5"
+                              >
+                                <ExternalLink size={10} className="shrink-0" />
                                 {stat.variant.redirect_url}
-                              </p>
+                              </a>
                             )}
                           </td>
                           <td className={`px-5 py-3.5 ${rowBg}`}>
