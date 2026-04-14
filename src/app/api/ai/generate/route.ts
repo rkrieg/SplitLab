@@ -284,11 +284,14 @@ export async function POST(request: NextRequest) {
 
         const { index, angle, prompt, response } = result.value;
         try {
+          console.log(`[AI Generate] Variant ${index}: parsing patches`);
           const parsed = parsePatchResponse(response);
+          console.log(`[AI Generate] Variant ${index}: parsed ${parsed.patches?.length ?? 0} patches`);
 
           // Apply HTML patches to the original
           const modifiedHtml = applyPatches(scrapedPage.html, parsed.patches || []);
           const variantHtml = injectBaseTag(modifiedHtml, scrapedPage.url);
+          console.log(`[AI Generate] Variant ${index}: HTML ready (${variantHtml.length} chars), inserting DB record`);
 
           const variantId = crypto.randomUUID();
           const weight = Math.floor(100 / (angles.length + 1));
@@ -304,6 +307,7 @@ export async function POST(request: NextRequest) {
           });
 
           if (variantErr) throw new Error(`Failed to create variant: ${variantErr.message}`);
+          console.log(`[AI Generate] Variant ${index}: DB record created (${variantId}), uploading HTML`);
 
           const storagePath = `${testId}/${variantId}.html`;
           const { error: uploadErr } = await db.storage
@@ -314,6 +318,7 @@ export async function POST(request: NextRequest) {
             });
 
           if (uploadErr) throw new Error(`Failed to upload HTML: ${uploadErr.message}`);
+          console.log(`[AI Generate] Variant ${index}: HTML uploaded to ${storagePath}`);
 
           const { data: urlData } = db.storage
             .from(VARIANTS_BUCKET)
@@ -323,6 +328,7 @@ export async function POST(request: NextRequest) {
             .from('test_variants')
             .update({ hosted_url: urlData.publicUrl })
             .eq('id', variantId);
+          console.log(`[AI Generate] Variant ${index}: hosted_url updated, inserting variant_pages`);
 
           const { error: pageErr } = await db.from('variant_pages').insert({
             variant_id: variantId,
@@ -334,6 +340,7 @@ export async function POST(request: NextRequest) {
           });
 
           if (pageErr) throw new Error(`Failed to create variant_page: ${pageErr.message}`);
+          console.log(`[AI Generate] Variant ${index}: variant_pages inserted, sending variant_ready`);
 
           const previewUrl = `/api/variants/${testId}/${variantId}`;
 

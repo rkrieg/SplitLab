@@ -275,7 +275,7 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
         body: JSON.stringify({
           scraped_page_id: scrapedPageId,
           test_id: testId,
-          num_variants: 1,
+          num_variants: 3,
           instructions: editableInstructions.trim() || instructions.trim() || undefined,
         }),
         signal: controller.signal,
@@ -297,6 +297,7 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
 
       const decoder = new TextDecoder();
       let buffer = '';
+      let eventType = '';
 
       while (true) {
         const { done, value } = await reader.read();
@@ -306,7 +307,6 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
         const lines = buffer.split('\n');
         buffer = lines.pop() || '';
 
-        let eventType = '';
         for (const line of lines) {
           if (line.startsWith('event: ')) {
             eventType = line.slice(7).trim();
