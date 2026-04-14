@@ -2,12 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/supabase-server';
 import { downloadHtml } from '@/lib/storage';
 
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://www.trysplitlab.com';
-
 export async function GET(
   request: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  const APP_URL = new URL(request.url).origin;
   const { id: pageId } = params;
 
   try {

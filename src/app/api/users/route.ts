@@ -71,7 +71,7 @@ export async function POST(request: NextRequest) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
     // Build the invite URL
-    const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://www.trysplitlab.com';
+    const APP_URL = new URL(request.url).origin;
     const inviteUrl = `${APP_URL}/invite/${inviteToken}`;
 
     // Send invitation email with setup link

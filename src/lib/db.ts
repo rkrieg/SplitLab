@@ -426,6 +426,16 @@ function makeStorageBucket(bucket: string) {
     getPublicUrl: (fileName: string) => {
       return { data: { publicUrl: `${LOCAL_URL_PREFIX}${bucket}/${fileName}` } };
     },
+    download: async (fileName: string) => {
+      const fp = storagePath(bucket, fileName);
+      if (!fsSync.existsSync(fp)) {
+        return { data: null, error: { message: `File not found: ${fileName}` } };
+      }
+      const content = fsSync.readFileSync(fp, 'utf-8');
+      // Return a Blob-like object with a text() method
+      const blob = new Blob([content], { type: 'text/html; charset=utf-8' });
+      return { data: blob, error: null };
+    },
     remove: async (fileNames: string[]) => {
       for (const f of fileNames) {
         const fp = storagePath(bucket, f);

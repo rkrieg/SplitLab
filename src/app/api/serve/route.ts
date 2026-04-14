@@ -4,10 +4,10 @@ import { downloadHtml } from '@/lib/storage';
 import { buildTrackingSnippet, injectIntoHtml, buildScriptTag } from '@/lib/tracking';
 import { assignVariant } from '@/lib/utils';
 
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 const COOKIE_NAME = 'sl_visitor';
 
 export async function GET(request: NextRequest) {
+  const APP_URL = new URL(request.url).origin;
   const { searchParams } = new URL(request.url);
   const domain = searchParams.get('domain') || '';
   const urlPath = searchParams.get('path') || '/';

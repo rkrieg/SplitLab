@@ -335,8 +335,8 @@ export async function POST(request: NextRequest) {
 
           if (pageErr) throw new Error(`Failed to create variant_page: ${pageErr.message}`);
 
-          const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://www.trysplitlab.com';
-          const previewUrl = `${APP_URL}/api/variants/${testId}/${variantId}`;
+          const origin = new URL(request.url).origin;
+          const previewUrl = `${origin}/api/variants/${testId}/${variantId}`;
 
           const variantResult = {
             index,
