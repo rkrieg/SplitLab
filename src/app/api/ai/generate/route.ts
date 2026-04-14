@@ -335,8 +335,7 @@ export async function POST(request: NextRequest) {
 
           if (pageErr) throw new Error(`Failed to create variant_page: ${pageErr.message}`);
 
-          const origin = new URL(request.url).origin;
-          const previewUrl = `${origin}/api/variants/${testId}/${variantId}`;
+          const previewUrl = `/api/variants/${testId}/${variantId}`;
 
           const variantResult = {
             index,

@@ -12,12 +12,11 @@ import Button from '@/components/ui/Button';
 
 function fixUrl(url: string): string {
   if (typeof window === 'undefined' || !url) return url;
+  if (url.startsWith('/')) return window.location.origin + url;
   try {
     const parsed = new URL(url);
-    if (parsed.hostname === '0.0.0.0') {
-      parsed.host = window.location.host;
-      parsed.protocol = window.location.protocol;
-      return parsed.toString();
+    if (parsed.hostname === '0.0.0.0' || parsed.port === '5000') {
+      return window.location.origin + parsed.pathname + parsed.search + parsed.hash;
     }
   } catch { /* not a valid URL */ }
   return url;

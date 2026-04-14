@@ -218,8 +218,7 @@ export async function POST(request: NextRequest) {
           throw new Error(`Failed to save page: ${insertErr.message}`);
         }
 
-        const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://www.trysplitlab.com';
-        const previewUrl = `${APP_URL}/api/pages/${pageId}/serve`;
+        const previewUrl = `/api/pages/${pageId}/serve`;
 
         sendEvent('complete', {
           page_id: pageId,
