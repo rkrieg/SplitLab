@@ -2,6 +2,15 @@ import { Pool } from 'pg';
 import fsSync from 'fs';
 import pathMod from 'path';
 
+// Serialize plain objects/arrays to JSON strings so pg sends them as valid JSON
+// for json/jsonb columns. Primitives, null, and Date are passed through unchanged.
+function serializeForPg(val: unknown): unknown {
+  if (val === null || val === undefined) return val;
+  if (val instanceof Date) return val;
+  if (typeof val === 'object') return JSON.stringify(val);
+  return val;
+}
+
 let _pool: Pool | null = null;
 
 function getPool(): Pool {
@@ -288,7 +297,7 @@ class QueryBuilder<T = unknown> {
         const cols = Object.keys(rows[0]);
         const vals: unknown[] = [];
         const rowPlaceholders = rows.map(row => {
-          const placeholders = cols.map(c => { vals.push(row[c]); return `$${vals.length}`; });
+          const placeholders = cols.map(c => { vals.push(serializeForPg(row[c])); return `$${vals.length}`; });
           return `(${placeholders.join(', ')})`;
         });
         const hasRelations = this._selectStr.includes('(');
@@ -316,7 +325,7 @@ class QueryBuilder<T = unknown> {
       // ── UPSERT ──
       if (this._upsertData !== undefined) {
         const cols = Object.keys(this._upsertData);
-        const vals: unknown[] = cols.map(c => this._upsertData![c]);
+        const vals: unknown[] = cols.map(c => serializeForPg(this._upsertData![c]));
         const placeholders = cols.map((_, i) => `$${i + 1}`);
         const conflictCol = this._upsertConflict || cols[0];
         const updates = cols.filter(c => c !== conflictCol).map((c, i) => `"${c}" = EXCLUDED."${c}"`);
@@ -333,7 +342,7 @@ class QueryBuilder<T = unknown> {
       if (this._updateData !== undefined) {
         const params: unknown[] = [];
         const sets = Object.entries(this._updateData).map(([k, v]) => {
-          params.push(v); return `"${k}" = $${params.length}`;
+          params.push(serializeForPg(v)); return `"${k}" = $${params.length}`;
         });
         const where = this._conditions.length > 0
           ? `WHERE ${this._conditions.map(c => this._shiftCondition(c, params.length)).join(' AND ')}`
