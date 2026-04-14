@@ -400,14 +400,15 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
   const approvedCount = variants.filter(v => v.approved && v.status === 'ready').length;
 
   const handleLaunch = useCallback(async () => {
-    if (approvedCount < 2) {
-      toast.error('Approve at least 2 variants');
+    if (approvedCount < 1) {
+      toast.error('Approve at least 1 variant');
       return;
     }
     setLaunching(true);
     try {
       const approved = variants.filter(v => v.approved && v.status === 'ready');
-      const weight = Math.floor(100 / (approved.length + 1));
+      const total = approved.length + 1; // +1 for control
+      const weight = Math.floor(100 / total);
       const controlWeight = 100 - weight * approved.length;
 
       const res = await fetch(`/api/workspaces/${workspaceId}/tests`, {
@@ -424,6 +425,13 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
               traffic_weight: controlWeight,
               is_control: true,
             },
+            ...approved.map(v => ({
+              name: `AI: ${v.label}`,
+              redirect_url: v.hosted_url,
+              proxy_mode: false,
+              traffic_weight: weight,
+              is_control: false,
+            })),
           ],
         }),
       });
@@ -435,20 +443,6 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
       }
 
       const test = await res.json();
-
-      for (const variant of approved) {
-        await fetch(`/api/tests/${test.id}/variants`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: `AI: ${variant.label}`,
-            redirect_url: variant.hosted_url,
-            proxy_mode: false,
-            traffic_weight: weight,
-          }),
-        });
-      }
-
       toast.success('Test created successfully!');
       router.push(`/clients/${clientId}/tests/${test.id}`);
     } catch {
