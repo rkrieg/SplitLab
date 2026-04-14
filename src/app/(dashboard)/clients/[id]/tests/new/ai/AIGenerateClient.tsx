@@ -9,7 +9,6 @@ import {
   Monitor, Smartphone, Save, Download, Bold, Italic, Type,
 } from 'lucide-react';
 import Button from '@/components/ui/Button';
-import HtmlPreview, { type HtmlPreviewHandle } from '@/components/HtmlPreview';
 
 function fixUrl(url: string): string {
   if (typeof window === 'undefined' || !url) return url;
@@ -97,7 +96,7 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
   const [regenerating, setRegenerating] = useState(false);
   const [regenInstructions, setRegenInstructions] = useState('');
   const [showRegenInput, setShowRegenInput] = useState(false);
-  const previewRef = useRef<HtmlPreviewHandle>(null);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
 
   // Floating toolbar
   const [toolbarPos, setToolbarPos] = useState<{ x: number; y: number } | null>(null);
@@ -110,31 +109,71 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
 
   const abortRef = useRef<AbortController | null>(null);
 
+  // ─── Apply edit mode to iframe when editMode or active tab changes ───
+
+  useEffect(() => {
+    const iframe = iframeRef.current;
+    if (!iframe) return;
+
+    function applyEditMode() {
+      const doc = iframe!.contentDocument;
+      if (!doc) return;
+
+      if (editMode) {
+        doc.querySelectorAll<HTMLElement>('h1,h2,h3,h4,h5,h6,p').forEach((el) => {
+          el.contentEditable = 'true';
+          el.style.outline = '2px dashed rgba(99,102,241,0.5)';
+          el.style.cursor = 'text';
+          el.style.borderRadius = '2px';
+        });
+
+        const handleSel = () => {
+          const sel = iframe!.contentWindow?.getSelection();
+          if (sel && !sel.isCollapsed && sel.rangeCount > 0) {
+            const rect = sel.getRangeAt(0).getBoundingClientRect();
+            setToolbarPos({ x: rect.left + rect.width / 2, y: rect.top - 8 });
+          } else {
+            setToolbarPos(null);
+          }
+        };
+        doc.addEventListener('selectionchange', handleSel);
+        return () => doc.removeEventListener('selectionchange', handleSel);
+      } else {
+        doc.querySelectorAll<HTMLElement>('[contenteditable]').forEach((el) => {
+          el.removeAttribute('contenteditable');
+          el.style.outline = '';
+          el.style.cursor = '';
+          el.style.borderRadius = '';
+        });
+        setToolbarPos(null);
+      }
+    }
+
+    if (iframe.contentDocument?.readyState === 'complete') {
+      applyEditMode();
+    } else {
+      iframe.addEventListener('load', applyEditMode, { once: true });
+    }
+  }, [editMode, activeTab]);
+
   // ─── Toolbar commands ───────────────────────────────────────────────
 
   function execCommand(command: string, value?: string) {
-    previewRef.current?.execFormat(command, value);
+    iframeRef.current?.contentWindow?.document.execCommand(command, false, value ?? undefined);
   }
-
-  // ─── Selection change handler passed to HtmlPreview ─────────────────
-
-  const handleSelectionChange = useCallback(
-    (active: boolean, pos?: { x: number; y: number }) => {
-      setToolbarPos(active && pos ? pos : null);
-    },
-    []
-  );
 
   // ─── Save edited HTML ───────────────────────────────────────────────
 
   async function handleSave() {
     const variant = variants[activeTab];
     if (!variant || variant.status !== 'ready') return;
-    if (!previewRef.current) return;
 
     setSaving(true);
     try {
-      const html = previewRef.current.getHtml();
+      const doc = iframeRef.current?.contentDocument;
+      const html = doc
+        ? '<!DOCTYPE html>\n' + doc.documentElement.outerHTML
+        : variant.html;
       const res = await fetch(`/api/ai/variants/${variant.variant_id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -203,7 +242,8 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
     const variant = variants[activeTab];
     if (!variant) return;
 
-    const html = previewRef.current?.getHtml() || variant.html;
+    const doc = iframeRef.current?.contentDocument;
+    const html = doc ? '<!DOCTYPE html>\n' + doc.documentElement.outerHTML : variant.html;
     const blob = new Blob([html], { type: 'text/html' });
     const downloadUrl = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -1082,12 +1122,13 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
                           )}
                         </div>
                         {activeVariant.html ? (
-                          <HtmlPreview
-                            ref={previewRef}
-                            html={activeVariant.html}
-                            editMode={editMode}
-                            className="w-full h-[600px]"
-                            onSelectionChange={handleSelectionChange}
+                          <iframe
+                            ref={iframeRef}
+                            key={activeTab}
+                            srcDoc={activeVariant.html}
+                            sandbox="allow-same-origin allow-popups"
+                            className="w-full h-[600px] border-0"
+                            title={activeVariant.label}
                           />
                         ) : (
                           <div className="w-full h-[600px] flex items-center justify-center text-slate-400">
