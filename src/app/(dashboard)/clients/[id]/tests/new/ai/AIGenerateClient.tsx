@@ -7,6 +7,8 @@ import {
   Sparkles, Globe, Loader2, Check, X, RotateCcw, RefreshCw,
   ChevronDown, ChevronUp, Rocket, ArrowLeft, Wand2,
   Monitor, Smartphone, Save, Download, Bold, Italic, Type,
+  Underline, Strikethrough, AlignLeft, AlignCenter, AlignRight, AlignJustify,
+  Eraser, Palette, Highlighter, Link,
 } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import HtmlPreview, { type HtmlPreviewHandle } from '@/components/HtmlPreview';
@@ -99,7 +101,13 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
   const [showRegenInput, setShowRegenInput] = useState(false);
   const previewRef = useRef<HtmlPreviewHandle>(null);
 
-  // Floating toolbar
+  // Rich editor toolbar state
+  const [textColor, setTextColor] = useState('#000000');
+  const [highlightColor, setHighlightColor] = useState('#ffff00');
+  const [fontFamily, setFontFamily] = useState('');
+  const [fontSize, setFontSize] = useState('16');
+
+  // Floating toolbar (kept for selection awareness only)
   const [toolbarPos, setToolbarPos] = useState<{ x: number; y: number } | null>(null);
   const toolbarRef = useRef<HTMLDivElement>(null);
 
@@ -114,6 +122,25 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
 
   function execCommand(command: string, value?: string) {
     previewRef.current?.execFormat(command, value);
+  }
+
+  function applyFontSize(px: string) {
+    if (!px || isNaN(Number(px))) return;
+    previewRef.current?.applyFontSize(px);
+  }
+
+  function insertLink() {
+    const sel = window.getSelection();
+    const selectedText = sel && !sel.isCollapsed ? sel.toString() : '';
+    const url = window.prompt('Enter URL:', 'https://');
+    if (url) {
+      if (selectedText) {
+        execCommand('createLink', url);
+      } else {
+        const text = window.prompt('Link text:', url) || url;
+        document.execCommand('insertHTML', false, `<a href="${url}" target="_blank">${text}</a>`);
+      }
+    }
   }
 
   // ─── Selection change handler passed to HtmlPreview ─────────────────
@@ -1037,6 +1064,136 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
                       </div>
                     </div>
 
+                    {/* ── Rich Editing Toolbar ── */}
+                    {editMode && (
+                      <div className="flex items-center flex-wrap gap-1 bg-white dark:bg-slate-800 rounded-lg border border-indigo-300 dark:border-indigo-700 px-3 py-2 shadow-sm">
+
+                        {/* Font family */}
+                        <select
+                          value={fontFamily}
+                          onChange={e => { setFontFamily(e.target.value); execCommand('fontName', e.target.value); }}
+                          className="h-7 rounded border border-slate-200 dark:border-slate-700 bg-transparent text-xs text-slate-700 dark:text-slate-300 px-1 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer min-w-[110px]"
+                          title="Font Family"
+                        >
+                          <option value="">Default Font</option>
+                          <option value="Arial, sans-serif">Arial</option>
+                          <option value="'Helvetica Neue', Helvetica, sans-serif">Helvetica Neue</option>
+                          <option value="Georgia, serif">Georgia</option>
+                          <option value="'Times New Roman', serif">Times New Roman</option>
+                          <option value="'Courier New', monospace">Courier New</option>
+                          <option value="Verdana, sans-serif">Verdana</option>
+                          <option value="Trebuchet MS, sans-serif">Trebuchet MS</option>
+                          <option value="Impact, fantasy">Impact</option>
+                        </select>
+
+                        {/* Font size */}
+                        <div className="flex items-center gap-0.5 border border-slate-200 dark:border-slate-700 rounded h-7 overflow-hidden">
+                          <input
+                            type="number"
+                            min="8"
+                            max="200"
+                            value={fontSize}
+                            onChange={e => setFontSize(e.target.value)}
+                            onBlur={e => applyFontSize(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Enter') { applyFontSize(fontSize); (e.target as HTMLInputElement).blur(); } }}
+                            className="w-11 h-full bg-transparent text-xs text-slate-700 dark:text-slate-300 px-1.5 focus:outline-none"
+                            title="Font size (px)"
+                          />
+                          <span className="text-[10px] text-slate-400 pr-1.5 select-none">px</span>
+                        </div>
+
+                        <div className="w-px h-5 bg-slate-200 dark:bg-slate-700 mx-0.5" />
+
+                        {/* Style buttons */}
+                        {[
+                          { cmd: 'bold', icon: <Bold size={13} />, title: 'Bold (Ctrl+B)' },
+                          { cmd: 'italic', icon: <Italic size={13} />, title: 'Italic (Ctrl+I)' },
+                          { cmd: 'underline', icon: <Underline size={13} />, title: 'Underline (Ctrl+U)' },
+                          { cmd: 'strikeThrough', icon: <Strikethrough size={13} />, title: 'Strikethrough' },
+                        ].map(({ cmd, icon, title }) => (
+                          <button
+                            key={cmd}
+                            onMouseDown={e => { e.preventDefault(); execCommand(cmd); }}
+                            className="flex items-center justify-center w-7 h-7 rounded hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 transition-colors"
+                            title={title}
+                          >
+                            {icon}
+                          </button>
+                        ))}
+
+                        <div className="w-px h-5 bg-slate-200 dark:bg-slate-700 mx-0.5" />
+
+                        {/* Alignment */}
+                        {[
+                          { cmd: 'justifyLeft', icon: <AlignLeft size={13} />, title: 'Align Left' },
+                          { cmd: 'justifyCenter', icon: <AlignCenter size={13} />, title: 'Align Center' },
+                          { cmd: 'justifyRight', icon: <AlignRight size={13} />, title: 'Align Right' },
+                          { cmd: 'justifyFull', icon: <AlignJustify size={13} />, title: 'Justify' },
+                        ].map(({ cmd, icon, title }) => (
+                          <button
+                            key={cmd}
+                            onMouseDown={e => { e.preventDefault(); execCommand(cmd); }}
+                            className="flex items-center justify-center w-7 h-7 rounded hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 transition-colors"
+                            title={title}
+                          >
+                            {icon}
+                          </button>
+                        ))}
+
+                        <div className="w-px h-5 bg-slate-200 dark:bg-slate-700 mx-0.5" />
+
+                        {/* Text color */}
+                        <label className="relative flex items-center justify-center w-7 h-7 rounded hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer transition-colors" title="Text Color">
+                          <Palette size={13} className="text-slate-600 dark:text-slate-300 pointer-events-none" />
+                          <div className="absolute bottom-0.5 left-1/2 -translate-x-1/2 w-4 h-1 rounded-sm pointer-events-none" style={{ backgroundColor: textColor }} />
+                          <input
+                            type="color"
+                            value={textColor}
+                            onChange={e => setTextColor(e.target.value)}
+                            onInput={e => execCommand('foreColor', (e.target as HTMLInputElement).value)}
+                            className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
+                          />
+                        </label>
+
+                        {/* Highlight / background color */}
+                        <label className="relative flex items-center justify-center w-7 h-7 rounded hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer transition-colors" title="Highlight Color">
+                          <Highlighter size={13} className="text-slate-600 dark:text-slate-300 pointer-events-none" />
+                          <div className="absolute bottom-0.5 left-1/2 -translate-x-1/2 w-4 h-1 rounded-sm pointer-events-none" style={{ backgroundColor: highlightColor }} />
+                          <input
+                            type="color"
+                            value={highlightColor}
+                            onChange={e => setHighlightColor(e.target.value)}
+                            onInput={e => execCommand('hiliteColor', (e.target as HTMLInputElement).value)}
+                            className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
+                          />
+                        </label>
+
+                        <div className="w-px h-5 bg-slate-200 dark:bg-slate-700 mx-0.5" />
+
+                        {/* Insert link */}
+                        <button
+                          onMouseDown={e => { e.preventDefault(); insertLink(); }}
+                          className="flex items-center justify-center w-7 h-7 rounded hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 transition-colors"
+                          title="Insert Link"
+                        >
+                          <Link size={13} />
+                        </button>
+
+                        {/* Clear formatting */}
+                        <button
+                          onMouseDown={e => { e.preventDefault(); execCommand('removeFormat'); }}
+                          className="flex items-center justify-center w-7 h-7 rounded hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 transition-colors"
+                          title="Clear Formatting"
+                        >
+                          <Eraser size={13} />
+                        </button>
+
+                        <div className="ml-auto text-[10px] text-indigo-400 dark:text-indigo-500 font-medium flex items-center gap-1">
+                          <Type size={10} /> Click any text on the page to edit
+                        </div>
+                      </div>
+                    )}
+
                     {/* Regenerate instructions input */}
                     {showRegenInput && (
                       <div className="flex gap-3 items-end bg-slate-50 dark:bg-slate-800/50 rounded-lg p-4 border border-slate-200 dark:border-slate-700">
@@ -1097,48 +1254,6 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
                       </div>
                     </div>
 
-                    {/* Floating toolbar for text editing */}
-                    {editMode && toolbarPos && (
-                      <div
-                        ref={toolbarRef}
-                        className="fixed z-50 flex items-center gap-1 bg-slate-900 rounded-lg shadow-xl px-2 py-1.5 border border-slate-700"
-                        style={{
-                          left: `${toolbarPos.x}px`,
-                          top: `${toolbarPos.y}px`,
-                          transform: 'translateX(-50%)',
-                        }}
-                      >
-                        <button
-                          onClick={() => execCommand('bold')}
-                          className="p-1.5 rounded hover:bg-slate-700 text-white transition-colors"
-                          title="Bold"
-                        >
-                          <Bold size={14} />
-                        </button>
-                        <button
-                          onClick={() => execCommand('italic')}
-                          className="p-1.5 rounded hover:bg-slate-700 text-white transition-colors"
-                          title="Italic"
-                        >
-                          <Italic size={14} />
-                        </button>
-                        <div className="w-px h-5 bg-slate-600 mx-1" />
-                        <button
-                          onClick={() => execCommand('fontSize', '5')}
-                          className="p-1.5 rounded hover:bg-slate-700 text-white transition-colors text-xs font-bold"
-                          title="Increase size"
-                        >
-                          A+
-                        </button>
-                        <button
-                          onClick={() => execCommand('fontSize', '2')}
-                          className="p-1.5 rounded hover:bg-slate-700 text-white transition-colors text-xs"
-                          title="Decrease size"
-                        >
-                          A-
-                        </button>
-                      </div>
-                    )}
 
                     {/* Changes summary */}
                     <div>

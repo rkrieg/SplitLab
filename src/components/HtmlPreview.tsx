@@ -6,6 +6,7 @@ import { parseShadowContent } from '@/lib/html-clean';
 export interface HtmlPreviewHandle {
   getHtml(): string;
   execFormat(command: string, value?: string): void;
+  applyFontSize(px: string): void;
 }
 
 interface Props {
@@ -32,11 +33,25 @@ const HtmlPreview = forwardRef<HtmlPreviewHandle, Props>(function HtmlPreview(
         el.style.outline = '';
         el.style.cursor = '';
         el.style.borderRadius = '';
+        el.style.minHeight = '';
       });
       return '<!DOCTYPE html>\n<html>\n<head></head>\n<body>\n' + shadow.innerHTML + '\n</body>\n</html>';
     },
     execFormat(command: string, value?: string) {
       document.execCommand(command, false, value ?? undefined);
+    },
+    applyFontSize(px: string) {
+      const shadow = hostRef.current?.shadowRoot;
+      if (!shadow) return;
+      // Classic big-7 trick: insert font[size=7], then replace with span[style]
+      document.execCommand('fontSize', false, '7');
+      shadow.querySelectorAll<HTMLElement>('font[size="7"]').forEach((el) => {
+        const span = document.createElement('span');
+        span.style.fontSize = `${px}px`;
+        el.parentNode?.insertBefore(span, el);
+        while (el.firstChild) span.appendChild(el.firstChild);
+        el.parentNode?.removeChild(el);
+      });
     },
   }));
 
@@ -61,17 +76,25 @@ const HtmlPreview = forwardRef<HtmlPreviewHandle, Props>(function HtmlPreview(
     if (!shadow) return;
 
     if (editMode) {
-      // Make text/cta elements contentEditable
-      shadow
-        .querySelectorAll<HTMLElement>('[data-editable="text"], [data-editable="cta"]')
-        .forEach((el) => {
-          el.contentEditable = 'true';
-          el.style.outline = '2px dashed rgba(99,102,241,0.5)';
-          el.style.cursor = 'text';
-          el.style.borderRadius = '2px';
-        });
+      // Enable CSS-based styling so execCommand produces <span style="..."> not <font>
+      document.execCommand('styleWithCSS', false, 'true');
 
-      // Selection → floating toolbar position
+      // Make all block-level text elements editable (avoid nested contentEditables)
+      const EDITABLE_SELECTOR = [
+        'h1','h2','h3','h4','h5','h6',
+        'p','li','td','th','blockquote',
+        'figcaption','caption','button','a',
+        '[data-editable]',
+      ].join(',');
+
+      shadow.querySelectorAll<HTMLElement>(EDITABLE_SELECTOR).forEach((el) => {
+        el.contentEditable = 'true';
+        el.style.outline = '1px dashed rgba(99,102,241,0.4)';
+        el.style.cursor = 'text';
+        el.style.borderRadius = '2px';
+        el.style.minHeight = '1em';
+      });
+
       const handleSelection = () => {
         const sel = window.getSelection();
         if (sel && !sel.isCollapsed && sel.rangeCount > 0) {
@@ -93,6 +116,7 @@ const HtmlPreview = forwardRef<HtmlPreviewHandle, Props>(function HtmlPreview(
         el.style.outline = '';
         el.style.cursor = '';
         el.style.borderRadius = '';
+        el.style.minHeight = '';
       });
       onSelectionChange?.(false);
     }
