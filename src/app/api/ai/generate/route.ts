@@ -111,30 +111,64 @@ function parsePatchResponse(response: string): PatchResponse {
   }
 }
 
+/**
+ * Collapse all whitespace runs to a single space — mirrors what prepareHtml does
+ * so find strings from the AI (which saw the collapsed HTML) will match.
+ */
+function collapseWS(s: string): string {
+  return s.replace(/\s+/g, ' ');
+}
+
+/**
+ * Build a regex from a find string where every run of whitespace becomes \s+
+ * and all regex-special chars in non-whitespace parts are escaped.
+ */
+function buildWSFlexibleRegex(findStr: string): RegExp | null {
+  try {
+    // Split into alternating non-ws / ws chunks
+    const parts = findStr.split(/(\s+)/);
+    const regexParts = parts.map(part =>
+      /^\s+$/.test(part)
+        ? '\\s+'
+        : part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    );
+    return new RegExp(regexParts.join(''));
+  } catch {
+    return null;
+  }
+}
+
 function applyPatches(html: string, patches: Array<{ find: string; replace: string; description: string }>): string {
-  let result = html;
+  // Normalise the working copy so AI-generated find strings match.
+  // prepareHtml collapses \s{2,} → ' '; we collapse all \s+ → ' ' which is a
+  // superset (single spaces already stay single) — identical end result.
+  let result = collapseWS(html);
   let applied = 0;
 
   for (const patch of patches) {
     if (!patch.find || patch.find === patch.replace) continue;
 
+    // Level 1 — exact match on the collapsed HTML
     if (result.includes(patch.find)) {
       result = result.replace(patch.find, patch.replace);
       applied++;
       console.log(`[AI Generate] Patch applied: ${patch.description?.slice(0, 80)}`);
-    } else {
-      // Try with normalized whitespace
-      const normalizedFind = patch.find.replace(/\s+/g, '\\s+');
-      const regex = new RegExp(normalizedFind.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\\s\+/g, '\\s+'));
+      continue;
+    }
+
+    // Level 2 — whitespace-flexible regex (handles any remaining WS differences)
+    const regex = buildWSFlexibleRegex(patch.find);
+    if (regex) {
       const match = result.match(regex);
-      if (match) {
-        result = result.replace(match[0], patch.replace);
+      if (match && match[0]) {
+        result = result.replace(regex, patch.replace);
         applied++;
         console.log(`[AI Generate] Patch applied (fuzzy): ${patch.description?.slice(0, 80)}`);
-      } else {
-        console.warn(`[AI Generate] Patch NOT found: ${patch.find.slice(0, 100)}`);
+        continue;
       }
     }
+
+    console.warn(`[AI Generate] Patch NOT found: ${patch.find.slice(0, 100)}`);
   }
 
   console.log(`[AI Generate] Applied ${applied}/${patches.length} patches`);

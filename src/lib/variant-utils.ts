@@ -62,6 +62,17 @@ export function applyReplacements(
       continue;
     }
 
+    // Strategy 1b: Match on whitespace-collapsed HTML (AI sees collapsed WS via prepareHtml)
+    const collapsedResult = result.replace(/\s+/g, ' ');
+    const collapsedFind = find.replace(/\s+/g, ' ');
+    if (collapsedResult.includes(collapsedFind)) {
+      // Apply to collapsed version (whitespace already normalised — safe to save)
+      result = collapsedResult.replace(collapsedFind, replace);
+      applied++;
+      console.log(`${logPrefix} Collapsed-WS match: "${find.slice(0, 60)}"`);
+      continue;
+    }
+
     // Strategy 2: Text-layer matching with normalization
     const plainText = htmlToText(result);
     const normalizedFind = normalizeText(find);
