@@ -112,7 +112,7 @@ export async function PATCH(
       }
     }
 
-    // Delete variant if requested
+    // Delete variant if requested, then rebalance remaining weights
     if (delete_variant_id) {
       const { error: delErr } = await db
         .from('test_variants')
@@ -120,6 +120,26 @@ export async function PATCH(
         .eq('id', delete_variant_id)
         .eq('test_id', params.id);
       if (delErr) return NextResponse.json({ error: delErr.message }, { status: 500 });
+
+      // Rebalance traffic weights across remaining variants
+      const { data: remaining } = await db
+        .from('test_variants')
+        .select('id, is_control')
+        .eq('test_id', params.id)
+        .order('is_control', { ascending: false });
+
+      if (remaining && remaining.length > 0) {
+        const n = remaining.length;
+        const base = Math.floor(100 / n);
+        const extra = 100 - base * n;
+        for (let i = 0; i < remaining.length; i++) {
+          const newWeight = base + (i === 0 ? extra : 0);
+          await db
+            .from('test_variants')
+            .update({ traffic_weight: newWeight })
+            .eq('id', remaining[i].id);
+        }
+      }
     }
 
     // Replace goals if provided

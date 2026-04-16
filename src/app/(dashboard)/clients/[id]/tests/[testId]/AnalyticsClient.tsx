@@ -1185,7 +1185,7 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
         onClose={() => setDeleteVariantId(null)}
         onConfirm={deleteVariant}
         title="Delete Variant"
-        description="This will permanently delete the variant and its event data. Traffic weights will need to be adjusted."
+        description="This will permanently delete the variant and its event data. Traffic weights will be redistributed automatically."
         loading={deletingVariant}
       />
     </div>
