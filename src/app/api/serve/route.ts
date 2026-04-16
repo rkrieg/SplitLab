@@ -127,15 +127,6 @@ ${proxyTrackingSnippet}
 </body>
 </html>`;
 
-        // Record server-side pageview
-        await db.from('events').insert({
-          test_id: test.id,
-          variant_id: selectedVariant.id,
-          visitor_hash: visitorId,
-          type: 'pageview',
-          metadata: { redirect_url: selectedVariant.redirect_url, proxy: true },
-        });
-
         const proxyResponse = new NextResponse(iframeHtml, {
           status: 200,
           headers: { 'Content-Type': 'text/html; charset=utf-8' },
@@ -226,15 +217,6 @@ ${proxyTrackingSnippet}
           );
 
           hostedHtml = injectIntoHtml(hostedHtml, hostedHeadScripts, hostedBodyScripts, hostedTracking);
-
-          // Record pageview
-          await db.from('events').insert({
-            test_id: test.id,
-            variant_id: selectedVariant.id,
-            visitor_hash: visitorId,
-            type: 'pageview',
-            metadata: { variant_type: 'hosted' },
-          });
 
           const hostedResponse = new NextResponse(hostedHtml, {
             status: 200,

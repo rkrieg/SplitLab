@@ -7,7 +7,7 @@ import {
   Download, RefreshCw, Trophy, TrendingUp, Code2, Copy,
   ChevronRight, ShieldCheck, ShieldX, FileCode2,
   Loader2, Globe, ExternalLink, Plus, Trash2, Check, X,
-  Pencil, BarChart3, Users, Settings as SettingsIcon, Sparkles,
+  Pencil, BarChart3, Users, Settings as SettingsIcon, Sparkles, Zap,
 } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import Modal from '@/components/ui/Modal';
@@ -171,6 +171,33 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
 
   const winner = stats.find(s => s.isWinner);
   const overallCvr = totalViews > 0 ? totalConversions / totalViews : 0;
+
+  // ─── Simulate ───────────────────────────────────────────────────────
+  const [simulating, setSimulating] = useState(false);
+
+  async function simulateVisits() {
+    setSimulating(true);
+    try {
+      const variantIds = variants.map(v => v.id);
+      const res = await fetch(`/api/tests/${test.id}/simulate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ variantIds }),
+      });
+      if (!res.ok) { toast.error('Simulation failed'); return; }
+      const data = await res.json();
+      toast.success(
+        data.hasGoal
+          ? `Simulated ${variantIds.length} pageview${variantIds.length !== 1 ? 's' : ''} + conversions`
+          : `Simulated ${variantIds.length} pageview${variantIds.length !== 1 ? 's' : ''} (no goals set — add goals in Settings to test conversions)`
+      );
+      await fetchAnalytics();
+    } catch {
+      toast.error('Simulation failed');
+    } finally {
+      setSimulating(false);
+    }
+  }
 
   function exportCsv() {
     const headers = ['Variant', 'Control', 'Views', 'Conversions', 'CVR', 'Confidence', 'Winner'];
@@ -630,6 +657,17 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
               <button onClick={fetchAnalytics} disabled={loading} className="btn-secondary">
                 <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> Refresh
               </button>
+              <button
+                onClick={simulateVisits}
+                disabled={simulating || variants.length === 0}
+                className="btn-secondary"
+                title="Inject one simulated pageview (and conversion if goals are set) per variant to verify the analytics pipeline"
+              >
+                {simulating
+                  ? <Loader2 size={14} className="animate-spin" />
+                  : <Zap size={14} />}
+                Simulate
+              </button>
               <button onClick={exportCsv} className="btn-secondary ml-auto">
                 <Download size={14} /> Export
               </button>
@@ -657,8 +695,13 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
                     </tr>
                   ) : stats.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="px-5 py-10 text-center text-slate-400">
-                        No data yet. Publish this page to start collecting events.
+                      <td colSpan={7} className="px-5 py-10 text-center">
+                        <BarChart3 size={28} className="mx-auto mb-3 text-slate-600" />
+                        <p className="text-slate-500 text-sm font-medium mb-1">No data yet</p>
+                        <p className="text-slate-500 dark:text-slate-600 text-xs max-w-xs mx-auto">
+                          Events are recorded when visitors load your served page.
+                          {test.status !== 'active' && ' Publish this test first, then'} use the <strong className="text-slate-400">Simulate</strong> button above to verify the pipeline end-to-end.
+                        </p>
                       </td>
                     </tr>
                   ) : stats.map(stat => {
