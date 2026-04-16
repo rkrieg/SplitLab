@@ -67,7 +67,15 @@ Produce 4-10 HTML search-and-replace patches. Each patch replaces a chunk of the
 4. You can change text, CSS styles, classes, attributes, images, structure — anything within the chunk
 5. Keep changes focused on supporting the hypothesis
 6. Do NOT change scripts, meta tags, or analytics code
-7. Make "find" strings at least 50 characters long for reliable matching
+7. Make "find" strings at least 30 characters long, but NO MORE THAN 200 characters — short, tight finds are more reliable
+
+## Critical Targeting Rules (READ CAREFULLY)
+- **Button/CTA text**: Target the INNERMOST text span only, e.g. `<span class="elementor-button-text">Contact Us</span>` — NEVER target the outer `<a>` or `<div>` wrapper; those have complex nested children that are hard to match exactly
+- **Headings**: Target just `<h1>`, `<h2>`, `<h3>` tags and their content directly — not their parent wrapper divs
+- **Paragraphs**: Target the `<p>` tag and its content; if the paragraph is long, target only the FIRST SENTENCE within it
+- **Avoid containers**: Never use `<div class="elementor-element ...">` as a find target — those wrappers contain many child elements and are prone to mismatch
+- **Short finds win**: The minimum unique string is better than a long block. If a heading text is unique in the document, `<h2>Your Heading Text</h2>` alone is enough
+- **Prefer text-bearing leaf elements**: `<span>`, `<p>`, `<h1>-<h6>`, `<a>` (only the anchor text, not the whole link), `<li>`, `<td>`
 
 ## Source URL: ${sourceUrl}
 
