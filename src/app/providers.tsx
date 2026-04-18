@@ -12,7 +12,7 @@ interface ProvidersProps {
 
 export default function Providers({ children, session }: ProvidersProps) {
   return (
-    <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
+    <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false}>
       <SessionProvider session={session}>
         {children}
         <Toaster
