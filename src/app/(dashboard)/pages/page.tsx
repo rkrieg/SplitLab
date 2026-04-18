@@ -6,9 +6,17 @@ import Header from '@/components/layout/Header';
 import Link from 'next/link';
 import {
   FileCode2, Globe, CheckCircle2, Clock, PauseCircle, XCircle,
-  FlaskConical as ABIcon, ExternalLink,
+  FlaskConical as ABIcon, ExternalLink, Link2, ShieldCheck,
 } from 'lucide-react';
 import EmptyState from '@/components/ui/EmptyState';
+
+interface Variant {
+  id: string;
+  name: string;
+  traffic_weight: number;
+  is_control: boolean;
+  redirect_url: string | null;
+}
 
 interface TestRow {
   id: string;
@@ -21,7 +29,7 @@ interface TestRow {
   views: number;
   conversions: number;
   cvr: number;
-  variant_count: number;
+  variants: Variant[];
 }
 
 async function getAllTests(): Promise<TestRow[]> {
@@ -33,21 +41,16 @@ async function getAllTests(): Promise<TestRow[]> {
   if (!tests || tests.length === 0) return [];
 
   const workspaceIds = [...new Set(tests.map((t: Record<string, unknown>) => t.workspace_id as string))];
+  const testIds = tests.map((t: Record<string, unknown>) => t.id as string);
 
-  const { data: domains } = await db
-    .from('domains')
-    .select('workspace_id, domain')
-    .in('workspace_id', workspaceIds);
+  const [{ data: domains }, { data: events }, { data: variants }] = await Promise.all([
+    db.from('domains').select('workspace_id, domain').in('workspace_id', workspaceIds),
+    db.from('events').select('test_id, type').in('test_id', testIds),
+    db.from('test_variants').select('test_id, id, name, traffic_weight, is_control, redirect_url').in('test_id', testIds),
+  ]);
 
   const domainMap: Record<string, string> = {};
   for (const d of domains || []) domainMap[d.workspace_id] = d.domain;
-
-  const testIds = tests.map((t: Record<string, unknown>) => t.id as string);
-
-  const { data: events } = await db
-    .from('events')
-    .select('test_id, type')
-    .in('test_id', testIds);
 
   const statsMap: Record<string, { views: number; conversions: number }> = {};
   for (const ev of events || []) {
@@ -56,14 +59,10 @@ async function getAllTests(): Promise<TestRow[]> {
     else if (ev.type === 'conversion') statsMap[ev.test_id].conversions++;
   }
 
-  const { data: variants } = await db
-    .from('test_variants')
-    .select('test_id')
-    .in('test_id', testIds);
-
-  const variantCountMap: Record<string, number> = {};
+  const variantMap: Record<string, Variant[]> = {};
   for (const v of variants || []) {
-    variantCountMap[v.test_id] = (variantCountMap[v.test_id] || 0) + 1;
+    if (!variantMap[v.test_id]) variantMap[v.test_id] = [];
+    variantMap[v.test_id].push({ id: v.id, name: v.name, traffic_weight: v.traffic_weight, is_control: v.is_control, redirect_url: v.redirect_url });
   }
 
   return tests.map((t: Record<string, unknown>) => {
@@ -80,7 +79,7 @@ async function getAllTests(): Promise<TestRow[]> {
       views: s.views,
       conversions: s.conversions,
       cvr: s.views > 0 ? (s.conversions / s.views) * 100 : 0,
-      variant_count: variantCountMap[t.id as string] || 0,
+      variants: variantMap[t.id as string] || [],
     };
   });
 }
@@ -147,91 +146,94 @@ export default async function AllPagesPage() {
             description="Pages will appear here once created in a client workspace."
           />
         ) : (
-          <div className="card overflow-hidden">
-            {/* Column header row */}
-            <div className="hidden sm:flex items-center px-5 py-2.5 border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40">
-              <div className="flex-1 text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wide">Page</div>
-              <div className="flex items-center gap-6 pr-1">
-                {['Visitors', 'Conversions', 'Conv. Rate', 'Confidence'].map(col => (
-                  <div key={col} className="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wide text-right min-w-[80px]">
-                    {col}
-                  </div>
-                ))}
-                <div className="w-7" />
-              </div>
-            </div>
+          <div className="space-y-3">
+            {tests.map((test) => {
+              const fullUrl = test.domain ? `${test.domain}${test.url_path}` : test.url_path;
+              const href = test.client_id ? `/clients/${test.client_id}/tests/${test.id}` : '#';
 
-            <div className="divide-y divide-slate-100 dark:divide-slate-700/60">
-              {tests.map((test) => {
-                const fullUrl = test.domain
-                  ? `${test.domain}${test.url_path}`
-                  : test.url_path;
-                const href = test.client_id ? `/clients/${test.client_id}/tests/${test.id}` : '#';
+              return (
+                <div key={test.id} className="card p-5 hover:border-slate-300 dark:hover:border-slate-600 transition-colors">
+                  <div className="flex items-start justify-between gap-4">
 
-                return (
-                  <div key={test.id} className="flex items-center px-5 py-3.5 hover:bg-slate-50 dark:hover:bg-slate-700/20 transition-colors group">
-
-                    {/* Left: name + badges + url */}
-                    <div className="flex-1 min-w-0 pr-6">
-                      <div className="flex flex-wrap items-center gap-2 mb-0.5">
+                    {/* Left: name + badges + url + variants */}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex flex-wrap items-center gap-2 mb-1">
                         <Link
                           href={href}
-                          className="font-semibold text-sm text-slate-900 dark:text-slate-100 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors truncate max-w-[400px]"
+                          className="font-semibold text-slate-900 dark:text-slate-100 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
                         >
                           {test.name}
                         </Link>
                         <StatusBadge status={test.status} />
-                        {test.variant_count > 1 && (
+                        {test.variants.length > 1 && (
                           <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-[#3D8BDA]/10 text-[#3D8BDA] border border-[#3D8BDA]/20">
-                            <ABIcon size={8} />A/B Test
+                            <ABIcon size={8} />{test.variants.length} variants
                           </span>
                         )}
                       </div>
-                      <div className="flex items-center gap-1.5">
+
+                      <div className="flex items-center gap-1.5 mb-3">
                         <Globe size={10} className="text-slate-400 flex-shrink-0" />
-                        <span className="text-xs text-slate-400 dark:text-slate-500 font-mono truncate">
-                          {fullUrl}
-                        </span>
+                        <span className="text-xs text-slate-400 dark:text-slate-500 font-mono">{fullUrl}</span>
                         {test.client_name && (
                           <>
-                            <span className="text-slate-300 dark:text-slate-700 text-xs select-none">·</span>
-                            <span className="text-xs text-slate-400 dark:text-slate-500 truncate">{test.client_name}</span>
+                            <span className="text-slate-300 dark:text-slate-700 select-none">·</span>
+                            <span className="text-xs text-slate-400 dark:text-slate-500">{test.client_name}</span>
                           </>
                         )}
                       </div>
+
+                      {/* Variant chips */}
+                      {test.variants.length > 0 && (
+                        <div className="flex flex-wrap gap-2">
+                          {test.variants.map((v) => (
+                            <span key={v.id} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-600">
+                              {v.name}
+                              <span className="text-slate-400">{v.traffic_weight}%</span>
+                              {v.is_control && <span className="text-indigo-400 text-[9px] font-semibold">ctrl</span>}
+                              {v.redirect_url && <Link2 size={9} className="text-amber-400" />}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
 
-                    {/* Right: stats */}
-                    <div className="flex items-center gap-6 flex-shrink-0 pr-1">
-                      <div className="text-right min-w-[80px]">
+                    {/* Right: stats + action */}
+                    <div className="flex items-center gap-5 flex-shrink-0">
+                      <div className="text-right">
                         <p className="text-sm font-semibold text-slate-900 dark:text-slate-100 tabular-nums">{test.views.toLocaleString()}</p>
                         <p className="text-[10px] text-slate-400 dark:text-slate-500">Visitors</p>
                       </div>
-                      <div className="text-right min-w-[80px]">
+                      <div className="text-right">
                         <p className="text-sm font-semibold text-slate-900 dark:text-slate-100 tabular-nums">{test.conversions.toLocaleString()}</p>
                         <p className="text-[10px] text-slate-400 dark:text-slate-500">Conversions</p>
                       </div>
-                      <div className="text-right min-w-[80px]">
+                      <div className="text-right">
                         <p className="text-sm font-semibold text-slate-900 dark:text-slate-100 tabular-nums">{test.cvr.toFixed(2)}%</p>
                         <p className="text-[10px] text-slate-400 dark:text-slate-500">Conv. Rate</p>
                       </div>
-                      <div className="text-right min-w-[80px]">
+                      <div className="text-right">
                         <ConfidenceBadge views={test.views} cvr={test.cvr} />
                         <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">Confidence</p>
                       </div>
-
+                      <Link
+                        href={href}
+                        className="btn-secondary text-xs whitespace-nowrap"
+                      >
+                        Analytics
+                      </Link>
                       <Link
                         href={href}
                         className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
-                        title="View analytics"
+                        title="Open analytics"
                       >
                         <ExternalLink size={14} />
                       </Link>
                     </div>
                   </div>
-                );
-              })}
-            </div>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

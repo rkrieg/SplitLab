@@ -34,15 +34,21 @@ interface Test {
   conversion_goals: Goal[];
 }
 
+interface TestStats {
+  views: number;
+  conversions: number;
+}
+
 interface Props {
   tests: Test[];
   workspaceId: string;
   clientId: string;
   canManage: boolean;
   domain?: string;
+  stats?: Record<string, TestStats>;
 }
 
-export default function PagesClient({ tests: initialTests, workspaceId, clientId, canManage, domain }: Props) {
+export default function PagesClient({ tests: initialTests, workspaceId, clientId, canManage, domain, stats = {} }: Props) {
   const router = useRouter();
   const [tests, setTests] = useState(initialTests);
   const [createOpen, setCreateOpen] = useState(false);
@@ -326,7 +332,38 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
                       </div>
                     )}
                   </div>
-                  <div className="flex items-center gap-2 ml-4">
+                  <div className="flex items-center gap-4 ml-4 flex-shrink-0">
+                    {/* Stats */}
+                    {(() => {
+                      const s = stats[test.id] || { views: 0, conversions: 0 };
+                      const cvr = s.views > 0 ? (s.conversions / s.views) * 100 : 0;
+                      return (
+                        <div className="hidden sm:flex items-center gap-4 border-r border-slate-200 dark:border-slate-700 pr-4">
+                          <div className="text-right">
+                            <p className="text-sm font-semibold text-slate-900 dark:text-slate-100 tabular-nums">{s.views.toLocaleString()}</p>
+                            <p className="text-[10px] text-slate-400">Visitors</p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-sm font-semibold text-slate-900 dark:text-slate-100 tabular-nums">{s.conversions.toLocaleString()}</p>
+                            <p className="text-[10px] text-slate-400">Conversions</p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-sm font-semibold text-slate-900 dark:text-slate-100 tabular-nums">{cvr.toFixed(2)}%</p>
+                            <p className="text-[10px] text-slate-400">Conv. Rate</p>
+                          </div>
+                          <div className="text-right">
+                            {s.views === 0
+                              ? <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-slate-100 text-slate-400 dark:bg-slate-700 dark:text-slate-500 border border-slate-200 dark:border-slate-600">Untested</span>
+                              : s.views >= 200 && cvr > 0
+                                ? <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-400 border border-green-200 dark:border-green-500/30">High</span>
+                                : <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400 border border-amber-200 dark:border-amber-500/30">Medium</span>
+                            }
+                            <p className="text-[10px] text-slate-400 mt-0.5">Confidence</p>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                    <div className="flex items-center gap-2">
                     <Link href={`/clients/${clientId}/tests/${test.id}`} className="btn-secondary text-xs" onClick={e => e.stopPropagation()}>
                       Analytics
                     </Link>
@@ -370,6 +407,7 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
                         )}
                       </div>
                     )}
+                    </div>
                   </div>
                 </div>
               </div>

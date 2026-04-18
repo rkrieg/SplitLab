@@ -33,6 +33,21 @@ async function getDomain(workspaceId: string) {
   return data;
 }
 
+async function getStats(testIds: string[]): Promise<Record<string, { views: number; conversions: number }>> {
+  if (testIds.length === 0) return {};
+  const { data: events } = await db
+    .from('events')
+    .select('test_id, type')
+    .in('test_id', testIds);
+  const map: Record<string, { views: number; conversions: number }> = {};
+  for (const ev of events || []) {
+    if (!map[ev.test_id]) map[ev.test_id] = { views: 0, conversions: 0 };
+    if (ev.type === 'pageview') map[ev.test_id].views++;
+    else if (ev.type === 'conversion') map[ev.test_id].conversions++;
+  }
+  return map;
+}
+
 export default async function PagesPage({ params }: { params: { id: string } }) {
   const session = await getServerSession(authOptions);
   if (!session) redirect('/login');
@@ -46,6 +61,9 @@ export default async function PagesPage({ params }: { params: { id: string } }) 
     getDomain(workspace.id),
   ]);
 
+  const testIds = (tests as Array<{ id: string }>).map((t) => t.id);
+  const stats = await getStats(testIds);
+
   return (
     <div>
       <Header title="Pages" subtitle={client?.name} />
@@ -56,6 +74,7 @@ export default async function PagesPage({ params }: { params: { id: string } }) 
           clientId={params.id}
           canManage={session.user.role !== 'viewer'}
           domain={domain?.verified ? domain.domain : undefined}
+          stats={stats}
         />
       </div>
     </div>
