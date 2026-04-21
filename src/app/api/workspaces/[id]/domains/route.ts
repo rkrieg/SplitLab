@@ -2,10 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
-import { addDomainToVercel, removeDomainFromVercel, getDomainStatus } from '@/lib/vercel';
 import { z } from 'zod';
-
-const APP_HOSTNAME = process.env.APP_HOSTNAME || 'cname.vercel-dns.com';
 
 const addSchema = z.object({
   domain: z.string().min(3).max(255),
@@ -21,6 +18,12 @@ const updateSchema = z.object({
   domain_id: z.string().uuid(),
   domain: z.string().min(3).max(255),
 });
+
+function getReplitTarget(): string {
+  return process.env.REPLIT_DEV_DOMAIN
+    || process.env.APP_HOSTNAME
+    || 'your-app.replit.app';
+}
 
 export async function GET(
   _req: NextRequest,
@@ -64,9 +67,26 @@ export async function POST(
         return NextResponse.json({ error: 'Domain not found' }, { status: 404 });
       }
 
-      const status = await getDomainStatus(domainRow.domain);
+      // Check DNS: look for CNAME or A record pointing to our app
+      const target = getReplitTarget();
+      let dnsOk = false;
+      try {
+        const res = await fetch(
+          `https://dns.google/resolve?name=${encodeURIComponent(domainRow.domain)}&type=CNAME`,
+          { signal: AbortSignal.timeout(5000) }
+        );
+        if (res.ok) {
+          const data = await res.json();
+          const answers: Array<{ data: string }> = data.Answer || [];
+          dnsOk = answers.some((a) =>
+            a.data.replace(/\.$/, '') === target.replace(/\.$/, '')
+          );
+        }
+      } catch {
+        // DNS check timed out — treat as pending
+      }
 
-      if (status.verified) {
+      if (dnsOk) {
         await db
           .from('domains')
           .update({ verified: true, verified_at: new Date().toISOString() })
@@ -74,9 +94,11 @@ export async function POST(
       }
 
       return NextResponse.json({
-        verified: status.verified,
-        status: status.status,
-        message: status.message,
+        verified: dnsOk,
+        status: dnsOk ? 'valid' : 'pending_verification',
+        message: dnsOk
+          ? 'Domain is verified and serving traffic.'
+          : `DNS not detected yet. Add a CNAME record: ${domainRow.domain} → ${target}`,
       });
     }
 
@@ -99,7 +121,6 @@ export async function POST(
         return NextResponse.json({ error: 'Domain unchanged' }, { status: 400 });
       }
 
-      // Check uniqueness
       const { data: existing } = await db
         .from('domains')
         .select('id')
@@ -110,25 +131,6 @@ export async function POST(
         return NextResponse.json({ error: 'Domain already registered' }, { status: 409 });
       }
 
-      // Register new domain with Vercel
-      try {
-        await addDomainToVercel(newDomain);
-      } catch (vercelErr: unknown) {
-        const msg = vercelErr instanceof Error ? vercelErr.message : 'Vercel API error';
-        return NextResponse.json(
-          { error: `Failed to register new domain with Vercel: ${msg}` },
-          { status: 502 }
-        );
-      }
-
-      // Remove old domain from Vercel
-      try {
-        await removeDomainFromVercel(oldRow.domain);
-      } catch {
-        // Non-fatal — old domain cleanup can fail
-      }
-
-      // Update DB
       const { data: updated, error: updateErr } = await db
         .from('domains')
         .update({ domain: newDomain, verified: false, verified_at: null })
@@ -154,23 +156,12 @@ export async function POST(
       return NextResponse.json({ error: 'Domain already registered' }, { status: 409 });
     }
 
-    // Register with Vercel first
-    try {
-      await addDomainToVercel(domain);
-    } catch (vercelErr: unknown) {
-      const msg = vercelErr instanceof Error ? vercelErr.message : 'Vercel API error';
-      return NextResponse.json(
-        { error: `Failed to register domain with Vercel: ${msg}` },
-        { status: 502 }
-      );
-    }
-
     const { data: newDomain, error } = await db
       .from('domains')
       .insert({
         workspace_id: params.id,
         domain,
-        cname_target: APP_HOSTNAME,
+        cname_target: getReplitTarget(),
         verified: false,
       })
       .select()
@@ -178,6 +169,7 @@ export async function POST(
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     return NextResponse.json(newDomain, { status: 201 });
+
   } catch (err) {
     if (err instanceof z.ZodError) {
       return NextResponse.json({ error: err.errors }, { status: 400 });
@@ -199,27 +191,15 @@ export async function DELETE(
       return NextResponse.json({ error: 'domain_id is required' }, { status: 400 });
     }
 
-    // Fetch domain name for Vercel API
-    const { data: domainRow, error: fetchErr } = await db
+    const { error: fetchErr } = await db
       .from('domains')
       .select('domain')
       .eq('id', domain_id)
       .eq('workspace_id', params.id)
       .single();
 
-    if (fetchErr || !domainRow) {
+    if (fetchErr) {
       return NextResponse.json({ error: 'Domain not found' }, { status: 404 });
-    }
-
-    // Remove from Vercel first
-    try {
-      await removeDomainFromVercel(domainRow.domain);
-    } catch (vercelErr: unknown) {
-      const msg = vercelErr instanceof Error ? vercelErr.message : 'Vercel API error';
-      return NextResponse.json(
-        { error: `Failed to remove domain from Vercel: ${msg}` },
-        { status: 502 }
-      );
     }
 
     const { error } = await db
