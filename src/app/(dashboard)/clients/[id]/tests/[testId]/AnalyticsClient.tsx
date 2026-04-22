@@ -319,6 +319,11 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
       if (!res.ok) { toast.error('Weights must sum to 100'); return; }
       const updated = await res.json();
       setTest(updated);
+      // Also update stats immediately so table reflects new weights without a refresh
+      setStats(prev => prev.map(s => {
+        const newW = weights.find(w => w.id === s.variant.id);
+        return newW ? { ...s, variant: { ...s.variant, traffic_weight: newW.traffic_weight } } : s;
+      }));
       toast.success('Weights updated');
     } catch { toast.error('Failed to save weights'); }
   }
