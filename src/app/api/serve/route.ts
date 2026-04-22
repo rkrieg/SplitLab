@@ -71,7 +71,10 @@ export async function GET(request: NextRequest) {
     const stickyCookieName = `sl_test_${test.id}`;
     const stickyVariantId = request.cookies.get(stickyCookieName)?.value;
 
-    let selectedVariant = variants.find((v) => v.id === stickyVariantId);
+    // Honor sticky cookie only if that variant still has weight > 0
+    let selectedVariant = variants.find(
+      (v) => v.id === stickyVariantId && v.traffic_weight > 0
+    );
 
     if (!selectedVariant) {
       selectedVariant = await assignVariant(visitorId, test.id, variants as { id: string; traffic_weight: number }[]) as typeof variants[0];
