@@ -145,9 +145,15 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
   const variants = test.test_variants || [];
   const snippet = `<script src="${appUrl}/tracker.js"></script>`;
   const fullUrl = domain ? `${domain}${test.url_path}` : null;
-  const serveUrl = domain
-    ? `${appUrl}/api/serve?domain=${domain}&path=${encodeURIComponent(test.url_path)}`
-    : null;
+
+  // Build serve URL using the actual browser origin (works on any host)
+  const [serveUrl, setServeUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (domain) {
+      const origin = window.location.origin;
+      setServeUrl(`${origin}/api/serve?domain=${domain}&path=${encodeURIComponent(test.url_path)}`);
+    }
+  }, [domain, test.url_path]);
 
   // Copy state
   const [copiedServe, setCopiedServe] = useState(false);

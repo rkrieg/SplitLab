@@ -37,7 +37,6 @@ export default async function TestAnalyticsPage({
       .from('domains')
       .select('domain, verified')
       .eq('workspace_id', workspace.id)
-      .eq('verified', true)
       .limit(1)
       .single();
     if (domainData) domain = domainData.domain;
