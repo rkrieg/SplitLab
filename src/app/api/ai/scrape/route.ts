@@ -188,19 +188,19 @@ export async function POST(request: NextRequest) {
     // Check cache if table exists (skip if force refresh)
     // Cache disabled temporarily to ensure fresh color extraction
     if (false && hasTable && !force) {
-      const { data: cached } = await db
+      const { data: cached } = await (db
         .from('scraped_pages')
         .select('*')
         .eq('url', url)
         .gte('scraped_at', new Date(Date.now() - 60 * 60 * 1000).toISOString())
-        .maybeSingle();
+        .maybeSingle() as unknown as Promise<{ data: { id: string; analysis: unknown; screenshot_desktop: string; screenshot_mobile: string } | null }>);
 
-      if (cached) {
+      if (cached != null) {
         return NextResponse.json({
-          scraped_page_id: cached.id,
-          analysis: cached.analysis,
-          screenshot_desktop: cached.screenshot_desktop,
-          screenshot_mobile: cached.screenshot_mobile,
+          scraped_page_id: cached!.id,
+          analysis: cached!.analysis,
+          screenshot_desktop: cached!.screenshot_desktop,
+          screenshot_mobile: cached!.screenshot_mobile,
           cached: true,
         });
       }
@@ -242,7 +242,7 @@ export async function POST(request: NextRequest) {
     // Try to save to DB (non-fatal if table doesn't exist)
     let scrapedPageId = crypto.randomUUID();
     if (hasTable) {
-      const { data: row, error: insertError } = await db
+      const { data: row, error: insertError } = await (db
         .from('scraped_pages')
         .upsert(
           {
@@ -257,7 +257,7 @@ export async function POST(request: NextRequest) {
           { onConflict: 'url' }
         )
         .select('id')
-        .single();
+        .single() as unknown as Promise<{ data: { id: string } | null; error: { message: string } | null }>);
 
       if (!insertError && row) {
         scrapedPageId = row.id;

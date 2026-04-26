@@ -23,20 +23,22 @@ interface TestRow {
   variant_count: number;
 }
 
+type RawTest = Record<string, unknown>;
+
 async function getAllPages() {
   const { data: tests } = await db
     .from('tests')
     .select('id, name, status, url_path, created_at, workspace_id, workspaces(id, name, clients(id, name))')
-    .order('created_at', { ascending: false });
+    .order('created_at', { ascending: false }) as unknown as { data: RawTest[] | null };
 
   if (!tests || tests.length === 0) return [];
 
-  const workspaceIds = [...new Set(tests.map((t: Record<string, unknown>) => t.workspace_id as string))];
+  const workspaceIds = Array.from(new Set(tests.map((t: Record<string, unknown>) => t.workspace_id as string)));
 
   const { data: domains } = await db
     .from('domains')
     .select('workspace_id, domain')
-    .in('workspace_id', workspaceIds);
+    .in('workspace_id', workspaceIds) as unknown as { data: { workspace_id: string; domain: string }[] | null };
 
   const domainMap: Record<string, string> = {};
   for (const d of domains || []) domainMap[d.workspace_id] = d.domain;
@@ -46,7 +48,7 @@ async function getAllPages() {
   const { data: events } = await db
     .from('events')
     .select('test_id, type')
-    .in('test_id', testIds);
+    .in('test_id', testIds) as unknown as { data: { test_id: string; type: string }[] | null };
 
   const statsMap: Record<string, { views: number; conversions: number }> = {};
   for (const ev of events || []) {
@@ -58,7 +60,7 @@ async function getAllPages() {
   const { data: variants } = await db
     .from('test_variants')
     .select('test_id')
-    .in('test_id', testIds);
+    .in('test_id', testIds) as unknown as { data: { test_id: string }[] | null };
 
   const variantCountMap: Record<string, number> = {};
   for (const v of variants || []) {

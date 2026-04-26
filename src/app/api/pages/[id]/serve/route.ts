@@ -11,11 +11,11 @@ export async function GET(
 
   try {
     // Fetch page from DB
-    const { data: page, error: pageErr } = await db
+    const { data: page, error: pageErr } = await (db
       .from('pages')
       .select('*')
       .eq('id', pageId)
-      .single();
+      .single() as unknown as Promise<{ data: { id: string; html_content: string | null; html_url: string | null; status: string } | null; error: { message: string } | null }>);
 
     if (pageErr || !page) {
       return new NextResponse(notFoundHtml(), {

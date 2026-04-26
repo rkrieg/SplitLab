@@ -27,38 +27,38 @@ export async function PUT(
   }
 
   // Fetch variant_pages record
-  const { data: variantPage, error: vpErr } = await db
+  const { data: variantPage, error: vpErr } = await (db
     .from('variant_pages')
     .select('*')
     .eq('variant_id', variantId)
     .order('version', { ascending: false })
     .limit(1)
-    .single();
+    .single() as unknown as Promise<{ data: { id: string; html_storage_path: string; version: number } | null; error: { message: string } | null }>);
 
   if (vpErr || !variantPage) {
     return NextResponse.json({ error: 'Variant page not found' }, { status: 404 });
   }
 
   // Upload updated HTML to storage (overwrite)
-  const { error: uploadErr } = await db.storage
+  const { error: uploadErr } = await (db.storage
     .from(VARIANTS_BUCKET)
     .upload(variantPage.html_storage_path, html, {
       contentType: 'text/html; charset=utf-8',
       upsert: true,
-    });
+    }) as unknown as Promise<{ error: { message: string } | null }>);
 
   if (uploadErr) {
     return NextResponse.json({ error: `Upload failed: ${uploadErr.message}` }, { status: 500 });
   }
 
   // Increment version
-  const { error: updateErr } = await db
+  const { error: updateErr } = await (db
     .from('variant_pages')
     .update({
       version: variantPage.version + 1,
       updated_at: new Date().toISOString(),
     })
-    .eq('id', variantPage.id);
+    .eq('id', variantPage.id) as unknown as Promise<{ error: { message: string } | null }>);
 
   if (updateErr) {
     return NextResponse.json({ error: updateErr.message }, { status: 500 });

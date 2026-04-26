@@ -18,14 +18,14 @@ export default async function AIGeneratePage({
     .from('workspaces')
     .select('id, name')
     .eq('client_id', params.id)
-    .single();
+    .single() as unknown as { data: { id: string; name: string } | null };
   if (!workspace) notFound();
 
   const { data: client } = await db
     .from('clients')
     .select('name')
     .eq('id', params.id)
-    .single();
+    .single() as unknown as { data: { name: string } | null };
 
   // Get domain for the workspace
   const { data: domainData } = await db
@@ -34,7 +34,7 @@ export default async function AIGeneratePage({
     .eq('workspace_id', workspace.id)
     .eq('verified', true)
     .limit(1)
-    .single();
+    .single() as unknown as { data: { domain: string; verified: boolean } | null };
 
   return (
     <div>

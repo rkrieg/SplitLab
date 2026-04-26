@@ -23,12 +23,12 @@ export const authOptions: NextAuthOptions = {
       async authorize(credentials) {
         if (!credentials?.email || !credentials?.password) return null;
 
-        const { data: user, error } = await db
+        const { data: user, error } = await (db
           .from('users')
           .select('*')
           .eq('email', credentials.email.toLowerCase())
           .eq('status', 'active')
-          .single();
+          .single() as unknown as Promise<{ data: { id: string; email: string; name: string; role: string; password_hash: string; status: string } | null; error: { message: string } | null }>);
 
         if (error || !user) return null;
 

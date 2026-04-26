@@ -48,35 +48,35 @@ export async function POST(
     // No body is fine — instructions are optional
   }
 
-  const { data: variantPage, error: vpErr } = await db
+  const { data: variantPage, error: vpErr } = await (db
     .from('variant_pages')
     .select('*')
     .eq('variant_id', variantId)
     .order('version', { ascending: false })
     .limit(1)
-    .single();
+    .single() as unknown as Promise<{ data: { id: string; html_storage_path: string; version: number; source_url: string } | null; error: { message: string } | null }>);
 
   if (vpErr || !variantPage) {
     return NextResponse.json({ error: 'Variant page not found' }, { status: 404 });
   }
 
-  const { data: scrapedPage, error: scrapeErr } = await db
+  const { data: scrapedPage, error: scrapeErr } = await (db
     .from('scraped_pages')
     .select('*')
     .eq('url', variantPage.source_url)
     .order('scraped_at', { ascending: false })
     .limit(1)
-    .single();
+    .single() as unknown as Promise<{ data: { html: string; url: string; analysis: unknown } | null; error: { message: string } | null }>);
 
   if (scrapeErr || !scrapedPage) {
     return NextResponse.json({ error: 'Original scraped page not found' }, { status: 404 });
   }
 
-  const { data: variant } = await db
+  const { data: variant } = await (db
     .from('test_variants')
     .select('name')
     .eq('id', variantId)
-    .single();
+    .single() as unknown as Promise<{ data: { name: string } | null }>);
 
   const variantName = variant?.name || 'Variant';
   const strategyLabel = variantName.replace(/^AI:\s*/, '');
@@ -135,12 +135,12 @@ ${preparedHtml}`;
     const modifiedHtml = applyReplacements(scrapedPage.html, parsed.replacements || []);
     const variantHtml = injectBaseTag(modifiedHtml, scrapedPage.url);
 
-    const { error: uploadErr } = await db.storage
+    const { error: uploadErr } = await (db.storage
       .from(VARIANTS_BUCKET)
       .upload(variantPage.html_storage_path, variantHtml, {
         contentType: 'text/html; charset=utf-8',
         upsert: true,
-      });
+      }) as unknown as Promise<{ error: { message: string } | null }>);
 
     if (uploadErr) {
       return NextResponse.json({ error: `Upload failed: ${uploadErr.message}` }, { status: 500 });

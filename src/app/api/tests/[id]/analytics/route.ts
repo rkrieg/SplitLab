@@ -15,14 +15,20 @@ export async function GET(
   const from = searchParams.get('from');
   const to = searchParams.get('to');
 
+  type AnalyticsTest = {
+    id: string;
+    test_variants: { id: string; name: string; is_control: boolean; traffic_weight: number; pages?: { id: string; name: string } | null }[];
+    conversion_goals: { id: string; is_primary: boolean }[];
+  };
+
   // Fetch test with variants and primary goal
-  const { data: test, error: testError } = await db
+  const { data: test, error: testError } = await (db
     .from('tests')
     .select('*, test_variants(*, pages(id, name)), conversion_goals(*)')
     .eq('id', params.id)
-    .single();
+    .single() as unknown as Promise<{ data: AnalyticsTest | null; error: { message: string } | null }>);
 
-  if (testError) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  if (testError || !test) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const variants = test.test_variants || [];
   const primaryGoal = (test.conversion_goals || []).find(
@@ -38,7 +44,7 @@ export async function GET(
   if (from) dateFilter = dateFilter.gte('created_at', `${from}T00:00:00Z`);
   if (to) dateFilter = dateFilter.lte('created_at', `${to}T23:59:59Z`);
 
-  const { data: events } = await dateFilter;
+  const { data: events } = await (dateFilter as unknown as Promise<{ data: { variant_id: string; type: string; goal_id: string | null }[] | null; error: unknown }>);
 
   // Aggregate per variant
   const variantStats = variants.map((variant: { id: string; name: string; is_control: boolean; traffic_weight: number; pages?: { id: string; name: string } | null }) => {

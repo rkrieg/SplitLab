@@ -111,7 +111,7 @@ export async function GET(request: NextRequest) {
     // 3. Cache in Supabase Storage (fire-and-forget, don't block response)
     db.storage
       .from(ASSETS_BUCKET)
-      .upload(path, buffer, {
+      .upload(path, buffer as unknown as string, {
         contentType,
         upsert: true,
       })

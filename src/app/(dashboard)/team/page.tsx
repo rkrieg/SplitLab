@@ -5,11 +5,20 @@ import { db } from '@/lib/supabase-server';
 import Header from '@/components/layout/Header';
 import TeamClient from './TeamClient';
 
+interface UserRow {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  status: string;
+  created_at: string;
+}
+
 async function getUsers() {
-  const { data } = await db
+  const { data } = await (db
     .from('users')
     .select('id, name, email, role, status, created_at')
-    .order('created_at', { ascending: false });
+    .order('created_at', { ascending: false }) as unknown as Promise<{ data: UserRow[] | null }>);
   return data ?? [];
 }
 

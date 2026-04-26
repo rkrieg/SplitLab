@@ -32,11 +32,11 @@ async function handleVariantPlan(body: Record<string, unknown>) {
   // Fetch actual page HTML for context
   let pageHtmlContext = '';
   if (scraped_page_id) {
-    const { data: scrapedPage } = await db
+    const { data: scrapedPage } = await (db
       .from('scraped_pages')
       .select('html, url')
       .eq('id', scraped_page_id as string)
-      .single();
+      .single() as unknown as Promise<{ data: { html: string; url: string } | null }>);
     if (scrapedPage?.html) {
       pageHtmlContext = `\n## Current Page HTML (abbreviated)\n${prepareHtml(scrapedPage.html).slice(0, 30000)}`;
     }

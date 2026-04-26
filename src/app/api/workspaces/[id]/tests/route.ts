@@ -35,7 +35,7 @@ export async function GET(
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const { data, error } = await db
+  const { data, error } = await (db
     .from('tests')
     .select(`
       *,
@@ -43,7 +43,7 @@ export async function GET(
       conversion_goals (*)
     `)
     .eq('workspace_id', params.id)
-    .order('created_at', { ascending: false });
+    .order('created_at', { ascending: false }) as unknown as Promise<{ data: Record<string, unknown>[] | null; error: { message: string } | null }>);
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json(data);
@@ -70,13 +70,13 @@ export async function POST(
     }
 
     // Create test
-    const { data: test, error: testError } = await db
+    const { data: test, error: testError } = await (db
       .from('tests')
       .insert({ workspace_id: params.id, name: data.name, url_path: data.url_path })
       .select()
-      .single();
+      .single() as unknown as Promise<{ data: { id: string } | null; error: { message: string } | null }>);
 
-    if (testError) return NextResponse.json({ error: testError.message }, { status: 500 });
+    if (testError || !test) return NextResponse.json({ error: testError?.message ?? 'Failed to create test' }, { status: 500 });
 
     // Create variants
     const variantRows = data.variants.map((v, i) => ({
@@ -106,11 +106,11 @@ export async function POST(
     }
 
     // Return full test with relations
-    const { data: fullTest } = await db
+    const { data: fullTest } = await (db
       .from('tests')
       .select('*, test_variants(*), conversion_goals(*)')
       .eq('id', test.id)
-      .single();
+      .single() as unknown as Promise<{ data: Record<string, unknown> | null; error: unknown }>);
 
     return NextResponse.json(fullTest, { status: 201 });
   } catch (err) {

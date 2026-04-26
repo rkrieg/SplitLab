@@ -13,11 +13,11 @@ export async function GET(
 ) {
   const { token } = await params;
 
-  const { data: user, error } = await db
+  const { data: user, error } = await (db
     .from('users')
     .select('id, name, email, role, invite_token, invite_expires_at')
     .eq('invite_token', token)
-    .single();
+    .single() as unknown as Promise<{ data: { id: string; name: string; email: string; role: string; invite_token: string | null; invite_expires_at: string | null } | null; error: { message: string } | null }>);
 
   if (error || !user) {
     return NextResponse.json({ error: 'Invalid or expired invite link' }, { status: 404 });
@@ -55,11 +55,11 @@ export async function POST(
   }
 
   // Find user with this token
-  const { data: user, error } = await db
+  const { data: user, error } = await (db
     .from('users')
     .select('id, invite_token, invite_expires_at')
     .eq('invite_token', token)
-    .single();
+    .single() as unknown as Promise<{ data: { id: string; invite_token: string | null; invite_expires_at: string | null } | null; error: { message: string } | null }>);
 
   if (error || !user) {
     return NextResponse.json({ error: 'Invalid or expired invite link' }, { status: 404 });

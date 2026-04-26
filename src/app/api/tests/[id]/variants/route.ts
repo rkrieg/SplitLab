@@ -32,11 +32,11 @@ export async function POST(
     }
 
     // Fetch test with workspace_id
-    const { data: test, error: testErr } = await db
+    const { data: test, error: testErr } = await (db
       .from('tests')
       .select('id, workspace_id')
       .eq('id', params.id)
-      .single();
+      .single() as unknown as Promise<{ data: { id: string; workspace_id: string } | null; error: { message: string } | null }>);
     if (testErr || !test) {
       return NextResponse.json({ error: 'Test not found' }, { status: 404 });
     }
@@ -48,7 +48,7 @@ export async function POST(
       const fileName = `${test.workspace_id}/${crypto.randomUUID()}.html`;
       const htmlUrl = await uploadHtml(fileName, data.html_content);
 
-      const { data: page, error: pageErr } = await db
+      const { data: page, error: pageErr } = await (db
         .from('pages')
         .insert({
           workspace_id: test.workspace_id,
@@ -57,10 +57,10 @@ export async function POST(
           html_content: data.html_content,
         })
         .select('id')
-        .single();
+        .single() as unknown as Promise<{ data: { id: string } | null; error: { message: string } | null }>);
 
       if (pageErr) return NextResponse.json({ error: pageErr.message }, { status: 500 });
-      pageId = page.id;
+      pageId = page!.id;
     }
 
     // Create variant
@@ -77,11 +77,11 @@ export async function POST(
     if (varErr) return NextResponse.json({ error: varErr.message }, { status: 500 });
 
     // Return full test with all variants
-    const { data: fullTest } = await db
+    const { data: fullTest } = await (db
       .from('tests')
       .select('*, test_variants(*), conversion_goals(*)')
       .eq('id', params.id)
-      .single();
+      .single() as unknown as Promise<{ data: Record<string, unknown> | null; error: unknown }>);
 
     return NextResponse.json(fullTest, { status: 201 });
   } catch (err) {

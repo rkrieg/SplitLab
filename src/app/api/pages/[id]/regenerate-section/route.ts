@@ -23,11 +23,11 @@ export async function POST(
     return NextResponse.json({ error: 'section_id and instructions required' }, { status: 400 });
   }
 
-  const { data: page, error } = await db
+  const { data: page, error } = await (db
     .from('pages')
     .select('*')
     .eq('id', pageId)
-    .single();
+    .single() as unknown as Promise<{ data: { id: string; html_content: string | null; html_url: string; workspace_id: string; version: number } | null; error: { message: string } | null }>);
 
   if (error || !page) {
     return NextResponse.json({ error: 'Page not found' }, { status: 404 });

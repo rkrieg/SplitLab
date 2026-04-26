@@ -47,11 +47,11 @@ export async function GET(
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const { data, error } = await db
+  const { data, error } = await (db
     .from('tests')
     .select(fullTestSelect())
     .eq('id', params.id)
-    .single();
+    .single() as unknown as Promise<{ data: Record<string, unknown> | null; error: { message: string } | null }>);
 
   if (error) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   return NextResponse.json(data);
@@ -122,11 +122,11 @@ export async function PATCH(
       if (delErr) return NextResponse.json({ error: delErr.message }, { status: 500 });
 
       // Rebalance traffic weights across remaining variants
-      const { data: remaining } = await db
+      const { data: remaining } = await (db
         .from('test_variants')
         .select('id, is_control')
         .eq('test_id', params.id)
-        .order('is_control', { ascending: false });
+        .order('is_control', { ascending: false }) as unknown as Promise<{ data: { id: string; is_control: boolean }[] | null; error: unknown }>);
 
       if (remaining && remaining.length > 0) {
         const n = remaining.length;
@@ -161,11 +161,11 @@ export async function PATCH(
     }
 
     // Return full test with relations
-    const { data: updated, error: fetchError } = await db
+    const { data: updated, error: fetchError } = await (db
       .from('tests')
       .select(fullTestSelect())
       .eq('id', params.id)
-      .single();
+      .single() as unknown as Promise<{ data: Record<string, unknown> | null; error: { message: string } | null }>);
 
     if (fetchError) return NextResponse.json({ error: fetchError.message }, { status: 500 });
     return NextResponse.json(updated);

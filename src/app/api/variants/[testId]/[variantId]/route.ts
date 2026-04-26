@@ -10,14 +10,14 @@ export async function GET(
 
   try {
     // 1. Look up variant_pages record
-    const { data: variantPage, error: vpErr } = await db
+    const { data: variantPage, error: vpErr } = await (db
       .from('variant_pages')
       .select('*')
       .eq('variant_id', variantId)
       .eq('status', 'ready')
       .order('version', { ascending: false })
       .limit(1)
-      .single();
+      .single() as unknown as Promise<{ data: { html_storage_path: string } | null; error: { message: string } | null }>);
 
     if (vpErr || !variantPage) {
       return new NextResponse(notFoundHtml(), {
@@ -27,12 +27,12 @@ export async function GET(
     }
 
     // 2. Verify the variant belongs to the given test
-    const { data: variant, error: varErr } = await db
+    const { data: variant, error: varErr } = await (db
       .from('test_variants')
       .select('id, test_id')
       .eq('id', variantId)
       .eq('test_id', testId)
-      .single();
+      .single() as unknown as Promise<{ data: { id: string; test_id: string } | null; error: { message: string } | null }>);
 
     if (varErr || !variant) {
       return new NextResponse(notFoundHtml(), {
@@ -86,11 +86,11 @@ export async function GET(
     }
 
     // 7. Check if the test is active for cache control
-    const { data: test } = await db
+    const { data: test } = await (db
       .from('tests')
       .select('status')
       .eq('id', testId)
-      .single();
+      .single() as unknown as Promise<{ data: { status: string } | null; error: unknown }>);
 
     const isActive = test?.status === 'active';
     const cacheControl = isActive

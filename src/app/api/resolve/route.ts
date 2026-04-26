@@ -18,11 +18,11 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'vid is required' }, { status: 400, headers });
   }
 
-  const { data, error } = await db
+  const { data, error } = await (db
     .from('test_variants')
     .select('id, test_id')
     .eq('id', vid)
-    .single();
+    .single() as unknown as Promise<{ data: { id: string; test_id: string } | null; error: { message: string } | null }>);
 
   if (error || !data) {
     return NextResponse.json({ error: 'Variant not found' }, { status: 404, headers });

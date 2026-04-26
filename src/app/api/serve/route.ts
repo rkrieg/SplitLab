@@ -3,6 +3,7 @@ import { db } from '@/lib/supabase-server';
 import { downloadHtml } from '@/lib/storage';
 import { buildTrackingSnippet, injectIntoHtml, buildScriptTag } from '@/lib/tracking';
 import { assignVariant } from '@/lib/utils';
+import type { ConversionGoal } from '@/types';
 
 const COOKIE_NAME = 'sl_visitor';
 
@@ -14,11 +15,11 @@ export async function GET(request: NextRequest) {
 
   try {
     // 1. Resolve domain → workspace
-    const { data: domainRow, error: domainError } = await db
+    const { data: domainRow, error: domainError } = await (db
       .from('domains')
       .select('workspace_id')
       .eq('domain', domain)
-      .single();
+      .single() as unknown as Promise<{ data: { workspace_id: string } | null; error: { message: string } | null }>);
 
     if (domainError || !domainRow) {
       return new NextResponse(notFoundHtml(domain), {
@@ -30,13 +31,13 @@ export async function GET(request: NextRequest) {
     const workspaceId = domainRow.workspace_id;
 
     // 2. Find active test matching this URL path
-    const { data: test, error: testError } = await db
+    const { data: test, error: testError } = await (db
       .from('tests')
       .select('*')
       .eq('workspace_id', workspaceId)
       .eq('status', 'active')
       .eq('url_path', urlPath)
-      .single();
+      .single() as unknown as Promise<{ data: { id: string; workspace_id: string; status: string; url_path: string; head_scripts?: string } | null; error: { message: string } | null }>);
 
     if (testError || !test) {
       return new NextResponse(notFoundHtml(domain), {
@@ -46,11 +47,11 @@ export async function GET(request: NextRequest) {
     }
 
     // 3. Fetch variants
-    const { data: variants, error: variantsError } = await db
+    const { data: variants, error: variantsError } = await (db
       .from('test_variants')
       .select('id, name, page_id, redirect_url, proxy_mode, traffic_weight, is_control, variant_type, hosted_url, pages(html_url, html_content)')
       .eq('test_id', test.id)
-      .order('is_control', { ascending: false });
+      .order('is_control', { ascending: false }) as unknown as Promise<{ data: { id: string; name: string; page_id: string | null; redirect_url: string | null; proxy_mode: boolean | null; traffic_weight: number; is_control: boolean; variant_type: string | null; hosted_url: string | null; pages: { html_url: string; html_content: string | null } | null }[] | null; error: { message: string; code?: string } | null }>);
 
     if (variantsError) {
       console.error('[serve] variants query error:', variantsError.message, variantsError.code);
@@ -86,12 +87,12 @@ export async function GET(request: NextRequest) {
       // The SPA runs in its original context inside the iframe
       if (selectedVariant.proxy_mode !== false) {
         // Fetch workspace scripts
-        const { data: proxyScripts } = await db
+        const { data: proxyScripts } = await (db
           .from('scripts')
           .select('*')
           .eq('workspace_id', workspaceId)
           .eq('is_active', true)
-          .is('page_id', null);
+          .is('page_id', null) as unknown as Promise<{ data: { type: string; content: string; placement: string }[] | null; error: unknown }>);
 
         const headScriptTags: string[] = [];
         const bodyEndScriptTags: string[] = [];
@@ -102,17 +103,17 @@ export async function GET(request: NextRequest) {
         }
 
         // Fetch conversion goals and build tracking snippet
-        const { data: proxyGoals } = await db
+        const { data: proxyGoals } = await (db
           .from('conversion_goals')
           .select('*')
-          .eq('test_id', test.id);
+          .eq('test_id', test.id) as unknown as Promise<{ data: ConversionGoal[] | null; error: unknown }>);
 
         const proxyTrackingSnippet = buildTrackingSnippet(
           test.id, selectedVariant.id, visitorId, proxyGoals || [], APP_URL
         );
 
         const iframeUrl = selectedVariant.redirect_url;
-        const testHeadScripts = (test as { head_scripts?: string }).head_scripts || '';
+        const testHeadScripts = test.head_scripts || '';
         const iframeHtml = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -176,14 +177,14 @@ ${proxyTrackingSnippet}
     // 6b. Hosted AI variant — serve HTML directly with tracking injected
     if (selectedVariant.variant_type === 'hosted') {
       // Fetch variant_pages record for this variant
-      const { data: variantPage } = await db
+      const { data: variantPage } = await (db
         .from('variant_pages')
         .select('html_storage_path')
         .eq('variant_id', selectedVariant.id)
         .eq('status', 'ready')
         .order('version', { ascending: false })
         .limit(1)
-        .single();
+        .single() as unknown as Promise<{ data: { html_storage_path: string } | null; error: unknown }>);
 
       if (variantPage) {
         const { data: fileData } = await db.storage
@@ -194,12 +195,12 @@ ${proxyTrackingSnippet}
           let hostedHtml = await fileData.text();
 
           // Fetch workspace scripts
-          const { data: hostedScripts } = await db
+          const { data: hostedScripts } = await (db
             .from('scripts')
             .select('*')
             .eq('workspace_id', workspaceId)
             .eq('is_active', true)
-            .is('page_id', null);
+            .is('page_id', null) as unknown as Promise<{ data: { type: string; content: string; placement: string }[] | null; error: unknown }>);
 
           const hostedHeadScripts: string[] = [];
           const hostedBodyScripts: string[] = [];
@@ -210,10 +211,10 @@ ${proxyTrackingSnippet}
           }
 
           // Fetch conversion goals
-          const { data: hostedGoals } = await db
+          const { data: hostedGoals } = await (db
             .from('conversion_goals')
             .select('*')
-            .eq('test_id', test.id);
+            .eq('test_id', test.id) as unknown as Promise<{ data: ConversionGoal[] | null; error: unknown }>);
 
           const hostedTracking = buildTrackingSnippet(
             test.id, selectedVariant.id, visitorId, hostedGoals || [], APP_URL
@@ -241,7 +242,7 @@ ${proxyTrackingSnippet}
 
     // 6c. Fetch HTML for variant
     let html = '';
-    const pageData = (selectedVariant.pages as unknown) as { html_url: string; html_content: string | null } | null;
+    const pageData = selectedVariant.pages;
 
     if (pageData?.html_content) {
       html = pageData.html_content;
@@ -259,12 +260,12 @@ ${proxyTrackingSnippet}
     }
 
     // 7. Fetch workspace scripts
-    const { data: scripts } = await db
+    const { data: scripts } = await (db
       .from('scripts')
       .select('*')
       .eq('workspace_id', workspaceId)
       .eq('is_active', true)
-      .is('page_id', null);
+      .is('page_id', null) as unknown as Promise<{ data: { type: string; content: string; placement: string }[] | null; error: unknown }>);
 
     const headScripts: string[] = [];
     const bodyEndScripts: string[] = [];
@@ -279,10 +280,10 @@ ${proxyTrackingSnippet}
     }
 
     // 8. Fetch conversion goals
-    const { data: goals } = await db
+    const { data: goals } = await (db
       .from('conversion_goals')
       .select('*')
-      .eq('test_id', test.id);
+      .eq('test_id', test.id) as unknown as Promise<{ data: ConversionGoal[] | null; error: unknown }>);
 
     // 9. Build tracking snippet
     const visitorHash = visitorId;

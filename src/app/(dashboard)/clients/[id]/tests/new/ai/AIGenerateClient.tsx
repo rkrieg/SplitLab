@@ -411,7 +411,8 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
           impact_hypothesis: '',
           changes_summary: [],
           hosted_url: '',
-          status: 'error',
+          html: '',
+          status: 'error' as const,
           error: data.error as string,
           approved: false,
         }]);

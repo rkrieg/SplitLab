@@ -70,12 +70,12 @@ Produce 4-10 HTML search-and-replace patches. Each patch replaces a chunk of the
 7. Make "find" strings at least 30 characters long, but NO MORE THAN 200 characters — short, tight finds are more reliable
 
 ## Critical Targeting Rules (READ CAREFULLY)
-- **Button/CTA text**: Target the INNERMOST text span only, e.g. `<span class="elementor-button-text">Contact Us</span>` — NEVER target the outer `<a>` or `<div>` wrapper; those have complex nested children that are hard to match exactly
-- **Headings**: Target just `<h1>`, `<h2>`, `<h3>` tags and their content directly — not their parent wrapper divs
-- **Paragraphs**: Target the `<p>` tag and its content; if the paragraph is long, target only the FIRST SENTENCE within it
-- **Avoid containers**: Never use `<div class="elementor-element ...">` as a find target — those wrappers contain many child elements and are prone to mismatch
-- **Short finds win**: The minimum unique string is better than a long block. If a heading text is unique in the document, `<h2>Your Heading Text</h2>` alone is enough
-- **Prefer text-bearing leaf elements**: `<span>`, `<p>`, `<h1>-<h6>`, `<a>` (only the anchor text, not the whole link), `<li>`, `<td>`
+- **Button/CTA text**: Target the INNERMOST text span only, e.g. \`<span class="elementor-button-text">Contact Us</span>\` — NEVER target the outer \`<a>\` or \`<div>\` wrapper; those have complex nested children that are hard to match exactly
+- **Headings**: Target just \`<h1>\`, \`<h2>\`, \`<h3>\` tags and their content directly — not their parent wrapper divs
+- **Paragraphs**: Target the \`<p>\` tag and its content; if the paragraph is long, target only the FIRST SENTENCE within it
+- **Avoid containers**: Never use \`<div class="elementor-element ...">\` as a find target — those wrappers contain many child elements and are prone to mismatch
+- **Short finds win**: The minimum unique string is better than a long block. If a heading text is unique in the document, \`<h2>Your Heading Text</h2>\` alone is enough
+- **Prefer text-bearing leaf elements**: \`<span>\`, \`<p>\`, \`<h1>-<h6>\`, \`<a>\` (only the anchor text, not the whole link), \`<li>\`, \`<td>\`
 
 ## Source URL: ${sourceUrl}
 
@@ -236,11 +236,11 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  const { data: scrapedPage, error: scrapeErr } = await db
+  const { data: scrapedPage, error: scrapeErr } = await (db
     .from('scraped_pages')
     .select('*')
     .eq('id', scrapedPageId)
-    .single();
+    .single() as unknown as Promise<{ data: { id: string; html: string; url: string } | null; error: { message: string } | null }>);
 
   if (scrapeErr || !scrapedPage) {
     return new Response(JSON.stringify({ error: 'Scraped page not found' }), {
@@ -251,13 +251,13 @@ export async function POST(request: NextRequest) {
 
   const angles = DEFAULT_ANGLES.slice(0, numVariants);
 
-  const { data: buckets } = await db.storage.listBuckets();
+  const { data: buckets } = await (db.storage.listBuckets() as unknown as Promise<{ data: { name: string }[] | null }>);
   const bucketExists = buckets?.some((b) => b.name === VARIANTS_BUCKET);
   if (!bucketExists) {
-    const { error: createErr } = await db.storage.createBucket(VARIANTS_BUCKET, {
+    const { error: createErr } = await (db.storage.createBucket(VARIANTS_BUCKET, {
       public: true,
       fileSizeLimit: 5 * 1024 * 1024,
-    });
+    }) as unknown as Promise<{ error: { message: string } | null }>);
     if (createErr) {
       console.error('Failed to create variants bucket:', createErr);
       return new Response(
@@ -338,7 +338,7 @@ export async function POST(request: NextRequest) {
           const variantId = crypto.randomUUID();
           const weight = Math.floor(100 / (angles.length + 1));
 
-          const { error: variantErr } = await db.from('test_variants').insert({
+          const { error: variantErr } = await (db.from('test_variants').insert({
             id: variantId,
             test_id: testId,
             name: `AI: ${angle.label}`,
@@ -346,25 +346,25 @@ export async function POST(request: NextRequest) {
             is_control: false,
             is_ai_generated: true,
             variant_type: 'hosted',
-          });
+          }) as unknown as Promise<{ error: { message: string } | null }>);
 
           if (variantErr) throw new Error(`Failed to create variant: ${variantErr.message}`);
           console.log(`[AI Generate] Variant ${index}: DB record created (${variantId}), uploading HTML`);
 
           const storagePath = `${testId}/${variantId}.html`;
-          const { error: uploadErr } = await db.storage
+          const { error: uploadErr } = await (db.storage
             .from(VARIANTS_BUCKET)
             .upload(storagePath, variantHtml, {
               contentType: 'text/html; charset=utf-8',
               upsert: true,
-            });
+            }) as unknown as Promise<{ error: { message: string } | null }>);
 
           if (uploadErr) throw new Error(`Failed to upload HTML: ${uploadErr.message}`);
           console.log(`[AI Generate] Variant ${index}: HTML uploaded to ${storagePath}`);
 
           const { data: urlData } = db.storage
             .from(VARIANTS_BUCKET)
-            .getPublicUrl(storagePath);
+            .getPublicUrl(storagePath) as unknown as { data: { publicUrl: string } };
 
           await db
             .from('test_variants')
@@ -372,14 +372,14 @@ export async function POST(request: NextRequest) {
             .eq('id', variantId);
           console.log(`[AI Generate] Variant ${index}: hosted_url updated, inserting variant_pages`);
 
-          const { error: pageErr } = await db.from('variant_pages').insert({
+          const { error: pageErr } = await (db.from('variant_pages').insert({
             variant_id: variantId,
             html_storage_path: storagePath,
             source_url: scrapedPage.url,
             generation_prompt: prompt.slice(0, 10000),
             changes_summary: parsed.changes_summary,
             status: 'ready',
-          });
+          }) as unknown as Promise<{ error: { message: string } | null }>);
 
           if (pageErr) throw new Error(`Failed to create variant_page: ${pageErr.message}`);
           console.log(`[AI Generate] Variant ${index}: variant_pages inserted, sending variant_ready`);

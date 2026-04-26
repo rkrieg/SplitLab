@@ -5,8 +5,8 @@ import { db } from '@/lib/supabase-server';
 import Header from '@/components/layout/Header';
 import ClientSettingsClient from './ClientSettingsClient';
 
-async function getWorkspaceForClient(clientId: string) {
-  const { data } = await db.from('workspaces').select('id, name').eq('client_id', clientId).single();
+async function getWorkspaceForClient(clientId: string): Promise<{ id: string; name: string } | null> {
+  const { data } = await db.from('workspaces').select('id, name').eq('client_id', clientId).single() as unknown as { data: { id: string; name: string } | null };
   return data;
 }
 
@@ -14,7 +14,7 @@ export default async function ClientSettingsPage({ params }: { params: { id: str
   const session = await getServerSession(authOptions);
   if (!session) redirect('/login');
 
-  const { data: client } = await db.from('clients').select('*').eq('id', params.id).single();
+  const { data: client } = await db.from('clients').select('*').eq('id', params.id).single() as unknown as { data: { id: string; name: string; slug: string } | null };
   if (!client) notFound();
 
   const workspace = await getWorkspaceForClient(params.id);
@@ -25,7 +25,7 @@ export default async function ClientSettingsPage({ params }: { params: { id: str
     .select('*')
     .eq('workspace_id', workspace.id)
     .order('created_at', { ascending: false })
-    .limit(1);
+    .limit(1) as unknown as { data: { id: string; domain: string; cname_target: string | null; verified: boolean; verified_at: string | null; created_at: string }[] | null };
 
   const appHostname = process.env.APP_HOSTNAME || 'cname.vercel-dns.com';
 

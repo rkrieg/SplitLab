@@ -7,8 +7,20 @@ import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
 import ScriptsClient from './ScriptsClient';
 
-async function getWorkspaceForClient(clientId: string) {
-  const { data } = await db.from('workspaces').select('id, name').eq('client_id', clientId).single();
+interface Script {
+  id: string;
+  name: string;
+  type: string;
+  content: string;
+  placement: string;
+  is_active: boolean;
+  page_id: string | null;
+  created_at: string;
+  pages?: { id: string; name: string } | null;
+}
+
+async function getWorkspaceForClient(clientId: string): Promise<{ id: string; name: string } | null> {
+  const { data } = await db.from('workspaces').select('id, name').eq('client_id', clientId).single() as unknown as { data: { id: string; name: string } | null };
   return data;
 }
 
@@ -23,15 +35,15 @@ export default async function ScriptsPage({ params }: { params: { id: string } }
     .from('scripts')
     .select('*, pages(id, name)')
     .eq('workspace_id', workspace.id)
-    .order('created_at', { ascending: false });
+    .order('created_at', { ascending: false }) as unknown as { data: Script[] | null };
 
   const { data: pages } = await db
     .from('pages')
     .select('id, name')
     .eq('workspace_id', workspace.id)
-    .eq('status', 'active');
+    .eq('status', 'active') as unknown as { data: { id: string; name: string }[] | null };
 
-  const { data: client } = await db.from('clients').select('name').eq('id', params.id).single();
+  const { data: client } = await db.from('clients').select('name').eq('id', params.id).single() as unknown as { data: { name: string } | null };
 
   return (
     <div>

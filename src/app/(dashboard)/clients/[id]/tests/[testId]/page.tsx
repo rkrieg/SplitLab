@@ -4,12 +4,45 @@ import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import AnalyticsClient from './AnalyticsClient';
 
-async function getTest(testId: string) {
+interface Variant {
+  id: string;
+  name: string;
+  is_control: boolean;
+  traffic_weight: number;
+  redirect_url?: string | null;
+  proxy_mode?: boolean;
+  pages?: { id: string; name: string } | null;
+  tracking_verified?: boolean | null;
+  is_ai_generated?: boolean;
+  variant_type?: string;
+  hosted_url?: string | null;
+}
+
+interface Goal {
+  id: string;
+  name: string;
+  type: string;
+  selector: string | null;
+  url_pattern: string | null;
+  is_primary: boolean;
+}
+
+interface Test {
+  id: string;
+  name: string;
+  url_path: string;
+  status: string;
+  head_scripts?: string | null;
+  test_variants?: Variant[];
+  conversion_goals?: Goal[];
+}
+
+async function getTest(testId: string): Promise<Test | null> {
   const { data, error } = await db
     .from('tests')
     .select('*, test_variants(*, pages(id, name)), conversion_goals(*)')
     .eq('id', testId)
-    .single();
+    .single() as unknown as { data: Test | null; error: unknown };
   if (error) return null;
   return data;
 }
@@ -27,10 +60,10 @@ export default async function TestAnalyticsPage({
   const test = await getTest(params.testId);
   if (!test) notFound();
 
-  const { data: client } = await db.from('clients').select('name').eq('id', params.id).single();
+  const { data: client } = await db.from('clients').select('name').eq('id', params.id).single() as unknown as { data: { name: string } | null };
 
   // Get workspace domain
-  const { data: workspace } = await db.from('workspaces').select('id').eq('client_id', params.id).single();
+  const { data: workspace } = await db.from('workspaces').select('id').eq('client_id', params.id).single() as unknown as { data: { id: string } | null };
   let domain: string | undefined;
   if (workspace) {
     const { data: domainData } = await db
@@ -38,7 +71,7 @@ export default async function TestAnalyticsPage({
       .select('domain, verified')
       .eq('workspace_id', workspace.id)
       .limit(1)
-      .single();
+      .single() as unknown as { data: { domain: string; verified: boolean } | null };
     if (domainData) domain = domainData.domain;
   }
 

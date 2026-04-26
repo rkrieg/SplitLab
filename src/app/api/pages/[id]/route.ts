@@ -43,11 +43,11 @@ export async function PATCH(
     // If html_content is being updated, re-upload to storage
     let storageUrl: string | undefined;
     if (data.html_content) {
-      const { data: existing } = await db
+      const { data: existing } = await (db
         .from('pages')
         .select('html_url')
         .eq('id', params.id)
-        .single();
+        .single() as unknown as Promise<{ data: { html_url: string | null } | null }>);
 
       if (existing?.html_url) {
         const fileName = fileNameFromUrl(existing.html_url);
@@ -91,11 +91,11 @@ export async function PUT(
   const pageId = params.id;
   const { html, name } = await request.json();
 
-  const { data: page, error } = await db
+  const { data: page, error } = await (db
     .from('pages')
     .select('workspace_id, version')
     .eq('id', pageId)
-    .single();
+    .single() as unknown as Promise<{ data: { workspace_id: string; version: number } | null; error: { message: string } | null }>);
 
   if (error || !page) {
     return NextResponse.json({ error: 'Page not found' }, { status: 404 });
@@ -143,11 +143,11 @@ export async function DELETE(
   }
 
   // Get page to clean up storage
-  const { data: page } = await db
+  const { data: page } = await (db
     .from('pages')
     .select('html_url')
     .eq('id', params.id)
-    .single();
+    .single() as unknown as Promise<{ data: { html_url: string | null } | null }>);
 
   if (page?.html_url) {
     const fileName = fileNameFromUrl(page.html_url);

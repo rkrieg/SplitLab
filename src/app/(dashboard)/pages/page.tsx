@@ -18,6 +18,15 @@ interface Variant {
   redirect_url: string | null;
 }
 
+interface RawTestRow {
+  id: string;
+  name: string;
+  status: string;
+  url_path: string;
+  workspace_id: string;
+  workspaces: { id: string; name: string; client_id: string; clients: { id: string; name: string } } | null;
+}
+
 interface TestRow {
   id: string;
   name: string;
@@ -36,18 +45,22 @@ async function getAllTests(): Promise<TestRow[]> {
   const { data: tests } = await db
     .from('tests')
     .select('id, name, url_path, status, created_at, workspace_id, workspaces(id, name, client_id, clients(id, name))')
-    .order('created_at', { ascending: false });
+    .order('created_at', { ascending: false }) as unknown as { data: RawTestRow[] | null };
 
   if (!tests || tests.length === 0) return [];
 
-  const workspaceIds = [...new Set(tests.map((t: Record<string, unknown>) => t.workspace_id as string))];
-  const testIds = tests.map((t: Record<string, unknown>) => t.id as string);
+  const workspaceIds = Array.from(new Set(tests.map((t: RawTestRow) => t.workspace_id)));
+  const testIds = tests.map((t: RawTestRow) => t.id);
 
   const [{ data: domains }, { data: events }, { data: variants }] = await Promise.all([
     db.from('domains').select('workspace_id, domain').in('workspace_id', workspaceIds),
     db.from('events').select('test_id, type').in('test_id', testIds),
     db.from('test_variants').select('test_id, id, name, traffic_weight, is_control, redirect_url').in('test_id', testIds),
-  ]);
+  ]) as unknown as [
+    { data: { workspace_id: string; domain: string }[] | null },
+    { data: { test_id: string; type: string }[] | null },
+    { data: { test_id: string; id: string; name: string; traffic_weight: number; is_control: boolean; redirect_url: string | null }[] | null },
+  ];
 
   const domainMap: Record<string, string> = {};
   for (const d of domains || []) domainMap[d.workspace_id] = d.domain;
@@ -65,21 +78,21 @@ async function getAllTests(): Promise<TestRow[]> {
     variantMap[v.test_id].push({ id: v.id, name: v.name, traffic_weight: v.traffic_weight, is_control: v.is_control, redirect_url: v.redirect_url });
   }
 
-  return tests.map((t: Record<string, unknown>) => {
-    const ws = t.workspaces as { id: string; name: string; client_id: string; clients: { id: string; name: string } } | null;
-    const s = statsMap[t.id as string] || { views: 0, conversions: 0 };
+  return tests.map((t: RawTestRow) => {
+    const ws = t.workspaces;
+    const s = statsMap[t.id] || { views: 0, conversions: 0 };
     return {
-      id: t.id as string,
-      name: t.name as string,
-      status: t.status as string,
-      url_path: t.url_path as string,
+      id: t.id,
+      name: t.name,
+      status: t.status,
+      url_path: t.url_path,
       client_id: ws?.clients?.id ?? ws?.client_id ?? '',
       client_name: ws?.clients?.name ?? '',
       domain: domainMap[ws?.id ?? ''] ?? null,
       views: s.views,
       conversions: s.conversions,
       cvr: s.views > 0 ? (s.conversions / s.views) * 100 : 0,
-      variants: variantMap[t.id as string] || [],
+      variants: variantMap[t.id] || [],
     };
   });
 }

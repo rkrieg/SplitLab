@@ -8,11 +8,21 @@ import { Code2 } from 'lucide-react';
 import EmptyState from '@/components/ui/EmptyState';
 import { formatDate } from '@/lib/utils';
 
+interface ScriptRow {
+  id: string;
+  name: string;
+  type: string;
+  placement: string;
+  is_active: boolean;
+  created_at: string;
+  workspaces: { name: string; client_id: string; clients: { name: string } } | null;
+}
+
 async function getAllScripts() {
-  const { data } = await db
+  const { data } = await (db
     .from('scripts')
     .select('*, workspaces(name, client_id, clients(name))')
-    .order('created_at', { ascending: false });
+    .order('created_at', { ascending: false }) as unknown as Promise<{ data: ScriptRow[] | null }>);
   return data ?? [];
 }
 
@@ -50,11 +60,11 @@ export default async function AllScriptsPage() {
                 </tr>
               </thead>
               <tbody>
-                {scripts.map((script: Record<string, unknown>) => {
-                  const ws = script.workspaces as { name: string; client_id: string; clients: { name: string } } | null;
+                {scripts.map((script) => {
+                  const ws = script.workspaces;
                   return (
-                    <tr key={script.id as string} className="border-b border-slate-700/50 hover:bg-slate-700/20">
-                      <td className="px-5 py-3.5 font-medium text-slate-200">{script.name as string}</td>
+                    <tr key={script.id} className="border-b border-slate-700/50 hover:bg-slate-700/20">
+                      <td className="px-5 py-3.5 font-medium text-slate-200">{script.name}</td>
                       <td className="px-5 py-3.5">
                         {ws && (
                           <Link href={`/clients/${ws.client_id}/scripts`} className="text-slate-400 hover:text-indigo-400 text-xs">
@@ -63,7 +73,7 @@ export default async function AllScriptsPage() {
                         )}
                       </td>
                       <td className="px-5 py-3.5">
-                        <span className="badge bg-slate-700 text-slate-300">{typeLabel[script.type as string] ?? script.type as string}</span>
+                        <span className="badge bg-slate-700 text-slate-300">{typeLabel[script.type] ?? script.type}</span>
                       </td>
                       <td className="px-5 py-3.5 text-slate-400 font-mono text-xs">{script.placement === 'head' ? '<head>' : '</body>'}</td>
                       <td className="px-5 py-3.5">
@@ -71,7 +81,7 @@ export default async function AllScriptsPage() {
                           {script.is_active ? 'Active' : 'Inactive'}
                         </span>
                       </td>
-                      <td className="px-5 py-3.5 text-slate-400">{formatDate(script.created_at as string)}</td>
+                      <td className="px-5 py-3.5 text-slate-400">{formatDate(script.created_at)}</td>
                     </tr>
                   );
                 })}

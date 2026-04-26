@@ -52,13 +52,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Slug already in use' }, { status: 409 });
     }
 
-    const { data: client, error } = await db
+    const { data: client, error } = await (db
       .from('clients')
       .insert({ name: data.name, slug, logo_url: data.logo_url })
       .select()
-      .single();
+      .single() as unknown as Promise<{ data: { id: string; name: string; slug: string; logo_url: string | null } | null; error: { message: string } | null }>);
 
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    if (error || !client) return NextResponse.json({ error: error?.message ?? 'Insert failed' }, { status: 500 });
 
     // Auto-create a default workspace
     await db.from('workspaces').insert({

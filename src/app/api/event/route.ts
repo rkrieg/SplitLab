@@ -49,11 +49,11 @@ export async function POST(request: NextRequest) {
     // Auto-match goal_id from metadata.trigger when not explicitly provided
     let goalId = data.goalId || null;
     if (data.type === 'conversion' && !goalId && data.metadata?.trigger) {
-      const { data: goals } = await db
+      const { data: goals } = await (db
         .from('conversion_goals')
         .select('id, type')
         .eq('test_id', data.testId)
-        .eq('type', data.metadata.trigger as string);
+        .eq('type', data.metadata.trigger as string) as unknown as Promise<{ data: { id: string; type: string }[] | null }>);
 
       if (goals && goals.length > 0) {
         goalId = goals[0].id;
@@ -74,28 +74,28 @@ export async function POST(request: NextRequest) {
     // Aggregate AI page performance data
     if (data.type === 'pageview' || data.type === 'conversion') {
       try {
-        const { data: variant } = await db
+        const { data: variant } = await (db
           .from('test_variants')
           .select('page_id')
           .eq('id', data.variantId)
-          .single();
+          .single() as unknown as Promise<{ data: { page_id: string | null } | null }>);
 
         if (variant?.page_id) {
-          const { data: page } = await db
+          const { data: page } = await (db
             .from('pages')
             .select('id, vertical, source_type')
             .eq('id', variant.page_id)
             .eq('source_type', 'ai_generated')
-            .single();
+            .single() as unknown as Promise<{ data: { id: string; vertical: string; source_type: string } | null }>);
 
           if (page) {
-            const { data: existing } = await db
+            const { data: existing } = await (db
               .from('page_performance')
               .select('id, total_views, total_conversions')
               .eq('page_id', page.id)
               .order('recorded_at', { ascending: false })
               .limit(1)
-              .single();
+              .single() as unknown as Promise<{ data: { id: string; total_views: number; total_conversions: number } | null }>);
 
             if (existing) {
               const updates: Record<string, unknown> = {};

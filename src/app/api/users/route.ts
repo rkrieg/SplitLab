@@ -40,11 +40,11 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const data = createSchema.parse(body);
 
-    const { data: existing } = await db
+    const { data: existing } = await (db
       .from('users')
       .select('id')
       .eq('email', data.email.toLowerCase())
-      .single();
+      .single() as unknown as Promise<{ data: { id: string } | null; error: unknown }>);
 
     if (existing) {
       return NextResponse.json({ error: 'Email already in use' }, { status: 409 });
@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
     const inviteToken = randomBytes(48).toString('base64url');
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 days
 
-    const { data: user, error } = await db
+    const { data: user, error } = await (db
       .from('users')
       .insert({
         name: data.name,
@@ -66,9 +66,9 @@ export async function POST(request: NextRequest) {
         invite_expires_at: expiresAt,
       })
       .select('id, name, email, role, status, created_at')
-      .single();
+      .single() as unknown as Promise<{ data: { id: string; name: string; email: string; role: string; status: string; created_at: string } | null; error: { message: string } | null }>);
 
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    if (error || !user) return NextResponse.json({ error: error?.message ?? 'Failed to create user' }, { status: 500 });
 
     // Build the invite URL
     const APP_URL = new URL(request.url).origin;

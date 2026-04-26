@@ -18,14 +18,14 @@ export default async function PageBuilderPage({
     .from('workspaces')
     .select('id, name')
     .eq('client_id', params.id)
-    .single();
+    .single() as unknown as { data: { id: string; name: string } | null };
   if (!workspace) notFound();
 
   const { data: client } = await db
     .from('clients')
     .select('name')
     .eq('id', params.id)
-    .single();
+    .single() as unknown as { data: { name: string } | null };
 
   return (
     <div>

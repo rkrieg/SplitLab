@@ -7,7 +7,7 @@ import { buildPageGenerationPrompt } from '@/lib/page-builder-prompts';
 import { scorePage } from '@/lib/page-quality';
 import { uploadHtml, downloadHtml } from '@/lib/storage';
 import { searchImages } from '@/lib/unsplash';
-import type { Vertical } from '@/types/page-builder';
+import type { Vertical, BrandSettings } from '@/types/page-builder';
 
 export const maxDuration = 300;
 
@@ -23,11 +23,11 @@ export async function POST(
   const pageId = params.id;
   const { instructions, plan_only } = await request.json();
 
-  const { data: page, error } = await db
+  const { data: page, error } = await (db
     .from('pages')
     .select('*')
     .eq('id', pageId)
-    .single();
+    .single() as unknown as Promise<{ data: { id: string; vertical: string | null; html_content: string | null; html_url: string; workspace_id: string; name: string; version: number; source_type: string; prompt: string; brand_settings: unknown } | null; error: { message: string } | null }>);
 
   if (error || !page) {
     return NextResponse.json({ error: 'Page not found' }, { status: 404 });
@@ -140,7 +140,7 @@ ${instructions}
     const { system, user } = buildPageGenerationPrompt({
       userPrompt: page.prompt,
       vertical,
-      brandSettings: page.brand_settings,
+      brandSettings: page.brand_settings as BrandSettings | undefined,
       imageUrls,
     });
 

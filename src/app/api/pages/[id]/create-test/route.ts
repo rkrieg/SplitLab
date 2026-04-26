@@ -14,11 +14,11 @@ export async function POST(
 
   const pageId = params.id;
 
-  const { data: page, error } = await db
+  const { data: page, error } = await (db
     .from('pages')
     .select('*')
     .eq('id', pageId)
-    .single();
+    .single() as unknown as Promise<{ data: { id: string; published_url: string | null; workspace_id: string; name: string } | null; error: { message: string } | null }>);
 
   if (error || !page) {
     return NextResponse.json({ error: 'Page not found' }, { status: 404 });

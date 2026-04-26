@@ -19,11 +19,11 @@ export async function POST(
 
     const testId = params.id;
 
-    const { data: goals } = await db
+    const { data: goals } = await (db
       .from('conversion_goals')
       .select('id, is_primary')
       .eq('test_id', testId)
-      .limit(1);
+      .limit(1) as unknown as Promise<{ data: { id: string; is_primary: boolean }[] | null; error: unknown }>);
 
     const primaryGoalId = goals?.find((g: { is_primary: boolean }) => g.is_primary)?.id
       || goals?.[0]?.id

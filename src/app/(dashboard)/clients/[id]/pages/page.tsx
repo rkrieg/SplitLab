@@ -5,31 +5,32 @@ import { db } from '@/lib/supabase-server';
 import Header from '@/components/layout/Header';
 import PagesClient from './PagesClient';
 
-async function getWorkspaceForClient(clientId: string) {
+async function getWorkspaceForClient(clientId: string): Promise<{ id: string; name: string } | null> {
   const { data } = await db
     .from('workspaces')
     .select('id, name')
     .eq('client_id', clientId)
-    .single();
+    .single() as unknown as { data: { id: string; name: string } | null };
   return data;
 }
 
-async function getTests(workspaceId: string) {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function getTests(workspaceId: string): Promise<any[]> {
   const { data } = await db
     .from('tests')
     .select('*, test_variants(*), conversion_goals(*)')
     .eq('workspace_id', workspaceId)
-    .order('created_at', { ascending: false });
-  return data ?? [];
+    .order('created_at', { ascending: false }) as unknown as { data: unknown[] | null };
+  return (data ?? []) as unknown[];
 }
 
-async function getDomain(workspaceId: string) {
+async function getDomain(workspaceId: string): Promise<{ domain: string; verified: boolean } | null> {
   const { data } = await db
     .from('domains')
     .select('domain, verified')
     .eq('workspace_id', workspaceId)
     .limit(1)
-    .single();
+    .single() as unknown as { data: { domain: string; verified: boolean } | null };
   return data;
 }
 
@@ -38,7 +39,7 @@ async function getStats(testIds: string[]): Promise<Record<string, { views: numb
   const { data: events } = await db
     .from('events')
     .select('test_id, type')
-    .in('test_id', testIds);
+    .in('test_id', testIds) as unknown as { data: Array<{ test_id: string; type: string }> | null };
   const map: Record<string, { views: number; conversions: number }> = {};
   for (const ev of events || []) {
     if (!map[ev.test_id]) map[ev.test_id] = { views: 0, conversions: 0 };
@@ -55,7 +56,7 @@ export default async function PagesPage({ params }: { params: { id: string } }) 
   const workspace = await getWorkspaceForClient(params.id);
   if (!workspace) notFound();
 
-  const { data: client } = await db.from('clients').select('name').eq('id', params.id).single();
+  const { data: client } = await db.from('clients').select('name').eq('id', params.id).single() as unknown as { data: { name: string } | null };
   const [tests, domain] = await Promise.all([
     getTests(workspace.id),
     getDomain(workspace.id),
