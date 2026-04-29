@@ -86,7 +86,7 @@ export async function POST(request: NextRequest) {
 
       const keepalive = setInterval(() => {
         sendEvent('keepalive', { timestamp: Date.now() });
-      }, 10_000);
+      }, 5_000);
 
       try {
         sendEvent('started', { status: 'fetching_images' });
@@ -106,9 +106,9 @@ export async function POST(request: NextRequest) {
           try {
             sendEvent('generating', { status: 'designing_with_stitch' });
 
-            // 30s timeout for entire Stitch pipeline
+            // 10s timeout for entire Stitch pipeline
             const stitchTimeout = new Promise<never>((_, reject) =>
-              setTimeout(() => reject(new Error('Stitch API timed out after 30s')), 30_000)
+              setTimeout(() => reject(new Error('Stitch API timed out after 10s')), 10_000)
             );
 
             const stitchPipeline = async () => {

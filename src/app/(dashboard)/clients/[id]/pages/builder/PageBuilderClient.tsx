@@ -67,6 +67,7 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
   // Generating step
   const [genStatus, setGenStatus] = useState('');
   const [imageCount, setImageCount] = useState(0);
+  const [genError, setGenError] = useState<string | null>(null);
 
   // Preview step
   const [pageId, setPageId] = useState('');
@@ -152,6 +153,7 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
 
     setStep('generating');
     setGenStatus('Starting...');
+    setGenError(null);
     completedRef.current = false;
     abortRef.current = new AbortController();
 
@@ -225,14 +227,14 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
       // so we use a ref to track whether complete was received.
       if (!completedRef.current) {
         console.error('[PageBuilder] Stream ended without complete event');
-        toast.error('Generation ended unexpectedly. Check server logs.');
+        setGenError('Generation timed out or was interrupted. Please try again.');
         setStep('prompt');
       }
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return;
       const msg = err instanceof Error ? err.message : 'Generation failed';
       console.error('[PageBuilder] Error:', err);
-      toast.error(msg);
+      setGenError(msg);
       setStep('prompt');
     }
   }, [editablePrompt, prompt, vertical, brandSettings, workspaceId, clientId]);
@@ -276,7 +278,7 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
         break;
       case 'error':
         console.error('[PageBuilder] Server error event:', data.error);
-        toast.error(String(data.error));
+        setGenError(String(data.error));
         setStep('prompt');
         break;
     }
@@ -445,6 +447,19 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
   if (step === 'prompt') {
     return (
       <div className="max-w-3xl mx-auto space-y-6">
+        {/* Error banner */}
+        {genError && (
+          <div className="flex items-start gap-3 px-4 py-3 rounded-lg bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800">
+            <svg className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-red-700 dark:text-red-400">Generation failed</p>
+              <p className="text-sm text-red-600 dark:text-red-500 mt-0.5">{genError}</p>
+            </div>
+            <button onClick={() => setGenError(null)} className="text-red-400 hover:text-red-600 flex-shrink-0">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+            </button>
+          </div>
+        )}
         {/* Vertical selector */}
         <div>
           <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-3">
