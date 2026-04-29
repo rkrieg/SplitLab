@@ -76,15 +76,24 @@ export async function POST(request: NextRequest) {
 
   // SSE stream
   const encoder = new TextEncoder();
+  let keepalive: ReturnType<typeof setInterval> | null = null;
+
   const stream = new ReadableStream({
     async start(controller) {
+      let closed = false;
+
       function sendEvent(event: string, data: unknown) {
-        controller.enqueue(
-          encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
-        );
+        if (closed) return;
+        try {
+          controller.enqueue(
+            encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
+          );
+        } catch {
+          closed = true;
+        }
       }
 
-      const keepalive = setInterval(() => {
+      keepalive = setInterval(() => {
         sendEvent('keepalive', { timestamp: Date.now() });
       }, 5_000);
 
@@ -235,9 +244,15 @@ export async function POST(request: NextRequest) {
         console.error('[page-generate] Stack:', stack);
         sendEvent('error', { error: message });
       } finally {
-        clearInterval(keepalive);
-        controller.close();
+        if (keepalive) clearInterval(keepalive);
+        keepalive = null;
+        closed = true;
+        try { controller.close(); } catch { /* already closed */ }
       }
+    },
+    cancel() {
+      if (keepalive) clearInterval(keepalive);
+      keepalive = null;
     },
   });
 
