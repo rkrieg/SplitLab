@@ -11,6 +11,8 @@ SplitLab is a Next.js 14 A/B testing platform migrated from Vercel + Supabase to
   - Supports: `select`, `insert`, `update`, `delete`, `upsert`, `eq`/`neq`/`in`/`gte`/`lte`/`like`/`ilike`, `order`, `limit`, `single`, `count`
   - Nested relations via PostgreSQL JSON aggregation (has_many / belongs_to)
   - Storage shim (`db.storage`) replicates Supabase Storage API using local filesystem
+  - **Fully typed**: `db.from('tableName')` infers the correct row type automatically via `TableSchema` overloads — no manual casts needed for new queries
+- **Type schema**: `src/types/database.ts` — one interface per table, maps table names to row types via `TableSchema`
 - **Migrations**: All 7 Supabase migrations applied to Replit PostgreSQL
 
 ### Storage

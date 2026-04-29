@@ -1,6 +1,7 @@
 import { Pool } from 'pg';
 import fsSync from 'fs';
 import pathMod from 'path';
+import type { TableSchema } from '@/types/database';
 
 // Serialize plain objects/arrays to JSON strings so pg sends them as valid JSON
 // for json/jsonb columns. Primitives, null, and Date are passed through unchanged.
@@ -189,7 +190,11 @@ function buildMainSelectCols(table: string, node: SelectNode, mainAlias: string)
 // ─── QueryBuilder ─────────────────────────────────────────────────────────────
 type DbResult<T = unknown> = { data: T | null; error: { message: string } | null; count?: number | null };
 
-class QueryBuilder<T = unknown> {
+// TRow  = the shape of one row from this table
+// TResult = the shape of the resolved `data` value:
+//           defaults to TRow[] for normal queries,
+//           becomes TRow after .single() / .maybeSingle()
+class QueryBuilder<TRow = unknown, TResult = TRow[]> {
   private _table: string;
   private _selectStr = '*';
   private _selectOpts: { count?: 'exact'; head?: boolean } = {};
@@ -262,8 +267,16 @@ class QueryBuilder<T = unknown> {
   }
   limit(n: number) { this._limitVal = n; return this; }
   range(from: number, to: number) { this._offsetVal = from; this._limitVal = to - from + 1; return this; }
-  single() { this._single = true; this._limitVal = 1; return this as QueryBuilder<T>; }
-  maybeSingle() { this._maybeSingle = true; this._limitVal = 1; return this as QueryBuilder<T>; }
+  single(): QueryBuilder<TRow, TRow> {
+    this._single = true;
+    this._limitVal = 1;
+    return this as unknown as QueryBuilder<TRow, TRow>;
+  }
+  maybeSingle(): QueryBuilder<TRow, TRow> {
+    this._maybeSingle = true;
+    this._limitVal = 1;
+    return this as unknown as QueryBuilder<TRow, TRow>;
+  }
 
   insert(data: Record<string, unknown> | Record<string, unknown>[]) {
     this._insertData = data;
@@ -282,13 +295,16 @@ class QueryBuilder<T = unknown> {
   // We detect this via the returnSelect flag.
 
   then(
-    resolve: (val: DbResult<T>) => unknown,
+    resolve: (val: DbResult<TResult>) => unknown,
     reject: (err: unknown) => unknown
   ) {
-    return this._execute().then(resolve, reject);
+    return this._execute().then(
+      (result) => resolve(result as unknown as DbResult<TResult>),
+      reject
+    );
   }
 
-  private async _execute(): Promise<DbResult<T>> {
+  private async _execute(): Promise<DbResult<unknown>> {
     const pool = getPool();
     try {
       // ── INSERT ──
@@ -311,7 +327,7 @@ class QueryBuilder<T = unknown> {
         if (hasRelations && (this._single || this._maybeSingle)) {
           const insertedId = res.rows[0]?.id;
           if (insertedId) {
-            const followup = new QueryBuilder<T>(this._table);
+            const followup = new QueryBuilder(this._table);
             followup._selectStr = this._selectStr;
             followup._conditions.push(`"_t"."id" = ${followup._nextParam(insertedId)}`);
             followup._single = true;
@@ -319,7 +335,7 @@ class QueryBuilder<T = unknown> {
           }
         }
         const data = this._single || this._maybeSingle ? (res.rows[0] ?? null) : res.rows;
-        return { data: data as T, error: null };
+        return { data: data as unknown, error: null };
       }
 
       // ── UPSERT ──
@@ -335,7 +351,7 @@ class QueryBuilder<T = unknown> {
         const sql = `INSERT INTO "${this._table}" (${cols.map(c => `"${c}"`).join(', ')}) VALUES (${placeholders.join(', ')}) ON CONFLICT ("${conflictCol}") DO UPDATE SET ${updates.join(', ')} ${returning}`;
         const res = await pool.query(sql, vals);
         const data = this._single || this._maybeSingle ? (res.rows[0] ?? null) : res.rows;
-        return { data: data as T, error: null };
+        return { data: data as unknown, error: null };
       }
 
       // ── UPDATE ──
@@ -352,7 +368,7 @@ class QueryBuilder<T = unknown> {
         const sql = `UPDATE "${this._table}" SET ${sets.join(', ')} ${where} RETURNING *`;
         const res = await pool.query(sql, allParams);
         const data = this._single || this._maybeSingle ? (res.rows[0] ?? null) : res.rows;
-        return { data: data as T, error: null };
+        return { data: data as unknown, error: null };
       }
 
       // ── DELETE ──
@@ -385,12 +401,12 @@ class QueryBuilder<T = unknown> {
 
       if (this._single) {
         if (res.rows.length === 0) return { data: null, error: { message: 'Row not found' } };
-        return { data: res.rows[0] as T, error: null };
+        return { data: res.rows[0] as unknown, error: null };
       }
       if (this._maybeSingle) {
-        return { data: (res.rows[0] ?? null) as T, error: null };
+        return { data: (res.rows[0] ?? null) as unknown, error: null };
       }
-      return { data: res.rows as T, error: null };
+      return { data: res.rows as unknown, error: null };
 
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -452,8 +468,18 @@ const storageShim = {
   createBucket: async (_name: string, _opts?: unknown) => ({ data: null, error: null }),
 };
 
+// ─── Typed from() with overloads ─────────────────────────────────────────────
+// When the table name is a known key of TableSchema, TypeScript infers the
+// correct row type automatically. Unknown table names fall back to
+// QueryBuilder<Record<string, unknown>>.
+function from<K extends keyof TableSchema>(table: K): QueryBuilder<TableSchema[K]>;
+function from(table: string): QueryBuilder<Record<string, unknown>>;
+function from(table: string): QueryBuilder<unknown> {
+  return new QueryBuilder(table);
+}
+
 // ─── Public db proxy ──────────────────────────────────────────────────────────
 export const db = {
-  from: (table: string) => new QueryBuilder(table),
+  from,
   storage: storageShim,
 };
