@@ -1,0 +1,946 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pearl - Experience Sleep Perfection | Luxury Mattresses</title>
+    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700;900&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --primary-navy: #1B2951;
+            --accent-gold: #D4AF37;
+            --light-gray: #f8f8f8;
+            --text-dark: #333;
+            --text-light: #666;
+            --white: #ffffff;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            line-height: 1.6;
+            color: var(--text-dark);
+            overflow-x: hidden;
+        }
+
+        h1, h2, h3 {
+            font-family: 'Playfair Display', serif;
+            font-weight: 700;
+            line-height: 1.2;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 20px;
+        }
+
+        .btn {
+            display: inline-block;
+            padding: 18px 40px;
+            font-size: 18px;
+            font-weight: 600;
+            text-decoration: none;
+            border-radius: 8px;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            border: none;
+            min-width: 220px;
+            text-align: center;
+        }
+
+        .btn-primary {
+            background: var(--accent-gold);
+            color: var(--primary-navy);
+        }
+
+        .btn-primary:hover {
+            background: #c5a030;
+            transform: translateY(-2px);
+            box-shadow: 0 10px 30px rgba(212, 175, 55, 0.3);
+        }
+
+        .btn-secondary {
+            background: var(--primary-navy);
+            color: var(--white);
+        }
+
+        .btn-secondary:hover {
+            background: #152241;
+            transform: translateY(-2px);
+            box-shadow: 0 10px 30px rgba(27, 41, 81, 0.3);
+        }
+
+        /* Fixed CTA Mobile */
+        .sticky-cta {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: var(--primary-navy);
+            padding: 15px;
+            text-align: center;
+            z-index: 1000;
+            box-shadow: 0 -5px 20px rgba(0,0,0,0.1);
+            display: none;
+        }
+
+        .sticky-cta .btn {
+            width: 100%;
+            max-width: 350px;
+        }
+
+        /* Header */
+        .header {
+            background: var(--white);
+            padding: 20px 0;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+            position: sticky;
+            top: 0;
+            z-index: 999;
+        }
+
+        .header-content {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo {
+            height: 50px;
+        }
+
+        .header-contact {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .phone-number {
+            font-size: 20px;
+            font-weight: 600;
+            color: var(--primary-navy);
+            text-decoration: none;
+        }
+
+        /* Hero Section */
+        .hero {
+            background: linear-gradient(rgba(27, 41, 81, 0.3), rgba(27, 41, 81, 0.3)), url('https://images.unsplash.com/photo-1540991825428-5b54b09f7338?w=1600') center/cover;
+            min-height: 90vh;
+            display: flex;
+            align-items: center;
+            color: var(--white);
+            padding: 100px 0;
+        }
+
+        .hero-content {
+            max-width: 700px;
+        }
+
+        .hero h1 {
+            font-size: 56px;
+            margin-bottom: 20px;
+            font-weight: 900;
+        }
+
+        .hero-subtitle {
+            font-size: 24px;
+            margin-bottom: 30px;
+            font-weight: 300;
+        }
+
+        .trust-badges {
+            display: flex;
+            gap: 30px;
+            margin-top: 40px;
+            flex-wrap: wrap;
+        }
+
+        .badge {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            padding: 15px 25px;
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .badge-icon {
+            font-size: 24px;
+        }
+
+        /* Social Proof Bar */
+        .social-proof {
+            background: var(--light-gray);
+            padding: 40px 0;
+        }
+
+        .proof-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 40px;
+            text-align: center;
+        }
+
+        .proof-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .proof-stars {
+            color: var(--accent-gold);
+            font-size: 20px;
+        }
+
+        .proof-number {
+            font-size: 36px;
+            font-weight: 700;
+            color: var(--primary-navy);
+            font-family: 'Playfair Display', serif;
+        }
+
+        /* Product Section */
+        .products {
+            padding: 100px 0;
+            background: var(--white);
+        }
+
+        .section-header {
+            text-align: center;
+            margin-bottom: 60px;
+        }
+
+        .section-header h2 {
+            font-size: 48px;
+            margin-bottom: 20px;
+            color: var(--primary-navy);
+        }
+
+        .product-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 40px;
+        }
+
+        .product-card {
+            background: var(--white);
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.08);
+            transition: all 0.3s ease;
+        }
+
+        .product-card:hover {
+            transform: translateY(-10px);
+            box-shadow: 0 20px 60px rgba(0,0,0,0.12);
+        }
+
+        .product-image {
+            width: 100%;
+            height: 300px;
+            object-fit: cover;
+        }
+
+        .product-content {
+            padding: 30px;
+        }
+
+        .product-name {
+            font-size: 28px;
+            margin-bottom: 15px;
+            color: var(--primary-navy);
+        }
+
+        .product-benefits {
+            list-style: none;
+            margin: 20px 0;
+        }
+
+        .product-benefits li {
+            padding: 10px 0;
+            padding-left: 30px;
+            position: relative;
+        }
+
+        .product-benefits li:before {
+            content: "✓";
+            position: absolute;
+            left: 0;
+            color: var(--accent-gold);
+            font-weight: bold;
+        }
+
+        .product-price {
+            font-size: 32px;
+            font-weight: 700;
+            color: var(--primary-navy);
+            margin: 20px 0;
+            font-family: 'Playfair Display', serif;
+        }
+
+        /* Luxury Experience */
+        .luxury-experience {
+            padding: 100px 0;
+            background: var(--light-gray);
+        }
+
+        .experience-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 60px;
+            align-items: center;
+            margin-top: 60px;
+        }
+
+        .experience-content h3 {
+            font-size: 36px;
+            margin-bottom: 20px;
+            color: var(--primary-navy);
+        }
+
+        .experience-image {
+            width: 100%;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.1);
+        }
+
+        /* Materials Section */
+        .materials {
+            padding: 100px 0;
+            background: var(--white);
+        }
+
+        .materials-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 40px;
+            margin-top: 60px;
+        }
+
+        .material-card {
+            text-align: center;
+        }
+
+        .material-image {
+            width: 100%;
+            height: 250px;
+            object-fit: cover;
+            border-radius: 12px;
+            margin-bottom: 20px;
+        }
+
+        /* Testimonials */
+        .testimonials {
+            padding: 100px 0;
+            background: var(--light-gray);
+        }
+
+        .testimonial-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 40px;
+            margin-top: 60px;
+        }
+
+        .testimonial-card {
+            background: var(--white);
+            padding: 40px;
+            border-radius: 16px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.08);
+        }
+
+        .testimonial-header {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .testimonial-avatar {
+            width: 70px;
+            height: 70px;
+            border-radius: 50%;
+            object-fit: cover;
+        }
+
+        .testimonial-quote {
+            font-size: 18px;
+            font-style: italic;
+            color: var(--text-dark);
+            margin-bottom: 20px;
+            line-height: 1.8;
+        }
+
+        /* Science Section */
+        .science {
+            padding: 100px 0;
+            background: var(--white);
+        }
+
+        .science-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 40px;
+            margin-top: 60px;
+        }
+
+        .science-item {
+            text-align: center;
+        }
+
+        .science-icon {
+            font-size: 48px;
+            margin-bottom: 20px;
+        }
+
+        /* Comparison */
+        .comparison {
+            padding: 100px 0;
+            background: var(--light-gray);
+        }
+
+        .comparison-table {
+            background: var(--white);
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.08);
+            margin-top: 60px;
+        }
+
+        .comparison-row {
+            display: grid;
+            grid-template-columns: 2fr repeat(3, 1fr);
+            border-bottom: 1px solid #eee;
+        }
+
+        .comparison-row:first-child {
+            background: var(--primary-navy);
+            color: var(--white);
+            font-weight: 600;
+        }
+
+        .comparison-cell {
+            padding: 25px;
+            text-align: center;
+        }
+
+        .comparison-cell:first-child {
+            text-align: left;
+        }
+
+        .comparison-pearl {
+            background: rgba(212, 175, 55, 0.1);
+            font-weight: 600;
+        }
+
+        .check-mark {
+            color: var(--accent-gold);
+            font-size: 24px;
+        }
+
+        /* Final CTA */
+        .final-cta {
+            background: linear-gradient(rgba(27, 41, 81, 0.8), rgba(27, 41, 81, 0.8)), url('https://images.unsplash.com/photo-1556909114-44e3e70034e2?w=1600') center/cover;
+            padding: 120px 0;
+            text-align: center;
+            color: var(--white);
+        }
+
+        .final-cta h2 {
+            font-size: 56px;
+            margin-bottom: 30px;
+        }
+
+        .financing-badge {
+            display: inline-block;
+            background: rgba(212, 175, 55, 0.2);
+            border: 2px solid var(--accent-gold);
+            padding: 15px 30px;
+            border-radius: 50px;
+            margin-top: 30px;
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        /* Footer */
+        .footer {
+            background: var(--primary-navy);
+            color: var(--white);
+            padding: 60px 0 30px;
+        }
+
+        .footer-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 40px;
+            margin-bottom: 40px;
+        }
+
+        .footer-logo {
+            height: 40px;
+            margin-bottom: 20px;
+            filter: brightness(0) invert(1);
+        }
+
+        .footer-links {
+            list-style: none;
+        }
+
+        .footer-links li {
+            padding: 8px 0;
+        }
+
+        .footer-links a {
+            color: var(--white);
+            text-decoration: none;
+            opacity: 0.8;
+            transition: opacity 0.3s ease;
+        }
+
+        .footer-links a:hover {
+            opacity: 1;
+        }
+
+        .footer-bottom {
+            border-top: 1px solid rgba(255,255,255,0.1);
+            padding-top: 30px;
+            text-align: center;
+            opacity: 0.8;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .sticky-cta {
+                display: block;
+            }
+
+            .hero h1 {
+                font-size: 36px;
+            }
+
+            .hero-subtitle {
+                font-size: 18px;
+            }
+
+            .section-header h2 {
+                font-size: 32px;
+            }
+
+            .experience-grid,
+            .comparison-row {
+                grid-template-columns: 1fr;
+            }
+
+            .header-contact {
+                flex-direction: column;
+                gap: 10px;
+            }
+
+            .phone-number {
+                font-size: 16px;
+            }
+
+            .product-grid,
+            .testimonial-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .final-cta h2 {
+                font-size: 36px;
+            }
+
+            .trust-badges {
+                justify-content: center;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .hero {
+                padding: 60px 0;
+            }
+
+            .proof-grid {
+                grid-template-columns: 1fr;
+                gap: 20px;
+            }
+
+            .materials-grid,
+            .science-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .footer-grid {
+                grid-template-columns: 1fr;
+                text-align: center;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Sticky CTA for Mobile -->
+    <div class="sticky-cta">
+        <a href="#" class="btn btn-primary" data-sl-editable="true">Shop Premium Collection</a>
+    </div>
+
+    <!-- Header -->
+    <header class="header">
+        <div class="container">
+            <div class="header-content">
+                <img src="https://static.vecteezy.com/system/resources/previews/009/178/125/large_2x/url-letter-logo-design-with-polygon-shape-url-polygon-and-cube-shape-logo-design-url-hexagon-logo-template-white-and-black-colors-url-monogram-business-and-real-estate-logo-vector.jpg" alt="Pearl Logo" class="logo">
+                <div class="header-contact">
+                    <span data-sl-editable="true">Luxury Sleep Awaits</span>
+                    <a href="tel:5552343234" class="phone-number" data-sl-editable="true">555 234 3234</a>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Hero Section -->
+    <section class="hero" data-sl-section="hero">
+        <div class="container">
+            <div class="hero-content">
+                <h1 data-sl-editable="true">Experience Sleep Perfection</h1>
+                <p class="hero-subtitle" data-sl-editable="true">Discover the luxury mattress that transforms your nights and elevates your mornings. Handcrafted with premium materials for the ultimate sleep experience.</p>
+                <a href="#" class="btn btn-primary" data-sl-editable="true">Shop Premium Collection</a>
+                <div class="trust-badges">
+                    <div class="badge">
+                        <span class="badge-icon">🌙</span>
+                        <span data-sl-editable="true">365-Night Sleep Trial</span>
+                    </div>
+                    <div class="badge">
+                        <span class="badge-icon">💳</span>
+                        <span data-sl-editable="true">0% Financing Available</span>
+                    </div>
+                    <div class="badge">
+                        <span class="badge-icon">🚚</span>
+                        <span data-sl-editable="true">White Glove Delivery</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Social Proof Bar -->
+    <section class="social-proof" data-sl-section="stats">
+        <div class="container">
+            <div class="proof-grid">
+                <div class="proof-item">
+                    <div class="proof-stars" data-sl-editable="true">★★★★★</div>
+                    <div class="proof-number" data-sl-editable="true">4.9/5</div>
+                    <p data-sl-editable="true">12,847 Five-Star Reviews</p>
+                </div>
+                <div class="proof-item">
+                    <div class="proof-number" data-sl-editable="true">500+</div>
+                    <p data-sl-editable="true">Luxury Hotels Trust Pearl</p>
+                </div>
+                <div class="proof-item">
+                    <div class="proof-number" data-sl-editable="true">100%</div>
+                    <p data-sl-editable="true">Certified Organic Materials</p>
+                </div>
+                <div class="proof-item">
+                    <div class="proof-number" data-sl-editable="true">25 Years</div>
+                    <p data-sl-editable="true">Lifetime Warranty</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Products Section -->
+    <section class="products" data-sl-section="pricing">
+        <div class="container">
+            <div class="section-header">
+                <h2 data-sl-editable="true">The Pearl Collection</h2>
+                <p data-sl-editable="true">Three levels of luxury, one perfect night's sleep</p>
+            </div>
+            <div class="product-grid">
+                <div class="product-card">
+                    <img src="https://images.unsplash.com/photo-1505693416388-ac5ce068fe85?w=800" alt="Pearl Essential Mattress" class="product-image">
+                    <div class="product-content">
+                        <h3 class="product-name" data-sl-editable="true">Pearl Essential</h3>
+                        <p data-sl-editable="true">Our signature luxury foundation for exceptional sleep</p>
+                        <ul class="product-benefits">
+                            <li data-sl-editable="true">Premium memory foam layers</li>
+                            <li data-sl-editable="true">Advanced cooling technology</li>
+                            <li data-sl-editable="true">Medium-firm support</li>
+                        </ul>
+                        <div class="product-price" data-sl-editable="true">From $1,899</div>
+                        <a href="#" class="btn btn-secondary" data-sl-editable="true">Shop Essential</a>
+                    </div>
+                </div>
+                <div class="product-card">
+                    <img src="https://images.unsplash.com/photo-1558618370-71a0e3d4a8b1?w=800" alt="Pearl Premium Mattress" class="product-image">
+                    <div class="product-content">
+                        <h3 class="product-name" data-sl-editable="true">Pearl Premium</h3>
+                        <p data-sl-editable="true">Enhanced luxury with advanced comfort features</p>
+                        <ul class="product-benefits">
+                            <li data-sl-editable="true">Cashmere-infused cover</li>
+                            <li data-sl-editable="true">Zoned support system</li>
+                            <li data-sl-editable="true">Dual comfort options</li>
+                        </ul>
+                        <div class="product-price" data-sl-editable="true">From $2,899</div>
+                        <a href="#" class="btn btn-primary" data-sl-editable="true">Shop Premium</a>
+                    </div>
+                </div>
+                <div class="product-card">
+                    <img src="https://images.unsplash.com/photo-1555041469-a586c61ea9bc?w=800" alt="Pearl Signature Mattress" class="product-image">
+                    <div class="product-content">
+                        <h3 class="product-name" data-sl-editable="true">Pearl Signature</h3>
+                        <p data-sl-editable="true">The pinnacle of sleep luxury and innovation</p>
+                        <ul class="product-benefits">
+                            <li data-sl-editable="true">Hand-tufted silk finish</li>
+                            <li data-sl-editable="true">Smart temperature regulation</li>
+                            <li data-sl-editable="true">Lifetime comfort guarantee</li>
+                        </ul>
+                        <div class="product-price" data-sl-editable="true">From $3,999</div>
+                        <a href="#" class="btn btn-secondary" data-sl-editable="true">Shop Signature</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Luxury Experience -->
+    <section class="luxury-experience" data-sl-section="services">
+        <div class="container">
+            <div class="section-header">
+                <h2 data-sl-editable="true">The Pearl Experience</h2>
+                <p data-sl-editable="true">Luxury service that matches our premium products</p>
+            </div>
+            <div class="experience-grid">
+                <div class="experience-content">
+                    <h3 data-sl-editable="true">White Glove Delivery & Setup</h3>
+                    <p data-sl-editable="true">Our certified sleep specialists deliver your Pearl mattress with care. We handle everything from unpacking to precise positioning, ensuring your new luxury mattress is perfectly placed.</p>
+                    <p data-sl-editable="true">Complimentary old mattress removal included with every purchase.</p>
+                    <a href="#" class="btn btn-primary" data-sl-editable="true">Schedule Delivery</a>
+                </div>
+                <img src="https://images.unsplash.com/photo-1484101403633-562f891dc89a?w=800" alt="White glove delivery service" class="experience-image">
+            </div>
+            <div class="experience-grid" style="margin-top: 80px;">
+                <img src="https://images.unsplash.com/photo-1556909172-8c2f041fca1e?w=800" alt="Sleep concierge service" class="experience-image">
+                <div class="experience-content">
+                    <h3 data-sl-editable="true">Personal Sleep Concierge</h3>
+                    <p data-sl-editable="true">Every Pearl customer receives dedicated support from our sleep experts. From selection guidance to post-purchase care tips, we're here to ensure your perfect sleep.</p>
+                    <p data-sl-editable="true">Available 24/7 for all your sleep wellness questions.</p>
+                    <a href="#" class="btn btn-secondary" data-sl-editable="true">Contact Concierge</a>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Materials Section -->
+    <section class="materials" data-sl-section="features">
+        <div class="container">
+            <div class="section-header">
+                <h2 data-sl-editable="true">Exquisite Craftsmanship</h2>
+                <p data-sl-editable="true">Every Pearl mattress features the finest materials sourced globally</p>
+            </div>
+            <div class="materials-grid">
+                <div class="material-card">
+                    <img src="https://images.unsplash.com/photo-1620127682229-33388276e540?w=800" alt="Premium organic cotton" class="material-image">
+                    <h3 data-sl-editable="true">Organic Egyptian Cotton</h3>
+                    <p data-sl-editable="true">Ultra-soft, breathable cover woven from the world's finest long-staple cotton</p>
+                </div>
+                <div class="material-card">
+                    <img src="https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=800" alt="Natural latex layers" class="material-image">
+                    <h3 data-sl-editable="true">Natural Talalay Latex</h3>
+                    <p data-sl-editable="true">Responsive support layers that contour perfectly while maintaining breathability</p>
+                </div>
+                <div class="material-card">
+                    <img src="https://images.unsplash.com/photo-1565184412688-20e313289e54?w=800" alt="Cashmere wool blend" class="material-image">
+                    <h3 data-sl-editable="true">New Zealand Wool</h3>
+                    <p data-sl-editable="true">Natural temperature regulation with moisture-wicking properties for all-season comfort</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Testimonials -->
+    <section class="testimonials" data-sl-section="testimonials">
+        <div class="container">
+            <div class="section-header">
+                <h2 data-sl-editable="true">Life-Changing Sleep Stories</h2>
+                <p data-sl-editable="true">Real transformations from Pearl customers</p>
+            </div>
+            <div class="testimonial-grid">
+                <div class="testimonial-card">
+                    <div class="testimonial-header">
+                        <img src="https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=200" alt="Customer Sarah M." class="testimonial-avatar">
+                        <div>
+                            <h4 data-sl-editable="true">Sarah M.</h4>
+                            <div class="proof-stars" data-sl-editable="true">★★★★★</div>
+                        </div>
+                    </div>
+                    <p class="testimonial-quote" data-sl-editable="true">"After years of waking up with back pain, my Pearl Premium has completely transformed my mornings. It's been 6 months and I feel like a new person. Worth every penny."</p>
+                    <p data-sl-editable="true"><strong>Sleep Quality Improvement: 92%</strong></p>
+                </div>
+                <div class="testimonial-card">
+                    <div class="testimonial-header">
+                        <img src="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=200" alt="Customer David L." class="testimonial-avatar">
+                        <div>
+                            <h4 data-sl-editable="true">David L.</h4>
+                            <div class="proof-stars" data-sl-editable="true">★★★★★</div>
+                        </div>
+                    </div>
+                    <p class="testimonial-quote" data-sl-editable="true">"As a surgeon working long hours, quality sleep is crucial. My Pearl Signature provides the perfect balance of support and luxury. My energy levels have never been better."</p>
+                    <p data-sl-editable="true"><strong>Recovery Time: -45%</strong></p>
+                </div>
+                <div class="testimonial-card">
+                    <div class="testimonial-header">
+                        <img src="https://images.unsplash.com/photo-1573497019940-1c28c88b4f3e?w=200" alt="Customer Emily R." class="testimonial-avatar">
+                        <div>
+                            <h4 data-sl-editable="true">Emily R.</h4>
+                            <div class="proof-stars" data-sl-editable="true">★★★★★</div>
+                        </div>
+                    </div>
+                    <p class="testimonial-quote" data-sl-editable="true">"The white glove service was impeccable, and the mattress itself is a work of art. My husband and I both sleep better than we have in years. Truly a luxury experience."</p>
+                    <p data-sl-editable="true"><strong>Couple Satisfaction: 100%</strong></p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Science Section -->
+    <section class="science" data-sl-section="about">
+        <div class="container">
+            <div class="section-header">
+                <h2 data-sl-editable="true">The Science of Perfect Sleep</h2>
+                <p data-sl-editable="true">Research-backed design for optimal rest and recovery</p>
+            </div>
+            <div class="science-grid">
+                <div class="science-item">
+                    <div class="science-icon">🧪</div>
+                    <h3 data-sl-editable="true">Sleep Lab Tested</h3>
+                    <p data-sl-editable="true">Every Pearl mattress undergoes rigorous testing in certified sleep laboratories to ensure optimal spinal alignment and pressure relief.</p>
+                </div>
+                <div class="science-item">
+                    <div class="science-icon">📊</div>
+                    <h3 data-sl-editable="true">97% Deep Sleep Increase</h3>
+                    <p data-sl-editable="true">Clinical studies show Pearl users experience significantly more restorative deep sleep phases compared to traditional luxury mattresses.</p>
+                </div>
+                <div class="science-item">
+                    <div class="science-icon">🌡️</div>
+                    <h3 data-sl-editable="true">Thermoregulation Technology</h3>
+                    <p data-sl-editable="true">Advanced phase-change materials maintain optimal sleeping temperature throughout the night, adapting to your body's needs.</p>
+                </div>
+                <div class="science-item">
+                    <div class="science-icon">💆</div>
+                    <h3 data-sl-editable="true">Zero Motion Transfer</h3>
+                    <p data-sl-editable="true">Individually wrapped coils and precision-engineered foam layers ensure undisturbed sleep, even with a restless partner.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Comparison Section -->
+    <section class="comparison" data-sl-section="features">
+        <div class="container">
+            <div class="section-header">
+                <h2 data-sl-editable="true">The Pearl Advantage</h2>
+                <p data-sl-editable="true">See how Pearl surpasses other luxury brands</p>
+            </div>
+            <div class="comparison-table">
+                <div class="comparison-row">
+                    <div class="comparison-cell" data-sl-editable="true">Feature</div>
+                    <div class="comparison-cell" data-sl-editable="true">Pearl</div>
+                    <div class="comparison-cell" data-sl-editable="true">Competitor A</div>
+                    <div class="comparison-cell" data-sl-editable="true">Competitor B</div>
+                </div>
+                <div class="comparison-row">
+                    <div class="comparison-cell" data-sl-editable="true">Sleep Trial Period</div>
+                    <div class="comparison-cell comparison-pearl" data-sl-editable="true">365 Nights</div>
+                    <div class="comparison-cell" data-sl-editable="true">100 Nights</div>
+                    <div class="comparison-cell" data-sl-editable="true">90 Nights</div>
+                </div>
+                <div class="comparison-row">
+                    <div class="comparison-cell" data-sl-editable="true">Warranty</div>
+                    <div class="comparison-cell comparison-pearl" data-sl-editable="true">25 Years</div>
+                    <div class="comparison-cell" data-sl-editable="true">10 Years</div>
+                    <div class="comparison-cell" data-sl-editable="true">15 Years</div>
+                </div>
+                <div class="comparison-row">
+                    <div class="comparison-cell" data-sl-editable="true">White Glove Delivery</div>
+                    <div class="comparison-cell comparison-pearl"><span class="check-mark">✓</span></div>
+                    <div class="comparison-cell" data-sl-editable="true">Extra Fee</div>
+                    <div class="comparison-cell" data-sl-editable="true">Not Available</div>
+                </div>
+                <div class="comparison-row">
+                    <div class="comparison-cell" data-sl-editable="true">24/7 Sleep Concierge</div>
+                    <div class="comparison-cell comparison-pearl"><span class="check-mark">✓</span></div>
+                    <div class="comparison-cell">—</div>
+                    <div class="comparison-cell">—</div>
+                </div>
+                <div class="comparison-row">
+                    <div class="comparison-cell" data-sl-editable="true">Organic Materials</div>
+                    <div class="comparison-cell comparison-pearl" data-sl-editable="true">100% Certified</div>
+                    <div class="comparison-cell" data-sl-editable="true">Partial</div>
+                    <div class="comparison-cell" data-sl-editable="true">Not Certified</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Final CTA Section -->
+    <section class="final-cta" data-sl-section="cta">
+        <div class="container">
+            <h2 data-sl-editable="true">Transform Your Sleep Tonight</h2>
+            <p data-sl-editable="true">Join thousands who've discovered the Pearl difference</p>
+            <a href="#" class="btn btn-primary" data-sl-editable="true">Shop Premium Collection</a>
+            <div class="financing-badge" data-sl-editable="true">
+                💳 0% APR Financing for 24 Months - Limited Time
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer" data-sl-section="footer">
+        <div class="container">
+            <div class="footer-grid">
+                <div>
+                    <img src="https://static.vecteezy.com/system/resources/previews/009/178/125/large_2x/url-letter-logo-design-with-polygon-shape-url-polygon-and-cube-shape-logo-design-url-hexagon-logo-template-white-and-black-colors-url-monogram-business-and-real-estate-logo-vector.jpg" alt="Pearl Logo" class="footer-logo">
+                    <p data-sl-editable="true">Elevating sleep to an art form since 2024</p>
+                    <p><a href="tel:5552343234" style="color: var(--accent-gold); text-decoration: none; font-size: 20px; font-weight: 600;" data-sl-editable="true">555 234 3234</a></p>
+                </div>
+                <div>
+                    <h4 data-sl-editable="true">Customer Care</h4>
+                    <ul class="footer-links">
+                        <li><a href="#" data-sl-editable="true">365-Night Trial</a></li>
+                        <li><a href="#" data-sl-editable="true">Warranty Information</a></li>
+                        <li><a href="#" data-sl-editable="true">Care Instructions</a></li>
+                        <li><a href="#" data-sl-editable="true">Contact Concierge</a></li>
+                    </ul>
+                </div>
+                <div>
+                    <h4 data-sl-editable="true">Company</h4>
+                    <ul class="footer-links">
+                        <li><a href="#" data-sl-editable="true">Our Story</a></li>
+                        <li><a href="#" data-sl-editable="true">Sustainability</a></li>
+                        <li><a href="#" data-sl-editable="true">Reviews</a></li>
+                        <li><a href="#" data-sl-editable="true">Certifications</a></li>
+                    </ul>
+                </div>
+                <div>
+                    <h4 data-sl-editable="true">Legal</h4>
+                    <ul class="footer-links">
+                        <li><a href="#" data-sl-editable="true">Privacy Policy</a></li>
+                        <li><a href="#" data-sl-editable="true">Terms of Service</a></li>
+                        <li><a href="#" data-sl-editable="true">Return Policy</a></li>
+                        <li><a href="#" data-sl-editable="true">Financing Terms</a></li>
+                    </ul>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p data-sl-editable="true">© 2024 Pearl. All rights reserved. Sleep perfected.</p>
+            </div>
+        </div>
+    </footer>
+</body>
+</html>
