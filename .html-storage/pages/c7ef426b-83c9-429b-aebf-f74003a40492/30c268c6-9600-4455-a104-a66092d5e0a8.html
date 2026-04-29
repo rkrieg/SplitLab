@@ -1,0 +1,1154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>cricket - Championship-Grade Cricket Equipment for Serious Players</title>
+    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        :root {
+            --forest-green: #1B4332;
+            --gold: #D4AF37;
+            --cream: #FAF7F0;
+            --dark-green: #0D2818;
+            --light-gold: #F4E5C2;
+            --white: #FFFFFF;
+            --black: #000000;
+        }
+        
+        body {
+            font-family: 'Inter', sans-serif;
+            color: var(--forest-green);
+            line-height: 1.6;
+            background-color: var(--white);
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 20px;
+        }
+        
+        /* Typography */
+        h1, h2, h3 {
+            font-family: 'Playfair Display', serif;
+            font-weight: 700;
+            line-height: 1.2;
+        }
+        
+        h1 {
+            font-size: clamp(36px, 5vw, 56px);
+            margin-bottom: 24px;
+        }
+        
+        h2 {
+            font-size: clamp(28px, 4vw, 42px);
+            margin-bottom: 20px;
+        }
+        
+        h3 {
+            font-size: clamp(20px, 3vw, 28px);
+            margin-bottom: 16px;
+        }
+        
+        p {
+            font-size: 18px;
+            margin-bottom: 16px;
+            font-weight: 300;
+        }
+        
+        /* Header */
+        .header-contact {
+            background-color: var(--forest-green);
+            padding: 12px 0;
+            text-align: center;
+        }
+        
+        .header-contact a {
+            color: var(--gold);
+            text-decoration: none;
+            font-size: 16px;
+            font-weight: 500;
+        }
+        
+        .logo-section {
+            background-color: var(--cream);
+            padding: 20px 0;
+            text-align: center;
+        }
+        
+        .logo {
+            height: 60px;
+            width: auto;
+        }
+        
+        /* Hero Section */
+        .hero {
+            background: linear-gradient(135deg, rgba(27, 67, 50, 0.9), rgba(13, 40, 24, 0.95)), url('https://images.pexels.com/photos/3657154/pexels-photo-3657154.jpeg') center/cover;
+            min-height: 85vh;
+            display: flex;
+            align-items: center;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .hero-content {
+            text-align: center;
+            color: var(--white);
+            z-index: 2;
+        }
+        
+        .hero h1 {
+            color: var(--white);
+            margin-bottom: 32px;
+        }
+        
+        .hero-subtitle {
+            font-size: 24px;
+            margin-bottom: 40px;
+            color: var(--gold);
+            font-weight: 300;
+        }
+        
+        /* Buttons */
+        .btn-primary {
+            background-color: var(--gold);
+            color: var(--forest-green);
+            padding: 18px 48px;
+            font-size: 18px;
+            font-weight: 600;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: inline-block;
+            text-decoration: none;
+            min-width: 250px;
+            box-shadow: 0 4px 20px rgba(212, 175, 55, 0.3);
+        }
+        
+        .btn-primary:hover {
+            background-color: var(--light-gold);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 30px rgba(212, 175, 55, 0.4);
+        }
+        
+        .btn-secondary {
+            background-color: transparent;
+            color: var(--gold);
+            border: 2px solid var(--gold);
+            padding: 16px 40px;
+            font-size: 16px;
+            font-weight: 500;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: inline-block;
+            text-decoration: none;
+        }
+        
+        .btn-secondary:hover {
+            background-color: var(--gold);
+            color: var(--forest-green);
+        }
+        
+        /* Social Proof Bar */
+        .social-proof {
+            background-color: var(--forest-green);
+            padding: 40px 0;
+            text-align: center;
+        }
+        
+        .social-proof-content {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 60px;
+            flex-wrap: wrap;
+        }
+        
+        .social-proof-item {
+            color: var(--gold);
+        }
+        
+        .social-proof-number {
+            font-size: 36px;
+            font-weight: 700;
+            display: block;
+        }
+        
+        .social-proof-label {
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        /* Featured Products */
+        .featured-products {
+            padding: 100px 0;
+            background-color: var(--cream);
+        }
+        
+        .section-header {
+            text-align: center;
+            margin-bottom: 60px;
+        }
+        
+        .section-subtitle {
+            color: var(--gold);
+            font-size: 18px;
+            font-weight: 400;
+            margin-bottom: 12px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+        
+        .product-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 40px;
+            margin-bottom: 60px;
+        }
+        
+        .product-card {
+            background-color: var(--white);
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.08);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            position: relative;
+        }
+        
+        .product-card:hover {
+            transform: translateY(-8px);
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.12);
+        }
+        
+        .product-badge {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background-color: var(--gold);
+            color: var(--forest-green);
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        
+        .product-image {
+            width: 100%;
+            height: 300px;
+            object-fit: cover;
+        }
+        
+        .product-info {
+            padding: 32px;
+        }
+        
+        .product-title {
+            font-size: 24px;
+            margin-bottom: 12px;
+            color: var(--forest-green);
+        }
+        
+        .product-description {
+            color: #666;
+            margin-bottom: 20px;
+            font-size: 16px;
+        }
+        
+        .product-price {
+            font-size: 28px;
+            color: var(--gold);
+            font-weight: 700;
+            margin-bottom: 24px;
+        }
+        
+        /* Benefits Section */
+        .benefits {
+            padding: 100px 0;
+            background-color: var(--white);
+        }
+        
+        .benefits-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 40px;
+        }
+        
+        .benefit-item {
+            text-align: center;
+            padding: 40px;
+            background-color: var(--cream);
+            border-radius: 12px;
+            transition: transform 0.3s ease;
+        }
+        
+        .benefit-item:hover {
+            transform: translateY(-4px);
+        }
+        
+        .benefit-icon {
+            width: 80px;
+            height: 80px;
+            background-color: var(--gold);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 24px;
+            font-size: 36px;
+            color: var(--forest-green);
+        }
+        
+        /* Expert Recommendations */
+        .expert-recommendations {
+            padding: 100px 0;
+            background: linear-gradient(180deg, var(--cream) 0%, var(--white) 100%);
+        }
+        
+        .expert-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 40px;
+            margin-top: 60px;
+        }
+        
+        .expert-card {
+            background-color: var(--white);
+            padding: 40px;
+            border-radius: 12px;
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.06);
+            text-align: center;
+        }
+        
+        .expert-image {
+            width: 120px;
+            height: 120px;
+            border-radius: 50%;
+            object-fit: cover;
+            margin-bottom: 24px;
+        }
+        
+        .expert-name {
+            font-size: 22px;
+            color: var(--forest-green);
+            margin-bottom: 8px;
+        }
+        
+        .expert-title {
+            color: var(--gold);
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 20px;
+        }
+        
+        .expert-quote {
+            font-style: italic;
+            color: #666;
+            line-height: 1.8;
+        }
+        
+        /* 360 Product Spotlight */
+        .product-spotlight {
+            padding: 100px 0;
+            background-color: var(--forest-green);
+            color: var(--white);
+        }
+        
+        .spotlight-content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 80px;
+            align-items: center;
+        }
+        
+        .spotlight-image-container {
+            position: relative;
+            background-color: var(--cream);
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        }
+        
+        .spotlight-image {
+            width: 100%;
+            height: 400px;
+            object-fit: contain;
+        }
+        
+        .rotate-badge {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background-color: var(--gold);
+            color: var(--forest-green);
+            padding: 12px 24px;
+            border-radius: 30px;
+            font-weight: 600;
+        }
+        
+        .spotlight-info h2 {
+            color: var(--white);
+            margin-bottom: 32px;
+        }
+        
+        .spotlight-features {
+            list-style: none;
+            margin-bottom: 40px;
+        }
+        
+        .spotlight-features li {
+            padding: 12px 0;
+            display: flex;
+            align-items: center;
+            font-size: 18px;
+        }
+        
+        .spotlight-features li:before {
+            content: "✓";
+            color: var(--gold);
+            font-size: 24px;
+            margin-right: 16px;
+        }
+        
+        /* Testimonials */
+        .testimonials {
+            padding: 100px 0;
+            background-color: var(--cream);
+        }
+        
+        .testimonial-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 40px;
+            margin-top: 60px;
+        }
+        
+        .testimonial-card {
+            background-color: var(--white);
+            padding: 40px;
+            border-radius: 16px;
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.06);
+            position: relative;
+        }
+        
+        .testimonial-video {
+            width: 100%;
+            height: 200px;
+            background-color: var(--forest-green);
+            border-radius: 12px;
+            margin-bottom: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--gold);
+            font-size: 48px;
+            cursor: pointer;
+        }
+        
+        .stars {
+            color: var(--gold);
+            font-size: 20px;
+            margin-bottom: 16px;
+        }
+        
+        .testimonial-text {
+            font-style: italic;
+            color: #666;
+            line-height: 1.8;
+            margin-bottom: 24px;
+        }
+        
+        .testimonial-author {
+            font-weight: 600;
+            color: var(--forest-green);
+        }
+        
+        .testimonial-product {
+            color: var(--gold);
+            font-size: 14px;
+        }
+        
+        /* Mobile App Section */
+        .mobile-app {
+            padding: 100px 0;
+            background: linear-gradient(135deg, var(--forest-green) 0%, var(--dark-green) 100%);
+            color: var(--white);
+        }
+        
+        .app-content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 80px;
+            align-items: center;
+        }
+        
+        .app-info h2 {
+            color: var(--white);
+            margin-bottom: 24px;
+        }
+        
+        .app-features {
+            list-style: none;
+            margin-bottom: 40px;
+        }
+        
+        .app-features li {
+            padding: 16px 0;
+            font-size: 18px;
+            display: flex;
+            align-items: center;
+        }
+        
+        .app-features li:before {
+            content: "📱";
+            margin-right: 16px;
+            font-size: 24px;
+        }
+        
+        .app-buttons {
+            display: flex;
+            gap: 20px;
+        }
+        
+        .app-mockup {
+            text-align: center;
+        }
+        
+        .app-mockup img {
+            width: 100%;
+            max-width: 400px;
+            height: auto;
+        }
+        
+        /* Premium Services */
+        .premium-services {
+            padding: 100px 0;
+            background-color: var(--white);
+        }
+        
+        .services-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 40px;
+            margin-top: 60px;
+        }
+        
+        .service-card {
+            background-color: var(--cream);
+            padding: 48px;
+            border-radius: 16px;
+            text-align: center;
+            transition: transform 0.3s ease;
+            border: 2px solid transparent;
+        }
+        
+        .service-card:hover {
+            transform: translateY(-8px);
+            border-color: var(--gold);
+        }
+        
+        .service-icon {
+            font-size: 48px;
+            margin-bottom: 24px;
+        }
+        
+        .service-title {
+            color: var(--forest-green);
+            margin-bottom: 16px;
+        }
+        
+        .service-description {
+            color: #666;
+            margin-bottom: 32px;
+        }
+        
+        /* Newsletter Section */
+        .newsletter {
+            padding: 100px 0;
+            background-color: var(--forest-green);
+            color: var(--white);
+            text-align: center;
+        }
+        
+        .newsletter h2 {
+            color: var(--white);
+            margin-bottom: 24px;
+        }
+        
+        .newsletter-subtitle {
+            font-size: 20px;
+            margin-bottom: 40px;
+            color: var(--gold);
+        }
+        
+        .newsletter-form {
+            max-width: 600px;
+            margin: 0 auto;
+            display: flex;
+            gap: 16px;
+        }
+        
+        .newsletter-input {
+            flex: 1;
+            padding: 18px 24px;
+            font-size: 16px;
+            border: none;
+            border-radius: 8px;
+            background-color: var(--white);
+            color: var(--forest-green);
+        }
+        
+        .newsletter-input::placeholder {
+            color: #999;
+        }
+        
+        .newsletter-benefits {
+            display: flex;
+            justify-content: center;
+            gap: 40px;
+            margin-top: 40px;
+            flex-wrap: wrap;
+        }
+        
+        .newsletter-benefit {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 16px;
+        }
+        
+        /* Footer */
+        .footer {
+            background-color: var(--dark-green);
+            padding: 60px 0 40px;
+            color: var(--white);
+        }
+        
+        .footer-content {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 40px;
+            margin-bottom: 40px;
+        }
+        
+        .footer-section h4 {
+            color: var(--gold);
+            margin-bottom: 20px;
+            font-size: 18px;
+        }
+        
+        .footer-section p, .footer-section a {
+            color: rgba(255, 255, 255, 0.8);
+            text-decoration: none;
+            line-height: 2;
+            display: block;
+        }
+        
+        .footer-section a:hover {
+            color: var(--gold);
+        }
+        
+        .footer-bottom {
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            padding-top: 32px;
+            text-align: center;
+            color: rgba(255, 255, 255, 0.6);
+        }
+        
+        /* Sticky CTA Mobile */
+        .sticky-cta {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background-color: var(--forest-green);
+            padding: 16px;
+            display: none;
+            z-index: 1000;
+            box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.1);
+        }
+        
+        .sticky-cta .btn-primary {
+            width: 100%;
+            margin: 0;
+        }
+        
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            .container {
+                padding: 0 16px;
+            }
+            
+            h1 {
+                font-size: 32px;
+            }
+            
+            h2 {
+                font-size: 28px;
+            }
+            
+            h3 {
+                font-size: 22px;
+            }
+            
+            p {
+                font-size: 16px;
+            }
+            
+            .hero {
+                min-height: 70vh;
+            }
+            
+            .hero-subtitle {
+                font-size: 20px;
+            }
+            
+            .social-proof-content {
+                gap: 30px;
+            }
+            
+            .spotlight-content,
+            .app-content {
+                grid-template-columns: 1fr;
+                gap: 40px;
+            }
+            
+            .newsletter-form {
+                flex-direction: column;
+            }
+            
+            .newsletter-input,
+            .btn-primary {
+                width: 100%;
+            }
+            
+            .sticky-cta {
+                display: block;
+            }
+            
+            .product-grid,
+            .expert-grid,
+            .testimonial-grid,
+            .services-grid {
+                grid-template-columns: 1fr;
+                gap: 30px;
+            }
+            
+            .section-header {
+                margin-bottom: 40px;
+            }
+            
+            .featured-products,
+            .benefits,
+            .expert-recommendations,
+            .product-spotlight,
+            .testimonials,
+            .mobile-app,
+            .premium-services,
+            .newsletter {
+                padding: 60px 0;
+            }
+        }
+        
+        @media (max-width: 480px) {
+            .btn-primary {
+                padding: 16px 32px;
+                font-size: 16px;
+                min-width: auto;
+            }
+            
+            .social-proof-item {
+                min-width: 120px;
+            }
+            
+            .social-proof-number {
+                font-size: 28px;
+            }
+            
+            .product-card {
+                margin: 0;
+            }
+            
+            .benefit-item {
+                padding: 30px 20px;
+            }
+            
+            .expert-card,
+            .testimonial-card,
+            .service-card {
+                padding: 30px 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Header Contact -->
+    <div class="header-contact">
+        <a href="tel:5521231233" data-sl-editable="true">📞 Call Us: 552 123 1233</a>
+    </div>
+    
+    <!-- Logo Section -->
+    <div class="logo-section">
+        <img src="https://static.vecteezy.com/system/resources/previews/009/178/125/large_2x/url-letter-logo-design-with-polygon-shape-url-polygon-and-cube-shape-logo-design-url-hexagon-logo-template-white-and-black-colors-url-monogram-business-and-real-estate-logo-vector.jpg" alt="cricket logo" class="logo">
+    </div>
+
+    <!-- Hero Section -->
+    <section class="hero" data-sl-section="hero">
+        <div class="container">
+            <div class="hero-content">
+                <h1 data-sl-editable="true">Elevate Your Game with Championship-Grade Cricket Equipment</h1>
+                <p class="hero-subtitle" data-sl-editable="true">Where champions trust their performance to premium craftsmanship</p>
+                <button class="btn-primary" data-sl-editable="true">Shop Premium Collection</button>
+            </div>
+        </div>
+    </section>
+
+    <!-- Social Proof Bar -->
+    <section class="social-proof">
+        <div class="container">
+            <div class="social-proof-content">
+                <div class="social-proof-item">
+                    <span class="social-proof-number" data-sl-editable="true">50,000+</span>
+                    <span class="social-proof-label" data-sl-editable="true">Professional Players</span>
+                </div>
+                <div class="social-proof-item">
+                    <span class="social-proof-number" data-sl-editable="true">25</span>
+                    <span class="social-proof-label" data-sl-editable="true">International Teams</span>
+                </div>
+                <div class="social-proof-item">
+                    <span class="social-proof-number" data-sl-editable="true">98%</span>
+                    <span class="social-proof-label" data-sl-editable="true">Satisfaction Rate</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Featured Products -->
+    <section class="featured-products" data-sl-section="features">
+        <div class="container">
+            <div class="section-header">
+                <p class="section-subtitle" data-sl-editable="true">Premium Collections</p>
+                <h2 data-sl-editable="true">Handcrafted Excellence for Elite Performance</h2>
+            </div>
+            
+            <div class="product-grid">
+                <div class="product-card">
+                    <span class="product-badge" data-sl-editable="true">Limited Edition</span>
+                    <img src="https://images.pexels.com/photos/3657154/pexels-photo-3657154.jpeg" alt="Professional Cricket Bat" class="product-image">
+                    <div class="product-info">
+                        <h3 class="product-title" data-sl-editable="true">Professional Bats</h3>
+                        <p class="product-description" data-sl-editable="true">Hand-selected English willow, perfectly balanced for maximum power and control</p>
+                        <p class="product-price" data-sl-editable="true">From $899</p>
+                        <button class="btn-primary" data-sl-editable="true">Explore Collection</button>
+                    </div>
+                </div>
+                
+                <div class="product-card">
+                    <span class="product-badge" data-sl-editable="true">New Arrival</span>
+                    <img src="https://images.pexels.com/photos/3621234/pexels-photo-3621234.jpeg" alt="Elite Protective Gear" class="product-image">
+                    <div class="product-info">
+                        <h3 class="product-title" data-sl-editable="true">Elite Protective Gear</h3>
+                        <p class="product-description" data-sl-editable="true">Advanced protection technology meets uncompromising comfort</p>
+                        <p class="product-price" data-sl-editable="true">From $599</p>
+                        <button class="btn-primary" data-sl-editable="true">Shop Protection</button>
+                    </div>
+                </div>
+                
+                <div class="product-card">
+                    <span class="product-badge" data-sl-editable="true">Bestseller</span>
+                    <img src="https://images.pexels.com/photos/4219639/pexels-photo-4219639.jpeg" alt="Match-Day Essentials" class="product-image">
+                    <div class="product-info">
+                        <h3 class="product-title" data-sl-editable="true">Match-Day Essentials</h3>
+                        <p class="product-description" data-sl-editable="true">Complete your professional kit with premium accessories</p>
+                        <p class="product-price" data-sl-editable="true">From $299</p>
+                        <button class="btn-primary" data-sl-editable="true">View Essentials</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Benefits -->
+    <section class="benefits" data-sl-section="features">
+        <div class="container">
+            <div class="section-header">
+                <p class="section-subtitle" data-sl-editable="true">The cricket Difference</p>
+                <h2 data-sl-editable="true">Why Champions Choose cricket</h2>
+            </div>
+            
+            <div class="benefits-grid">
+                <div class="benefit-item">
+                    <div class="benefit-icon">🚚</div>
+                    <h3 data-sl-editable="true">White Glove Delivery</h3>
+                    <p data-sl-editable="true">Complimentary express shipping with professional setup consultation</p>
+                </div>
+                
+                <div class="benefit-item">
+                    <div class="benefit-icon">🛡️</div>
+                    <h3 data-sl-editable="true">Lifetime Warranty</h3>
+                    <p data-sl-editable="true">Unconditional quality guarantee on all premium equipment</p>
+                </div>
+                
+                <div class="benefit-item">
+                    <div class="benefit-icon">🏆</div>
+                    <h3 data-sl-editable="true">Expert Curation</h3>
+                    <p data-sl-editable="true">Every piece personally selected by professional players</p>
+                </div>
+                
+                <div class="benefit-item">
+                    <div class="benefit-icon">✨</div>
+                    <h3 data-sl-editable="true">Bespoke Service</h3>
+                    <p data-sl-editable="true">Custom equipment tailored to your playing style</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Expert Recommendations -->
+    <section class="expert-recommendations" data-sl-section="about">
+        <div class="container">
+            <div class="section-header">
+                <p class="section-subtitle" data-sl-editable="true">Trusted by Legends</p>
+                <h2 data-sl-editable="true">Professional Endorsements</h2>
+            </div>
+            
+            <div class="expert-grid">
+                <div class="expert-card">
+                    <img src="https://images.pexels.com/photos/927451/pexels-photo-927451.jpeg" alt="Cricket Expert" class="expert-image">
+                    <h3 class="expert-name" data-sl-editable="true">James Mitchell</h3>
+                    <p class="expert-title" data-sl-editable="true">Former Test Captain</p>
+                    <p class="expert-quote" data-sl-editable="true">"cricket equipment has been instrumental in my career. The attention to detail and quality is simply unmatched."</p>
+                </div>
+                
+                <div class="expert-card">
+                    <img src="https://images.pexels.com/photos/1222271/pexels-photo-1222271.jpeg" alt="Cricket Expert" class="expert-image">
+                    <h3 class="expert-name" data-sl-editable="true">Sarah Thompson</h3>
+                    <p class="expert-title" data-sl-editable="true">World Cup Winner</p>
+                    <p class="expert-quote" data-sl-editable="true">"When you're facing the world's best, you need equipment that matches your ambition. cricket delivers every time."</p>
+                </div>
+                
+                <div class="expert-card">
+                    <img src="https://images.pexels.com/photos/91227/pexels-photo-91227.jpeg" alt="Cricket Expert" class="expert-image">
+                    <h3 class="expert-name" data-sl-editable="true">Michael Chen</h3>
+                    <p class="expert-title" data-sl-editable="true">International Coach</p>
+                    <p class="expert-quote" data-sl-editable="true">"I recommend cricket to all my players. Their commitment to excellence aligns perfectly with our training philosophy."</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- 360° Product Spotlight -->
+    <section class="product-spotlight" data-sl-section="features">
+        <div class="container">
+            <div class="spotlight-content">
+                <div class="spotlight-image-container">
+                    <span class="rotate-badge" data-sl-editable="true">360° View</span>
+                    <img src="https://images.pexels.com/photos/3657154/pexels-photo-3657154.jpeg" alt="Premium Cricket Bat 360 View" class="spotlight-image">
+                </div>
+                
+                <div class="spotlight-info">
+                    <p class="section-subtitle" data-sl-editable="true">Featured Innovation</p>
+                    <h2 data-sl-editable="true">The Signature Series Pro Bat</h2>
+                    <p data-sl-editable="true">Experience the pinnacle of cricket bat engineering with our flagship model, trusted by international champions.</p>
+                    
+                    <ul class="spotlight-features">
+                        <li data-sl-editable="true">Grade 1+ English Willow</li>
+                        <li data-sl-editable="true">Precision Weight Distribution</li>
+                        <li data-sl-editable="true">Extended Sweet Spot Technology</li>
+                        <li data-sl-editable="true">Hand-finished by Master Craftsmen</li>
+                        <li data-sl-editable="true">Personalized Engraving Available</li>
+                    </ul>
+                    
+                    <button class="btn-primary" data-sl-editable="true">Explore Signature Series</button>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Testimonials -->
+    <section class="testimonials" data-sl-section="testimonials">
+        <div class="container">
+            <div class="section-header">
+                <p class="section-subtitle" data-sl-editable="true">Success Stories</p>
+                <h2 data-sl-editable="true">Champions Trust cricket</h2>
+            </div>
+            
+            <div class="testimonial-grid">
+                <div class="testimonial-card">
+                    <div class="testimonial-video">▶</div>
+                    <div class="stars" data-sl-editable="true">★★★★★</div>
+                    <p class="testimonial-text" data-sl-editable="true">"The moment I picked up my cricket bat, I knew this was different. The balance, the pickup, the power - it's transformed my game completely."</p>
+                    <p class="testimonial-author" data-sl-editable="true">David Williams</p>
+                    <p class="testimonial-product" data-sl-editable="true">Signature Series Pro Bat</p>
+                </div>
+                
+                <div class="testimonial-card">
+                    <div class="testimonial-video">▶</div>
+                    <div class="stars" data-sl-editable="true">★★★★★</div>
+                    <p class="testimonial-text" data-sl-editable="true">"As a professional player, I can't afford to compromise on equipment. cricket's protective gear gives me the confidence to face any bowler."</p>
+                    <p class="testimonial-author" data-sl-editable="true">Emma Roberts</p>
+                    <p class="testimonial-product" data-sl-editable="true">Elite Protection Range</p>
+                </div>
+                
+                <div class="testimonial-card">
+                    <div class="testimonial-video">▶</div>
+                    <div class="stars" data-sl-editable="true">★★★★★</div>
+                    <p class="testimonial-text" data-sl-editable="true">"The customer service is as premium as the products. They helped me find the perfect equipment for my playing style. Exceptional experience!"</p>
+                    <p class="testimonial-author" data-sl-editable="true">Raj Patel</p>
+                    <p class="testimonial-product" data-sl-editable="true">Custom Equipment Service</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Mobile App Section -->
+    <section class="mobile-app" data-sl-section="features">
+        <div class="container">
+            <div class="app-content">
+                <div class="app-info">
+                    <p class="section-subtitle" data-sl-editable="true">Exclusive Access</p>
+                    <h2 data-sl-editable="true">The cricket Premium App</h2>
+                    <p data-sl-editable="true">Join the elite circle of cricket enthusiasts with exclusive app-only benefits and first access to limited editions.</p>
+                    
+                    <ul class="app-features">
+                        <li data-sl-editable="true">Early access to new collections</li>
+                        <li data-sl-editable="true">Virtual equipment consultations</li>
+                        <li data-sl-editable="true">Personalized training programs</li>
+                        <li data-sl-editable="true">Members-only pricing</li>
+                        <li data-sl-editable="true">Performance tracking tools</li>
+                    </ul>
+                    
+                    <div class="app-buttons">
+                        <button class="btn-primary" data-sl-editable="true">Download Now</button>
+                        <button class="btn-secondary" data-sl-editable="true">Learn More</button>
+                    </div>
+                </div>
+                
+                <div class="app-mockup">
+                    <img src="https://images.pexels.com/photos/1092671/pexels-photo-1092671.jpeg" alt="cricket App Interface">
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Premium Services -->
+    <section class="premium-services" data-sl-section="services">
+        <div class="container">
+            <div class="section-header">
+                <p class="section-subtitle" data-sl-editable="true">Exclusive Services</p>
+                <h2 data-sl-editable="true">Beyond Equipment Excellence</h2>
+            </div>
+            
+            <div class="services-grid">
+                <div class="service-card">
+                    <div class="service-icon">👤</div>
+                    <h3 class="service-title" data-sl-editable="true">Personal Consultation</h3>
+                    <p class="service-description" data-sl-editable="true">One-on-one equipment selection with our cricket experts</p>
+                    <button class="btn-secondary" data-sl-editable="true">Book Session</button>
+                </div>
+                
+                <div class="service-card">
+                    <div class="service-icon">🎨</div>
+                    <h3 class="service-title" data-sl-editable="true">Custom Design</h3>
+                    <p class="service-description" data-sl-editable="true">Create bespoke equipment tailored to your specifications</p>
+                    <button class="btn-secondary" data-sl-editable="true">Start Design</button>
+                </div>
+                
+                <div class="service-card">
+                    <div class="service-icon">🔧</div>
+                    <h3 class="service-title" data-sl-editable="true">Maintenance Program</h3>
+                    <p class="service-description" data-sl-editable="true">Professional care to extend your equipment's peak performance</p>
+                    <button class="btn-secondary" data-sl-editable="true">Learn More</button>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Newsletter Section -->
+    <section class="newsletter" data-sl-section="cta">
+        <div class="container">
+            <p class="section-subtitle" data-sl-editable="true">Join the Elite Circle</p>
+            <h2 data-sl-editable="true">Exclusive Access Awaits</h2>
+            <p class="newsletter-subtitle" data-sl-editable="true">Be first to discover limited editions and receive member-only benefits</p>
+            
+            <form class="newsletter-form">
+                <input type="email" class="newsletter-input" placeholder="Enter your email address" required>
+                <button type="submit" class="btn-primary" data-sl-editable="true">Join Now</button>
+            </form>
+            
+            <div class="newsletter-benefits">
+                <div class="newsletter-benefit">
+                    <span>✓</span>
+                    <span data-sl-editable="true">15% Welcome Discount</span>
+                </div>
+                <div class="newsletter-benefit">
+                    <span>✓</span>
+                    <span data-sl-editable="true">Early Sale Access</span>
+                </div>
+                <div class="newsletter-benefit">
+                    <span>✓</span>
+                    <span data-sl-editable="true">Exclusive Content</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer" data-sl-section="footer">
+        <div class="container">
+            <div class="footer-content">
+                <div class="footer-section">
+                    <h4 data-sl-editable="true">Contact Excellence</h4>
+                    <p data-sl-editable="true">Premium Support Available 24/7</p>
+                    <a href="tel:5521231233" data-sl-editable="true">552 123 1233</a>
+                    <a href="mailto:concierge@cricket.com" data-sl-editable="true">concierge@cricket.com</a>
+                </div>
+                
+                <div class="footer-section">
+                    <h4 data-sl-editable="true">Customer Care</h4>
+                    <a href="#" data-sl-editable="true">Shipping & Delivery</a>
+                    <a href="#" data-sl-editable="true">Returns & Exchanges</a>
+                    <a href="#" data-sl-editable="true">Size Guide</a>
+                    <a href="#" data-sl-editable="true">Care Instructions</a>
+                </div>
+                
+                <div class="footer-section">
+                    <h4 data-sl-editable="true">Company</h4>
+                    <a href="#" data-sl-editable="true">Our Heritage</a>
+                    <a href="#" data-sl-editable="true">Sustainability</a>
+                    <a href="#" data-sl-editable="true">Careers</a>
+                    <a href="#" data-sl-editable="true">Press</a>
+                </div>
+                
+                <div class="footer-section">
+                    <h4 data-sl-editable="true">Legal</h4>
+                    <a href="#" data-sl-editable="true">Privacy Policy</a>
+                    <a href="#" data-sl-editable="true">Terms of Service</a>
+                    <a href="#" data-sl-editable="true">Return Policy</a>
+                </div>
+            </div>
+            
+            <div class="footer-bottom">
+                <p data-sl-editable="true">© 2024 cricket. Elevating the game since excellence began.</p>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Sticky CTA for Mobile -->
+    <div class="sticky-cta">
+        <button class="btn-primary" data-sl-editable="true">Shop Premium Collection</button>
+    </div>
+
+</body>
+</html>

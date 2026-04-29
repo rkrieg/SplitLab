@@ -251,7 +251,7 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
       case 'generating': {
         const statusMessages: Record<string, string> = {
           building_prompt: 'Building prompt...',
-          calling_claude: 'Generating page with Claude Opus...',
+          calling_claude: 'Generating page with Claude...',
           designing_with_stitch: 'Designing page with Google Stitch AI...',
           design_complete: 'Design ready! Optimizing for production...',
           refining_with_claude: 'Refining design with Claude...',

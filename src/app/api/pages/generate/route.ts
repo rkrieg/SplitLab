@@ -141,7 +141,7 @@ export async function POST(request: NextRequest) {
             const refined = await ask(user, {
               system,
               model: 'claude-sonnet-4-20250514',
-              maxTokens: 16384,
+              maxTokens: 8192,
             });
 
             finalHtml = refined.trim();
@@ -170,8 +170,8 @@ export async function POST(request: NextRequest) {
           sendEvent('generating', { status: 'calling_claude' });
           const html = await ask(user, {
             system,
-            model: 'claude-opus-4-20250514',
-            maxTokens: 16384,
+            model: 'claude-sonnet-4-20250514',
+            maxTokens: 8192,
           });
 
           finalHtml = html.trim();
