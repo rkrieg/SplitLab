@@ -40,7 +40,7 @@ const globalNavItems = [
 
 function getClientNavItems(clientId: string) {
   return [
-    { href: `/clients/${clientId}/pages`, label: 'Pages', icon: FileCode2 },
+    { href: `/clients/${clientId}/pages`, label: 'Pages', icon: FileCode2, exact: true },
     { href: `/clients/${clientId}/pages/builder`, label: 'AI Page Builder', icon: Wand2 },
     { href: `/clients/${clientId}/tests/new/ai`, label: 'AI Generate', icon: Sparkles },
     { href: `/clients/${clientId}/scripts`, label: 'Scripts', icon: Code2 },
@@ -96,8 +96,8 @@ export default function Sidebar() {
     ? getClientNavItems(selectedClient.id)
     : globalNavItems;
 
-  function isActive(href: string) {
-    if (href === '/dashboard') return pathname === '/dashboard';
+  function isActive(href: string, exact = false) {
+    if (href === '/dashboard' || exact) return pathname === href;
     return pathname.startsWith(href);
   }
 
@@ -240,13 +240,13 @@ export default function Sidebar() {
 
       {/* Navigation */}
       <nav className="flex-1 px-3 py-2 space-y-0.5">
-        {navItems.map(({ href, label, icon: Icon }) => (
+        {navItems.map(({ href, label, icon: Icon, exact }) => (
           <Link
             key={href}
             href={href}
             className={cn(
               'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
-              isActive(href)
+              isActive(href, !!exact)
                 ? 'bg-indigo-600/20 text-indigo-400 border border-indigo-600/30'
                 : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
             )}
