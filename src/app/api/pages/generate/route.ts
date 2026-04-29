@@ -210,7 +210,7 @@ export async function POST(request: NextRequest) {
           brand_settings: brandSettings || null,
           quality_score: quality.score,
           quality_details: quality.details,
-          source_type: useStitch ? 'stitch_generated' : 'ai_generated',
+          source_type: usedStitch ? 'stitch_generated' : 'ai_generated',
           version: 1,
         });
 
