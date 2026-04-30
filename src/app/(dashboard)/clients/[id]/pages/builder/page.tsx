@@ -5,10 +5,21 @@ import { db } from '@/lib/supabase-server';
 import Header from '@/components/layout/Header';
 import PageBuilderClient from './PageBuilderClient';
 
+interface InitialPage {
+  id: string;
+  name: string;
+  status: string;
+  html_content: string | null;
+  quality_score: number | null;
+  published_url: string | null;
+}
+
 export default async function PageBuilderPage({
   params,
+  searchParams,
 }: {
   params: { id: string };
+  searchParams: { pageId?: string };
 }) {
   const session = await getServerSession(authOptions);
   if (!session) redirect('/login');
@@ -27,6 +38,17 @@ export default async function PageBuilderPage({
     .eq('id', params.id)
     .single() as unknown as { data: { name: string } | null };
 
+  let initialPage: InitialPage | null = null;
+  if (searchParams.pageId) {
+    const { data: page } = await db
+      .from('pages')
+      .select('id, name, status, html_content, quality_score, published_url')
+      .eq('id', searchParams.pageId)
+      .eq('workspace_id', workspace.id)
+      .single() as unknown as { data: InitialPage | null };
+    initialPage = page ?? null;
+  }
+
   return (
     <div>
       <Header
@@ -37,6 +59,7 @@ export default async function PageBuilderPage({
         <PageBuilderClient
           workspaceId={workspace.id}
           clientId={params.id}
+          initialPage={initialPage}
         />
       </div>
     </div>

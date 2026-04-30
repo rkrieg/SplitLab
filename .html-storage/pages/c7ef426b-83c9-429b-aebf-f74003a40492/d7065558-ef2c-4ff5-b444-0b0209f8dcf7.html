@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>presale - Premium Tech Accessories That Elevate Your Digital Life</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary-navy: #1a365d;
+            --electric-blue: #3182ce;
+            --orange: #ff6b35;
+            --light-gray: #a0aec0;
+            --white: #ffffff;
+            --bg-gray: #f7fafc;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Inter', sans-serif; line-height: 1.6; color: #2d3748; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 0 20px; }
+        .btn-primary { background: var(--orange); color: white; padding: 16px 32px; border: none; border-radius: 8px; font-weight: 600; font-size: 16px; cursor: pointer; text-decoration: none; display: inline-block; transition: all 0.3s; min-height: 48px; min-width: 200px; }
+        .btn-primary:hover { background: #e55a2b; transform: translateY(-2px); }
+        .btn-secondary { color: var(--electric-blue); text-decoration: none; font-weight: 600; margin-left: 20px; }
+        .btn-secondary:hover { text-decoration: underline; }
+        section { padding: 80px 0; }
+        h1 { font-size: 48px; font-weight: 700; margin-bottom: 20px; }
+        h2 { font-size: 36px; font-weight: 700; margin-bottom: 20px; }
+        h3 { font-size: 24px; font-weight: 600; margin-bottom: 16px; }
+        p { font-size: 16px; margin-bottom: 16px; }
+        .text-center { text-align: center; }
+        .hero { background: linear-gradient(135deg, var(--primary-navy) 0%, var(--electric-blue) 100%); min-height: 100vh; display: flex; align-items: center; color: white; position: relative; }
+        .hero-content { text-align: center; }
+        .hero h1 { color: white; }
+        .hero p { color: var(--light-gray); font-size: 18px; max-width: 600px; margin: 0 auto 40px; }
+        .product-showcase { display: grid; grid-template-columns: repeat(2, 1fr); gap: 30px; margin: 60px 0; }
+        .product-card { background: rgba(255,255,255,0.1); border-radius: 12px; padding: 30px; transition: all 0.3s; border: 1px solid rgba(255,255,255,0.2); }
+        .product-card:hover { transform: translateY(-8px); background: rgba(255,255,255,0.15); }
+        .product-card img { width: 100%; height: 200px; object-fit: cover; border-radius: 8px; margin-bottom: 20px; }
+        .logo { height: 40px; margin-bottom: 20px; }
+        .social-proof { background: white; padding: 40px 0; border-bottom: 1px solid #e2e8f0; }
+        .social-proof-content { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; }
+        .social-stat { display: flex; align-items: center; gap: 10px; }
+        .social-avatars { display: flex; gap: -10px; }
+        .social-avatars img { width: 32px; height: 32px; border-radius: 50%; border: 2px solid white; }
+        .featured-products { background: var(--bg-gray); }
+        .product-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 30px; margin-top: 40px; }
+        .featured-card { background: white; border-radius: 12px; padding: 30px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); transition: all 0.3s; }
+        .featured-card:hover { transform: translateY(-5px); box-shadow: 0 8px 30px rgba(0,0,0,0.15); }
+        .featured-card img { width: 100%; height: 250px; object-fit: cover; border-radius: 8px; margin-bottom: 20px; }
+        .price { font-size: 20px; font-weight: 700; color: var(--orange); }
+        .old-price { text-decoration: line-through; color: #999; margin-right: 10px; }
+        .stars { color: #ffc107; margin: 10px 0; }
+        .badge { background: var(--orange); color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; position: absolute; top: 10px; right: 10px; }
+        .benefits-section { background: white; }
+        .benefits-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 40px; margin-top: 40px; }
+        .benefit-item { text-align: center; }
+        .benefit-icon { width: 80px; height: 80px; background: linear-gradient(135deg, var(--electric-blue), var(--primary-navy)); border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 20px; color: white; font-size: 24px; }
+        .reviews { background: var(--bg-gray); }
+        .review-card { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); margin: 20px; }
+        .reviewer { display: flex; align-items: center; gap: 15px; margin-bottom: 20px; }
+        .reviewer img { width: 50px; height: 50px; border-radius: 50%; }
+        .verified { background: var(--electric-blue); color: white; padding: 2px 6px; border-radius: 4px; font-size: 10px; }
+        .why-choose { background: white; }
+        .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 60px; align-items: center; }
+        .checklist { list-style: none; }
+        .checklist li { display: flex; align-items: center; gap: 15px; margin-bottom: 15px; font-size: 16px; }
+        .checklist li:before { content: "✓"; background: var(--electric-blue); color: white; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; }
+        .video-thumbnail { position: relative; border-radius: 12px; overflow: hidden; }
+        .play-overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; color: white; font-size: 48px; cursor: pointer; }
+        .newsletter { background: linear-gradient(rgba(26,54,93,0.8), rgba(26,54,93,0.8)), url('https://images.unsplash.com/photo-1560472355-536de3962603?w=1200&h=600&fit=crop') center/cover; color: white; text-align: center; }
+        .email-form { display: flex; gap: 15px; justify-content: center; max-width: 500px; margin: 0 auto; }
+        .email-form input { flex: 1; padding: 16px; border: none; border-radius: 8px; font-size: 16px; }
+        .faq { background: var(--bg-gray); }
+        .faq-item { background: white; border-radius: 8px; margin-bottom: 15px; }
+        .faq-question { padding: 20px; cursor: pointer; font-weight: 600; border-bottom: 1px solid #e2e8f0; }
+        .faq-answer { padding: 0 20px 20px; display: none; }
+        .footer { background: var(--primary-navy); color: white; padding: 60px 0 20px; }
+        .footer-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 40px; margin-bottom: 40px; }
+        .footer h4 { margin-bottom: 20px; }
+        .footer ul { list-style: none; }
+        .footer li { margin-bottom: 8px; }
+        .footer a { color: var(--light-gray); text-decoration: none; }
+        .footer a:hover { color: white; }
+        .payment-badges { display: flex; gap: 15px; justify-content: center; margin-top: 20px; }
+        .sticky-cta { position: fixed; bottom: 20px; right: 20px; z-index: 1000; display: none; }
+        @media (max-width: 768px) {
+            .container { padding: 0 15px; }
+            section { padding: 60px 0; }
+            h1 { font-size: 36px; }
+            h2 { font-size: 28px; }
+            .product-showcase, .product-grid, .benefits-grid, .footer-grid { grid-template-columns: 1fr; gap: 20px; }
+            .two-col { grid-template-columns: 1fr; gap: 40px; }
+            .social-proof-content { flex-direction: column; gap: 20px; text-align: center; }
+            .email-form { flex-direction: column; }
+            .sticky-cta { display: block; }
+        }
+        @media (max-width: 480px) {
+            .hero { min-height: 80vh; }
+            h1 { font-size: 28px; }
+            .product-card, .featured-card { padding: 20px; }
+        }
+    </style>
+</head>
+<body>
+    <section class="hero" data-sl-section="hero">
+        <div class="container">
+            <div class="hero-content">
+                <img src="https://static.vecteezy.com/system/resources/previews/009/178/125/large_2x/url-letter-logo-design-with-polygon-shape-url-polygon-and-cube-shape-logo-design-url-hexagon-logo-template-white-and-black-colors-url-monogram-business-and-real-estate-logo-vector.jpg" alt="presale logo" class="logo">
+                <h1 data-sl-editable="true">Premium Tech Accessories That Elevate Your Digital Life</h1>
+                <p data-sl-editable="true">Experience unmatched quality and innovation with our carefully curated collection of premium tech accessories designed for the modern professional.</p>
+                <div class="product-showcase">
+                    <div class="product-card">
+                        <img src="https://images.unsplash.com/photo-1572569511254-d8f925fe2cbb?w=400&h=200&fit=crop" alt="Wireless Charging Station">
+                        <h3 data-sl-editable="true">Wireless Charging Station</h3>
+                        <p data-sl-editable="true">Premium fast-charging technology</p>
+                    </div>
+                    <div class="product-card">
+                        <img src="https://images.unsplash.com/photo-1583394838336-acd977736f90?w=400&h=200&fit=crop" alt="Bluetooth Headphones">
+                        <h3 data-sl-editable="true">Pro Bluetooth Headphones</h3>
+                        <p data-sl-editable="true">Studio-quality sound engineering</p>
+                    </div>
+                    <div class="product-card">
+                        <img src="https://images.unsplash.com/photo-1527864550417-7fd91fc51a46?w=400&h=200&fit=crop" alt="Laptop Stand">
+                        <h3 data-sl-editable="true">Ergonomic Laptop Stand</h3>
+                        <p data-sl-editable="true">Aluminum construction with ventilation</p>
+                    </div>
+                    <div class="product-card">
+                        <img src="https://images.unsplash.com/photo-1609091839311-d5365f9ff1c5?w=400&h=200&fit=crop" alt="Cable Organizer">
+                        <h3 data-sl-editable="true">Smart Cable Management</h3>
+                        <p data-sl-editable="true">Magnetic modular organization system</p>
+                    </div>
+                </div>
+                <div>
+                    <a href="#products" class="btn-primary" data-sl-editable="true">Shop Premium Collection</a>
+                    <a href="#story" class="btn-secondary" data-sl-editable="true">Watch Our Story</a>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="social-proof" data-sl-section="social-proof">
+        <div class="container">
+            <div class="social-proof-content">
+                <div class="social-stat">
+                    <div class="social-avatars">
+                        <img src="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=50&h=50&fit=crop&crop=face" alt="Customer">
+                        <img src="https://images.unsplash.com/photo-1494790108755-2616b612b786?w=50&h=50&fit=crop&crop=face" alt="Customer">
+                        <img src="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=50&h=50&fit=crop&crop=face" alt="Customer">
+                    </div>
+                    <span data-sl-editable="true">50,000+ Happy Customers</span>
+                </div>
+                <div class="social-stat">
+                    <span class="stars">★★★★★</span>
+                    <span data-sl-editable="true">4.9/5 Average Rating</span>
+                </div>
+                <div class="social-stat">
+                    <span data-sl-editable="true">🚚 Free Shipping Over $75</span>
+                </div>
+                <div class="social-stat">
+                    <span data-sl-editable="true">🛡️ Lifetime Warranty</span>
+                </div>
+                <div class="social-stat">
+                    <span data-sl-editable="true">📞 <a href="tel:3243432343">324 343 2343</a></span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="featured-products" data-sl-section="featured" id="products">
+        <div class="container">
+            <div class="text-center">
+                <h2 data-sl-editable="true">Featured Premium Collection</h2>
+                <p data-sl-editable="true">Handpicked accessories that combine exceptional quality with innovative design</p>
+            </div>
+            <div class="product-grid">
+                <div class="featured-card" style="position: relative;">
+                    <span class="badge" data-sl-editable="true">Limited Time</span>
+                    <img src="https://images.unsplash.com/photo-1572569511254-d8f925fe2cbb?w=400&h=250&fit=crop" alt="Wireless Charging Station Premium">
+                    <h3 data-sl-editable="true">UltraCharge Pro Station</h3>
+                    <p data-sl-editable="true">15W fast wireless charging with cooling system</p>
+                    <div class="stars">★★★★★</div>
+                    <div class="price">
+                        <span class="old-price" data-sl-editable="true">$149</span>
+                        <span data-sl-editable="true">$119</span>
+                    </div>
+                    <button class="btn-primary" data-sl-editable="true">Add to Cart</button>
+                </div>
+                <div class="featured-card" style="position: relative;">
+                    <span class="badge" data-sl-editable="true">Limited Time</span>
+                    <img src="https://images.unsplash.com/photo-1583394838336-acd977736f90?w=400&h=250&fit=crop" alt="Premium Bluetooth Headphones">
+                    <h3 data-sl-editable="true">AudioMax Pro Headphones</h3>
+                    <p data-sl-editable="true">Active noise cancellation with 40-hour battery</p>
+                    <div class="stars">★★★★★</div>
+                    <div class="price">
+                        <span class="old-price" data-sl-editable="true">$299</span>
+                        <span data-sl-editable="true">$249</span>
+                    </div>
+                    <button class="btn-primary" data-sl-editable="true">Add to Cart</button>
+                </div>
+                <div class="featured-card">
+                    <img src="https://images.unsplash.com/photo-1527864550417-7fd91fc51a46?w=400&h=250&fit=crop" alt="Premium Laptop Stand">
+                    <h3 data-sl-editable="true">ErgoRise Laptop Stand</h3>
+                    <p data-sl-editable="true">CNC-machined aluminum with heat dissipation</p>
+                    <div class="stars">★★★★★</div>
+                    <div class="price">
+                        <span data-sl-editable="true">$89</span>
+                    </div>
+                    <button class="btn-primary" data-sl-editable="true">Add to Cart</button>
+                </div>
+                <div class="featured-card">
+                    <img src="https://images.unsplash.com/photo-1609091839311-d5365f9ff1c5?w=400&h=250&fit=crop" alt="Magnetic Cable Organizer">
+                    <h3 data-sl-editable="true">MagOrganize System</h3>
+                    <p data-sl-editable="true">Modular magnetic cable management solution</p>
+                    <div class="stars">★★★★★</div>
+                    <div class="price">
+                        <span data-sl-editable="true">$59</span>
+                    </div>
+                    <button class="btn-primary" data-sl-editable="true">Add to Cart</button>
+                </div>
+                <div class="featured-card">
+                    <img src="https://images.unsplash.com/photo-1560472355-536de3962603?w=400&h=250&fit=crop" alt="Multi-Device Hub">
+                    <h3 data-sl-editable="true">ConnectHub Pro</h3>
+                    <p data-sl-editable="true">7-in-1 USB-C hub with 4K display support</p>
+                    <div class="stars">★★★★★</div>
+                    <div class="price">
+                        <span data-sl-editable="true">$129</span>
+                    </div>
+                    <button class="btn-primary" data-sl-editable="true">Add to Cart</button>
+                </div>
+                <div class="featured-card">
+                    <img src="https://images.unsplash.com/photo-1484704849700-f032a568e944?w=400&h=250&fit=crop" alt="Desk Organizer">
+                    <h3 data-sl-editable="true">DeskMaster Organizer</h3>
+                    <p data-sl-editable="true">Bamboo desk organizer with wireless charging</p>
+                    <div class="stars">★★★★★</div>
+                    <div class="price">
+                        <span data-sl-editable="true">$79</span>
+                    </div>
+                    <button class="btn-primary" data-sl-editable="true">Add to Cart</button>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="benefits-section" data-sl-section="benefits">
+        <div class="container">
+            <div class="text-center">
+                <h2 data-sl-editable="true">Why presale Stands Apart</h2>
+                <p data-sl-editable="true">Every product is engineered with precision and backed by our commitment to excellence</p>
+            </div>
+            <div class="benefits-grid">
+                <div class="benefit-item">
+                    <div class="benefit-icon">🏆</div>
+                    <h3 data-sl-editable="true">Premium Materials</h3>
+                    <p data-sl-editable="true">Aircraft-grade aluminum, premium leather, and high-grade silicone ensure durability that lasts for years of daily use.</p>
+                    <img src="https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=300&h=200&fit=crop" alt="Premium materials showcase" style="width: 100%; height: 150px; object-fit: cover; border-radius: 8px; margin-top: 20px;">
+                </div>
+                <div class="benefit-item">
+                    <div class="benefit-icon">💡</div>
+                    <h3 data-sl-editable="true">Innovative Design</h3>
+                    <p data-sl-editable="true">Award-winning industrial design team creates products that seamlessly blend form and function for the modern workspace.</p>
+                    <img src="https://images.unsplash.com/photo-1559056199-641a0ac8b55e?w=300&h=200&fit=crop" alt="Innovative design process" style="width: 100%; height: 150px; object-fit: cover; border-radius: 8px; margin-top: 20px;">
+                </div>
+                <div class="benefit-item">
+                    <div class="benefit-icon">🛠️</div>
+                    <h3 data-sl-editable="true">Lifetime Support</h3>
+                    <p data-sl-editable="true">Dedicated customer success team provides lifetime warranty and support to ensure your complete satisfaction with every purchase.</p>
+                    <img src="https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?w=300&h=200&fit=crop" alt="Customer support team" style="width: 100%; height: 150px; object-fit: cover; border-radius: 8px; margin-top: 20px;">
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="reviews" data-sl-section="testimonials">
+        <div class="container">
+            <div class="text-center">
+                <h2 data-sl-editable="true">What Our Customers Say</h2>
+                <p data-sl-editable="true">Real reviews from verified customers who love their presale accessories</p>
+            </div>
+            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 30px; margin-top: 40px;">
+                <div class="review-card">
+                    <div class="reviewer">
+                        <img src="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=50&h=50&fit=crop&crop=face" alt="Michael Chen">
+                        <div>
+                            <h4 data-sl-editable="true">Michael Chen</h4>
+                            <span class="verified" data-sl-editable="true">VERIFIED</span>
+                        </div>
+                    </div>
+                    <div class="stars">★★★★★</div>
+                    <p data-sl-editable="true">"The UltraCharge Pro Station has completely transformed my desk setup. It charges all my devices simultaneously and the cooling system keeps everything at optimal temperature. Worth every penny!"</p>
+                </div>
+                <div class="review-card">
+                    <div class="reviewer">
+                        <img src="https://images.unsplash.com/photo-1494790108755-2616b612b786?w=50&h=50&fit=crop&crop=face" alt="Sarah Johnson">
+                        <div>
+                            <h4 data-sl-editable="true">Sarah Johnson</h4>
+                            <span class="verified" data-sl-editable="true">VERIFIED</span>
+                        </div>
+                    </div>
+                    <div class="stars">★★★★★</div>
+                    <p data-sl-editable="true">"Amazing quality! The AudioMax Pro headphones have incredible noise cancellation and the battery life is exactly as advertised. Best purchase I've made this year."</p>
+                </div>
+                <div class="review-card">
+                    <div class="reviewer">
+                        <img src="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=50&h=50&fit=crop&crop=face" alt="David Rodriguez">
+                        <div>
+                            <h4 data-sl-editable="true">David Rodriguez</h4>
+                            <span class="verified" data-sl-editable="true">VERIFIED</span>
+                        </div>
+                    </div>
+                    <div class="stars">★★★★★</div>
+                    <p data-sl-editable="true">"The ErgoRise laptop stand fixed my posture issues immediately. The build quality is exceptional and it looks fantastic on my desk. Highly recommend to anyone working from home."</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="why-choose" data-sl-section="about">
+        <div class="container">
+            <div class="two-col">
+                <div>
+                    <h2 data-sl-editable="true">Why Choose presale?</h2>
+                    <ul class="checklist">
+                        <li data-sl-editable="true">Premium materials sourced from leading manufacturers</li>
+                        <li data-sl-editable="true">Rigorous quality testing on every product</li>
+                        <li data-sl-editable="true">Award-winning industrial design team</li>
+                        <li data-sl-editable="true">30-day money-back guarantee</li>
+                        <li data-sl-editable="true">Lifetime warranty on all products</li>
+                        <li data-sl-editable="true">Free shipping on orders over $75</li>
+                        <li data-sl-editable="true">Expert customer support team</li>
+                        <li data-sl-editable="true">Sustainable packaging and practices</li>
+                    </ul>
+                </div>
+                <div class="video-thumbnail">
+                    <img src="https://images.unsplash.com/photo-1560472355-536de3962603?w=600&h=400&fit=crop" alt="presale founder story video" style="width: 100%; height: 400px; object-fit: cover;">
+                    <div class="play-overlay">
+                        <span>▶</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="newsletter" data-sl-section="cta">
+        <div class="container">
+            <div class="text-center">
+                <h2 data-sl-editable="true">Get Exclusive Access</h2>
+                <p data-sl-editable="true">Join our community for early access to new products, exclusive discounts, and tech tips from our experts</p>
+                <div class="email-form">
+                    <input type="email" placeholder="Enter your email address" data-sl-editable="true">
+                    <button class="btn-primary" data-sl-editable="true">Get 15% Off</button>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="faq" data-sl-section="faq">
+        <div class="container">
+            <div class="text-center">
+                <h2 data-sl-editable="true">Frequently Asked Questions</h2>
+            </div>
+            <div style="max-width: 800px; margin: 0 auto; margin-top: 40px;">
+                <div class="faq-item">
+                    <div class="faq-question" data-sl-editable="true">What is your shipping policy?</div>
+                    <div class="faq-answer">
+                        <p data-sl-editable="true">We offer free shipping on all orders over $75 within the United States. Standard shipping takes 3-5 business days, and we also offer expedited shipping options at checkout.</p>
+                    </div>
+                </div>
+                <div class="faq-item">
+                    <div class="faq-question" data-sl-editable="true">Do you offer international shipping?</div>
+                    <div class="faq-answer">
+                        <p data-sl-editable="true">Yes, we ship worldwide. International shipping costs vary by location and are calculated at checkout. Delivery times typically range from 7-14 business days depending on your location.</p>
+                    </div>
+                </div>
+                <div class="faq-item">
+                    <div class="faq-question" data-sl-editable="true">What is your return policy?</div>
+                    <div class="faq-answer">
+                        <p data-sl-editable="true">We offer a 30-day money-back guarantee on all products. Items must be in original condition with all packaging. Simply contact our support team to initiate a return.</p>
+                    </div>
+                </div>
+                <div class="faq-item">
+                    <div class="faq-question" data-sl-editable="true">Are your products compatible with all devices?</div>
+                    <div class="faq-answer">
+                        <p data-sl-editable="true">Our products are designed to be universally compatible with major brands including Apple, Samsung, Google, Microsoft, and more. Specific compatibility information is listed on each product page.</p>
+                    </div>
+                </div>
+                <div class="faq-item">
+                    <div class="faq-question" data-sl-editable="true">What makes presale products different from competitors?</div>
+                    <div class="faq-answer">
+                        <p data-sl-editable="true">We use only premium materials, employ rigorous quality testing, and offer lifetime warranty on all products. Our design team has won multiple industry awards for innovation and functionality.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <footer class="footer" data-sl-section="footer">
+        <div class="container">
+            <div class="footer-grid">
+                <div>
+                    <h4 data-sl-
+</body></html>

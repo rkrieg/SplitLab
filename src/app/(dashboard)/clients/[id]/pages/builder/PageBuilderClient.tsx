@@ -24,9 +24,19 @@ function fixUrl(url: string): string {
   return url;
 }
 
+interface InitialPage {
+  id: string;
+  name: string;
+  status: string;
+  html_content: string | null;
+  quality_score: number | null;
+  published_url: string | null;
+}
+
 interface Props {
   workspaceId: string;
   clientId: string;
+  initialPage?: InitialPage | null;
 }
 
 const VERTICALS: { value: Vertical; label: string; description: string; icon: string }[] = [
@@ -51,11 +61,16 @@ const TONES = ['professional', 'friendly', 'urgent', 'luxury', 'casual'] as cons
 
 type PreviewDevice = 'desktop' | 'tablet' | 'mobile';
 
-export default function PageBuilderClient({ workspaceId, clientId }: Props) {
+export default function PageBuilderClient({ workspaceId, clientId, initialPage }: Props) {
   const router = useRouter();
 
+  // Determine starting step from an existing page
+  const startingStep: BuilderStep =
+    initialPage?.status === 'active' ? 'published' :
+    initialPage?.html_content ? 'preview' : 'prompt';
+
   // Step state
-  const [step, setStep] = useState<BuilderStep>('prompt');
+  const [step, setStep] = useState<BuilderStep>(startingStep);
 
   // Prompt step
   const [prompt, setPrompt] = useState('');
@@ -69,13 +84,13 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
   const [imageCount, setImageCount] = useState(0);
   const [genError, setGenError] = useState<string | null>(null);
 
-  // Preview step
-  const [pageId, setPageId] = useState('');
+  // Preview step — pre-populated from initialPage if provided
+  const [pageId, setPageId] = useState(initialPage?.id ?? '');
   const [previewUrl, setPreviewUrl] = useState('');
-  const [previewHtml, setPreviewHtml] = useState('');
-  const [qualityScore, setQualityScore] = useState(0);
+  const [previewHtml, setPreviewHtml] = useState(initialPage?.html_content ?? '');
+  const [qualityScore, setQualityScore] = useState(initialPage?.quality_score ?? 0);
   const [qualityDetails, setQualityDetails] = useState<QualityCheck[]>([]);
-  const [pageName, setPageName] = useState('');
+  const [pageName, setPageName] = useState(initialPage?.name ?? '');
   const [previewDevice, setPreviewDevice] = useState<PreviewDevice>('desktop');
   const [editMode, setEditMode] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -99,7 +114,7 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
   const [planFeedback, setPlanFeedback] = useState('');
 
   // Published step
-  const [publishedUrl, setPublishedUrl] = useState('');
+  const [publishedUrl, setPublishedUrl] = useState(initialPage?.published_url ?? '');
   const [publishing, setPublishing] = useState(false);
 
   // Floating toolbar

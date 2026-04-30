@@ -1,12 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
 import {
   Plus, FileCode2, MoreHorizontal, Play, Pause, Check, Trash2,
   Globe, Link2, ShieldCheck, ShieldX, Loader2, Edit2, Sparkles, Wand2,
+  ExternalLink, Star,
 } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
@@ -39,6 +40,16 @@ interface TestStats {
   conversions: number;
 }
 
+interface AiPage {
+  id: string;
+  name: string;
+  status: string;
+  quality_score: number | null;
+  published_url: string | null;
+  source_type: string;
+  created_at: string;
+}
+
 interface Props {
   tests: Test[];
   workspaceId: string;
@@ -68,6 +79,18 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
   const [editName, setEditName] = useState('');
   const [editUrlPath, setEditUrlPath] = useState('');
   const [editSaving, setEditSaving] = useState(false);
+
+  // AI Pages
+  const [aiPages, setAiPages] = useState<AiPage[]>([]);
+  const [aiPagesLoading, setAiPagesLoading] = useState(true);
+
+  useEffect(() => {
+    fetch(`/api/workspaces/${workspaceId}/pages`)
+      .then((r) => r.json())
+      .then((data: AiPage[]) => setAiPages(Array.isArray(data) ? data : []))
+      .catch(() => {})
+      .finally(() => setAiPagesLoading(false));
+  }, [workspaceId]);
 
   // Add variant state
   const [addVariantTestId, setAddVariantTestId] = useState<string | null>(null);
@@ -415,6 +438,103 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
           })}
         </div>
       )}
+
+      {/* ── AI-Generated Pages ──────────────────────────────────────── */}
+      <div className="mt-10">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+            <Wand2 size={16} className="text-purple-400" /> AI Pages
+          </h2>
+          {canManage && (
+            <Link
+              href={`/clients/${clientId}/pages/builder`}
+              className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium text-white bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-600 hover:to-indigo-600 transition-colors"
+            >
+              <Plus size={13} /> Build new
+            </Link>
+          )}
+        </div>
+
+        {aiPagesLoading && (
+          <div className="flex items-center gap-2 text-slate-400 text-sm py-4">
+            <Loader2 size={16} className="animate-spin" /> Loading AI pages…
+          </div>
+        )}
+
+        {!aiPagesLoading && aiPages.length === 0 && (
+          <p className="text-sm text-slate-400 dark:text-slate-500 py-2">
+            No AI pages yet. Click <strong>Build with AI</strong> above to create your first one.
+          </p>
+        )}
+
+        {!aiPagesLoading && aiPages.length > 0 && (
+          <div className="space-y-2">
+            {aiPages.map((page) => {
+              const isPublished = page.status === 'active' && !!page.published_url;
+              const score = page.quality_score;
+              const scoreColor =
+                score === null ? 'text-slate-400' :
+                score >= 80 ? 'text-green-400' :
+                score >= 60 ? 'text-amber-400' : 'text-red-400';
+              return (
+                <div key={page.id} className="card p-4 flex items-center gap-4">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="font-medium text-slate-900 dark:text-slate-100 truncate">{page.name}</span>
+                      <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${
+                        isPublished
+                          ? 'bg-green-500/10 text-green-400'
+                          : 'bg-slate-100 dark:bg-slate-700 text-slate-400'
+                      }`}>
+                        {isPublished ? 'Published' : page.status}
+                      </span>
+                      {score !== null && (
+                        <span className={`text-xs flex items-center gap-0.5 ${scoreColor}`}>
+                          <Star size={11} /> {score}
+                        </span>
+                      )}
+                    </div>
+                    {isPublished && page.published_url && (
+                      <a
+                        href={page.published_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs text-indigo-400 hover:text-indigo-300 font-mono truncate flex items-center gap-1 max-w-sm"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <Globe size={11} /> {page.published_url.replace(/^https?:\/\//, '')}
+                      </a>
+                    )}
+                    <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
+                      {new Date(page.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    {isPublished && page.published_url && (
+                      <a
+                        href={page.published_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="btn-secondary text-xs inline-flex items-center gap-1"
+                      >
+                        <ExternalLink size={12} /> View
+                      </a>
+                    )}
+                    {canManage && (
+                      <Link
+                        href={`/clients/${clientId}/pages/builder?pageId=${page.id}`}
+                        className="btn-secondary text-xs inline-flex items-center gap-1"
+                      >
+                        <Edit2 size={12} /> Edit
+                      </Link>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
 
       {/* Create Page Modal */}
       <Modal open={createOpen} onClose={() => { setCreateOpen(false); resetCreateForm(); }} title="New Page" size="sm">
