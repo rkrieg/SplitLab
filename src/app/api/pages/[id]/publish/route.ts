@@ -27,7 +27,17 @@ export async function POST(
     return NextResponse.json({ error: 'Page not found' }, { status: 404 });
   }
 
-  const publishedUrl = `https://pages.trysplitlab.com/${pageId}`;
+  // Resolve the public-facing base URL.
+  // REPLIT_DEV_DOMAIN is a Replit-injected hostname (no protocol, no trailing slash).
+  const rawOrigin = new URL(request.url).origin;
+  const replitDomain = process.env.REPLIT_DEV_DOMAIN;
+  const appHostname = process.env.APP_HOSTNAME;
+  const appBase = replitDomain
+    ? `https://${replitDomain}`
+    : appHostname
+    ? `https://${appHostname}`
+    : rawOrigin;
+  const publishedUrl = `${appBase}/api/pages/${pageId}/serve`;
 
   const { error: updateErr } = await db
     .from('pages')

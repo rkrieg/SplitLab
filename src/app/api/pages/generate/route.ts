@@ -151,7 +151,7 @@ export async function POST(request: NextRequest) {
             const refined = await ask(user, {
               system,
               model: 'claude-sonnet-4-20250514',
-              maxTokens: 6144,
+              maxTokens: 8192,
             });
 
             finalHtml = refined.trim();
@@ -182,7 +182,7 @@ export async function POST(request: NextRequest) {
             setTimeout(() => reject(new Error('Page generation timed out. Please try again.')), 120_000)
           );
           const html = await Promise.race([
-            ask(user, { system, model: 'claude-sonnet-4-20250514', maxTokens: 6144 }),
+            ask(user, { system, model: 'claude-sonnet-4-20250514', maxTokens: 8192 }),
             claudeTimeout,
           ]);
 

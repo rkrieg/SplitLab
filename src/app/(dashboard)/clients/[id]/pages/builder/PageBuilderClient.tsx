@@ -796,7 +796,7 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
             `}</style>
 
             <p className="text-xs text-slate-400 dark:text-slate-500 mb-6">
-              This takes about 60–90 seconds. Please keep this tab open.
+              This takes about 60–120 seconds. Please keep this tab open.
             </p>
 
             {imageCount > 0 && (

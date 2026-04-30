@@ -3,547 +3,1073 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PreSale - Premium Tech Accessories | Save 40% Limited Time</title>
+    <title>PreSale - Premium Tech Accessories | 40% OFF Limited Time</title>
+    <meta name="description" content="Get 40% OFF premium tech accessories at PreSale. Limited stock available. Shop wireless chargers, phone stands & more. Free shipping on all orders.">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
     <style>
+        :root {
+            --navy: #0a1628;
+            --blue: #1e3a8a;
+            --orange: #ff6b35;
+            --light-orange: #ff8555;
+            --dark-gray: #374151;
+            --light-gray: #f3f4f6;
+            --white: #ffffff;
+        }
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
         }
-        
         body {
             font-family: 'Inter', sans-serif;
+            color: var(--dark-gray);
             line-height: 1.6;
-            color: #2d3748;
+            overflow-x: hidden;
         }
-        
+        h1, h2, h3, h4, h5, h6 {
+            font-family: 'Poppins', sans-serif;
+            line-height: 1.2;
+        }
         .container {
             max-width: 1200px;
             margin: 0 auto;
             padding: 0 20px;
         }
-        
-        h1, h2, h3, h4 {
-            font-family: 'Poppins', sans-serif;
-            font-weight: 700;
-            line-height: 1.2;
-        }
-        
-        /* Urgency Bar */
-        .urgency-bar {
-            background: linear-gradient(90deg, #e53e3e, #ff6b35);
-            color: white;
-            text-align: center;
-            padding: 8px 0;
+        .btn {
+            display: inline-block;
+            padding: 16px 40px;
             font-weight: 600;
-            position: fixed;
-            top: 0;
-            width: 100%;
-            z-index: 1000;
-            animation: pulse 2s infinite;
+            text-decoration: none;
+            border-radius: 8px;
+            transition: all 0.3s;
+            cursor: pointer;
+            border: none;
+            font-size: 18px;
+            min-width: 200px;
+            text-align: center;
         }
-        
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.9; }
+        .btn-primary {
+            background: var(--orange);
+            color: var(--white);
+            box-shadow: 0 4px 20px rgba(255, 107, 53, 0.3);
         }
-        
-        .urgency-content {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            gap: 30px;
-            overflow: hidden;
-            white-space: nowrap;
+        .btn-primary:hover {
+            background: var(--light-orange);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 30px rgba(255, 107, 53, 0.4);
         }
-        
-        .urgency-item {
-            font-size: 14px;
-            animation: scroll-left 20s linear infinite;
+        .btn-secondary {
+            background: transparent;
+            color: var(--white);
+            border: 2px solid var(--white);
         }
-        
-        @keyframes scroll-left {
-            0% { transform: translateX(100%); }
-            100% { transform: translateX(-100%); }
+        .btn-secondary:hover {
+            background: var(--white);
+            color: var(--navy);
         }
-        
-        /* Hero Section */
         .hero {
-            background: linear-gradient(135deg, #1e3a8a, #3b82f6);
-            color: white;
+            background: linear-gradient(135deg, var(--navy) 0%, var(--blue) 100%);
             min-height: 100vh;
             display: flex;
             align-items: center;
             position: relative;
             overflow: hidden;
-            margin-top: 40px;
         }
-        
         .hero::before {
             content: '';
             position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: url('https://images.unsplash.com/photo-1531297484001-80022131f5a1?ixlib=rb-4.0.3&auto=format&fit=crop&w=2020&q=80') center/cover;
-            opacity: 0.1;
+            top: -50%;
+            right: -50%;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(circle, rgba(255,107,53,0.1) 0%, transparent 70%);
+            animation: pulse 4s ease-in-out infinite;
         }
-        
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+        }
         .hero-content {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 60px;
-            align-items: center;
             position: relative;
             z-index: 2;
+            text-align: center;
+            width: 100%;
         }
-        
-        .hero-text h1 {
-            font-size: 56px;
-            margin-bottom: 20px;
-            font-weight: 800;
-        }
-        
-        .hero-text .subheadline {
-            font-size: 24px;
-            margin-bottom: 30px;
-            color: #fbbf24;
-            font-weight: 600;
-        }
-        
-        .countdown-timer {
-            display: flex;
-            gap: 15px;
+        .logo {
+            width: 150px;
+            height: auto;
             margin-bottom: 40px;
         }
-        
-        .countdown-item {
-            background: rgba(255,255,255,0.1);
-            padding: 15px;
+        h1 {
+            font-size: 56px;
+            font-weight: 800;
+            color: var(--white);
+            margin-bottom: 20px;
+        }
+        .hero-sub {
+            font-size: 24px;
+            color: var(--white);
+            margin-bottom: 30px;
+            font-weight: 500;
+        }
+        .countdown {
+            display: inline-flex;
+            gap: 20px;
+            margin-bottom: 40px;
+            background: rgba(255,107,53,0.2);
+            padding: 20px 40px;
             border-radius: 12px;
-            text-align: center;
-            min-width: 80px;
             backdrop-filter: blur(10px);
         }
-        
+        .countdown-item {
+            text-align: center;
+            color: var(--white);
+        }
         .countdown-number {
-            font-size: 28px;
-            font-weight: 800;
-            color: #fbbf24;
+            font-size: 36px;
+            font-weight: 700;
+            display: block;
         }
-        
         .countdown-label {
-            font-size: 12px;
+            font-size: 14px;
             text-transform: uppercase;
+            opacity: 0.9;
         }
-        
-        .hero-ctas {
+        .hero-cta {
             display: flex;
             gap: 20px;
+            justify-content: center;
+            margin-bottom: 60px;
             flex-wrap: wrap;
         }
-        
-        .cta-primary {
-            background: #ff6b35;
-            color: white;
-            padding: 18px 40px;
-            border: none;
-            border-radius: 12px;
-            font-size: 18px;
-            font-weight: 700;
-            cursor: pointer;
-            text-decoration: none;
-            display: inline-block;
-            transition: all 0.3s ease;
-            box-shadow: 0 8px 20px rgba(255, 107, 53, 0.3);
-        }
-        
-        .cta-primary:hover {
-            background: #e55a2b;
-            transform: translateY(-2px);
-            box-shadow: 0 12px 30px rgba(255, 107, 53, 0.4);
-        }
-        
-        .cta-secondary {
-            background: transparent;
-            color: white;
-            padding: 18px 40px;
-            border: 2px solid white;
-            border-radius: 12px;
-            font-size: 18px;
-            font-weight: 600;
-            cursor: pointer;
-            text-decoration: none;
-            display: inline-block;
-            transition: all 0.3s ease;
-        }
-        
-        .cta-secondary:hover {
-            background: white;
-            color: #1e3a8a;
-        }
-        
-        .hero-product {
-            text-align: center;
-        }
-        
         .product-showcase {
-            animation: float 3s ease-in-out infinite;
+            position: relative;
+            height: 300px;
+            margin: 0 auto;
+            max-width: 500px;
         }
-        
-        @keyframes float {
-            0%, 100% { transform: translateY(0px); }
-            50% { transform: translateY(-20px); }
-        }
-        
-        .hero-product img {
-            max-width: 400px;
-            width: 100%;
+        .product-showcase img {
+            position: absolute;
+            width: 250px;
             height: auto;
             border-radius: 20px;
             box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            animation: float 3s ease-in-out infinite;
         }
-        
-        /* Logo */
-        .logo {
-            position: absolute;
-            top: 20px;
-            left: 20px;
-            z-index: 10;
+        .product-showcase img:nth-child(1) { left: 0; z-index: 3; animation-delay: 0s; }
+        .product-showcase img:nth-child(2) { left: 125px; top: 20px; z-index: 2; animation-delay: 1s; }
+        .product-showcase img:nth-child(3) { left: 250px; top: 40px; z-index: 1; animation-delay: 2s; }
+        @keyframes float {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-20px); }
         }
-        
-        .logo img {
-            height: 50px;
-            width: auto;
+        .urgency-bar {
+            background: var(--orange);
+            color: var(--white);
+            padding: 12px 0;
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
         }
-        
-        /* Social Proof Bar */
-        .social-proof {
-            background: #f7fafc;
-            padding: 60px 0;
-        }
-        
-        .social-proof-content {
-            text-align: center;
-        }
-        
-        .social-proof h2 {
-            font-size: 18px;
-            color: #718096;
-            margin-bottom: 30px;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-        }
-        
-        .social-logos {
+        .urgency-content {
             display: flex;
-            justify-content: center;
             align-items: center;
+            justify-content: center;
             gap: 40px;
-            flex-wrap: wrap;
+            animation: scroll 20s linear infinite;
         }
-        
-        .social-logos img {
-            height: 40px;
-            opacity: 0.6;
-            filter: grayscale(100%);
+        @keyframes scroll {
+            0% { transform: translateX(0); }
+            100% { transform: translateX(-100%); }
         }
-        
-        .stats-bar {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 40px;
-            margin-top: 40px;
+        .urgency-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            white-space: nowrap;
         }
-        
-        .stat-item {
-            text-align: center;
-        }
-        
-        .stat-number {
-            font-size: 36px;
-            font-weight: 800;
-            color: #1e3a8a;
-            margin-bottom: 5px;
-        }
-        
-        .stat-label {
-            color: #718096;
-            font-weight: 500;
-        }
-        
-        /* Featured Products */
-        .products {
-            padding: 100px 0;
-            background: white;
-        }
-        
-        .products h2 {
-            font-size: 42px;
-            text-align: center;
-            margin-bottom: 20px;
-            color: #1e3a8a;
-        }
-        
-        .products-subtitle {
-            text-align: center;
+        .urgency-icon {
             font-size: 20px;
-            color: #718096;
-            margin-bottom: 60px;
         }
-        
+        .section {
+            padding: 80px 0;
+        }
+        .section-title {
+            font-size: 48px;
+            font-weight: 700;
+            text-align: center;
+            margin-bottom: 60px;
+            color: var(--navy);
+        }
         .products-grid {
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
             gap: 40px;
+            margin-bottom: 60px;
         }
-        
         .product-card {
-            background: white;
+            background: var(--white);
             border-radius: 16px;
-            padding: 30px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
-            transition: transform 0.3s ease, box-shadow 0.3s ease;
-            position: relative;
-            border: 2px solid #f7fafc;
+            overflow: hidden;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+            transition: transform 0.3s, box-shadow 0.3s;
         }
-        
         .product-card:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 20px 40px rgba(0,0,0,0.15);
+            transform: translateY(-10px);
+            box-shadow: 0 20px 60px rgba(0,0,0,0.15);
         }
-        
-        .product-badge {
-            position: absolute;
-            top: -10px;
-            right: 20px;
-            background: #e53e3e;
-            color: white;
-            padding: 8px 16px;
-            border-radius: 20px;
-            font-size: 12px;
-            font-weight: 700;
-            text-transform: uppercase;
-        }
-        
         .product-image {
-            text-align: center;
-            margin-bottom: 25px;
-        }
-        
-        .product-image img {
-            width: 200px;
-            height: 200px;
+            width: 100%;
+            height: 250px;
             object-fit: cover;
-            border-radius: 12px;
+            position: relative;
         }
-        
-        .product-title {
-            font-size: 22px;
-            font-weight: 700;
-            margin-bottom: 15px;
-            color: #2d3748;
+        .stock-badge {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: var(--orange);
+            color: var(--white);
+            padding: 8px 16px;
+            border-radius: 24px;
+            font-size: 14px;
+            font-weight: 600;
         }
-        
-        .product-rating {
+        .product-info {
+            padding: 30px;
+        }
+        .product-name {
+            font-size: 24px;
+            font-weight: 600;
+            margin-bottom: 10px;
+            color: var(--navy);
+        }
+        .rating {
             display: flex;
             align-items: center;
             gap: 10px;
             margin-bottom: 15px;
         }
-        
         .stars {
-            color: #fbbf24;
-            font-size: 16px;
+            color: #ffd700;
+            font-size: 18px;
         }
-        
-        .rating-text {
-            color: #718096;
+        .rating-count {
+            color: #6b7280;
             font-size: 14px;
         }
-        
-        .product-price {
+        .price-box {
+            display: flex;
+            align-items: center;
+            gap: 15px;
             margin-bottom: 20px;
         }
-        
-        .current-price {
-            font-size: 28px;
-            font-weight: 800;
-            color: #1e3a8a;
-            margin-right: 10px;
+        .price-current {
+            font-size: 32px;
+            font-weight: 700;
+            color: var(--orange);
         }
-        
-        .original-price {
+        .price-original {
             font-size: 20px;
-            color: #718096;
+            color: #9ca3af;
             text-decoration: line-through;
         }
-        
-        .discount {
-            background: #ff6b35;
-            color: white;
-            padding: 4px 8px;
-            border-radius: 6px;
-            font-size: 12px;
-            font-weight: 700;
-            margin-left: 10px;
+        .price-save {
+            background: #fef3c7;
+            color: #d97706;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 600;
         }
-        
-        .product-cta {
-            background: #ff6b35;
-            color: white;
-            border: none;
-            padding: 15px 30px;
-            border-radius: 10px;
-            font-weight: 700;
-            cursor: pointer;
-            width: 100%;
+        .testimonials {
+            background: var(--light-gray);
+        }
+        .testimonial-carousel {
+            display: flex;
+            gap: 40px;
+            overflow-x: auto;
+            padding-bottom: 20px;
+            scroll-snap-type: x mandatory;
+        }
+        .testimonial-card {
+            min-width: 350px;
+            background: var(--white);
+            padding: 40px;
+            border-radius: 16px;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.08);
+            scroll-snap-align: start;
+        }
+        .testimonial-header {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        .testimonial-avatar {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            object-fit: cover;
+        }
+        .testimonial-name {
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--navy);
+        }
+        .testimonial-product {
+            color: #6b7280;
+            font-size: 14px;
+        }
+        .testimonial-text {
             font-size: 16px;
-            transition: background 0.3s ease;
+            line-height: 1.8;
+            color: var(--dark-gray);
+            margin-bottom: 20px;
         }
-        
-        .product-cta:hover {
-            background: #e55a2b;
+        .stats-bar {
+            background: var(--navy);
+            color: var(--white);
+            padding: 60px 0;
+            margin-top: 60px;
         }
-        
-        /* Benefits */
-        .benefits {
-            padding: 100px 0;
-            background: #f7fafc;
-        }
-        
-        .benefits h2 {
-            font-size: 42px;
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 40px;
             text-align: center;
-            margin-bottom: 60px;
-            color: #1e3a8a;
         }
-        
+        .stat-number {
+            font-size: 48px;
+            font-weight: 700;
+            margin-bottom: 10px;
+        }
+        .stat-label {
+            font-size: 16px;
+            opacity: 0.9;
+        }
         .benefits-grid {
             display: grid;
-            grid-template-columns: repeat(4, 1fr);
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
             gap: 40px;
+            margin-bottom: 60px;
         }
-        
         .benefit-item {
             text-align: center;
-            padding: 40px 20px;
-            background: white;
-            border-radius: 16px;
-            box-shadow: 0 5px 20px rgba(0,0,0,0.05);
         }
-        
         .benefit-icon {
             width: 80px;
             height: 80px;
-            background: linear-gradient(135deg, #3b82f6, #1e3a8a);
-            border-radius: 50%;
+            background: linear-gradient(135deg, var(--orange), var(--light-orange));
+            border-radius: 20px;
             display: flex;
             align-items: center;
             justify-content: center;
             margin: 0 auto 20px;
-            font-size: 32px;
-            color: white;
+            font-size: 40px;
+            color: var(--white);
         }
-        
         .benefit-title {
-            font-size: 20px;
-            font-weight: 700;
-            margin-bottom: 15px;
-            color: #2d3748;
+            font-size: 24px;
+            font-weight: 600;
+            margin-bottom: 10px;
+            color: var(--navy);
         }
-        
-        .benefit-description {
-            color: #718096;
+        .benefit-text {
+            font-size: 16px;
+            color: var(--dark-gray);
         }
-        
-        /* Testimonials */
-        .testimonials {
-            padding: 100px 0;
-            background: white;
+        .why-choose {
+            background: var(--light-gray);
         }
-        
-        .testimonials h2 {
-            font-size: 42px;
-            text-align: center;
-            margin-bottom: 20px;
-            color: #1e3a8a;
-        }
-        
-        .testimonials-subtitle {
-            text-align: center;
-            font-size: 20px;
-            color: #718096;
-            margin-bottom: 60px;
-        }
-        
-        .testimonials-grid {
+        .why-choose-content {
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 40px;
-            margin-bottom: 80px;
+            grid-template-columns: 1fr 1fr;
+            gap: 60px;
+            align-items: center;
         }
-        
-        .testimonial-card {
-            background: #f7fafc;
-            padding: 40px;
+        .why-choose-image {
+            width: 100%;
             border-radius: 16px;
-            position: relative;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.15);
         }
-        
-        .testimonial-rating {
-            color: #fbbf24;
+        .why-choose-list {
+            list-style: none;
+        }
+        .why-choose-item {
+            display: flex;
+            align-items: start;
+            gap: 20px;
+            margin-bottom: 25px;
+        }
+        .check-icon {
+            flex-shrink: 0;
+            width: 32px;
+            height: 32px;
+            background: var(--orange);
+            color: var(--white);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+        }
+        .trust-badges {
+            display: flex;
+            gap: 20px;
+            margin-top: 40px;
+            flex-wrap: wrap;
+        }
+        .trust-badge {
+            background: var(--white);
+            padding: 15px 25px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+        }
+        .newsletter {
+            background: var(--navy);
+            color: var(--white);
+            text-align: center;
+        }
+        .newsletter-form {
+            display: flex;
+            gap: 20px;
+            max-width: 500px;
+            margin: 0 auto;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        .newsletter-input {
+            flex: 1;
+            min-width: 250px;
+            padding: 16px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+        }
+        .faq {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        .faq-item {
+            background: var(--white);
+            margin-bottom: 20px;
+            border-radius: 12px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            overflow: hidden;
+        }
+        .faq-question {
+            padding: 25px 30px;
+            font-size: 18px;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: background 0.3s;
+        }
+        .faq-question:hover {
+            background: var(--light-gray);
+        }
+        .faq-icon {
+            font-size: 24px;
+            transition: transform 0.3s;
+        }
+        .faq-answer {
+            padding: 0 30px 25px;
+            font-size: 16px;
+            line-height: 1.8;
+            color: var(--dark-gray);
+            display: none;
+        }
+        .faq-item.active .faq-icon {
+            transform: rotate(180deg);
+        }
+        .faq-item.active .faq-answer {
+            display: block;
+        }
+        footer {
+            background: var(--navy);
+            color: var(--white);
+            padding: 60px 0 30px;
+        }
+        .footer-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 40px;
+            margin-bottom: 40px;
+        }
+        .footer-title {
             font-size: 20px;
+            font-weight: 600;
             margin-bottom: 20px;
         }
-        
-        .testimonial-text {
-            font-size: 18px;
-            font-style: italic;
-            margin-bottom: 25px;
-            color: #4a5568;
+        .footer-links {
+            list-style: none;
         }
-        
-        .testimonial-author {
+        .footer-links li {
+            margin-bottom: 12px;
+        }
+        .footer-links a {
+            color: var(--white);
+            text-decoration: none;
+            opacity: 0.8;
+            transition: opacity 0.3s;
+        }
+        .footer-links a:hover {
+            opacity: 1;
+        }
+        .footer-contact {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 15px;
+            font-size: 18px;
+        }
+        .social-links {
+            display: flex;
+            gap: 15px;
+            margin-top: 20px;
+        }
+        .social-link {
+            width: 40px;
+            height: 40px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.3s;
+        }
+        .social-link:hover {
+            background: var(--orange);
+        }
+        .footer-bottom {
+            text-align: center;
+            padding-top: 30px;
+            border-top: 1px solid rgba(255,255,255,0.1);
+            opacity: 0.8;
+        }
+        .floating-cta {
+            display: none;
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 1000;
+        }
+        .purchase-popup {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            background: var(--white);
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            max-width: 300px;
+            display: none;
+            z-index: 999;
+        }
+        .popup-header {
             display: flex;
             align-items: center;
             gap: 15px;
+            margin-bottom: 10px;
         }
-        
-        .author-avatar img {
-            width: 50px;
-            height: 50px;
+        .popup-avatar {
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
-            object-fit: cover;
         }
-        
-        .author-name {
-            font-weight: 700;
-            color: #2d3748;
+        .popup-name {
+            font-weight: 600;
         }
-        
-        .author-title {
-            color: #718096;
+        .popup-text {
+            color: #6b7280;
             font-size: 14px;
         }
+        @media (max-width: 768px) {
+            h1 { font-size: 36px; }
+            .hero-sub { font-size: 18px; }
+            .section-title { font-size: 32px; }
+            .countdown { padding: 15px 25px; }
+            .countdown-number { font-size: 28px; }
+            .products-grid { grid-template-columns: 1fr; }
+            .why-choose-content { grid-template-columns: 1fr; }
+            .why-choose-image { margin-bottom: 40px; }
+            .stats-grid { grid-template-columns: repeat(2, 1fr); }
+            .floating-cta { display: block; }
+            .urgency-content { animation: none; }
+        }
+        @media (max-width: 480px) {
+            .hero-cta { flex-direction: column; align-items: center; }
+            .btn { width: 100%; max-width: 300px; }
+            .newsletter-form { flex-direction: column; }
+            .newsletter-input { width: 100%; }
+            .product-showcase { display: none; }
+            .testimonial-card { min-width: 280px; }
+            .benefits-grid { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <section class="hero" data-sl-section="hero">
+        <div class="container">
+            <div class="hero-content">
+                <img src="https://static.vecteezy.com/system/resources/previews/009/178/125/large_2x/url-letter-logo-design-with-polygon-shape-url-polygon-and-cube-shape-logo-design-url-hexagon-logo-template-white-and-black-colors-url-monogram-business-and-real-estate-logo-vector.jpg" alt="PreSale Logo" class="logo">
+                <h1 data-sl-editable="true">Premium Tech Accessories That Transform Your Space</h1>
+                <p class="hero-sub" data-sl-editable="true">⚡ LIMITED TIME: Save 40% on All Premium Tech Accessories - Stock Running Out Fast!</p>
+                <div class="countdown">
+                    <div class="countdown-item">
+                        <span class="countdown-number" data-sl-editable="true">02</span>
+                        <span class="countdown-label" data-sl-editable="true">Days</span>
+                    </div>
+                    <div class="countdown-item">
+                        <span class="countdown-number" data-sl-editable="true">14</span>
+                        <span class="countdown-label" data-sl-editable="true">Hours</span>
+                    </div>
+                    <div class="countdown-item">
+                        <span class="countdown-number" data-sl-editable="true">37</span>
+                        <span class="countdown-label" data-sl-editable="true">Minutes</span>
+                    </div>
+                    <div class="countdown-item">
+                        <span class="countdown-number" data-sl-editable="true">28</span>
+                        <span class="countdown-label" data-sl-editable="true">Seconds</span>
+                    </div>
+                </div>
+                <div class="hero-cta">
+                    <a href="#products" class="btn btn-primary" data-sl-editable="true">Shop Now - Save 40%</a>
+                    <a href="#products" class="btn btn-secondary" data-sl-editable="true">View All Products</a>
+                </div>
+                <div class="product-showcase">
+                    <img src="https://images.pexels.com/photos/16644117/pexels-photo-16644117/free-photo-of-light-sea-dawn-landscape.jpeg" alt="Wireless Charging Station">
+                    <img src="https://images.pexels.com/photos/16875434/pexels-photo-16875434/free-photo-of-mountain-reflection-in-lake.jpeg" alt="Premium Phone Stand">
+                    <img src="https://images.pexels.com/photos/17013331/pexels-photo-17013331/free-photo-of-reflection-of-mountains-in-lake.jpeg" alt="USB Hub Pro">
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <div class="urgency-bar" data-sl-section="urgency">
+        <div class="urgency-content">
+            <div class="urgency-item">
+                <span class="urgency-icon">🔥</span>
+                <span data-sl-editable="true">Flash Sale: 40% OFF Everything</span>
+            </div>
+            <div class="urgency-item">
+                <span class="urgency-icon">📦</span>
+                <span data-sl-editable="true">Free Shipping on All Orders</span>
+            </div>
+            <div class="urgency-item">
+                <span class="urgency-icon">⚡</span>
+                <span data-sl-editable="true">Only 47 Units Left in Stock</span>
+            </div>
+            <div class="urgency-item">
+                <span class="urgency-icon">💳</span>
+                <span data-sl-editable="true">Pay in 4 Interest-Free Payments</span>
+            </div>
+        </div>
+    </div>
+
+    <section class="section" id="products" data-sl-section="products">
+        <div class="container">
+            <h2 class="section-title" data-sl-editable="true">Best Selling Tech Accessories</h2>
+            <div class="products-grid">
+                <div class="product-card">
+                    <div class="product-image">
+                        <img src="https://images.pexels.com/photos/14866495/pexels-photo-14866495.jpeg" alt="Wireless Charging Pad" style="width: 100%; height: 100%; object-fit: cover;">
+                        <span class="stock-badge" data-sl-editable="true">Only 12 Left!</span>
+                    </div>
+                    <div class="product-info">
+                        <h3 class="product-name" data-sl-editable="true">UltraCharge Wireless Pad</h3>
+                        <div class="rating">
+                            <span class="stars">⭐⭐⭐⭐⭐</span>
+                            <span class="rating-count" data-sl-editable="true">(2,847 reviews)</span>
+                        </div>
+                        <div class="price-box">
+                            <span class="price-current" data-sl-editable="true">$47</span>
+                            <span class="price-original" data-sl-editable="true">$79</span>
+                            <span class="price-save" data-sl-editable="true">Save $32</span>
+                        </div>
+                        <a href="#" class="btn btn-primary" style="width: 100%;" data-sl-editable="true">Add to Cart - Save 40%</a>
+                    </div>
+                </div>
+                <div class="product-card">
+                    <div class="product-image">
+                        <img src="https://images.pexels.com/photos/15432188/pexels-photo-15432188.jpeg" alt="Premium Phone Stand" style="width: 100%; height: 100%; object-fit: cover;">
+                        <span class="stock-badge" data-sl-editable="true">Selling Fast!</span>
+                    </div>
+                    <div class="product-info">
+                        <h3 class="product-name" data-sl-editable="true">ProStand Adjustable Holder</h3>
+                        <div class="rating">
+                            <span class="stars">⭐⭐⭐⭐⭐</span>
+                            <span class="rating-count" data-sl-editable="true">(1,923 reviews)</span>
+                        </div>
+                        <div class="price-box">
+                            <span class="price-current" data-sl-editable="true">$35</span>
+                            <span class="price-original" data-sl-editable="true">$59</span>
+                            <span class="price-save" data-sl-editable="true">Save $24</span>
+                        </div>
+                        <a href="#" class="btn btn-primary" style="width: 100%;" data-sl-editable="true">Add to Cart - Save 40%</a>
+                    </div>
+                </div>
+                <div class="product-card">
+                    <div class="product-image">
+                        <img src="https://images.pexels.com/photos/14936127/pexels-photo-14936127.jpeg" alt="USB Hub Pro" style="width: 100%; height: 100%; object-fit: cover;">
+                        <span class="stock-badge" data-sl-editable="true">Low Stock!</span>
+                    </div>
+                    <div class="product-info">
+                        <h3 class="product-name" data-sl-editable="true">HubMax 7-in-1 USB-C</h3>
+                        <div class="rating">
+                            <span class="stars">⭐⭐⭐⭐⭐</span>
+                            <span class="rating-count" data-sl-editable="true">(3,182 reviews)</span>
+                        </div>
+                        <div class="price-box">
+                            <span class="price-current" data-sl-editable="true">$59</span>
+                            <span class="price-original" data-sl-editable="true">$99</span>
+                            <span class="price-save" data-sl-editable="true">Save $40</span>
+                        </div>
+                        <a href="#" class="btn btn-primary" style="width: 100%;" data-sl-editable="true">Add to Cart - Save 40%</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="testimonials section" data-sl-section="testimonials">
+        <div class="container">
+            <h2 class="section-title" data-sl-editable="true">What Our Customers Say</h2>
+            <div class="testimonial-carousel">
+                <div class="testimonial-card">
+                    <div class="testimonial-header">
+                        <img src="https://randomuser.me/api/portraits/women/1.jpg" alt="Customer" class="testimonial-avatar">
+                        <div>
+                            <div class="testimonial-name" data-sl-editable="true">Sarah Johnson</div>
+                            <div class="testimonial-product" data-sl-editable="true">Verified Buyer - UltraCharge Pad</div>
+                        </div>
+                    </div>
+                    <div class="stars">⭐⭐⭐⭐⭐</div>
+                    <p class="testimonial-text" data-sl-editable="true">"This charging pad is a game-changer! It charges my phone faster than the original charger and looks stunning on my desk. Worth every penny!"</p>
+                </div>
+                <div class="testimonial-card">
+                    <div class="testimonial-header">
+                        <img src="https://randomuser.me/api/portraits/men/2.jpg" alt="Customer" class="testimonial-avatar">
+                        <div>
+                            <div class="testimonial-name" data-sl-editable="true">Michael Chen</div>
+                            <div class="testimonial-product" data-sl-editable="true">Verified Buyer - ProStand Holder</div>
+                        </div>
+                    </div>
+                    <div class="stars">⭐⭐⭐⭐⭐</div>
+                    <p class="testimonial-text" data-sl-editable="true">"The build quality is exceptional! I use it for video calls daily and the adjustable angles are perfect. Highly recommend PreSale products!"</p>
+                </div>
+                <div class="testimonial-card">
+                    <div class="testimonial-header">
+                        <img src="https://randomuser.me/api/portraits/women/3.jpg" alt="Customer" class="testimonial-avatar">
+                        <div>
+                            <div class="testimonial-name" data-sl-editable="true">Emma Davis</div>
+                            <div class="testimonial-product" data-sl-editable="true">Verified Buyer - HubMax USB-C</div>
+                        </div>
+                    </div>
+                    <div class="stars">⭐⭐⭐⭐⭐</div>
+                    <p class="testimonial-text" data-sl-editable="true">"Finally a USB hub that actually works with all my devices! The transfer speeds are incredible and it hasn't failed me once in 6 months."</p>
+                </div>
+            </div>
+            <div class="stats-bar">
+                <div class="stats-grid">
+                    <div>
+                        <div class="stat-number" data-sl-editable="true">98%</div>
+                        <div class="stat-label" data-sl-editable="true">Customer Satisfaction</div>
+                    </div>
+                    <div>
+                        <div class="stat-number" data-sl-editable="true">50K+</div>
+                        <div class="stat-label" data-sl-editable="true">Happy Customers</div>
+                    </div>
+                    <div>
+                        <div class="stat-number" data-sl-editable="true">4.9/5</div>
+                        <div class="stat-label" data-sl-editable="true">Average Rating</div>
+                    </div>
+                    <div>
+                        <div class="stat-number" data-sl-editable="true">30-Day</div>
+                        <div class="stat-label" data-sl-editable="true">Money Back Guarantee</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="section" data-sl-section="benefits">
+        <div class="container">
+            <h2 class="section-title" data-sl-editable="true">Why Choose PreSale Tech</h2>
+            <div class="benefits-grid">
+                <div class="benefit-item">
+                    <div class="benefit-icon">💎</div>
+                    <h3 class="benefit-title" data-sl-editable="true">Premium Materials</h3>
+                    <p class="benefit-text" data-sl-editable="true">Crafted with aircraft-grade aluminum and premium plastics for lasting durability</p>
+                </div>
+                <div class="benefit-item">
+                    <div class="benefit-icon">⚡</div>
+                    <h3 class="benefit-title" data-sl-editable="true">Fast Charging Tech</h3>
+                    <p class="benefit-text" data-sl-editable="true">Latest Qi technology delivers up to 15W wireless charging for compatible devices</p>
+                </div>
+                <div class="benefit-item">
+                    <div class="benefit-icon">📱</div>
+                    <h3 class="benefit-title" data-sl-editable="true">Universal Compatibility</h3>
+                    <p class="benefit-text" data-sl-editable="true">Works seamlessly with all major phone brands and models</p>
+                </div>
+                <div class="benefit-item">
+                    <div class="benefit-icon">🛡️</div>
+                    <h3 class="benefit-title" data-sl-editable="true">2-Year Warranty</h3>
+                    <p class="benefit-text" data-sl-editable="true">Industry-leading warranty coverage with hassle-free replacements</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="why-choose section" data-sl-section="about">
+        <div class="container">
+            <div class="why-choose-content">
+                <img src="https://images.pexels.com/photos/14845809/pexels-photo-14845809.jpeg" alt="Premium Tech Lifestyle" class="why-choose-image">
+                <div>
+                    <h2 class="section-title" style="text-align: left; margin-bottom: 30px;" data-sl-editable="true">Built for the Modern Professional</h2>
+                    <ul class="why-choose-list">
+                        <li class="why-choose-item">
+                            <span class="check-icon">✓</span>
+                            <div>
+                                <h4 data-sl-editable="true">Engineered for Performance</h4>
+                                <p data-sl-editable="true">Each product undergoes 200+ quality checks before shipping to ensure flawless operation</p>
+                            </div>
+                        </li>
+                        <li class="why-choose-item">
+                            <span class="check-icon">✓</span>
+                            <div>
+                                <h4 data-sl-editable="true">Minimalist Design Philosophy</h4>
+                                <p data-sl-editable="true">Clean lines and premium finishes that complement any workspace or home setup</p>
+                            </div>
+                        </li>
+                        <li class="why-choose-item">
+                            <span class="check-icon">✓</span>
+                            <div>
+                                <h4 data-sl-editable="true">Sustainable Manufacturing</h4>
+                                <p data-sl-editable="true">Eco-friendly materials and carbon-neutral shipping on every order</p>
+                            </div>
+                        </li>
+                        <li class="why-choose-item">
+                            <span class="check-icon">✓</span>
+                            <div>
+                                <h4 data-sl-editable="true">24/7 Customer Support</h4>
+                                <p data-sl-editable="true">Expert tech support team ready to help you get the most from your purchase</p>
+                            </div>
+                        </li>
+                    </ul>
+                    <div class="trust-badges">
+                        <div class="trust-badge">
+                            <span style="font-size: 24px;">🔒</span>
+                            <span data-sl-editable="true">Secure Checkout</span>
+                        </div>
+                        <div class="trust-badge">
+                            <span style="font-size: 24px;">📦</span>
+                            <span data-sl-editable="true">Fast Shipping</span>
+                        </div>
+                        <div class="trust-badge">
+                            <span style="font-size: 24px;">💯</span>
+                            <span data-sl-editable="true">Satisfaction Guaranteed</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="newsletter section" data-sl-section="cta">
+        <div class="container">
+            <h2 class="section-title" style="color: white; margin-bottom: 20px;" data-sl-editable="true">Get 15% Off Your First Order</h2>
+            <p style="font-size: 20px; margin-bottom: 40px; opacity: 0.9;" data-sl-editable="true">Join 25,000+ tech enthusiasts and never miss a deal</p>
+            <form class="newsletter-form">
+                <input type="email" placeholder="Enter your email address" class="newsletter-input" required>
+                <button type="submit" class="btn btn-primary" data-sl-editable="true">Claim 15% Discount</button>
+            </form>
+            <p style="margin-top: 20px; opacity: 0.8;" data-sl-editable="true">🔒 We respect your privacy. Unsubscribe anytime.</p>
+        </div>
+    </section>
+
+    <section class="section" data-sl-section="faq">
+        <div class="container">
+            <h2 class="section-title" data-sl-editable="true">Frequently Asked Questions</h2>
+            <div class="faq">
+                <div class="faq-item">
+                    <div class="faq-question">
+                        <span data-sl-editable="true">How fast is shipping and is it really free?</span>
+                        <span class="faq-icon">▼</span>
+                    </div>
+                    <div class="faq-answer">
+                        <p data-sl-editable="true">Yes, shipping is completely free on all orders! Orders placed before 2 PM EST ship the same day. Standard delivery takes 3-5 business days, and we also offer express 2-day shipping for $9.99.</p>
+                    </div>
+                </div>
+                <div class="faq-item">
+                    <div class="faq-question">
+                        <span data-sl-editable="true">What if the product doesn't work with my device?</span>
+                        <span class="faq-icon">▼</span>
+                    </div>
+                    <div class="faq-answer">
+                        <p data-sl-editable="true">All our products are universally compatible with 99% of devices. If you experience any compatibility issues, our support team will help you immediately, and you're covered by our 30-day money-back guarantee.</p>
+                    </div>
+                </div>
+                <div class="faq-item">
+                    <div class="faq-question">
+                        <span data-sl-editable="true">How long does the 40% discount last?</span>
+                        <span class="faq-icon">▼</span>
+                    </div>
+                    <div class="faq-answer">
+                        <p data-sl-editable="true">This flash sale ends in 48 hours or when stock runs out - whichever comes first. We only have limited inventory at this price, and based on current demand, we expect to sell out within 24 hours.</p>
+                    </div>
+                </div>
+                <div class="faq-item">
+                    <div class="faq-question">
+                        <span data-sl-editable="true">What's your return policy?</span>
+                        <span class="faq-icon">▼</span>
+                    </div>
+                    <div class="faq-answer">
+                        <p data-sl-editable="true">We offer a hassle-free 30-day return policy. If you're not 100% satisfied, simply contact us for a prepaid return label. Once we receive the item, we'll issue a full refund within 2-3 business days.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <footer data-sl-section="footer">
+        <div class="container">
+            <div class="footer-grid">
+                <div>
+                    <h3 class="footer-title" data-sl-editable="true">PreSale</h3>
+                    <p style="margin-bottom: 20px; opacity: 0.9;" data-sl-editable="true">Premium tech accessories designed for the modern lifestyle.</p>
+                    <div class="footer-contact">
+                        <span>📞</span>
+                        <a href="tel:3234232232" style="color: white; text-decoration: none;" data-sl-editable="true">3234 23322 23</a>
+                    </div>
+                    <div class="footer-contact">
+                        <span>✉️</span>
+                        <span data-sl-editable="true">support@presale.com</span>
+                    </div>
+                    <div class="social-links">
+                        <a href="#" class="social-link">f</a>
+                        <a href="#" class="social-link">t</a>
+                        <a href="#" class="social-link">i</a>
+                        <a href="#" class="social-link">y</a>
+                    </div>
+                </div>
+                <div>
+                    <h3 class="footer-title" data-sl-editable="true">Customer Care</h3>
+                    <ul class="footer-links">
+                        <li><a href="#" data-sl-editable="true">Track Order</a></li>
+                        <li><a href="#" data-sl-editable="true">Shipping Info</a></li>
+                        <li><a href="#" data-sl-editable="true">Returns & Exchanges</a></li>
+                        <li><a href="#" data-sl-editable="true">Warranty Claims</a></li>
+                        <li><a href="#" data-sl-editable="true">Contact Support</a></li>
+                    </ul>
+                </div>
+                <div>
+                    <h3 class="footer-title" data-sl-editable="true">Company</h3>
+                    <ul class="footer-links">
+                        <li><a href="#" data-sl-editable="true">About PreSale</a></li>
+                        <li><a href="#" data-sl-editable="true">Sustainability</a></li>
+                        <li><a href="#" data-sl-editable="true">Press & Media</a></li>
+                        <li><a href="#" data-sl-editable="true">Careers</a></li>
+                        <li><a href="#" data-sl-editable="true">Affiliate Program</a></li>
+                    </ul>
+                </div>
+                <div>
+                    <h3 class="footer-title" data-sl-editable="true">Trust & Security</h3>
+                    <p style="margin-bottom: 20px; opacity: 0.9;" data-sl-editable="true">Shop with confidence knowing your data is protected by bank-level encryption.</p>
+                    <img src="https://via.placeholder.com/300x60" alt="Security Badges" style="max-width: 100%; opacity: 0.8;">
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p data-sl-editable="true">© 2024 PreSale. All rights reserved. | <a href="#" style="color: white; opacity: 0.8;">Privacy Policy</a> | <a href="#" style="color: white; opacity: 0.8;">Terms of Service</a></p>
+            </div>
+        </div>
+    </footer>
+
+    <div class="floating-cta">
+        <a href="#products" class="btn btn-primary" data-sl-editable="true">Shop Now - 40% OFF</a>
+    </div>
+
+    <div class="purchase-popup" id="purchasePopup">
+        <div class="popup-header">
+            <img src="https://randomuser.me/api/portraits/women/4.jpg" alt="Customer" class="popup-avatar">
+            <div>
+                <div class="popup-name" data-sl-editable="true">Jessica from New York</div>
+                <div class="popup-text" data-sl-editable="true">just purchased</div>
+            </div>
+        </div>
+        <p class="popup-text" data-sl-editable="true">UltraCharge Wireless Pad - 2 minutes ago</p>
+    </div>
+
+    <script>
+        // FAQ Accordion
+        document.querySelectorAll('.faq-question').forEach(question => {
+            question.addEventListener('click', () => {
+                const item = question.parentElement;
+                item.classList.toggle('active');
+            });
+        });
+
+        // Purchase Popup
+        const popups = [
+            {name: 'Jessica from New York', product: 'UltraCharge Wireless Pad', time: '2 minutes ago'},
+            {name: 'David from California', product: 'ProStand Adjustable Holder', time: '5 minutes ago'},
+            {name: 'Maria from Texas', product: 'HubMax 7-in-1 USB-C', time: '8 minutes ago'}
+        ];
+        let popupIndex = 0;
         
-        /* Stats Bar */
-        .stats-section {
-            background: #1e3a8a;
-            color: white;
-            padding: 60px 0;
+        function showPopup() {
+            const popup = document.getElementById('purchasePopup');
+            const current = popups[popupIndex];
+            popup.querySelector('.popup-name').textContent = current.name;
+            popup.querySelector('.popup-text:last-child').textContent = `${current.product} - ${current.time}`;
+            
+            popup.style.display = 'block';
+            setTimeout(() => {
+                popup.style.display = 'none';
+                popupIndex = (popupIndex + 1) % popups.length;
+            }, 5000);
         }
         
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 40px;
+        setInterval(showPopup, 15000);
+        setTimeout(showPopup, 3000);
+
+        // Countdown Timer
+        function updateCountdown() {
+            const countdownElements = document.querySelectorAll('.countdown-number');
+            if (countdownElements[3]) {
+                let seconds = parseInt(countdownElements[3].textContent);
+                seconds--;
+                if (seconds < 0) {
+                    seconds = 59;
+                    let minutes = parseInt(countdownElements[2].textContent);
+                    minutes--;
+                    if (minutes < 0) {
+                        minutes = 59;
+                        let hours = parseInt(countdownElements[1].textContent);
+                        hours--;
+                        if (hours < 0) {
+                            hours = 23;
+                            let days = parseInt(countdownElements[0].textContent);
+                            days--;
+                            if (days >= 0) countdownElements[0].textContent = days.toString().padStart(2, '0');
+                        }
+                        countdownElements[1].textContent = hours.toString().padStart(2, '0');
+                    }
+                    countdownElements[2].textContent = minutes.toString().padStart(2, '0');
+                }
+                countdownElements[3].textContent = seconds.toString().padStart(2, '0');
+            }
         }
         
-        .stat-card {
-            text-align: center;
-        }
-        
-        .stat-
+        setInterval(updateCountdown, 1000);
+    </script>
+</body>
+</html>

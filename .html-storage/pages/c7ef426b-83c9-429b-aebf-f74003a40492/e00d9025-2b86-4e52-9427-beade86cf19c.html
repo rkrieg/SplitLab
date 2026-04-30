@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>presale - Premium Tech Accessories That Define Excellence</title>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700&family=Open+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --navy: #1a1d3a;
+            --charcoal: #2c2c2c;
+            --gold: #d4af37;
+            --white: #ffffff;
+            --light-gray: #f8f9fa;
+            --text-dark: #333333;
+            --text-light: #6c757d;
+        }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Open Sans', sans-serif;
+            line-height: 1.6;
+            color: var(--text-dark);
+            font-size: 16px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 20px;
+        }
+        section {
+            padding: 100px 0;
+        }
+        h1, h2, h3 {
+            font-family: 'Montserrat', sans-serif;
+            font-weight: 700;
+        }
+        h1 {
+            font-size: 56px;
+            line-height: 1.2;
+            margin-bottom: 20px;
+        }
+        h2 {
+            font-size: 42px;
+            line-height: 1.3;
+            margin-bottom: 20px;
+        }
+        h3 {
+            font-size: 28px;
+            line-height: 1.4;
+            margin-bottom: 16px;
+        }
+        .btn {
+            display: inline-block;
+            padding: 16px 32px;
+            font-size: 18px;
+            font-weight: 600;
+            text-decoration: none;
+            border-radius: 8px;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            border: none;
+            min-height: 48px;
+            min-width: 200px;
+            text-align: center;
+        }
+        .btn-gold {
+            background: var(--gold);
+            color: var(--charcoal);
+        }
+        .btn-gold:hover {
+            background: #c19b26;
+            transform: translateY(-2px);
+        }
+        .btn-white {
+            background: var(--white);
+            color: var(--charcoal);
+        }
+        .btn-white:hover {
+            background: #f0f0f0;
+        }
+        .header {
+            background: linear-gradient(135deg, var(--navy) 0%, var(--charcoal) 100%);
+            padding: 20px 0;
+            position: relative;
+        }
+        .header .container {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .logo {
+            height: 50px;
+        }
+        .phone {
+            color: var(--gold);
+            text-decoration: none;
+            font-size: 18px;
+            font-weight: 600;
+        }
+        .hero {
+            background: linear-gradient(135deg, var(--navy) 0%, var(--charcoal) 100%);
+            min-height: 80vh;
+            display: flex;
+            align-items: center;
+            position: relative;
+            overflow: hidden;
+        }
+        .hero-content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 60px;
+            align-items: center;
+        }
+        .hero-text {
+            color: var(--white);
+        }
+        .hero h1 {
+            color: var(--white);
+        }
+        .hero-subtitle {
+            font-size: 20px;
+            color: #b8bcc8;
+            margin-bottom: 30px;
+        }
+        .hero-image {
+            position: relative;
+            text-align: center;
+        }
+        .hero-image img {
+            max-width: 100%;
+            height: 400px;
+            object-fit: cover;
+            border-radius: 12px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.3);
+        }
+        .social-proof {
+            background: var(--light-gray);
+            padding: 40px 0;
+            text-align: center;
+        }
+        .social-proof-text {
+            font-size: 18px;
+            color: var(--text-light);
+            margin-bottom: 20px;
+        }
+        .logos {
+            display: flex;
+            justify-content: center;
+            gap: 40px;
+            align-items: center;
+        }
+        .featured-products {
+            background: var(--white);
+        }
+        .featured-products h2 {
+            text-align: center;
+            margin-bottom: 60px;
+        }
+        .products-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 40px;
+        }
+        .product-card {
+            background: var(--white);
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            text-align: center;
+            transition: transform 0.3s ease;
+            position: relative;
+        }
+        .product-card:hover {
+            transform: translateY(-5px);
+        }
+        .limited-badge {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: var(--gold);
+            color: var(--charcoal);
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .product-image {
+            width: 100%;
+            height: 200px;
+            object-fit: cover;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        .product-title {
+            font-size: 20px;
+            margin-bottom: 10px;
+        }
+        .product-rating {
+            color: var(--gold);
+            margin-bottom: 10px;
+        }
+        .product-price {
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--charcoal);
+            margin-bottom: 20px;
+        }
+        .benefits {
+            background: var(--light-gray);
+        }
+        .benefits h2 {
+            text-align: center;
+            margin-bottom: 60px;
+        }
+        .benefits-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 40px;
+        }
+        .benefit-item {
+            text-align: center;
+            padding: 20px;
+        }
+        .benefit-icon {
+            width: 80px;
+            height: 80px;
+            margin: 0 auto 20px;
+            background: var(--gold);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 32px;
+            color: var(--charcoal);
+        }
+        .testimonials {
+            background: var(--white);
+        }
+        .testimonials h2 {
+            text-align: center;
+            margin-bottom: 60px;
+        }
+        .testimonials-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 40px;
+        }
+        .testimonial {
+            background: var(--light-gray);
+            padding: 30px;
+            border-radius: 12px;
+            text-align: center;
+        }
+        .testimonial-avatar {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            margin: 0 auto 20px;
+            object-fit: cover;
+        }
+        .testimonial-stars {
+            color: var(--gold);
+            margin-bottom: 15px;
+        }
+        .how-it-works {
+            background: var(--light-gray);
+        }
+        .how-it-works h2 {
+            text-align: center;
+            margin-bottom: 60px;
+        }
+        .steps {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 30px;
+        }
+        .step {
+            text-align: center;
+            padding: 20px;
+        }
+        .step-number {
+            width: 60px;
+            height: 60px;
+            background: var(--gold);
+            color: var(--charcoal);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            font-weight: 700;
+            margin: 0 auto 20px;
+        }
+        .newsletter {
+            background: linear-gradient(135deg, var(--navy) 0%, var(--charcoal) 100%);
+            color: var(--white);
+        }
+        .newsletter h2 {
+            text-align: center;
+            color: var(--white);
+            margin-bottom: 20px;
+        }
+        .newsletter-subtitle {
+            text-align: center;
+            font-size: 18px;
+            color: #b8bcc8;
+            margin-bottom: 40px;
+        }
+        .newsletter-form {
+            max-width: 500px;
+            margin: 0 auto;
+            display: flex;
+            gap: 15px;
+        }
+        .newsletter-input {
+            flex: 1;
+            padding: 16px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+        }
+        .faq {
+            background: var(--white);
+        }
+        .faq h2 {
+            text-align: center;
+            margin-bottom: 60px;
+        }
+        .faq-list {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        .faq-item {
+            border-bottom: 1px solid #eee;
+            padding: 30px 0;
+        }
+        .faq-question {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 10px;
+        }
+        .footer {
+            background: var(--charcoal);
+            color: var(--white);
+            padding: 60px 0 40px;
+        }
+        .footer-content {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 40px;
+            margin-bottom: 40px;
+        }
+        .footer-section h3 {
+            color: var(--gold);
+            margin-bottom: 20px;
+        }
+        .footer-links {
+            list-style: none;
+        }
+        .footer-links li {
+            margin-bottom: 10px;
+        }
+        .footer-links a {
+            color: #b8bcc8;
+            text-decoration: none;
+        }
+        .footer-links a:hover {
+            color: var(--gold);
+        }
+        .footer-bottom {
+            border-top: 1px solid #555;
+            padding-top: 30px;
+            text-align: center;
+            color: #b8bcc8;
+        }
+        .sticky-cta {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 1000;
+            display: none;
+        }
+        @media (max-width: 768px) {
+            .container {
+                padding: 0 15px;
+            }
+            section {
+                padding: 60px 0;
+            }
+            h1 {
+                font-size: 36px;
+            }
+            h2 {
+                font-size: 32px;
+            }
+            .hero-content {
+                grid-template-columns: 1fr;
+                gap: 40px;
+                text-align: center;
+            }
+            .products-grid, .benefits-grid, .testimonials-grid {
+                grid-template-columns: 1fr;
+                gap: 30px;
+            }
+            .steps {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            .footer-content {
+                grid-template-columns: repeat(2, 1fr);
+                gap: 30px;
+            }
+            .newsletter-form {
+                flex-direction: column;
+            }
+            .sticky-cta {
+                display: block;
+            }
+            .header .container {
+                flex-direction: column;
+                gap: 15px;
+            }
+        }
+        @media (max-width: 480px) {
+            .steps {
+                grid-template-columns: 1fr;
+            }
+            .footer-content {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <div class="container">
+            <img src="https://static.vecteezy.com/system/resources/previews/009/178/125/large_2x/url-letter-logo-design-with-polygon-shape-url-polygon-and-cube-shape-logo-design-url-hexagon-logo-template-white-and-black-colors-url-monogram-business-and-real-estate-logo-vector.jpg" alt="presale logo" class="logo" data-sl-editable="true">
+            <a href="tel:2312231233" class="phone" data-sl-editable="true">231 223 1233</a>
+        </div>
+    </header>
+
+    <section class="hero" data-sl-section="hero">
+        <div class="container">
+            <div class="hero-content">
+                <div class="hero-text">
+                    <h1 data-sl-editable="true">Premium Tech Accessories That Define Excellence</h1>
+                    <p class="hero-subtitle" data-sl-editable="true">Meticulously crafted for discerning professionals who demand nothing less than perfection in every detail.</p>
+                    <a href="#featured-products" class="btn btn-gold" data-sl-editable="true">Shop Premium Collection</a>
+                </div>
+                <div class="hero-image">
+                    <img src="https://images.unsplash.com/photo-1572569511254-d8f925fe2cbb?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1200&q=80" alt="Premium wireless charger on marble surface with dramatic lighting">
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="social-proof" data-sl-section="hero">
+        <div class="container">
+            <p class="social-proof-text" data-sl-editable="true">Trusted by 50,000+ professionals worldwide</p>
+            <div class="logos">
+                <span data-sl-editable="true">★★★★★ 4.9/5 Customer Rating</span>
+            </div>
+        </div>
+    </section>
+
+    <section class="featured-products" data-sl-section="features" id="featured-products">
+        <div class="container">
+            <h2 data-sl-editable="true">Featured Premium Collection</h2>
+            <div class="products-grid">
+                <div class="product-card">
+                    <div class="limited-badge" data-sl-editable="true">Limited Edition</div>
+                    <img src="https://images.unsplash.com/photo-1588508065123-287b28e013da?ixlib=rb-4.0.3&auto=format&fit=crop&w=600&q=80" alt="Premium wireless charger" class="product-image">
+                    <h3 class="product-title" data-sl-editable="true">Platinum Wireless Charger</h3>
+                    <div class="product-rating" data-sl-editable="true">★★★★★ (127 reviews)</div>
+                    <div class="product-price" data-sl-editable="true">$189</div>
+                    <a href="#" class="btn btn-gold" data-sl-editable="true">Add to Cart</a>
+                </div>
+                <div class="product-card">
+                    <div class="limited-badge" data-sl-editable="true">Bestseller</div>
+                    <img src="https://images.unsplash.com/photo-1601593346740-925612772716?ixlib=rb-4.0.3&auto=format&fit=crop&w=600&q=80" alt="Luxury phone case" class="product-image">
+                    <h3 class="product-title" data-sl-editable="true">Executive Leather Case</h3>
+                    <div class="product-rating" data-sl-editable="true">★★★★★ (89 reviews)</div>
+                    <div class="product-price" data-sl-editable="true">$149</div>
+                    <a href="#" class="btn btn-gold" data-sl-editable="true">Add to Cart</a>
+                </div>
+                <div class="product-card">
+                    <div class="limited-badge" data-sl-editable="true">New Arrival</div>
+                    <img src="https://images.unsplash.com/photo-1484704849700-f032a568e944?ixlib=rb-4.0.3&auto=format&fit=crop&w=600&q=80" alt="Premium tech stand" class="product-image">
+                    <h3 class="product-title" data-sl-editable="true">Titanium Device Stand</h3>
+                    <div class="product-rating" data-sl-editable="true">★★★★★ (76 reviews)</div>
+                    <div class="product-price" data-sl-editable="true">$199</div>
+                    <a href="#" class="btn btn-gold" data-sl-editable="true">Add to Cart</a>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="benefits" data-sl-section="features">
+        <div class="container">
+            <h2 data-sl-editable="true">Why Choose presale</h2>
+            <div class="benefits-grid">
+                <div class="benefit-item">
+                    <div class="benefit-icon">✈</div>
+                    <h3 data-sl-editable="true">Aircraft-Grade Materials</h3>
+                    <p data-sl-editable="true">Every product is crafted from premium materials used in aerospace engineering, ensuring unmatched durability and luxury feel.</p>
+                </div>
+                <div class="benefit-item">
+                    <div class="benefit-icon">⚡</div>
+                    <h3 data-sl-editable="true">Precision Engineering</h3>
+                    <p data-sl-editable="true">Manufactured to tolerances measured in microns, our accessories deliver flawless performance and perfect aesthetics.</p>
+                </div>
+                <div class="benefit-item">
+                    <div class="benefit-icon">♦</div>
+                    <h3 data-sl-editable="true">Lifetime Warranty</h3>
+                    <p data-sl-editable="true">We stand behind our craftsmanship with an unconditional lifetime warranty on all premium accessories.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="testimonials" data-sl-section="testimonials">
+        <div class="container">
+            <h2 data-sl-editable="true">What Our Clients Say</h2>
+            <div class="testimonials-grid">
+                <div class="testimonial">
+                    <img src="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?ixlib=rb-4.0.3&auto=format&fit=crop&w=200&q=80" alt="Michael Chen testimonial" class="testimonial-avatar">
+                    <div class="testimonial-stars" data-sl-editable="true">★★★★★</div>
+                    <p data-sl-editable="true">"The build quality is extraordinary. These accessories feel more premium than anything I've owned. Worth every penny."</p>
+                    <h4 data-sl-editable="true">Michael Chen</h4>
+                    <span data-sl-editable="true">Tech Executive</span>
+                </div>
+                <div class="testimonial">
+                    <img src="https://images.unsplash.com/photo-1494790108755-2616b612b786?ixlib=rb-4.0.3&auto=format&fit=crop&w=200&q=80" alt="Sarah Williams testimonial" class="testimonial-avatar">
+                    <div class="testimonial-stars" data-sl-editable="true">★★★★★</div>
+                    <p data-sl-editable="true">"Absolutely stunning craftsmanship. The attention to detail is remarkable. My colleagues always ask where I got these."</p>
+                    <h4 data-sl-editable="true">Sarah Williams</h4>
+                    <span data-sl-editable="true">Design Director</span>
+                </div>
+                <div class="testimonial">
+                    <img src="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?ixlib=rb-4.0.3&auto=format&fit=crop&w=200&q=80" alt="David Rodriguez testimonial" class="testimonial-avatar">
+                    <div class="testimonial-stars" data-sl-editable="true">★★★★★</div>
+                    <p data-sl-editable="true">"I've never experienced luxury tech accessories like these. The materials and finish are museum-quality."</p>
+                    <h4 data-sl-editable="true">David Rodriguez</h4>
+                    <span data-sl-editable="true">Investment Banker</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="how-it-works" data-sl-section="process">
+        <div class="container">
+            <h2 data-sl-editable="true">How It Works</h2>
+            <div class="steps">
+                <div class="step">
+                    <div class="step-number">1</div>
+                    <h3 data-sl-editable="true">Browse</h3>
+                    <p data-sl-editable="true">Explore our curated collection of premium tech accessories designed for excellence.</p>
+                </div>
+                <div class="step">
+                    <div class="step-number">2</div>
+                    <h3 data-sl-editable="true">Select</h3>
+                    <p data-sl-editable="true">Choose from our handcrafted luxury items, each with unique premium finishes.</p>
+                </div>
+                <div class="step">
+                    <div class="step-number">3</div>
+                    <h3 data-sl-ed
+</body></html>

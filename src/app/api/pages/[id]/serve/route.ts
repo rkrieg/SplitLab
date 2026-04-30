@@ -6,7 +6,17 @@ export async function GET(
   request: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const APP_URL = new URL(request.url).origin;
+  // Resolve the public-facing base URL.
+  // REPLIT_DEV_DOMAIN is a Replit-injected hostname (no protocol, no trailing slash).
+  // Fall back to APP_HOSTNAME from .env.local, then to the raw request origin.
+  const rawOrigin = new URL(request.url).origin;
+  const replitDomain = process.env.REPLIT_DEV_DOMAIN;
+  const appHostname = process.env.APP_HOSTNAME;
+  const APP_URL = replitDomain
+    ? `https://${replitDomain}`
+    : appHostname
+    ? `https://${appHostname}`
+    : rawOrigin;
   const { id: pageId } = params;
 
   try {
