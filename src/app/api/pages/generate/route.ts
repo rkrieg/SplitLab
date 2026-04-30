@@ -151,7 +151,7 @@ export async function POST(request: NextRequest) {
             const refined = await ask(user, {
               system,
               model: 'claude-sonnet-4-20250514',
-              maxTokens: 4096,
+              maxTokens: 6144,
             });
 
             finalHtml = refined.trim();
@@ -179,10 +179,10 @@ export async function POST(request: NextRequest) {
 
           sendEvent('generating', { status: 'calling_claude' });
           const claudeTimeout = new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error('Page generation timed out. Please try again.')), 90_000)
+            setTimeout(() => reject(new Error('Page generation timed out. Please try again.')), 120_000)
           );
           const html = await Promise.race([
-            ask(user, { system, model: 'claude-sonnet-4-20250514', maxTokens: 4096 }),
+            ask(user, { system, model: 'claude-sonnet-4-20250514', maxTokens: 6144 }),
             claudeTimeout,
           ]);
 
@@ -195,6 +195,31 @@ export async function POST(request: NextRequest) {
         }
         if (!finalHtml.startsWith('<!DOCTYPE') && !finalHtml.startsWith('<html')) {
           finalHtml = '<!DOCTYPE html>\n' + finalHtml;
+        }
+
+        // 4b. Detect and recover from truncated HTML (hits token limit mid-generation)
+        const htmlLower = finalHtml.toLowerCase();
+        if (!htmlLower.includes('</body>') || !htmlLower.includes('</html>')) {
+          console.warn('[page-generate] HTML appears truncated — attempting recovery');
+          if (!htmlLower.includes('</style>')) {
+            // Truncated inside the <style> block — no body content at all
+            finalHtml += '\n</style></head><body style="font-family:sans-serif;padding:60px 40px;text-align:center;background:#f8fafc">'
+              + '<h2 style="color:#e53e3e;font-size:1.5rem;margin-bottom:12px">Generation Incomplete</h2>'
+              + '<p style="color:#64748b;max-width:480px;margin:0 auto 24px">The page was too long for one response. Click <strong>Regenerate</strong> — the prompt has been optimised to fit.</p>'
+              + '</body></html>';
+          } else if (!htmlLower.includes('<body')) {
+            // Truncated between </head> and <body>
+            finalHtml += '\n</head><body style="font-family:sans-serif;padding:60px 40px;text-align:center;background:#f8fafc">'
+              + '<h2 style="color:#e53e3e;font-size:1.5rem;margin-bottom:12px">Generation Incomplete</h2>'
+              + '<p style="color:#64748b;max-width:480px;margin:0 auto 24px">The page was cut short. Click <strong>Regenerate</strong> to try again.</p>'
+              + '</body></html>';
+          } else if (!htmlLower.includes('</body>')) {
+            // Body started but never closed
+            finalHtml += '\n</body></html>';
+          } else {
+            // Has </body> but missing </html>
+            finalHtml += '\n</html>';
+          }
         }
 
         // 5. Score quality

@@ -357,7 +357,8 @@ const BASE_SYSTEM_PROMPT = `You are an expert landing page designer and CRO (Con
 8. Use semantic HTML5 elements
 9. All images use placeholder URLs from the provided image list, with descriptive alt text
 10. Include a \`<meta name="viewport" content="width=device-width, initial-scale=1.0">\` tag
-11. Keep total HTML under 150KB
+11. **CSS EFFICIENCY — CRITICAL**: Keep CSS compact. Use shorthand properties, group selectors, use CSS variables for repeated values, avoid redundant rules. Target CSS under 5,000 characters total. You MUST finish the complete HTML page (including \`</body></html>\`) within the token budget.
+12. Structure: write the COMPLETE \`<head>\` (with CSS) first, then ALL body sections, then close \`</body></html>\`. Do NOT stop early.
 
 ## DESIGN PRINCIPLES
 
