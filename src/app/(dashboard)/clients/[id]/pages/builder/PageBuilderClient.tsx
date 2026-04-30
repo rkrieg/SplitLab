@@ -181,8 +181,7 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
           errMsg = `Server error (${res.status})`;
         }
         console.error('[PageBuilder] API error:', res.status, errMsg);
-        toast.error(errMsg);
-        setStep('plan');
+        setGenError(errMsg);
         return;
       }
 
@@ -190,54 +189,72 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
       if (!reader) throw new Error('No response body');
 
       const decoder = new TextDecoder();
+      // Buffer accumulates raw SSE bytes across TCP chunks
       let buffer = '';
 
       while (true) {
-        const { done, value } = await reader.read();
+        let done: boolean;
+        let value: Uint8Array | undefined;
+        try {
+          ({ done, value } = await reader.read());
+        } catch (readErr) {
+          console.error('[PageBuilder] Stream read error:', readErr);
+          break;
+        }
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
 
-        // Parse SSE event/data pairs correctly
-        let i = 0;
-        while (i < lines.length) {
-          const line = lines[i];
-          if (line.startsWith('event: ')) {
-            const eventType = line.slice(7);
-            if (i + 1 < lines.length && lines[i + 1].startsWith('data: ')) {
-              try {
-                const data = JSON.parse(lines[i + 1].slice(6));
-                handleSSEEvent(eventType, data);
-              } catch (e) {
-                console.error('[PageBuilder] SSE parse error:', e, lines[i + 1]);
-              }
-              i += 2;
-              continue;
+        // SSE messages are separated by blank lines (\n\n).
+        // Splitting on \n\n guarantees that event: and data: lines from the
+        // same message are always processed together, even when they arrive
+        // in different TCP chunks.
+        const parts = buffer.split('\n\n');
+        // The last slice may be an incomplete message — keep it in the buffer.
+        buffer = parts.pop() ?? '';
+
+        for (const part of parts) {
+          if (!part.trim()) continue;
+
+          let eventType = 'message';
+          let dataStr = '';
+
+          for (const line of part.split('\n')) {
+            if (line.startsWith('event: ')) {
+              eventType = line.slice(7).trim();
+            } else if (line.startsWith('data: ')) {
+              dataStr = line.slice(6);
             }
           }
-          i++;
+
+          if (!dataStr) continue;
+
+          try {
+            const data = JSON.parse(dataStr);
+            handleSSEEvent(eventType, data);
+          } catch (parseErr) {
+            console.error(
+              '[PageBuilder] SSE parse error — event:', eventType,
+              'raw (first 300 chars):', dataStr.slice(0, 300),
+              'error:', parseErr,
+            );
+          }
         }
       }
 
-      // Stream ended — if we never got a 'complete' event, handleSSEEvent
-      // would not have called setStep('preview'), so the component stays
-      // on 'generating'. We can't read the React state here (stale closure),
-      // so we use a ref to track whether complete was received.
+      // Stream fully consumed. If we never received a 'complete' event the
+      // server either timed out, crashed, or the connection was dropped.
       if (!completedRef.current) {
-        console.error('[PageBuilder] Stream ended without complete event');
-        setGenError('Generation timed out or was interrupted. Please try again.');
-        setStep('prompt');
+        console.error('[PageBuilder] Stream ended without a complete event');
+        setGenError('Generation did not complete — the server may have timed out. Please try again.');
       }
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return;
       const msg = err instanceof Error ? err.message : 'Generation failed';
-      console.error('[PageBuilder] Error:', err);
+      console.error('[PageBuilder] Unexpected error:', err);
       setGenError(msg);
-      setStep('prompt');
     }
-  }, [editablePrompt, prompt, vertical, brandSettings, workspaceId, clientId]);
+  }, [editablePrompt, prompt, vertical, customVertical, brandSettings, workspaceId, clientId]);
 
   function handleSSEEvent(event: string, data: Record<string, unknown>) {
     switch (event) {
@@ -279,7 +296,7 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
       case 'error':
         console.error('[PageBuilder] Server error event:', data.error);
         setGenError(String(data.error));
-        setStep('prompt');
+        // Stay on 'generating' step so the error UI with retry buttons renders
         break;
     }
   }
@@ -725,38 +742,79 @@ export default function PageBuilderClient({ workspaceId, clientId }: Props) {
   // ─── Render: Generating Step ──────────────────────────────────────
 
   if (step === 'generating') {
+    const hasError = !!genError;
     return (
       <div className="max-w-lg mx-auto text-center py-20">
-        <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-indigo-500/10 mb-6">
-          <Sparkles size={28} className="text-indigo-400 animate-pulse" />
-        </div>
-        <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100 mb-2">
-          Building your landing page
-        </h2>
-        <p className="text-slate-500 dark:text-slate-400 mb-6">{genStatus}</p>
-
-        {/* Progress bar */}
-        <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-2 overflow-hidden">
-          <div
-            className="h-full bg-indigo-500 rounded-full transition-all duration-1000"
-            style={{
-              width: step === 'generating' ? '70%' : '100%',
-              animation: 'indeterminate 2s ease-in-out infinite',
-            }}
-          />
-        </div>
-        <style>{`
-          @keyframes indeterminate {
-            0% { margin-left: -30%; width: 30%; }
-            50% { margin-left: 20%; width: 50%; }
-            100% { margin-left: 100%; width: 30%; }
+        <div className={`inline-flex items-center justify-center w-16 h-16 rounded-full mb-6 ${
+          hasError ? 'bg-red-500/10' : 'bg-indigo-500/10'
+        }`}>
+          {hasError
+            ? <span className="text-3xl">⚠️</span>
+            : <Sparkles size={28} className="text-indigo-400 animate-pulse" />
           }
-        `}</style>
+        </div>
 
-        {imageCount > 0 && (
-          <p className="text-xs text-slate-400 dark:text-slate-500 mt-4">
-            Using {imageCount} images from Unsplash
-          </p>
+        <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100 mb-2">
+          {hasError ? 'Generation failed' : 'Building your landing page'}
+        </h2>
+
+        {hasError ? (
+          <>
+            <p className="text-sm text-red-400 mb-6 px-4">{genError}</p>
+            <div className="flex items-center justify-center gap-3">
+              <button
+                onClick={handleGenerate}
+                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium text-white bg-indigo-500 hover:bg-indigo-600 transition-colors"
+              >
+                <RefreshCw size={15} /> Try Again
+              </button>
+              <button
+                onClick={() => { setStep('plan'); setGenError(null); }}
+                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600 transition-colors"
+              >
+                <RotateCcw size={15} /> Edit Prompt
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="text-slate-500 dark:text-slate-400 mb-6">{genStatus}</p>
+
+            {/* Indeterminate progress bar */}
+            <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-2 overflow-hidden mb-4">
+              <div
+                className="h-full bg-indigo-500 rounded-full"
+                style={{ animation: 'indeterminate 2s ease-in-out infinite' }}
+              />
+            </div>
+            <style>{`
+              @keyframes indeterminate {
+                0% { margin-left: -30%; width: 30%; }
+                50% { margin-left: 20%; width: 50%; }
+                100% { margin-left: 100%; width: 30%; }
+              }
+            `}</style>
+
+            <p className="text-xs text-slate-400 dark:text-slate-500 mb-6">
+              This takes about 40–60 seconds. Please keep this tab open.
+            </p>
+
+            {imageCount > 0 && (
+              <p className="text-xs text-slate-400 dark:text-slate-500 mb-4">
+                Using {imageCount} images from Unsplash
+              </p>
+            )}
+
+            <button
+              onClick={() => {
+                abortRef.current?.abort();
+                setStep('plan');
+              }}
+              className="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 underline transition-colors"
+            >
+              Cancel
+            </button>
+          </>
         )}
       </div>
     );
