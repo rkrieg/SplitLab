@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pearl Premium Tech Accessories - Limited Flash Sale</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: #ffffff;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 20px;
+        }
+
+        /* Hero Section */
+        .hero {
+            background: linear-gradient(135deg, #000000 0%, #1a1a1a 100%);
+            color: white;
+            min-height: 100vh;
+            position: relative;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+        }
+
+        .hero::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            right: 0;
+            width: 50%;
+            height: 100%;
+            background: url('https://images.unsplash.com/photo-1609081219090-a6d81d3085bf?w=800') center/cover;
+            opacity: 0.3;
+            z-index: 1;
+        }
+
+        .hero-content {
+            position: relative;
+            z-index: 2;
+            max-width: 600px;
+        }
+
+        .logo {
+            width: 80px;
+            height: 80px;
+            margin-bottom: 30px;
+        }
+
+        .flash-sale-badge {
+            background: linear-gradient(45deg, #FFD700, #FFA500);
+            color: #000;
+            padding: 8px 20px;
+            border-radius: 25px;
+            font-size: 14px;
+            font-weight: 700;
+            text-transform: uppercase;
+            margin-bottom: 20px;
+            display: inline-block;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+        }
+
+        .hero h1 {
+            font-size: 56px;
+            font-weight: 800;
+            line-height: 1.1;
+            margin-bottom: 20px;
+            background: linear-gradient(45deg, #ffffff, #FFD700);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .hero .subtitle {
+            font-size: 24px;
+            margin-bottom: 30px;
+            color: #cccccc;
+            font-weight: 400;
+        }
+
+        .countdown-timer {
+            background: rgba(255, 215, 0, 0.1);
+            border: 2px solid #FFD700;
+            padding: 20px;
+            border-radius: 12px;
+            margin: 30px 0;
+            text-align: center;
+        }
+
+        .countdown-label {
+            color: #FFD700;
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+        }
+
+        .countdown-numbers {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+        }
+
+        .countdown-item {
+            text-align: center;
+        }
+
+        .countdown-number {
+            font-size: 32px;
+            font-weight: 800;
+            color: #FFD700;
+            display: block;
+        }
+
+        .countdown-text {
+            font-size: 12px;
+            color: #cccccc;
+            text-transform: uppercase;
+        }
+
+        .cta-button {
+            background: linear-gradient(45deg, #FFD700, #FFA500);
+            color: #000000;
+            padding: 18px 40px;
+            border: none;
+            border-radius: 8px;
+            font-size: 18px;
+            font-weight: 700;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            display: inline-block;
+            margin-right: 20px;
+            margin-bottom: 20px;
+        }
+
+        .cta-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 30px rgba(255, 215, 0, 0.3);
+        }
+
+        .phone-cta {
+            background: transparent;
+            border: 2px solid #FFD700;
+            color: #FFD700;
+        }
+
+        .phone-cta:hover {
+            background: #FFD700;
+            color: #000;
+        }
+
+        .scarcity-text {
+            color: #ff6b6b;
+            font-weight: 600;
+            margin-top: 15px;
+            animation: blink 1.5s infinite;
+        }
+
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+
+        /* Social Proof Bar */
+        .social-proof {
+            background: #f8f9fa;
+            padding: 40px 0;
+            text-align: center;
+            border-bottom: 1px solid #e9ecef;
+        }
+
+        .proof-text {
+            font-size: 18px;
+            color: #666;
+            margin-bottom: 20px;
+            font-weight: 500;
+        }
+
+        .proof-logos {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 40px;
+            flex-wrap: wrap;
+        }
+
+        .proof-stat {
+            font-size: 32px;
+            font-weight: 800;
+            color: #000;
+            margin: 0 20px;
+        }
+
+        .proof-stat-label {
+            font-size: 14px;
+            color: #666;
+            text-transform: uppercase;
+        }
+
+        /* Featured Products */
+        .featured-products {
+            padding: 100px 0;
+            background: #ffffff;
+        }
+
+        .section-header {
+            text-align: center;
+            margin-bottom: 60px;
+        }
+
+        .section-title {
+            font-size: 42px;
+            font-weight: 800;
+            margin-bottom: 15px;
+            color: #000;
+        }
+
+        .section-subtitle {
+            font-size: 20px;
+            color: #666;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        .products-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 40px;
+            margin-top: 60px;
+        }
+
+        .product-card {
+            background: #ffffff;
+            border: 1px solid #e9ecef;
+            border-radius: 16px;
+            overflow: hidden;
+            transition: all 0.3s ease;
+            position: relative;
+        }
+
+        .product-card:hover {
+            transform: translateY(-8px);
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+        }
+
+        .product-image {
+            width: 100%;
+            height: 250px;
+            object-fit: cover;
+        }
+
+        .product-content {
+            padding: 30px;
+        }
+
+        .product-title {
+            font-size: 24px;
+            font-weight: 700;
+            margin-bottom: 10px;
+            color: #000;
+        }
+
+        .product-description {
+            color: #666;
+            margin-bottom: 20px;
+        }
+
+        .product-price {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        .current-price {
+            font-size: 28px;
+            font-weight: 800;
+            color: #000;
+        }
+
+        .original-price {
+            font-size: 20px;
+            color: #999;
+            text-decoration: line-through;
+        }
+
+        .discount-badge {
+            background: #ff6b6b;
+            color: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 700;
+        }
+
+        .stock-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 20px;
+        }
+
+        .stock-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #28a745;
+        }
+
+        .stock-low .stock-dot {
+            background: #ff6b6b;
+        }
+
+        .stock-text {
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .stock-low .stock-text {
+            color: #ff6b6b;
+        }
+
+        .product-cta {
+            width: 100%;
+            background: #000;
+            color: white;
+            padding: 15px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+        }
+
+        .product-cta:hover {
+            background: #333;
+        }
+
+        .urgent-badge {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            background: #FFD700;
+            color: #000;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+
+        /* Benefits Section */
+        .benefits {
+            padding: 100px 0;
+            background: #f8f9fa;
+        }
+
+        .benefits-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 40px;
+            margin-top: 60px;
+        }
+
+        .benefit-card {
+            background: white;
+            padding: 40px;
+            border-radius: 12px;
+            text-align: center;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+        }
+
+        .benefit-icon {
+            width: 64px;
+            height: 64px;
+            margin: 0 auto 20px;
+            border-radius: 50%;
+            background: linear-gradient(45deg, #FFD700, #FFA500);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+        }
+
+        .benefit-title {
+            font-size: 22px;
+            font-weight: 700;
+            margin-bottom: 15px;
+            color: #000;
+        }
+
+        .benefit-description {
+            color: #666;
+        }
+
+        /* Testimonials */
+        .testimonials {
+            padding: 100px 0;
+            background: #ffffff;
+        }
+
+        .testimonials-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 40px;
+            margin-top: 60px;
+        }
+
+        .testimonial-card {
+            background: #f8f9fa;
+            padding: 40px;
+            border-radius: 12px;
+            position: relative;
+        }
+
+        .stars {
+            color: #FFD700;
+            font-size: 18px;
+            margin-bottom: 20px;
+        }
+
+        .testimonial-text {
+            font-size: 18px;
+            line-height: 1.6;
+            margin-bottom: 25px;
+            color: #333;
+        }
+
+        .testimonial-author {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .author-image {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            object-fit: cover;
+        }
+
+        .author-info h4 {
+            font-weight: 600;
+            color: #000;
+            margin-bottom: 2px;
+        }
+
+        .author-info span {
+            color: #666;
+            font-size: 14px;
+        }
+
+        /* Flash Sale Section */
+        .flash-sale {
+            padding: 100px 0;
+            background: linear-gradient(135deg, #000000 0%, #1a1a1a 100%);
+            color: white;
+            text-align: center;
+        }
+
+        .flash-sale .section-title {
+            color: #FFD700;
+            margin-bottom: 30px;
+        }
+
+        .inventory-counters {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 30px;
+            margin: 50px 0;
+        }
+
+        .inventory-item {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 30px;
+            border-radius: 12px;
+            backdrop-filter: blur(10px);
+        }
+
+        .inventory-product {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 15px;
+        }
+
+        .inventory-bar {
+            background: rgba(255, 255, 255, 0.2);
+            height: 8px;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-bottom: 10px;
+        }
+
+        .inventory-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #ff6b6b, #FFD700);
+            border-radius: 4px;
+            animation: pulse-bar 2s infinite;
+        }
+
+        @keyframes pulse-bar {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.8; }
+        }
+
+        .inventory-text {
+            font-size: 14px;
+            color: #ff6b6b;
+            font-weight: 600;
+        }
+
+        .flash-sale-cta {
+            font-size: 20px;
+            padding: 20px 50px;
+            margin-top: 40px;
+        }
+
+        /* Newsletter Section */
+        .newsletter {
+            padding: 100px 0;
+            background: #f8f9fa;
+            text-align: center;
+        }
+
+        .newsletter-form {
+            max-width: 500px;
+            margin: 40px auto 0;
+            display: flex;
+            gap: 15px;
+        }
+
+        .newsletter-input {
+            flex: 1;
+            padding: 15px 20px;
+            border: 2px solid #e9ecef;
+            border-radius: 8px;
+            font-size: 16px;
+        }
+
+        .newsletter-input:focus {
+            outline: none;
+            border-color: #FFD700;
+        }
+
+        .newsletter-button {
+            background: #000;
+            color: white;
+            padding: 15px 30

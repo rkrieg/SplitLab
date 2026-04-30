@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useImperativeHandle, forwardRef, useCallback } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
 import { parseShadowContent } from '@/lib/html-clean';
 
 export interface HtmlPreviewHandle {
@@ -16,117 +16,119 @@ interface Props {
   onSelectionChange?: (active: boolean, pos?: { x: number; y: number }) => void;
 }
 
+/**
+ * Build a self-contained, script-free HTML document suitable for srcdoc.
+ * parseShadowContent strips <script> tags and extracts <style>/<link> blocks
+ * so we can reconstruct a clean document where body-scoped CSS applies
+ * correctly (unlike shadow DOM which drops <html>/<body> elements).
+ */
+function buildSrcdoc(rawHtml: string): string {
+  if (!rawHtml) return '';
+
+  // If the raw HTML already looks like a complete document, use it directly
+  // after stripping scripts for safety.
+  const cleaned = rawHtml
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
+    .replace(/<noscript\b[^>]*>[\s\S]*?<\/noscript>/gi, '');
+
+  // If it's a proper <!DOCTYPE html> doc, return as-is (scripts stripped)
+  if (/^\s*<!DOCTYPE\s+html/i.test(cleaned) || /^\s*<html/i.test(cleaned)) {
+    return cleaned;
+  }
+
+  // Otherwise treat as a fragment — wrap with head/body
+  const { styles, body } = parseShadowContent(rawHtml);
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+${styles}
+</head>
+<body style="margin:0">${body}</body>
+</html>`;
+}
+
 const HtmlPreview = forwardRef<HtmlPreviewHandle, Props>(function HtmlPreview(
   { html, editMode, className, onSelectionChange },
-  ref
+  ref,
 ) {
-  const hostRef = useRef<HTMLDivElement>(null);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const srcdoc = buildSrcdoc(html);
 
-  // ─── Expose imperative handle ─────────────────────────────────────────
   useImperativeHandle(ref, () => ({
     getHtml() {
-      const shadow = hostRef.current?.shadowRoot;
-      if (!shadow) return html;
-      // Strip contenteditable/outline styles before serialising
-      shadow.querySelectorAll<HTMLElement>('[contenteditable]').forEach((el) => {
-        el.removeAttribute('contenteditable');
-        el.style.outline = '';
-        el.style.cursor = '';
-        el.style.borderRadius = '';
-        el.style.minHeight = '';
-      });
-      return '<!DOCTYPE html>\n<html>\n<head></head>\n<body>\n' + shadow.innerHTML + '\n</body>\n</html>';
+      try {
+        const doc = iframeRef.current?.contentDocument;
+        if (!doc) return html;
+        return '<!DOCTYPE html>\n' + doc.documentElement.outerHTML;
+      } catch {
+        return html;
+      }
     },
     execFormat(command: string, value?: string) {
-      document.execCommand(command, false, value ?? undefined);
+      try {
+        const doc = iframeRef.current?.contentDocument;
+        doc?.execCommand(command, false, value ?? undefined);
+      } catch { /* ignore */ }
     },
     applyFontSize(px: string) {
-      const shadow = hostRef.current?.shadowRoot;
-      if (!shadow) return;
-      // Classic big-7 trick: insert font[size=7], then replace with span[style]
-      document.execCommand('fontSize', false, '7');
-      shadow.querySelectorAll<HTMLElement>('font[size="7"]').forEach((el) => {
-        const span = document.createElement('span');
-        span.style.fontSize = `${px}px`;
-        el.parentNode?.insertBefore(span, el);
-        while (el.firstChild) span.appendChild(el.firstChild);
-        el.parentNode?.removeChild(el);
-      });
+      try {
+        const doc = iframeRef.current?.contentDocument;
+        if (!doc) return;
+        doc.execCommand('fontSize', false, '7');
+        doc.querySelectorAll<HTMLElement>('font[size="7"]').forEach((el) => {
+          const span = doc.createElement('span');
+          span.style.fontSize = `${px}px`;
+          el.parentNode?.insertBefore(span, el);
+          while (el.firstChild) span.appendChild(el.firstChild);
+          el.parentNode?.removeChild(el);
+        });
+      } catch { /* ignore */ }
     },
   }));
 
-  // ─── (Re-)render HTML into shadow DOM ────────────────────────────────
+  // Apply / remove edit mode whenever editMode or html changes
   useEffect(() => {
-    const host = hostRef.current;
-    if (!host || !html) return;
+    const iframe = iframeRef.current;
+    if (!iframe) return;
 
-    let shadow = host.shadowRoot;
-    if (!shadow) {
-      shadow = host.attachShadow({ mode: 'open' });
-    }
-
-    const { combined } = parseShadowContent(html);
-    shadow.innerHTML = combined;
-  }, [html]);
-
-  // ─── Toggle edit mode ────────────────────────────────────────────────
-  useEffect(() => {
-    const host = hostRef.current;
-    const shadow = host?.shadowRoot;
-    if (!shadow) return;
-
-    if (editMode) {
-      // Enable CSS-based styling so execCommand produces <span style="..."> not <font>
-      document.execCommand('styleWithCSS', false, 'true');
-
-      // Make all block-level text elements editable (avoid nested contentEditables)
-      const EDITABLE_SELECTOR = [
-        'h1','h2','h3','h4','h5','h6',
-        'p','li','td','th','blockquote',
-        'figcaption','caption','button','a',
-        '[data-editable]',
-      ].join(',');
-
-      shadow.querySelectorAll<HTMLElement>(EDITABLE_SELECTOR).forEach((el) => {
-        el.contentEditable = 'true';
-        el.style.outline = '1px dashed rgba(99,102,241,0.4)';
-        el.style.cursor = 'text';
-        el.style.borderRadius = '2px';
-        el.style.minHeight = '1em';
-      });
-
-      const handleSelection = () => {
-        const sel = window.getSelection();
-        if (sel && !sel.isCollapsed && sel.rangeCount > 0) {
-          const rect = sel.getRangeAt(0).getBoundingClientRect();
-          onSelectionChange?.(true, {
-            x: rect.left + rect.width / 2,
-            y: rect.top - 8,
-          });
+    function applyEditMode() {
+      const doc = iframe!.contentDocument;
+      if (!doc) return;
+      try {
+        if (editMode) {
+          doc.designMode = 'on';
         } else {
+          doc.designMode = 'off';
           onSelectionChange?.(false);
         }
-      };
-
-      document.addEventListener('selectionchange', handleSelection);
-      return () => document.removeEventListener('selectionchange', handleSelection);
-    } else {
-      shadow.querySelectorAll<HTMLElement>('[contenteditable]').forEach((el) => {
-        el.removeAttribute('contenteditable');
-        el.style.outline = '';
-        el.style.cursor = '';
-        el.style.borderRadius = '';
-        el.style.minHeight = '';
-      });
-      onSelectionChange?.(false);
+      } catch { /* cross-origin sandbox — ignore */ }
     }
+
+    // Apply immediately in case the doc is already loaded
+    applyEditMode();
+    // Also apply after the next load (srcdoc swap resets the document)
+    iframe.addEventListener('load', applyEditMode);
+    return () => iframe.removeEventListener('load', applyEditMode);
   }, [editMode, html, onSelectionChange]);
 
   return (
-    <div
-      ref={hostRef}
+    <iframe
+      ref={iframeRef}
+      srcDoc={srcdoc}
       className={className}
-      style={{ display: 'block', width: '100%', minHeight: '600px', overflow: 'auto', background: '#fff' }}
+      title="Page Preview"
+      // allow-same-origin lets us access contentDocument for designMode / getHtml()
+      // allow-popups lets CTA links open in a new tab (harmless in preview)
+      sandbox="allow-same-origin allow-popups"
+      style={{
+        display: 'block',
+        width: '100%',
+        minHeight: '80vh',
+        border: 'none',
+        background: '#fff',
+      }}
     />
   );
 });
