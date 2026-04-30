@@ -72,7 +72,8 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const useStitch = isStitchConfigured();
+  // Stitch is configured but currently unreachable — bypass to go straight to Claude
+  const useStitch = false && isStitchConfigured();
 
   // SSE stream
   const encoder = new TextEncoder();
@@ -177,11 +178,13 @@ export async function POST(request: NextRequest) {
           });
 
           sendEvent('generating', { status: 'calling_claude' });
-          const html = await ask(user, {
-            system,
-            model: 'claude-sonnet-4-20250514',
-            maxTokens: 8192,
-          });
+          const claudeTimeout = new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('Claude timed out after 75s — try a shorter prompt')), 75_000)
+          );
+          const html = await Promise.race([
+            ask(user, { system, model: 'claude-sonnet-4-20250514', maxTokens: 8192 }),
+            claudeTimeout,
+          ]);
 
           finalHtml = html.trim();
         }

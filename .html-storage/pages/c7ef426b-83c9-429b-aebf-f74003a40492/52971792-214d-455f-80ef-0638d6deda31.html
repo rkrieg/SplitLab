@@ -1,0 +1,897 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pearl - Luxury Tech Accessories | Elevate Your Digital Experience</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Montserrat', sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background-color: #fff;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 20px;
+        }
+
+        /* Hero Section */
+        .hero {
+            min-height: 85vh;
+            background: linear-gradient(135deg, #2c2c2c 0%, #1a1a1a 50%, #2c2c2c 100%);
+            position: relative;
+            display: flex;
+            align-items: center;
+            overflow: hidden;
+        }
+
+        .hero-content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 60px;
+            align-items: center;
+            z-index: 2;
+            position: relative;
+        }
+
+        .hero-text {
+            color: white;
+        }
+
+        .logo {
+            width: 80px;
+            height: auto;
+            margin-bottom: 40px;
+        }
+
+        .hero h1 {
+            font-size: 48px;
+            font-weight: 600;
+            margin-bottom: 24px;
+            line-height: 1.2;
+        }
+
+        .hero p {
+            font-size: 20px;
+            font-weight: 300;
+            margin-bottom: 40px;
+            opacity: 0.9;
+        }
+
+        .hero-cta {
+            background: linear-gradient(45deg, #d4af37, #f4e24f);
+            color: #1a1a1a;
+            padding: 18px 40px;
+            border: none;
+            border-radius: 50px;
+            font-size: 18px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            display: inline-block;
+            min-width: 220px;
+            text-align: center;
+        }
+
+        .hero-cta:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(212, 175, 55, 0.4);
+        }
+
+        .product-showcase {
+            position: relative;
+            height: 500px;
+        }
+
+        .product-slider {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            border-radius: 16px;
+        }
+
+        .product-slide {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            opacity: 0;
+            transition: opacity 1s ease-in-out;
+        }
+
+        .product-slide.active {
+            opacity: 1;
+        }
+
+        .product-slide img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            border-radius: 16px;
+        }
+
+        /* Social Proof Bar */
+        .social-proof {
+            background: #f8f8f8;
+            padding: 40px 0;
+            text-align: center;
+        }
+
+        .social-proof p {
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 20px;
+            font-weight: 500;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
+
+        .brand-logos {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 40px;
+            flex-wrap: wrap;
+        }
+
+        .brand-logo {
+            font-size: 18px;
+            color: #999;
+            font-weight: 600;
+        }
+
+        /* Featured Products */
+        .featured-products {
+            padding: 100px 0;
+            background: white;
+        }
+
+        .section-title {
+            text-align: center;
+            margin-bottom: 60px;
+        }
+
+        .section-title h2 {
+            font-size: 42px;
+            font-weight: 600;
+            color: #2c2c2c;
+            margin-bottom: 16px;
+        }
+
+        .section-title p {
+            font-size: 18px;
+            color: #666;
+            font-weight: 300;
+        }
+
+        .products-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 40px;
+            margin-top: 60px;
+        }
+
+        .product-card {
+            background: white;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+            transition: all 0.3s ease;
+        }
+
+        .product-card:hover {
+            transform: translateY(-8px);
+            box-shadow: 0 8px 40px rgba(0,0,0,0.15);
+        }
+
+        .product-image {
+            position: relative;
+            overflow: hidden;
+        }
+
+        .product-image img {
+            width: 100%;
+            height: 280px;
+            object-fit: cover;
+            transition: transform 0.3s ease;
+        }
+
+        .product-card:hover .product-image img {
+            transform: scale(1.05);
+        }
+
+        .product-info {
+            padding: 30px;
+        }
+
+        .product-info h3 {
+            font-size: 22px;
+            font-weight: 600;
+            color: #2c2c2c;
+            margin-bottom: 12px;
+        }
+
+        .product-info p {
+            font-size: 16px;
+            color: #666;
+            margin-bottom: 20px;
+        }
+
+        .product-price {
+            font-size: 28px;
+            font-weight: 700;
+            color: #d4af37;
+            margin-bottom: 20px;
+        }
+
+        .product-cta {
+            background: #2c2c2c;
+            color: white;
+            border: 2px solid #2c2c2c;
+            padding: 14px 30px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            width: 100%;
+        }
+
+        .product-cta:hover {
+            background: transparent;
+            color: #2c2c2c;
+        }
+
+        /* Benefits Section */
+        .benefits {
+            padding: 100px 0;
+            background: #f8f8f8;
+        }
+
+        .benefits-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 50px;
+            margin-top: 60px;
+        }
+
+        .benefit-item {
+            text-align: center;
+            padding: 40px 20px;
+        }
+
+        .benefit-icon {
+            width: 80px;
+            height: 80px;
+            background: linear-gradient(45deg, #d4af37, #f4e24f);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 30px;
+            font-size: 32px;
+            color: #1a1a1a;
+        }
+
+        .benefit-item h3 {
+            font-size: 24px;
+            font-weight: 600;
+            color: #2c2c2c;
+            margin-bottom: 16px;
+        }
+
+        .benefit-item p {
+            font-size: 16px;
+            color: #666;
+        }
+
+        /* Testimonials */
+        .testimonials {
+            padding: 100px 0;
+            background: white;
+        }
+
+        .testimonials-carousel {
+            position: relative;
+            overflow: hidden;
+            margin-top: 60px;
+        }
+
+        .testimonial-slide {
+            display: none;
+            text-align: center;
+            padding: 0 40px;
+        }
+
+        .testimonial-slide.active {
+            display: block;
+        }
+
+        .testimonial-content {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .stars {
+            font-size: 24px;
+            color: #d4af37;
+            margin-bottom: 30px;
+        }
+
+        .testimonial-text {
+            font-size: 20px;
+            font-style: italic;
+            color: #2c2c2c;
+            margin-bottom: 30px;
+            line-height: 1.8;
+        }
+
+        .testimonial-author {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 20px;
+        }
+
+        .author-image {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            object-fit: cover;
+        }
+
+        .author-info h4 {
+            font-size: 18px;
+            font-weight: 600;
+            color: #2c2c2c;
+        }
+
+        .author-info p {
+            font-size: 14px;
+            color: #666;
+        }
+
+        /* Why Choose Pearl */
+        .why-choose {
+            padding: 100px 0;
+            background: #2c2c2c;
+            color: white;
+        }
+
+        .why-choose-content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 80px;
+            align-items: center;
+        }
+
+        .why-choose-text h2 {
+            font-size: 42px;
+            font-weight: 600;
+            margin-bottom: 24px;
+        }
+
+        .why-choose-text p {
+            font-size: 18px;
+            margin-bottom: 40px;
+            opacity: 0.9;
+        }
+
+        .awards-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+        }
+
+        .award-badge {
+            background: rgba(255,255,255,0.1);
+            padding: 24px;
+            border-radius: 12px;
+            text-align: center;
+        }
+
+        .award-badge h4 {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #d4af37;
+        }
+
+        .award-badge p {
+            font-size: 14px;
+            opacity: 0.8;
+        }
+
+        /* How It Works */
+        .how-it-works {
+            padding: 100px 0;
+            background: white;
+        }
+
+        .steps-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 40px;
+            margin-top: 60px;
+        }
+
+        .step-item {
+            text-align: center;
+            position: relative;
+        }
+
+        .step-number {
+            width: 60px;
+            height: 60px;
+            background: #d4af37;
+            color: #1a1a1a;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            font-weight: 700;
+            margin: 0 auto 24px;
+        }
+
+        .step-item h3 {
+            font-size: 20px;
+            font-weight: 600;
+            color: #2c2c2c;
+            margin-bottom: 16px;
+        }
+
+        .step-item p {
+            font-size: 16px;
+            color: #666;
+        }
+
+        /* Newsletter Section */
+        .newsletter {
+            padding: 100px 0;
+            background: linear-gradient(135deg, #2c2c2c, #1a1a1a);
+            color: white;
+            text-align: center;
+        }
+
+        .newsletter h2 {
+            font-size: 36px;
+            font-weight: 600;
+            margin-bottom: 16px;
+        }
+
+        .newsletter p {
+            font-size: 18px;
+            margin-bottom: 40px;
+            opacity: 0.9;
+        }
+
+        .newsletter-form {
+            max-width: 500px;
+            margin: 0 auto;
+            display: flex;
+            gap: 16px;
+        }
+
+        .newsletter-form input {
+            flex: 1;
+            padding: 16px 20px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+        }
+
+        .newsletter-form button {
+            background: linear-gradient(45deg, #d4af37, #f4e24f);
+            color: #1a1a1a;
+            border: none;
+            padding: 16px 32px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .newsletter-form button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(212, 175, 55, 0.4);
+        }
+
+        /* FAQ Section */
+        .faq {
+            padding: 100px 0;
+            background: #f8f8f8;
+        }
+
+        .faq-list {
+            max-width: 800px;
+            margin: 0 auto;
+            margin-top: 60px;
+        }
+
+        .faq-item {
+            background: white;
+            margin-bottom: 16px;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .faq-question {
+            padding: 24px;
+            background: white;
+            border: none;
+            width: 100%;
+            text-align: left;
+            font-size: 18px;
+            font-weight: 600;
+            color: #2c2c2c;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .faq-answer {
+            padding: 0 24px 24px;
+            color: #666;
+            font-size: 16px;
+            display: none;
+        }
+
+        .faq-item.active .faq-answer {
+            display: block;
+        }
+
+        /* Footer */
+        .footer {
+            background: #1a1a1a;
+            color: white;
+            padding: 60px 0 40px;
+        }
+
+        .footer-content {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 40px;
+            margin-bottom: 40px;
+        }
+
+        .footer-section h3 {
+            font-size: 20px;
+            font-weight: 600;
+            margin-bottom: 20px;
+            color: #d4af37;
+        }
+
+        .footer-section p,
+        .footer-section a {
+            color: #ccc;
+            text-decoration: none;
+            margin-bottom: 8px;
+            display: block;
+        }
+
+        .footer-section a:hover {
+            color: #d4af37;
+        }
+
+        .phone-link {
+            color: #d4af37;
+            font-weight: 600;
+            font-size: 18px;
+        }
+
+        .footer-bottom {
+            border-top: 1px solid #333;
+            padding-top: 40px;
+            text-align: center;
+            color: #999;
+        }
+
+        /* Sticky CTA */
+        .sticky-cta {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: linear-gradient(45deg, #d4af37, #f4e24f);
+            color: #1a1a1a;
+            padding: 16px 24px;
+            border-radius: 50px;
+            font-weight: 600;
+            text-decoration: none;
+            box-shadow: 0 4px 20px rgba(212, 175, 55, 0.4);
+            z-index: 1000;
+            display: none;
+        }
+
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            .container {
+                padding: 0 16px;
+            }
+
+            .hero-content {
+                grid-template-columns: 1fr;
+                gap: 40px;
+                text-align: center;
+            }
+
+            .hero h1 {
+                font-size: 36px;
+            }
+
+            .hero p {
+                font-size: 18px;
+            }
+
+            .products-grid {
+                grid-template-columns: 1fr;
+                gap: 30px;
+            }
+
+            .benefits-grid {
+                grid-template-columns: 1fr;
+                gap: 40px;
+            }
+
+            .why-choose-content {
+                grid-template-columns: 1fr;
+                gap: 50px;
+            }
+
+            .newsletter-form {
+                flex-direction: column;
+            }
+
+            .section-title h2 {
+                font-size: 32px;
+            }
+
+            .sticky-cta {
+                display: block;
+            }
+
+            .steps-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .awards-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .hero h1 {
+                font-size: 28px;
+            }
+
+            .hero p {
+                font-size: 16px;
+            }
+
+            .section-title h2 {
+                font-size: 28px;
+            }
+
+            .testimonial-slide {
+                padding: 0 20px;
+            }
+
+            .testimonial-text {
+                font-size: 18px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Hero Section -->
+    <section class="hero" data-sl-section="hero">
+        <div class="container">
+            <div class="hero-content">
+                <div class="hero-text">
+                    <img src="https://static.vecteezy.com/system/resources/previews/009/178/125/large_2x/url-letter-logo-design-with-polygon-shape-url-polygon-and-cube-shape-logo-design-url-hexagon-logo-template-white-and-black-colors-url-monogram-business-and-real-estate-logo-vector.jpg" alt="Pearl Logo" class="logo">
+                    <h1 data-sl-editable="true">Elevate Your Digital Experience</h1>
+                    <p data-sl-editable="true">Discover the pinnacle of luxury tech accessories. Crafted for professionals who demand excellence in every detail.</p>
+                    <a href="#featured-products" class="hero-cta" data-sl-editable="true">Shop Luxury Collection</a>
+                </div>
+                <div class="product-showcase">
+                    <div class="product-slider">
+                        <div class="product-slide active">
+                            <img src="https://images.unsplash.com/photo-1593642532842-98d0fd5ebc1a?w=600&h=500&fit=crop" alt="Professional using Pearl wireless headphones in modern office">
+                        </div>
+                        <div class="product-slide">
+                            <img src="https://images.unsplash.com/photo-1542272604-787c3835535d?w=600&h=500&fit=crop" alt="Pearl premium laptop stand on executive desk">
+                        </div>
+                        <div class="product-slide">
+                            <img src="https://images.unsplash.com/photo-1588872657578-7efd1f1555ed?w=600&h=500&fit=crop" alt="Pearl wireless charging station in luxury workspace">
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Social Proof Bar -->
+    <section class="social-proof" data-sl-section="stats">
+        <div class="container">
+            <p data-sl-editable="true">Trusted by Industry Leaders</p>
+            <div class="brand-logos">
+                <span class="brand-logo" data-sl-editable="true">Fortune 500</span>
+                <span class="brand-logo" data-sl-editable="true">Tech Weekly</span>
+                <span class="brand-logo" data-sl-editable="true">Business Elite</span>
+                <span class="brand-logo" data-sl-editable="true">Innovation Today</span>
+            </div>
+        </div>
+    </section>
+
+    <!-- Featured Products -->
+    <section class="featured-products" id="featured-products" data-sl-section="services">
+        <div class="container">
+            <div class="section-title">
+                <h2 data-sl-editable="true">Luxury Tech Accessories</h2>
+                <p data-sl-editable="true">Each piece in our collection represents the perfect fusion of cutting-edge technology and timeless elegance</p>
+            </div>
+            
+            <div class="products-grid">
+                <div class="product-card">
+                    <div class="product-image">
+                        <img src="https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=400&h=280&fit=crop" alt="Pearl Premium Wireless Headphones">
+                    </div>
+                    <div class="product-info">
+                        <h3 data-sl-editable="true">Pearl Signature Headphones</h3>
+                        <p data-sl-editable="true">Immersive audio experience with premium leather and gold accents</p>
+                        <div class="product-price" data-sl-editable="true">$199</div>
+                        <button class="product-cta" data-sl-editable="true">Add to Cart</button>
+                    </div>
+                </div>
+
+                <div class="product-card">
+                    <div class="product-image">
+                        <img src="https://images.unsplash.com/photo-1527864550417-7fd91fc51a46?w=400&h=280&fit=crop" alt="Pearl Executive Laptop Stand">
+                    </div>
+                    <div class="product-info">
+                        <h3 data-sl-editable="true">Executive Laptop Stand</h3>
+                        <p data-sl-editable="true">Ergonomic aluminum design with precision engineering</p>
+                        <div class="product-price" data-sl-editable="true">$149</div>
+                        <button class="product-cta" data-sl-editable="true">Add to Cart</button>
+                    </div>
+                </div>
+
+                <div class="product-card">
+                    <div class="product-image">
+                        <img src="https://images.unsplash.com/photo-1572569511254-d8f925fe2cbb?w=400&h=280&fit=crop" alt="Pearl Wireless Charging Station">
+                    </div>
+                    <div class="product-info">
+                        <h3 data-sl-editable="true">Wireless Charging Hub</h3>
+                        <p data-sl-editable="true">Multi-device charging with sophisticated design aesthetics</p>
+                        <div class="product-price" data-sl-editable="true">$129</div>
+                        <button class="product-cta" data-sl-editable="true">Add to Cart</button>
+                    </div>
+                </div>
+
+                <div class="product-card">
+                    <div class="product-image">
+                        <img src="https://images.unsplash.com/photo-1560472354-b33ff0c44a43?w=400&h=280&fit=crop" alt="Pearl Premium Mouse">
+                    </div>
+                    <div class="product-info">
+                        <h3 data-sl-editable="true">Precision Wireless Mouse</h3>
+                        <p data-sl-editable="true">Ergonomic excellence with premium materials and precision tracking</p>
+                        <div class="product-price" data-sl-editable="true">$89</div>
+                        <button class="product-cta" data-sl-editable="true">Add to Cart</button>
+                    </div>
+                </div>
+
+                <div class="product-card">
+                    <div class="product-image">
+                        <img src="https://images.unsplash.com/photo-1541140532154-b024d705b90a?w=400&h=280&fit=crop" alt="Pearl Mechanical Keyboard">
+                    </div>
+                    <div class="product-info">
+                        <h3 data-sl-editable="true">Luxury Mechanical Keyboard</h3>
+                        <p data-sl-editable="true">Handcrafted keys with premium switches and gold detailing</p>
+                        <div class="product-price" data-sl-editable="true">$179</div>
+                        <button class="product-cta" data-sl-editable="true">Add to Cart</button>
+                    </div>
+                </div>
+
+                <div class="product-card">
+                    <div class="product-image">
+                        <img src="https://images.unsplash.com/photo-1625842268584-8f3296236761?w=400&h=280&fit=crop" alt="Pearl Cable Management System">
+                    </div>
+                    <div class="product-info">
+                        <h3 data-sl-editable="true">Cable Management Suite</h3>
+                        <p data-sl-editable="true">Elegant organization system for the discerning professional</p>
+                        <div class="product-price" data-sl-editable="true">$49</div>
+                        <button class="product-cta" data-sl-editable="true">Add to Cart</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Benefits Section -->
+    <section class="benefits" data-sl-section="features">
+        <div class="container">
+            <div class="section-title">
+                <h2 data-sl-editable="true">Why Choose Pearl</h2>
+                <p data-sl-editable="true">Experience the difference that true luxury and meticulous craftsmanship make</p>
+            </div>
+            
+            <div class="benefits-grid">
+                <div class="benefit-item">
+                    <div class="benefit-icon">💎</div>
+                    <h3 data-sl-editable="true">Premium Materials</h3>
+                    <p data-sl-editable="true">Only the finest materials are selected for our accessories. Each product features premium aluminum, genuine leather, and gold accents that age beautifully.</p>
+                </div>
+                
+                <div class="benefit-item">
+                    <div class="benefit-icon">🛡️</div>
+                    <h3 data-sl-editable="true">Lifetime Warranty</h3>
+                    <p data-sl-editable="true">We stand behind our craftsmanship with a comprehensive lifetime warranty. Your investment in Pearl is protected for years to come.</p>
+                </div>
+                
+                <div class="benefit-item">
+                    <div class="benefit-icon">👨‍💼</div>
+                    <h3 data-sl-editable="true">Expert Craftsmanship</h3>
+                    <p data-sl-editable="true">Each Pearl product is meticulously crafted by skilled artisans who understand the importance of precision and attention to detail.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Testimonials -->
+    <section class="testimonials" data-sl-section="testimonials">
+        <div class="container">
+            <div class="section-title">
+                <h2 data-sl-editable="true">What Our Clients Say</h2>
+                <p data-sl-editable="true">Discover why professionals choose Pearl for their workspace</p>
+            </div>
+            
+            <div class="testimonials-carousel">
+                <div class="testimonial-slide active">
+                    <div class="testimonial-content">
+                        <div class="stars">★★★★★</div>
+                        <p class="testimonial-text" data-sl-editable="true">"Pearl accessories have completely transformed my workspace. The quality is unmatched, and the attention to detail is extraordinary. Worth every penny for the professional who demands excellence."</p>
+                        <div class="testimonial-author">
+                            <img src="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=60&h=60&fit=crop&crop=face" alt="Client testimonial" class="author-image">
+                            <div class="author-info">
+                                <h4 data-sl-editable="true">Michael Chen</h4>
+                                <p data-sl-editable="true">CEO, TechVision</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="testimonial-slide">
+                    <div class="testimonial-content">
+                        <div class="stars">★★★★★</div>
+                        <p class="testimonial-text" data-sl-editable="true">"The durability and craftsmanship of Pearl products is simply outstanding. After two years of daily use, everything still looks and functions like new. This is luxury that lasts."</p>
+                        <div class="testimonial-author">
+                            <img src="https://images.unsplash.com/photo-1494790108755-2616b332049c?w=60&h=60&fit=crop&crop=face" alt="Client testimonial" class="author-image">
+                            <div class="author-info">
+                                <h4 data-sl-editable="true">Sarah Rodriguez</h4>
+                                <p data-sl-editable="true">Creative Director, Design Studio</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="testimonial-slide">
+                    <div class="testimonial-content">
+                        <div class="stars">★★★★★</div>
+                        <p class="testimonial-text" data-sl-editable="true">"Pearl understands what professionals need. The combination of functionality and aesthetic appeal is perfect for my executive office. Clients always compliment the setup."</p>
+                        <div class="testimonial-author">
+                            <img src="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=60&h=60&fit=crop&crop=face" alt="Client testimonial"
