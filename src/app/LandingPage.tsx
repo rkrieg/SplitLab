@@ -32,7 +32,7 @@ export default function LandingPage() {
       });
       const data = await res.json();
       if (data.url) {
-        window.location.href = data.url;
+        window.open(data.url, '_blank');
       } else {
         alert(data.error || 'Failed to start checkout. Please try again.');
         setCheckoutLoading(null);
@@ -76,7 +76,7 @@ export default function LandingPage() {
             <a href="#how-it-works">How It Works</a>
             <a href="#pricing">Pricing</a>
             <a href="#use-cases">Use Cases</a>
-            <a href="/login" className="nav-cta">Get Started Free</a>
+            <a href="/signup" className="nav-cta">Get Started Free</a>
           </div>
           <button className="mobile-toggle" onClick={() => setMobileOpen(!mobileOpen)}>
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
@@ -89,7 +89,7 @@ export default function LandingPage() {
         <h1>A/B Test <span className="gradient">Any URL</span><br />In Under 5 Minutes</h1>
         <p className="hero-sub">Route traffic through your domain. Test Lovable pages, Replit apps, raw HTML, or any URL. One script tag for conversion tracking. Statistical confidence built in.</p>
         <div className="hero-ctas">
-          <a href="/register" className="btn-primary">Start Testing Free <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg></a>
+          <a href="/signup" className="btn-primary">Start Testing Free <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg></a>
           <a href="#how-it-works" className="btn-secondary">See How It Works</a>
         </div>
         <div className="hero-proof">
@@ -210,7 +210,7 @@ export default function LandingPage() {
               <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Basic analytics</li>
               <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Zero-config tracker.js</li>
             </ul>
-            <a href="/register" className="pricing-btn pricing-btn-secondary">Get Started</a>
+            <a href="/signup" className="pricing-btn pricing-btn-secondary">Get Started</a>
           </div>
           <div className="pricing-card">
             <div className="pricing-plan">Pro</div>
@@ -261,7 +261,7 @@ export default function LandingPage() {
       <section className="final-cta">
         <h2>Ready to find your<br /><span className="gradient">winning page?</span></h2>
         <p>Start testing for free. No credit card required. Your first test can be live in under 5 minutes.</p>
-        <a href="/register" className="btn-primary">Get Started Free <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg></a>
+        <a href="/signup" className="btn-primary">Get Started Free <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg></a>
       </section>
 
       <footer>
