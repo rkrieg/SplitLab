@@ -3,11 +3,8 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { ask } from '@/lib/claude';
-import { searchImages } from '@/lib/unsplash';
-import { buildClonePrompt } from '@/lib/page-builder-prompts';
-import { scorePage } from '@/lib/page-quality';
 import { uploadHtml } from '@/lib/storage';
-import { prepareHtml } from '@/lib/variant-utils';
+import { prepareHtml, applyReplacements, injectBaseTag } from '@/lib/variant-utils';
 
 export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
@@ -25,80 +22,104 @@ const DEFAULT_ANGLES: VariantAngle[] = [
     focus: 'headlines and value proposition',
     hypothesis: 'Clearer, benefit-driven headlines will increase engagement and CTA clicks by 15–25%.',
     guidance:
-      'Rewrite ALL section headlines and the main value proposition to be more specific and benefit-driven. Keep the exact same visual design, layout, colors, images, and structure. Only change the wording of headlines and value prop text.',
+      'Rewrite section headlines and the main value proposition text to be more specific and benefit-driven. ' +
+      'Target <h1>, <h2>, <h3> tags and the subheadline paragraphs immediately beneath them. ' +
+      'Do NOT touch CTA buttons, navigation, body paragraphs, testimonials, or footer. ' +
+      'Do NOT change images, colors, fonts, layout, or CSS.',
   },
   {
     label: 'Outcome-Focused CTAs',
     focus: 'calls-to-action and action-oriented copy',
     hypothesis: 'More specific, outcome-focused CTAs will increase click-through rates by 10–20%.',
     guidance:
-      'Rewrite all CTA button text and nearby action copy to communicate a specific outcome (e.g., "Get My Free Strategy Session" instead of "Contact Us"). Keep the exact same visual design, layout, colors, images, and all non-CTA text.',
+      'Rewrite CTA button text and any copy immediately adjacent to CTAs to communicate a specific outcome ' +
+      '(e.g., "Get My Free Strategy Session" instead of "Get In Touch"). ' +
+      'Target button text, anchor text inside buttons, and short action phrases near CTAs. ' +
+      'Do NOT touch headlines, body paragraphs, testimonials, navigation items, or footer links. ' +
+      'Do NOT change images, colors, fonts, layout, or CSS.',
   },
   {
     label: 'Benefit-Driven Body Copy',
     focus: 'body copy and service descriptions',
     hypothesis: 'Rewriting feature-focused copy to lead with client benefits will better communicate value.',
     guidance:
-      'Rewrite all body paragraphs and service descriptions to lead with the benefit the client gets, not the feature. Keep the exact same visual design, layout, colors, images, headlines, and CTAs.',
+      'Rewrite body paragraphs and service description text to lead with the benefit the client gets, not the feature or process. ' +
+      'Target <p> tags in the main content sections, list items describing services. ' +
+      'Do NOT touch headlines, CTA buttons, navigation, testimonials, or footer. ' +
+      'Do NOT change images, colors, fonts, layout, or CSS.',
   },
 ];
 
-/**
- * Generate a complete standalone HTML page for one variant angle.
- * Uses buildClonePrompt so each variant is a real page (not a text patch).
- */
-async function generateVariantPage(
+interface ReplacementResponse {
+  replacements: Array<{ find: string; replace: string; description: string }>;
+  changes_summary: Array<{ change: string; reason: string }>;
+  impact_hypothesis: string;
+}
+
+function buildReplacementPrompt(
+  html: string,
   angle: VariantAngle,
-  scrapedHtml: string,
   sourceUrl: string,
-  analysis: Record<string, unknown>,
-  imageUrls: Awaited<ReturnType<typeof searchImages>>,
-  baseInstructions?: string
-): Promise<string> {
-  const angleInstructions = [
-    `## CRO STRATEGY: ${angle.label}`,
-    `HYPOTHESIS: ${angle.hypothesis}`,
-    `FOCUS: ${angle.focus}`,
-    `INSTRUCTIONS: ${angle.guidance}`,
-    baseInstructions?.trim()
-      ? `\n## ADDITIONAL USER INSTRUCTIONS (apply these too):\n${baseInstructions.trim()}`
-      : '',
-  ]
-    .filter(Boolean)
-    .join('\n');
+  instructions?: string
+): string {
+  const preparedHtml = prepareHtml(html);
 
-  const originalHtmlContext = prepareHtml(scrapedHtml).slice(0, 30_000);
+  return `You are a senior CRO (Conversion Rate Optimization) specialist creating a precise A/B test variant.
 
-  const { system, user } = buildClonePrompt({
-    originalHtmlContext,
-    sourceUrl,
-    analysis: analysis as Parameters<typeof buildClonePrompt>[0]['analysis'],
-    instructions: angleInstructions,
-    imageUrls,
-  });
+## STRATEGY: ${angle.label}
+**Hypothesis:** ${angle.hypothesis}
+**Focus Area:** ${angle.guidance}
 
-  const html = await ask(user, {
-    system,
-    model: 'claude-sonnet-4-20250514',
-    maxTokens: 8192,
-  });
+${instructions ? `## Custom Instructions (HIGHEST PRIORITY — overrides focus area if they conflict)\n${instructions}\n` : ''}
 
-  let finalHtml = html.trim();
-  if (finalHtml.startsWith('```')) {
-    finalHtml = finalHtml.replace(/^```html?\n?/, '').replace(/\n?```$/, '');
+## YOUR TASK
+Produce 5–12 TEXT-ONLY replacements that change ONLY visible copy — no HTML tags, no CSS, no images.
+
+Each replacement:
+- "find": the EXACT visible text string as it appears on the page (copy from the HTML below)
+- "replace": the new text (same format — plain text, no HTML tags in either field unless necessary for inline emphasis)
+- "description": what changed and why
+
+## CRITICAL RULES
+1. "find" must be EXACTLY the visible text as rendered — copy-paste it from the HTML below
+2. Keep "find" SHORT (5–20 words max) — find the most unique shortest version
+3. Do NOT change navigation items, footer links, or legal text
+4. Do NOT change anything outside the focus area
+5. If a headline contains ALL CAPS text, rewrite it also in ALL CAPS
+6. Match the tone and length of the original text
+
+## Source URL: ${sourceUrl}
+
+## Page HTML:
+${preparedHtml}
+
+## RESPONSE FORMAT
+Return ONLY valid JSON (no markdown fences):
+{
+  "replacements": [
+    {
+      "find": "exact visible text from the page",
+      "replace": "improved text following the strategy",
+      "description": "what changed and why"
+    }
+  ],
+  "changes_summary": [{"change": "what was changed", "reason": "why this improves conversion"}],
+  "impact_hypothesis": "specific prediction about how this variant will perform vs control"
+}`;
+}
+
+function parseReplacementResponse(response: string): ReplacementResponse {
+  let cleaned = response.trim();
+  if (cleaned.startsWith('```')) {
+    cleaned = cleaned.replace(/^```json?\n?/, '').replace(/\n?```$/, '');
   }
-  if (!finalHtml.startsWith('<!DOCTYPE') && !finalHtml.startsWith('<html')) {
-    finalHtml = '<!DOCTYPE html>\n' + finalHtml;
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    const match = cleaned.match(/\{[\s\S]*\}/);
+    if (match) return JSON.parse(match[0]);
+    throw new Error('Claude returned invalid JSON for variant generation');
   }
-
-  const lower = finalHtml.toLowerCase();
-  if (!lower.includes('</body>') && !lower.includes('</html>')) {
-    finalHtml += '\n</body></html>';
-  } else if (!lower.includes('</html>')) {
-    finalHtml += '\n</html>';
-  }
-
-  return finalHtml;
 }
 
 export async function POST(request: NextRequest) {
@@ -168,7 +189,6 @@ export async function POST(request: NextRequest) {
 
   const angles = DEFAULT_ANGLES.slice(0, numVariants);
   const workspaceId = test.workspace_id as string;
-  const analysis = (scrapedPage.analysis || {}) as Record<string, unknown>;
 
   const encoder = new TextEncoder();
   let keepalive: ReturnType<typeof setInterval> | null = null;
@@ -198,33 +218,42 @@ export async function POST(request: NextRequest) {
           strategies: angles.map(a => a.label),
         });
 
-        // Search images once for all variants
-        const searchQuery = [
-          (analysis.primary_offer as string | undefined),
-          (analysis.page_type as string | undefined),
-          (analysis.target_audience as string | undefined),
-        ]
-          .filter(Boolean)
-          .join(' ')
-          .slice(0, 200) || 'professional business';
-
-        const imageUrls = await searchImages(searchQuery, 'other');
-
         sendEvent('generating', {
           strategies: angles.map((a, i) => ({ index: i, label: a.label, status: 'in_progress' })),
         });
 
         // Generate all variants in parallel
         const variantPromises = angles.map(async (angle, index) => {
-          const html = await generateVariantPage(
-            angle,
+          const prompt = buildReplacementPrompt(
             scrapedPage.html,
+            angle,
             scrapedPage.url,
-            analysis,
-            imageUrls,
             instructions
           );
-          return { index, angle, html };
+
+          console.log(`[AI Generate] Variant ${index} (${angle.label}): requesting text replacements`);
+
+          const response = await ask(prompt, {
+            system:
+              'You are a senior CRO specialist. You create A/B test variants by producing precise text-only replacements. Return only valid JSON as specified.',
+            model: 'claude-sonnet-4-20250514',
+            maxTokens: 4096,
+          });
+
+          const parsed = parseReplacementResponse(response);
+          console.log(`[AI Generate] Variant ${index}: got ${parsed.replacements?.length ?? 0} replacements`);
+
+          // Apply replacements to original HTML (keeps layout/CSS/images identical)
+          const modifiedHtml = applyReplacements(
+            scrapedPage.html,
+            parsed.replacements || [],
+            `[Variant ${index} (${angle.label})]`
+          );
+
+          // Inject base tag so original CSS, images, fonts load from source domain
+          const finalHtml = injectBaseTag(modifiedHtml, scrapedPage.url);
+
+          return { index, angle, html: finalHtml, parsed };
         });
 
         const results = await Promise.allSettled(variantPromises);
@@ -242,30 +271,25 @@ export async function POST(request: NextRequest) {
             continue;
           }
 
-          const { index, angle, html: finalHtml } = result.value;
+          const { index, angle, html: finalHtml, parsed } = result.value;
 
           try {
-            // Score quality
-            const quality = scorePage(finalHtml, 'other');
-
-            // Save to pages table
+            // Save to pages table — each variant is a real stored page
             const pageId = crypto.randomUUID();
             const storagePath = `pages/${workspaceId}/${pageId}.html`;
             const publicUrl = await uploadHtml(storagePath, finalHtml);
 
-            const pageName = `${angle.label} Variant`;
             const { error: pageInsertErr } = await db.from('pages').insert({
               id: pageId,
               workspace_id: workspaceId,
-              name: pageName,
+              name: `${angle.label} Variant`,
               slug: pageId,
               html_url: publicUrl,
               html_content: finalHtml.length < 500_000 ? finalHtml : null,
               status: 'active',
               prompt: `A/B Variant: ${angle.label}\n${angle.hypothesis}`,
               vertical: 'other',
-              quality_score: quality.score,
-              quality_details: quality.details,
+              quality_score: 75,
               source_type: 'ai_generated',
               version: 1,
             });
@@ -276,7 +300,6 @@ export async function POST(request: NextRequest) {
             const variantId = crypto.randomUUID();
             const weight = Math.floor(100 / (angles.length + 1));
 
-            // Save to test_variants — hosted_url points to our generated page
             const { error: variantErr } = await (db.from('test_variants').insert({
               id: variantId,
               test_id: testId,
@@ -290,29 +313,24 @@ export async function POST(request: NextRequest) {
 
             if (variantErr) throw new Error(`Failed to create variant record: ${variantErr.message}`);
 
-            // Save variant_pages for tracking
             await (db.from('variant_pages').insert({
               variant_id: variantId,
               html_storage_path: storagePath,
               source_url: scrapedPage.url,
               generation_prompt: `${angle.label}: ${angle.hypothesis}`.slice(0, 10000),
-              changes_summary: [
-                { change: angle.label, reason: angle.hypothesis },
-                { change: angle.guidance, reason: angle.focus },
-              ],
+              changes_summary: parsed.changes_summary,
               status: 'ready',
             }) as unknown as Promise<{ error: { message: string } | null }>);
+
+            console.log(`[AI Generate] Variant ${index} saved as page ${pageId}`);
 
             sendEvent('variant_ready', {
               index,
               variant_id: variantId,
               page_id: pageId,
               label: angle.label,
-              impact_hypothesis: angle.hypothesis,
-              changes_summary: [
-                { change: `${angle.label} rewrite`, reason: angle.hypothesis },
-                { change: 'Standalone generated page', reason: 'No dependency on original site assets or URLs' },
-              ],
+              impact_hypothesis: parsed.impact_hypothesis || angle.hypothesis,
+              changes_summary: parsed.changes_summary || [],
               serve_url: serveUrl,
               hosted_url: serveUrl,
               html: finalHtml,
@@ -356,3 +374,4 @@ export async function POST(request: NextRequest) {
     },
   });
 }
+

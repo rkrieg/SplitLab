@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Infinity Media - FROM VISION TO VICTORY</title>
+    <meta name="description" content="Infinity Media stands apart in the sphere of marketing. We prefer to think of ourselves as a collective of high-performance marketing virtuosos. Our passion is collaborating with visionary startups and discerning business proprietors who value innovation as much as we do.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;900&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary-color: #ffffff;
+            --secondary-color: #000000;
+            --accent-color: #0693e3;
+            --text-dark: #1a1a1a;
+            --text-light: #666666;
+            --bg-light: #f8fafc;
+            --font-primary: 'Poppins', sans-serif;
+            --shadow-card: 0 4px 24px rgba(0,0,0,0.08);
+            --shadow-hover: 0 8px 40px rgba(0,0,0,0.12);
+            --border-radius: 12px;
+            --transition: all 0.25s ease;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body { font-family: var(--font-primary); line-height: 1.65; color: var(--text-dark); overflow-x: hidden; }
+
+        .container { max-width: 1200px; margin: 0 auto; padding: 0 24px; }
+
+        /* Navigation */
+        nav {
+            position: fixed;
+            top: 0;
+            width: 100%;
+            z-index: 1000;
+            padding: 16px 0;
+            transition: var(--transition);
+            background: rgba(0,0,0,0.1);
+        }
+
+        nav.scrolled {
+            background: var(--primary-color);
+            box-shadow: var(--shadow-card);
+        }
+
+        nav .container { display: flex; align-items: center; justify-content: space-between; }
+
+        .logo { font-size: 24px; font-weight: 700; color: var(--primary-color); text-decoration: none; }
+
+        nav.scrolled .logo { color: var(--secondary-color); }
+
+        .nav-menu { display: flex; list-style: none; gap: 32px; }
+
+        .nav-menu a {
+            color: var(--primary-color);
+            text-decoration: none;
+            font-weight: 500;
+            transition: var(--transition);
+        }
+
+        nav.scrolled .nav-menu a { color: var(--text-dark); }
+
+        .nav-menu a:hover { color: var(--accent-color); }
+
+        .nav-cta {
+            background: var(--accent-color);
+            color: var(--primary-color);
+            padding: 12px 24px;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: 600;
+            transition: var(--transition);
+        }
+
+        .nav-cta:hover { transform: translateY(-2px); box-shadow: var(--shadow-hover); }
+
+        .mobile-toggle { display: none; background: none; border: none; color: var(--primary-color); font-size: 24px; cursor: pointer; }
+
+        nav.scrolled .mobile-toggle { color: var(--secondary-color); }
+
+        /* Hero Section */
+        .hero {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            background: linear-gradient(rgba(0,0,0,0.5), rgba(0,0,0,0.5)), url('https://images.unsplash.com/photo-1557804506-669a67965ba0?ixlib=rb-4.0.3&auto=format&fit=crop&w=2070&q=80') center/cover;
+            text-align: center;
+            color: var(--primary-color);
+        }
+
+        .hero-content h1 {
+            font-size: clamp(48px, 8vw, 72px);
+            font-weight: 900;
+            margin-bottom: 24px;
+            letter-spacing: -1px;
+        }
+
+        .hero-content p {
+            font-size: 20px;
+            margin-bottom: 40px;
+            max-width: 600px;
+        }
+
+        .hero-cta {
+            background: var(--accent-color);
+            color: var(--primary-color);
+            padding: 18px 48px;
+            font-size: 18px;
+            font-weight: 600;
+            border: none;
+            border-radius: var(--border-radius);
+            cursor: pointer;
+            transition: var(--transition);
+            text-decoration: none;
+            display: inline-block;
+        }
+
+        .hero-cta:hover { transform: translateY(-4px); box-shadow: var(--shadow-hover); }
+
+        /* Sections */
+        section { padding: 100px 0; }
+
+        .section-alt { background: var(--bg-light); }
+
+        .section-header { text-align: center; margin-bottom: 80px; }
+
+        .section-header h2 {
+            font-size: clamp(36px, 5vw, 48px);
+            font-weight: 700;
+            margin-bottom: 16px;
+            color: var(--text-dark);
+        }
+
+        .section-header p {
+            font-size: 18px;
+            color: var(--text-light);
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        /* Services Grid */
+        .services-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 40px;
+        }
+
+        .service-card {
+            background: var(--primary-color);
+            padding: 40px;
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow-card);
+            text-align: center;
+            transition: var(--transition);
+        }
+
+        .service-card:hover { transform: translateY(-8px); box-shadow: var(--shadow-hover); }
+
+        .service-card h3 {
+            font-size: 24px;
+            font-weight: 700;
+            margin-bottom: 16px;
+            color: var(--text-dark);
+        }
+
+        .service-card p {
+            color: var(--text-light);
+            margin-bottom: 24px;
+        }
+
+        .service-cta {
+            background: var(--secondary-color);
+            color: var(--primary-color);
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: var(--transition);
+        }
+
+        .service-cta:hover { background: var(--accent-color); }
+
+        /* Stats Section */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 40px;
+            text-align: center;
+        }
+
+        .stat-item h3 {
+            font-size: 48px;
+            font-weight: 900;
+            color: var(--accent-color);
+            margin-bottom: 8px;
+        }
+
+        .stat-item p {
+            font-size: 18px;
+            color: var(--text-light);
+        }
+
+        /* Testimonials */
+        .testimonials {
+            background: var(--secondary-color);
+            color: var(--primary-color);
+        }
+
+        .testimonials .section-header h2,
+        .testimonials .section-header p { color: var(--primary-color); }
+
+        .testimonial-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 40px;
+        }
+
+        .testimonial-card {
+            background: rgba(255,255,255,0.1);
+            padding: 32px;
+            border-radius: var(--border-radius);
+            backdrop-filter: blur(10px);
+        }
+
+        .testimonial-card p {
+            font-size: 16px;
+            margin-bottom: 24px;
+            font-style: italic;
+        }
+
+        .testimonial-author {
+            font-weight: 600;
+            color: var(--accent-color);
+        }
+
+        /* Contact Form */
+        .contact-form {
+            max-width: 600px;
+            margin: 0 auto;
+            background: var(--primary-color);
+            padding: 40px;
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow-card);
+        }
+
+        .form-group {
+            margin-bottom: 24px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: var(--text-dark);
+        }
+
+        .form-group input,
+        .form-group textarea {
+            width: 100%;
+            padding: 16px;
+            border: 1.5px solid #e2e8f0;
+            border-radius: 8px;
+            font-family: inherit;
+            font-size: 16px;
+            transition: var(--transition);
+        }
+
+        .form-group input:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: var(--accent-color);
+            box-shadow: 0 0 0 3px rgba(6,147,227,0.1);
+        }
+
+        .form-submit {
+            background: var(--accent-color);
+            color: var(--primary-color);
+            padding: 16px 32px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: var(--transition);
+            width: 100%;
+        }
+
+        .form-submit:hover { background: #0577c7; transform: translateY(-2px); }
+
+        /* Footer */
+        footer {
+            background: var(--text-dark);
+            color: var(--primary-color);
+            padding: 60px 0 24px;
+        }
+
+        .footer-content {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 40px;
+            margin-bottom: 40px;
+        }
+
+        .footer-section h3 {
+            font-size: 20px;
+            font-weight: 700;
+            margin-bottom: 16px;
+        }
+
+        .footer-section p,
+        .footer-section li {
+            color: #cccccc;
+            margin-bottom: 8px;
+        }
+
+        .footer-section ul {
+            list-style: none;
+        }
+
+        .footer-section a {
+            color: #cccccc;
+            text-decoration: none;
+            transition: var(--transition);
+        }
+
+        .footer-section a:hover { color: var(--accent-color); }
+
+        .footer-bottom {
+            border-top: 1px solid #333;
+            padding-top: 24px;
+            text-align: center;
+            color: #999;
+        }
+
+        .social-icons {
+            display: flex;
+            gap: 16px;
+            margin-top: 16px;
+        }
+
+        .social-icon {
+            width: 40px;
+            height: 40px;
+            background: var(--accent-color);
+            color: var(--primary-color);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            text-decoration: none;
+            transition: var(--transition);
+        }
+
+        .social-icon:hover { transform: scale(1.1); }
+
+        /* Mobile CTA Bar */
+        .mobile-cta-bar {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: var(--accent-color);
+            padding: 16px;
+            z-index: 999;
+            display: none;
+        }
+
+        .mobile-cta-bar a {
+            display: block;
+            text-align: center;
+            color: var(--primary-color);
+            font-weight: 600;
+            text-decoration: none;
+            font-size: 16px;
+        }
+
+        /* Mobile Styles */
+        @media (max-width: 768px) {
+            .nav-menu, .nav-cta { display: none; }
+            .mobile-toggle { display: block; }
+            
+            .nav-menu.active {
+                display: flex;
+                position: absolute;
+                top: 100%;
+                left: 0;
+                right: 0;
+                background: var(--primary-color);
+                flex-direction: column;
+                padding: 24px;
+                box-shadow: var(--shadow-card);
+            }
+
+            .nav-menu.active a { color: var(--text-dark); }
+
+            .services-grid { grid-template-columns: 1fr; }
+            
+            .stats-grid { grid-template-columns: repeat(2, 1fr); }
+            
+            .testimonial-grid { grid-template-columns: 1fr; }
+            
+            .mobile-cta-bar { display: block; }
+            
+            section { padding: 60px 0; }
+        }
+
+        @media (max-width: 480px) {
+            .container { padding: 0 16px; }
+            .stats-grid { grid-template-columns: 1fr; }
+            .hero-content h1 { font-size: 36px; }
+            .hero-content p { font-size: 18px; }
+        }
+    </style>
+</head>
+<body>
+    <nav data-sl-section="nav">
+        <div class="container">
+            <a href="#" class="logo" data-sl-editable="true">Infinity Media</a>
+            <ul class="nav-menu">
+                <li><a href="#services" data-sl-editable="true">Ad Creative</a></li>
+                <li><a href="#services" data-sl-editable="true">Landing Pages</a></li>
+                <li><a href="#testimonials" data-sl-editable="true">Case Studies</a></li>
+                <li><a href="#faq" data-sl-editable="true">FAQ</a></li>
+                <li><a href="#contact" data-sl-editable="true">Contact</a></li>
+            </ul>
+            <a href="#contact" class="nav-cta" data-sl-editable="true">Get My Free Strategy Session</a>
+            <button class="mobile-toggle">☰</button>
+        </div>
+    </nav>
+
+    <header class="hero" data-sl-section="hero">
+        <div class="hero-content">
+            <h1 data-sl-editable="true">FROM VISION TO VICTORY</h1>
+            <p data-sl-editable="true">Infinity Media stands apart in the sphere of marketing. We prefer to think of ourselves as a collective of high-performance marketing virtuosos. Our passion is collaborating with visionary startups and discerning business proprietors who value innovation as much as we do.</p>
+            <a href="#contact" class="hero-cta" data-sl-editable="true">Start My Victory Journey</a>
+        </div>
+    </header>
+
+    <section data-sl-section="services" id="services">
+        <div class="container">
+            <div class="section-header">
+                <h2 data-sl-editable="true">High-Performance Marketing Services</h2>
+                <p data-sl-editable="true">We deliver cutting-edge solutions that transform visions into victories for forward-thinking businesses.</p>
+            </div>
+            <div class="services-grid">
+                <div class="service-card">
+                    <h3 data-sl-editable="true">Ad Creative</h3>
+                    <p data-sl-editable="true">Compelling creative assets that capture attention and drive conversions across all digital platforms.</p>
+                    <button class="service-cta" data-sl-editable="true">Get My Creative Strategy</button>
+                </div>
+                <div class="service-card">
+                    <h3 data-sl-editable="true">Landing Pages</h3>
+                    <p data-sl-editable="true">High-converting landing pages designed to maximize your ROI and turn visitors into customers.</p>
+                    <button class="service-cta" data-sl-editable="true">Build My Conversion Machine</button>
+                </div>
+                <div class="service-card">
+                    <h3 data-sl-editable="true">Case Studies</h3>
+                    <p data-sl-editable="true">Proven results from our marketing virtuosos who have delivered exceptional outcomes for visionary clients.</p>
+                    <button class="service-cta" data-sl-editable="true">See My Success Roadmap</button>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="section-alt" data-sl-section="stats">
+        <div class="container">
+            <div class="section-header">
+                <h2 data-sl-editable="true">Proven Performance</h2>
+                <p data-sl-editable="true">Numbers that speak to our commitment to delivering exceptional results for our clients.</p>
+            </div>
+            <div class="stats-grid">
+                <div class="stat-item">
+                    <h3 data-sl-editable="true">300+</h3>
+                    <p data-sl-editable="true">Successful Campaigns</p>
+                </div>
+                <div class="stat-item">
+                    <h3 data-sl-editable="true">47%</h3>
+                    <p data-sl-editable="true">Average Conversion Lift</p>
+                </div>
+                <div class="stat-item">
+                    <h3 data-sl-editable="true">$50M+</h3>
+                    <p data-sl-editable="true">Revenue Generated</p>
+                </div>
+                <div class="stat-item">
+                    <h3 data-sl-editable="true">98%</h3>
+                    <p data-sl-editable="true">Client Satisfaction</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="testimonials" data-sl-section="testimonials" id="testimonials">
+        <div class="container">
+            <div class="section-header">
+                <h2 data-sl-editable="true">What Our Clients Say</h2>
+                <p data-sl-editable="true">Discover why visionary entrepreneurs trust Infinity Media with their most important marketing initiatives.</p>
+            </div>
+            <div class="testimonial-grid">
+                <div class="testimonial-card">
+                    <p data-sl-editable="true">"Infinity Media transformed our entire marketing approach. Their innovative strategies increased our conversion rate by 65% in just 3 months."</p>
+                    <div class="testimonial-author" data-sl-editable="true">— Sarah Johnson, CEO TechStart</div>
+                </div>
+                <div class="testimonial-card">
+                    <p data-sl-editable="true">"Working with this team of marketing virtuosos was a game-changer. They understood our vision and delivered results beyond our expectations."</p>
+                    <div class="testimonial-author" data-sl-editable="true">— Marcus Chen, Founder InnovateNow</div>
+                </div>
+                <div class="testimonial-card">
+                    <p data-sl-editable="true">"The level of expertise and attention to detail is unmatched. They don't just execute campaigns; they craft winning strategies."</p>
+                    <div class="testimonial-author" data-sl-editable="true">— Elena Rodriguez, CMO GrowthCo</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section data-sl-section="cta" id="contact">
+        <div class="container">
+            <div class="section-header">
+                <h2 data-sl-editable="true">Ready to Transform Your Vision?</h2>
+                <p data-sl-editable="true">Let's discuss how our marketing virtuosos can help you achieve victory in your market.</p>
+            </div>
+            <form class="contact-form">
+                <div class="form-group">
+                    <label data-sl-editable="true">Full Name</label>
+                    <input type="text" required>
+                </div>
+                <div class="form-group">
+                    <label data-sl-editable="true">Email Address</label>
+                    <input type="email" required>
+                </div>
+                <div class="form-group">
+                    <label data-sl-editable="true">Company Name</label>
+                    <input type="text" required>
+                </div>
+                <div class="form-group">
+                    <label data-sl-editable="true">Tell us about your vision</label>
+                    <textarea rows="5" required></textarea>
+                </div>
+                <button type="submit" class="form-submit" data-sl-editable="true">Claim My Free Strategy Session</button>
+            </form>
+        </div>
+    </section>
+
+    <footer data-sl-section="footer">
+        <div class="container">
+            <div class="footer-content">
+                <div class="footer-section">
+                    <h3 data-sl-editable="true">Infinity Media</h3>
+                    <p data-sl-editable="true">A collective of high-performance marketing virtuosos dedicated to transforming visions into victories.</p>
+                    <div class="social-icons">
+                        <a href="#" class="social-icon">f</a>
+                        <a href="#" class="social-icon">in</a>
+                        <a href="#" class="social-icon">ig</a>
+                    </div>
+                </div>
+                <div class="footer-section">
+                    <h3 data-sl-editable="true">Services</h3>
+                    <ul>
+                        <li><a href="#" data-sl-editable="true">Ad Creative</a></li>
+                        <li><a href="#" data-sl-editable="true">Landing Pages</a></li>
+                        <li><a href="#" data-sl-editable="true">Case Studies</a></li>
+                        <li><a href="#" data-sl-editable="true">Strategy Consulting</a></li>
+                    </ul>
+                </div>
+                <div class="footer-section">
+                    <h3 data-sl-editable="true">Contact</h3>
+                    <p data-sl-editable="true">Ready to start your journey from vision to victory?</p>
+                    <p data-sl-editable="true">hello@infinitymediala.com</p>
+                    <p data-sl-editable="true">Los Angeles, CA</p>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p data-sl-editable="true">&copy; 2024 Infinity Media. All rights reserved. Built for visionary entrepreneurs.</p>
+            </div>
+        </div>
+    </footer>
+
+    <div class="mobile-cta-bar">
+        <a href="#contact" data-sl-editable="true">Get My Free Strategy Session</a>
+    </div>
+
+    <script>
+        // Navbar scroll effect
+        const nav = document.querySelector('nav');
+        const mobileToggle = document.querySelector('.mobile-toggle');
+        const navMenu = document.querySelector('.nav-menu');
+
+        window.addEventListener('scroll', () => {
+            if (window.scrollY > 60) {
+                nav.classList.add('scrolled');
+            } else {
+                nav.classList.remove('scrolled');
+            }
+        });
+
+        // Mobile menu toggle
+        mobileToggle.addEventListener('click', () => {
+            navMenu.classList.toggle('active');
+        });
+
+        // Smooth scrolling for anchor links
+        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+            anchor.addEventListener('click', function (e) {
+                e.preventDefault();
+                const target = document.querySelector(this.getAttribute('href'));
+                if (target) {
+                    target.scrollIntoView({
+                        behavior: 'smooth',
+                        block: 'start'
+                    });
+                }
+                navMenu.classList.remove('active');
+            });
+        });
+
+        // Form submission
+        document.querySelector('.contact-form').addEventListener('submit', function(e) {
+            e.preventDefault();
+            alert('Thank you! We will contact you soon to schedule your free strategy session.');
+        });
+    </script>
+</body>
+</html>
