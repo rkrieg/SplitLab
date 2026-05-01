@@ -65,6 +65,8 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
   const [createOpen, setCreateOpen] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [deletePageId, setDeletePageId] = useState<string | null>(null);
+  const [deletingPage, setDeletingPage] = useState(false);
   const [saving, setSaving] = useState(false);
   const [activeMenu, setActiveMenu] = useState<string | null>(null);
   const [checkingTracking, setCheckingTracking] = useState<string | null>(null);
@@ -169,6 +171,17 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
       setTests((prev) => prev.filter((t) => t.id !== deleteId));
       toast.success('Page deleted');
     } finally { setDeleting(false); setDeleteId(null); }
+  }
+
+  async function handleDeletePage() {
+    if (!deletePageId) return;
+    setDeletingPage(true);
+    try {
+      const res = await fetch(`/api/pages/${deletePageId}`, { method: 'DELETE' });
+      if (!res.ok) { toast.error('Failed to delete AI page'); return; }
+      setAiPages((prev) => prev.filter((p) => p.id !== deletePageId));
+      toast.success('AI page deleted');
+    } finally { setDeletingPage(false); setDeletePageId(null); }
   }
 
   // ─── Edit ───────────────────────────────────────────────────────────────
@@ -528,6 +541,14 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
                         <Edit2 size={12} /> Edit
                       </Link>
                     )}
+                    {canManage && (
+                      <button
+                        onClick={() => setDeletePageId(page.id)}
+                        className="btn-secondary text-xs inline-flex items-center gap-1 text-red-400 hover:text-red-500 hover:border-red-300 dark:hover:border-red-700"
+                      >
+                        <Trash2 size={12} /> Delete
+                      </button>
+                    )}
                   </div>
                 </div>
               );
@@ -654,7 +675,7 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
         </form>
       </Modal>
 
-      {/* Delete Confirm */}
+      {/* Delete Test Confirm */}
       <ConfirmDialog
         open={!!deleteId}
         onClose={() => setDeleteId(null)}
@@ -662,6 +683,16 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
         title="Delete Page"
         description="This will permanently delete the page and all its event data. This cannot be undone."
         loading={deleting}
+      />
+
+      {/* Delete AI Page Confirm */}
+      <ConfirmDialog
+        open={!!deletePageId}
+        onClose={() => setDeletePageId(null)}
+        onConfirm={handleDeletePage}
+        title="Delete AI Page"
+        description="This will permanently delete this AI page and its HTML. This cannot be undone."
+        loading={deletingPage}
       />
     </>
   );

@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Infinity Media - From Vision to Victory</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary-blue: #0080ff;
+            --dark-bg: #0a0a0a;
+            --light-gray: #f8f9fa;
+            --text-dark: #1a1a1a;
+            --text-gray: #6b7280;
+            --white: #ffffff;
+            --gradient: linear-gradient(135deg, var(--dark-bg), #1a1a1a);
+        }
+        
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body { font-family: 'Inter', sans-serif; line-height: 1.6; color: var(--text-dark); overflow-x: hidden; }
+        
+        .container { max-width: 1200px; margin: 0 auto; padding: 0 20px; }
+        
+        /* Hero Section */
+        .hero { 
+            min-height: 100vh; 
+            background: var(--gradient); 
+            display: flex; 
+            align-items: center; 
+            position: relative; 
+            overflow: hidden;
+        }
+        
+        .hero::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: url('https://images.unsplash.com/photo-1551434678-e076c223a692?w=1920') center/cover;
+            opacity: 0.1;
+            z-index: 1;
+        }
+        
+        .hero-content { 
+            position: relative; 
+            z-index: 2; 
+            text-align: center; 
+            color: var(--white);
+        }
+        
+        .hero h1 { 
+            font-size: clamp(48px, 8vw, 96px); 
+            font-weight: 900; 
+            margin-bottom: 20px; 
+            letter-spacing: -2px;
+        }
+        
+        .hero p { 
+            font-size: 24px; 
+            margin-bottom: 40px; 
+            opacity: 0.9; 
+            max-width: 600px; 
+            margin-left: auto; 
+            margin-right: auto;
+        }
+        
+        .cta-btn {
+            display: inline-block;
+            background: var(--primary-blue);
+            color: var(--white);
+            padding: 20px 40px;
+            font-size: 18px;
+            font-weight: 600;
+            text-decoration: none;
+            border-radius: 12px;
+            transition: all 0.3s ease;
+            box-shadow: 0 10px 30px rgba(0, 128, 255, 0.3);
+        }
+        
+        .cta-btn:hover { transform: translateY(-2px); box-shadow: 0 15px 40px rgba(0, 128, 255, 0.4); }
+        
+        /* Trust Signals */
+        .trust-signals { 
+            padding: 60px 0; 
+            background: var(--light-gray);
+        }
+        
+        .logo-grid {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 40px;
+            flex-wrap: wrap;
+            opacity: 0.6;
+        }
+        
+        .logo-grid img { height: 40px; filter: grayscale(100%); transition: all 0.3s ease; }
+        .logo-grid img:hover { filter: grayscale(0%); opacity: 1; }
+        
+        /* About Section */
+        .about { padding: 120px 0; }
+        
+        .section-title { 
+            font-size: 48px; 
+            font-weight: 800; 
+            margin-bottom: 30px; 
+            text-align: center;
+        }
+        
+        .about-content { 
+            max-width: 800px; 
+            margin: 0 auto; 
+            text-align: center; 
+            font-size: 20px; 
+            color: var(--text-gray);
+        }
+        
+        /* Funnel Section */
+        .funnel { 
+            padding: 120px 0; 
+            background: var(--light-gray);
+        }
+        
+        .funnel-grid { 
+            display: grid; 
+            grid-template-columns: 1fr 1fr; 
+            gap: 80px; 
+            align-items: center;
+        }
+        
+        .funnel-image { text-align: center; }
+        .funnel-image img { max-width: 100%; height: auto; border-radius: 16px; }
+        
+        .funnel-stage {
+            background: var(--white);
+            padding: 40px;
+            border-radius: 16px;
+            margin-bottom: 20px;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.1);
+            transition: transform 0.3s ease;
+        }
+        
+        .funnel-stage:hover { transform: translateY(-5px); }
+        
+        .funnel-stage h3 { 
+            font-size: 24px; 
+            font-weight: 700; 
+            margin-bottom: 15px; 
+            color: var(--primary-blue);
+        }
+        
+        /* Services */
+        .services { padding: 120px 0; }
+        
+        .services-grid { 
+            display: grid; 
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); 
+            gap: 40px; 
+            margin-top: 60px;
+        }
+        
+        .service-card {
+            background: var(--white);
+            padding: 50px 40px;
+            border-radius: 20px;
+            text-align: center;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+            transition: all 0.3s ease;
+        }
+        
+        .service-card:hover { transform: translateY(-10px); box-shadow: 0 20px 60px rgba(0,0,0,0.15); }
+        
+        .service-card h3 { 
+            font-size: 28px; 
+            font-weight: 700; 
+            margin-bottom: 20px; 
+            color: var(--text-dark);
+        }
+        
+        .service-card p { color: var(--text-gray); font-size: 18px; }
+        
+        /* Case Studies */
+        .case-studies { 
+            padding: 120px 0; 
+            background: var(--dark-bg); 
+            color: var(--white);
+        }
+        
+        .case-grid { 
+            display: grid; 
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); 
+            gap: 40px; 
+            margin-top: 60px;
+        }
+        
+        .case-card {
+            background: rgba(255,255,255,0.05);
+            padding: 40px;
+            border-radius: 16px;
+            backdrop-filter: blur(10px);
+        }
+        
+        .case-metric { 
+            font-size: 48px; 
+            font-weight: 800; 
+            color: var(--primary-blue); 
+            margin-bottom: 10px;
+        }
+        
+        .case-card h4 { 
+            font-size: 24px; 
+            font-weight: 600; 
+            margin-bottom: 15px;
+        }
+        
+        /* Testimonials */
+        .testimonials { padding: 120px 0; }
+        
+        .testimonial-card {
+            background: var(--white);
+            padding: 40px;
+            border-radius: 20px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+            text-align: center;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        
+        .testimonial-card p { 
+            font-size: 20px; 
+            font-style: italic; 
+            margin-bottom: 30px; 
+            color: var(--text-gray);
+        }
+        
+        .client-info h5 { 
+            font-size: 18px; 
+            font-weight: 600; 
+            margin-bottom: 5px;
+        }
+        
+        .client-info span { color: var(--text-gray); }
+        
+        /* FAQ */
+        .faq { 
+            padding: 120px 0; 
+            background: var(--light-gray);
+        }
+        
+        .faq-item {
+            background: var(--white);
+            margin-bottom: 20px;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }
+        
+        .faq-question {
+            padding: 30px;
+            font-size: 20px;
+            font-weight: 600;
+            cursor: pointer;
+            border: none;
+            background: none;
+            width: 100%;
+            text-align: left;
+        }
+        
+        .faq-answer { 
+            padding: 0 30px 30px; 
+            color: var(--text-gray); 
+            font-size: 16px;
+        }
+        
+        /* Contact */
+        .contact { padding: 120px 0; }
+        
+        .contact-grid { 
+            display: grid; 
+            grid-template-columns: 1fr 1fr; 
+            gap: 80px;
+        }
+        
+        .contact-form {
+            background: var(--white);
+            padding: 50px;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.1);
+        }
+        
+        .form-group { margin-bottom: 30px; }
+        
+        .form-group label { 
+            display: block; 
+            margin-bottom: 10px; 
+            font-weight: 500;
+        }
+        
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
+            width: 100%;
+            padding: 15px;
+            border: 2px solid #e5e7eb;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s ease;
+        }
+        
+        .form-group input:focus,
+        .form-group select:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: var(--primary-blue);
+        }
+        
+        .contact-info h3 { 
+            font-size: 32px; 
+            font-weight: 700; 
+            margin-bottom: 30px;
+        }
+        
+        .contact-item { margin-bottom: 30px; }
+        .contact-item h4 { 
+            font-size: 20px; 
+            font-weight: 600; 
+            margin-bottom: 10px; 
+            color: var(--primary-blue);
+        }
+        
+        /* Footer */
+        .footer { 
+            padding: 60px 0 30px; 
+            background: var(--dark-bg); 
+            color: var(--white);
+        }
+        
+        .footer-content { 
+            display: grid; 
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); 
+            gap: 40px; 
+            margin-bottom: 40px;
+        }
+        
+        .footer-logo { height: 40px; margin-bottom: 20px; }
+        
+        .footer a { 
+            color: rgba(255,255,255,0.8); 
+            text-decoration: none; 
+            transition: color 0.3s ease;
+        }
+        
+        .footer a:hover { color: var(--primary-blue); }
+        
+        .footer-bottom { 
+            border-top: 1px solid rgba(255,255,255,0.1); 
+            padding-top: 30px; 
+            text-align: center; 
+            color: rgba(255,255,255,0.6);
+        }
+        
+        /* Responsive */
+        @media (max-width: 768px) {
+            .hero h1 { font-size: 48px; }
+            .hero p { font-size: 20px; }
+            .funnel-grid { grid-template-columns: 1fr; }
+            .contact-grid { grid-template-columns: 1fr; }
+            .services-grid { grid-template-columns: 1fr; }
+            .case-grid { grid-template-columns: 1fr; }
+            .logo-grid { gap: 20px; }
+            .section-title { font-size: 36px; }
+        }
+        
+        @media (max-width: 480px) {
+            .container { padding: 0 15px; }
+            .hero h1 { font-size: 36px; }
+            .cta-btn { padding: 15px 30px; font-size: 16px; }
+        }
+    </style>
+</head>
+<body>
+    <section class="hero" data-sl-section="hero">
+        <div class="container">
+            <div class="hero-content">
+                <h1 data-sl-editable="true">FROM VISION TO VICTORY</h1>
+                <p data-sl-editable="true">Growth marketing tailored to your brand's unique journey</p>
+                <a href="#contact" class="cta-btn" data-sl-editable="true">Get In Touch</a>
+            </div>
+        </div>
+    </section>
+
+    <section class="trust-signals" data-sl-section="stats">
+        <div class="container">
+            <div class="logo-grid">
+                <img src="https://via.placeholder.com/120x40/666666/FFFFFF?text=Client+1" alt="Client Logo 1">
+                <img src="https://via.placeholder.com/120x40/666666/FFFFFF?text=Client+2" alt="Client Logo 2">
+                <img src="https://via.placeholder.com/120x40/666666/FFFFFF?text=Client+3" alt="Client Logo 3">
+                <img src="https://via.placeholder.com/120x40/666666/FFFFFF?text=Client+4" alt="Client Logo 4">
+                <img src="https://via.placeholder.com/120x40/666666/FFFFFF?text=Client+5" alt="Client Logo 5">
+                <img src="https://via.placeholder.com/120x40/666666/FFFFFF?text=Client+6" alt="Client Logo 6">
+            </div>
+        </div>
+    </section>
+
+    <section class="about" data-sl-section="about">
+        <div class="container">
+            <h2 class="section-title" data-sl-editable="true">WHO IS INFINITY MEDIA?</h2>
+            <div class="about-content">
+                <p data-sl-editable="true">Infinity Media is a premium growth marketing agency that transforms ambitious brands into market leaders. We combine data-driven strategies with creative excellence to deliver measurable results that exceed expectations. Our team of marketing experts specializes in scaling businesses through innovative digital marketing solutions tailored to each brand's unique journey from vision to victory.</p>
+            </div>
+        </div>
+    </section>
+
+    <section class="funnel" data-sl-section="process">
+        <div class="container">
+            <div class="funnel-grid">
+                <div class="funnel-image">
+                    <img src="https://images.unsplash.com/photo-1551288049-bebda4e38f71?w=600" alt="Marketing Funnel Visualization">
+                </div>
+                <div class="funnel-stages">
+                    <div class="funnel-stage">
+                        <h3 data-sl-editable="true">Traffic Generation</h3>
+                        <p data-sl-editable="true">Drive qualified prospects to your brand through targeted advertising, SEO optimization, and strategic content marketing campaigns.</p>
+                    </div>
+                    <div class="funnel-stage">
+                        <h3 data-sl-editable="true">Maximize Conversion Rate & AOV</h3>
+                        <p data-sl-editable="true">Optimize every touchpoint to convert visitors into customers while increasing average order value through strategic UX design and persuasive copywriting.</p>
+                    </div>
+                    <div class="funnel-stage">
+                        <h3 data-sl-editable="true">Retargeting</h3>
+                        <p data-sl-editable="true">Re-engage prospects and customers with personalized campaigns that nurture relationships and drive repeat business for sustainable growth.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="services" data-sl-section="services">
+        <div class="container">
+            <h2 class="section-title" data-sl-editable="true">Our Services</h2>
+            <div class="services-grid">
+                <div class="service-card">
+                    <h3 data-sl-editable="true">Ad Creative</h3>
+                    <p data-sl-editable="true">High-converting creative assets that capture attention and drive action across all digital platforms.</p>
+                </div>
+                <div class="service-card">
+                    <h3 data-sl-editable="true">Landing Pages</h3>
+                    <p data-sl-editable="true">Conversion-optimized landing pages designed to turn traffic into customers with compelling design and copy.</p>
+                </div>
+                <div class="service-card">
+                    <h3 data-sl-editable="true">Conversion Optimization</h3>
+                    <p data-sl-editable="true">Data-driven testing and optimization to maximize your conversion rates and revenue per visitor.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="case-studies" data-sl-section="testimonials">
+        <div class="container">
+            <h2 class="section-title" data-sl-editable="true" style="color: white;">Success Stories</h2>
+            <div class="case-grid">
+                <div class="case-card">
+                    <div class="case-metric" data-sl-editable="true">340%</div>
+                    <h4 data-sl-editable="true">ROI Increase</h4>
+                    <p data-sl-editable="true">E-commerce brand achieved 340% ROI increase through our comprehensive marketing funnel optimization.</p>
+                </div>
+                <div class="case-card">
+                    <div class="case-metric" data-sl-editable="true">$2.4M</div>
+                    <h4 data-sl-editable="true">Revenue Generated</h4>
+                    <p data-sl-editable="true">SaaS startup generated $2.4M in new revenue within 12 months of partnership.</p>
+                </div>
+                <div class="case-card">
+                    <div class="case-metric" data-sl-editable="true">85%</div>
+                    <h4 data-sl-editable="true">Conversion Rate Lift</h4>
+                    <p data-sl-editable="true">B2B service company saw 85% improvement in landing page conversion rates.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="testimonials" data-sl-section="testimonials">
+        <div class="container">
+            <h2 class="section-title" data-sl-editable="true">What Our Clients Say</h2>
+            <div class="testimonial-card">
+                <p data-sl-editable="true">"Infinity Media transformed our digital presence completely. Their strategic approach and attention to detail resulted in a 300% increase in qualified leads within just 6 months. The team's expertise is unmatched."</p>
+                <div class="client-info">
+                    <h5 data-sl-editable="true">Sarah Johnson</h5>
+                    <span data-sl-editable="true">CEO, TechFlow Solutions</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="faq" data-sl-section="faq">
+        <div class="container">
+            <h2 class="section-title" data-sl-editable="true">Frequently Asked Questions</h2>
+            <div class="faq-item">
+                <button class="faq-question" data-sl-editable="true">What's your typical project timeline?</button>
+                <div class="faq-answer">
+                    <p data-sl-editable="true">Most projects are completed within 4-8 weeks, depending on scope and complexity. We provide detailed timelines during our initial consultation.</p>
+                </div>
+            </div>
+            <div class="faq-item">
+                <button class="faq-question" data-sl-editable="true">How do you determine pricing?</button>
+                <div class="faq-answer">
+                    <p data-sl-editable="true">Our pricing is based on project scope, timeline, and expected results. We offer transparent pricing with no hidden fees.</p>
+                </div>
+            </div>
+            <div class="faq-item">
+                <button class="faq-question" data-sl-editable="true">What's included in your strategy process?</button>
+                <div class="faq-answer">
+                    <p data-sl-editable="true">We begin with a comprehensive audit, followed by strategy development, implementation, and ongoing optimization with regular reporting.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="contact" data-sl-section="cta" id="contact">
+        <div class="container">
+            <div class="contact-grid">
+                <div class="contact-form">
+                    <h3 data-sl-editable="true">Ready to Scale Your Business?</h3>
+                    <form>
+                        <div class="form-group">
+                            <label data-sl-editable="true">Full Name</label>
+                            <input type="text" required>
+                        </div>
+                        <div class="form-group">
+                            <label data-sl-editable="true">Email Address</label>
+                            <input type="email" required>
+                        </div>
+                        <div class="form-group">
+                            <label data-sl-editable="true">Company Name</label>
+                            <input type="text" required>
+                        </div>
+                        <div class="form-group">
+                            <label data-sl-editable="true">Project Budget</label>
+                            <select required>
+                                <option value="">Select Budget Range</option>
+                                <option value="10k-25k">$10k - $25k</option>
+                                <option value="25k-50k">$25k - $50k</option>
+                                <option value="50k-100k">$50k - $100k</option>
+                                <option value="100k+">$100k+</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label data-sl-editable="true">Project Description</label>
+                            <textarea rows="4" required></textarea>
+                        </div>
+                        <button type="submit" class="cta-btn" style="width: 100%;" data-sl-editable="true">Get Started Today</button>
+                    </form>
+                </div>
+                <div class="contact-info">
+                    <h3 data-sl-editable="true">Get In Touch</h3>
+                    <div class="contact-item">
+                        <h4 data-sl-editable="true">Phone</h4>
+                        <p><a href="tel:3108965542" data-sl-editable="true">(310) 896-5542</a></p>
+                    </div>
+                    <div class="contact-item">
+                        <h4 data-sl-editable="true">Email</h4>
+                        <p data-sl-editable="true">hello@infinitymedia.com</p>
+                    </div>
+                    <div class="contact-item">
+                        <h4 data-sl-editable="true">Office</h4>
+                        <p data-sl-editable="true">Los Angeles, CA<br>Available Worldwide</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <footer class="footer" data-sl-section="footer">
+        <div class="container">
+            <div class="footer-content">
+                <div>
+                    <img src="https://www.infinitymediala.com/wp-content/uploads/2023/03/logo-svg1.svg" alt="Infinity Media Logo" class="footer-logo">
+                    <p data-sl-editable="true">Transforming brands from vision to victory through strategic growth marketing.</p>
+                </div>
+                <div>
+                    <h4 data-sl-editable="true">Services</h4>
+                    <ul style="list-style: none;">
+                        <li><a href="#" data-sl-editable="true">Ad Creative</a></li>
+                        <li><a href="#" data-sl-editable="true">Landing Pages</a></li>
+                        <li><a href="#" data-sl-editable="true">Conversion Optimization</a></li>
+                    </ul>
+                </div>
+                <div>
+                    <h4 data-sl-editable="true">Company</h4>
+                    <ul style="list-style: none;">
+                        <li><a href="#" data-sl-editable="true">About Us</a></li>
+                        <li><a href="#" data-sl-editable="true">Case Studies</a></li>
+                        <li><a href="#" data-sl-editable="true">Contact</a></li>
+                    </ul>
+                </div>
+                <div>
+                    <h4 data-sl-editable="true">Legal</h4>
+                    <ul style="list-style: none;">
+                        <li><a href="#" data-sl-editable="true">Privacy Policy</a></li>
+                        <li><a href="#" data-sl-editable="true">Terms of Service</a></li>
+                    </ul>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p data-sl-editable="true">&copy; 2024 Infinity Media. All rights reserved.</p>
+            </div>
+        </div>
+    </footer>
+</body>
+</html>
