@@ -343,7 +343,7 @@ const VERTICAL_TEMPLATES: Record<Vertical, string> = {
 - Terms of service link`,
 };
 
-const BASE_SYSTEM_PROMPT = `You are an expert web designer and CRO (Conversion Rate Optimization) specialist. You generate complete, production-ready HTML websites that look premium, professional, and convert visitors into customers.
+export const BASE_SYSTEM_PROMPT = `You are an expert web designer and CRO (Conversion Rate Optimization) specialist. You generate complete, production-ready HTML websites that look premium, professional, and convert visitors into customers.
 
 ## OUTPUT REQUIREMENTS
 
@@ -567,6 +567,94 @@ Output ONLY the complete refined HTML document. No markdown fences, no explanati
   }
 
   user += '\n\nRefine the HTML now. Output ONLY the final HTML — no markdown code fences, no explanation.';
+
+  return { system, user };
+}
+
+/* ───────────────────────────────────────────────────
+ * Clone prompt: rebuild a page from scratch using scraped design DNA
+ * ─────────────────────────────────────────────────── */
+
+interface ClonePromptInput {
+  originalHtmlContext: string;
+  sourceUrl: string;
+  analysis: {
+    page_type?: string;
+    primary_offer?: string;
+    target_audience?: string;
+    tone_of_voice?: string;
+    cta_strategy?: string;
+    color_palette?: string[];
+    sections?: Array<{ type: string; content: string; position: string }>;
+  };
+  instructions?: string;
+  imageUrls?: UnsplashImage[];
+}
+
+/**
+ * Build a Claude prompt that recreates a page as clean, production HTML/CSS
+ * using the original page's design DNA (colors, sections, content) plus
+ * any user-specified customisation instructions.
+ */
+export function buildClonePrompt(input: ClonePromptInput): { system: string; user: string } {
+  const { originalHtmlContext, sourceUrl, analysis, instructions, imageUrls } = input;
+
+  const system = BASE_SYSTEM_PROMPT;
+
+  const colorPalette = analysis.color_palette || [];
+  const sections = analysis.sections || [];
+
+  let user = `## PAGE REBUILD REQUEST\n\n`;
+  user += `Recreate this landing page from scratch as clean, production-quality HTML/CSS.\n`;
+  user += `Source URL: ${sourceUrl}\n\n`;
+
+  user += `## ORIGINAL PAGE ANALYSIS\n`;
+  if (analysis.page_type) user += `- Page Type: ${analysis.page_type}\n`;
+  if (analysis.primary_offer) user += `- Primary Offer: ${analysis.primary_offer}\n`;
+  if (analysis.target_audience) user += `- Target Audience: ${analysis.target_audience}\n`;
+  if (analysis.tone_of_voice) user += `- Tone of Voice: ${analysis.tone_of_voice}\n`;
+  if (analysis.cta_strategy) user += `- CTA Strategy: ${analysis.cta_strategy}\n`;
+
+  if (colorPalette.length > 0) {
+    user += `\n## BRAND COLORS — USE THESE EXACTLY AS CSS VARIABLES\n`;
+    colorPalette.forEach((color, i) => {
+      if (i === 0) user += `- Primary color (CTAs, highlights, links): ${color}\n`;
+      else if (i === 1) user += `- Secondary color (accents, section tints): ${color}\n`;
+      else user += `- Additional color: ${color}\n`;
+    });
+  }
+
+  if (sections.length > 0) {
+    user += `\n## ORIGINAL PAGE SECTIONS (recreate all of these in order)\n`;
+    sections.forEach(s => {
+      user += `- ${s.type.toUpperCase()} (${s.position}): ${s.content}\n`;
+    });
+  }
+
+  if (instructions?.trim()) {
+    user += `\n## CUSTOMIZATION INSTRUCTIONS — HIGHEST PRIORITY\n`;
+    user += `${instructions.trim()}\n`;
+    user += `Apply ALL these instructions. They override any default design choices.\n`;
+  }
+
+  if (imageUrls && imageUrls.length > 0) {
+    user += `\n## AVAILABLE IMAGES\nUse these Unsplash images throughout the page:\n`;
+    imageUrls.forEach((img, i) => {
+      user += `${i + 1}. URL: ${img.url}\n   Alt: ${img.alt}\n   Credit: ${img.credit}\n`;
+    });
+  }
+
+  user += `\n## ORIGINAL PAGE HTML (study for content, copy, and structure — then rebuild cleanly)\n`;
+  user += `\`\`\`html\n${originalHtmlContext}\n\`\`\`\n`;
+
+  user += `\n## REBUILD RULES\n`;
+  user += `1. Extract ALL the real content (headlines, copy, service names, testimonials, CTAs) from the original HTML above\n`;
+  user += `2. Use the brand colors from the analysis — set them as CSS variables in :root\n`;
+  user += `3. Apply all customization instructions\n`;
+  user += `4. Add a sticky navbar (transparent→solid on scroll with JS) and a full footer\n`;
+  user += `5. Make it fully responsive with hamburger mobile menu\n`;
+  user += `6. Output a COMPLETE page ending with </body></html> — do NOT stop early\n\n`;
+  user += `Generate the complete HTML page now. Output ONLY the HTML — no markdown fences, no explanation.`;
 
   return { system, user };
 }
