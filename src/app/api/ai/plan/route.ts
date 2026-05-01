@@ -137,17 +137,23 @@ Create a detailed build plan. Be specific about:
 - Design direction: colors, typography, imagery style, mood
 - Conversion strategy: what makes a visitor take action
 
+IMPORTANT: The page will include a sticky navbar and a footer — always include these as the first and last sections in your plan.
+
 Return ONLY valid JSON:
 {
   "summary": "1-2 sentence overview",
   "sections": [
+    {
+      "title": "Navbar",
+      "description": "Sticky top navigation bar with company logo/name on left, smooth-scroll links to main sections (Services, About, Contact), and a primary CTA button on the right. Transparent over the hero, turns solid with shadow on scroll. Hamburger menu on mobile."
+    },
     {
       "title": "Hero",
       "description": "Full-width hero with dark overlay video background of Phoenix skyline. Bold headline: 'Aggressive Criminal Defense When Your Freedom Is On The Line'. Subheadline with credentials. Primary CTA: 'Get Your Free Case Review'."
     }
   ],
   "design_notes": "Specific design direction — colors, fonts, imagery style, mood",
-  "editable_prompt": "Detailed creative brief the user can edit. Written like instructions to a designer — include specific section details, content, imagery, and conversion elements."
+  "editable_prompt": "Detailed creative brief the user can edit. Written like instructions to a designer — include specific section details, content, imagery, and conversion elements. Mention that a navbar and footer are required."
 }`;
 
   const response = await ask(prompt, {

@@ -343,44 +343,50 @@ const VERTICAL_TEMPLATES: Record<Vertical, string> = {
 - Terms of service link`,
 };
 
-const BASE_SYSTEM_PROMPT = `You are an expert landing page designer and CRO (Conversion Rate Optimization) specialist. You generate complete, production-ready HTML landing pages optimized for converting ad traffic.
+const BASE_SYSTEM_PROMPT = `You are an expert web designer and CRO (Conversion Rate Optimization) specialist. You generate complete, production-ready HTML websites that look premium, professional, and convert visitors into customers.
 
 ## OUTPUT REQUIREMENTS
 
 1. Output a COMPLETE \`<!DOCTYPE html>\` document with ALL CSS in a single \`<style>\` block in the \`<head>\` — no external CSS files
 2. Use Google Fonts via \`<link>\` tags only (no other external dependencies)
-3. Add \`data-sl-section="hero|features|testimonials|cta|process|faq|about|services|stats|pricing|footer"\` on each major \`<section>\`
+3. Add \`data-sl-section="nav|hero|features|testimonials|cta|process|faq|about|services|stats|pricing|footer"\` on each major \`<nav>\`, \`<header>\`, and \`<section>\`
 4. Add \`data-sl-editable="true"\` on ALL text elements (headings, paragraphs, list items, button text, spans with text)
 5. Responsive design with breakpoints at 768px and 480px
-6. **ABSOLUTELY NO navigation menu or header nav links** — no hamburger menu, no nav bar, no header links. The ONLY clickable elements should be CTA buttons. This is a landing page, not a website — keep the visitor focused on ONE action.
-7. Include a sticky/fixed CTA element (floating button or bar) for mobile
-8. Use semantic HTML5 elements
-9. All images use placeholder URLs from the provided image list, with descriptive alt text
-10. Include a \`<meta name="viewport" content="width=device-width, initial-scale=1.0">\` tag
-11. **CSS EFFICIENCY — CRITICAL**: Keep CSS compact. Use shorthand properties, group selectors, use CSS variables for repeated values, avoid redundant rules. Target CSS under 5,000 characters total. You MUST finish the complete HTML page (including \`</body></html>\`) within the token budget.
-12. Structure: write the COMPLETE \`<head>\` (with CSS) first, then ALL body sections, then close \`</body></html>\`. Do NOT stop early.
+6. **NAVBAR — REQUIRED**: Include a sticky top \`<nav>\` with:
+   - Company logo/name on the left (use brand logo <img> if provided, otherwise bold text)
+   - 4-5 smooth-scroll anchor links to main sections (e.g. Services, About, Contact)
+   - A prominent CTA button on the right (e.g. "Get a Free Quote", "Book a Call")
+   - Transparent background over the hero, switches to solid white/dark with shadow after 60px scroll (use a tiny inline JS scroll listener on the nav element)
+   - Hamburger icon on mobile (≤768px) that toggles a full-width dropdown nav list
+7. **FOOTER — REQUIRED**: Include a rich multi-column footer with company name + tagline, quick navigation links, contact details, and social icon placeholders (LinkedIn, Instagram, Facebook as SVG icons or Unicode)
+8. Include a fixed bottom CTA bar on mobile (hidden on desktop) to maximise conversions
+9. Use semantic HTML5 elements (\`<nav>\`, \`<header>\`, \`<main>\`, \`<section>\`, \`<footer>\`, \`<article>\`)
+10. All images use URLs from the provided image list, with descriptive alt text; use object-fit:cover for image containers
+11. Include \`<meta name="viewport" content="width=device-width, initial-scale=1.0">\` and a descriptive \`<title>\` tag
+12. **CSS EFFICIENCY — CRITICAL**: Keep CSS compact. Define a :root block with CSS variables for brand colours, fonts, spacing. Use shorthand properties, group selectors, avoid redundant rules. Target CSS under 6,500 characters. You MUST output the COMPLETE HTML page ending with \`</body></html>\` — do NOT stop early.
+13. Structure order: \`<head>\` (CSS inside) → \`<nav>\` → \`<header>\`/hero → all \`<section>\`s → \`<footer>\` → closing scripts → \`</body></html>\`
 
 ## DESIGN PRINCIPLES
 
-- **Modern, premium aesthetic** — this should look like a $5,000+ custom landing page, not a template
-- Above-the-fold must contain: headline, value proposition, and primary CTA
-- Use high contrast for CTAs (bright color on dark or vice versa) — CTA buttons should be large (min 48px height, 200px+ width) with bold text
-- Generous white space — sections should have 80-120px vertical padding, don't overcrowd
-- Use a consistent 2-3 color palette derived from brand settings (if provided)
-- Typography: use Google Font pairings (e.g. Inter + DM Sans, Poppins + Open Sans). Headlines 36-56px, subheads 20-24px, body 16-18px, line-height 1.6
-- Subtle design touches: soft gradients, subtle shadows (box-shadow), rounded corners (8-16px), section dividers
-- Use CSS grid or flexbox for clean layouts — no tables
-- Hero section should be visually striking: full-width, min 70vh height, with gradient or image overlay
-- Mobile-first: touch-friendly buttons (min 48px tap targets), single-column on mobile
-- Form fields: large inputs (48px height), clear labels, rounded corners, visible focus states
+- **Modern, premium aesthetic** — this should look like a $10,000+ custom website, not a template
+- Above-the-fold: navbar + full-viewport hero with bold headline, value proposition, and a large primary CTA button
+- Hero: full-width, min-height 90vh, striking background image with a dark gradient overlay (rgba 0,0,0,0.45–0.60) so white text pops. Headline 52-72px bold, subheadline 20-24px, CTA button 56px height, 220px+ wide
+- Color palette: derive a 3-colour system from brand settings (primary action, secondary accent, neutral dark). Store as CSS variables. Apply consistently — CTAs always use primary, accents use secondary, headings use dark
+- Typography: pair two Google Fonts (e.g. "Playfair Display" for headings + "Inter" for body, or "Poppins" + "Lato"). Headlines 40-72px, subheads 22-28px, body 16-18px, line-height 1.65
+- Section rhythm: alternate backgrounds (white → #f8fafc or very light tinted → white). Each section 90-130px vertical padding. Max content width 1200px, centred
+- Cards: use subtle box-shadow (0 4px 24px rgba(0,0,0,0.08)), 12-16px border-radius, gentle hover lift (translateY -4px, shadow increase, 0.25s ease)
+- Grid: CSS grid for card rows (auto-fill, minmax(260px,1fr)), flexbox for nav and inline elements — no tables ever
+- Mobile: single-column below 768px, hamburger nav, touch targets ≥48px, sticky bottom CTA bar
+- Form inputs: height 52px, border-radius 8px, border 1.5px solid #e2e8f0, visible :focus ring using brand primary colour
+- Micro-interactions: all buttons and links have 0.2s ease transitions on background, colour, transform, and box-shadow
 
 ## COPY PRINCIPLES
 
-- Lead with the visitor's problem or desired outcome, not the company
-- Use specific numbers and results where appropriate
-- CTA buttons should be action-oriented and specific (not just "Submit")
-- Keep paragraphs short (2-3 sentences max)
-- Use bullet points for scannable content`;
+- Lead with the visitor's desired outcome or pain point — not the company name
+- Use specific numbers and social proof (e.g. "300+ clients", "avg 47% lift in conversions")
+- CTA text is specific and action-oriented ("Get My Free Strategy Call", not "Submit")
+- Paragraphs ≤3 sentences; use bullet points for features and benefits
+- Section headlines follow a problem → solution → proof narrative arc throughout the page`;
 
 export function buildPageGenerationPrompt(input: PromptInput): { system: string; user: string } {
   const { userPrompt, vertical, customVertical, brandSettings, imageUrls, performanceInsights } = input;
@@ -508,38 +514,32 @@ interface RefinementInput {
 
 /**
  * Build a Claude prompt to refine Stitch-generated HTML for SplitLab compatibility.
- * Claude's job: add data attributes, swap images, inject compliance, remove nav, inline CSS.
+ * Claude's job: add data attributes, swap images, inject compliance, ensure navbar, inline CSS.
  */
 export function buildRefinementPrompt(input: RefinementInput): { system: string; user: string } {
   const { stitchHtml, vertical, brandSettings, imageUrls } = input;
 
-  const system = `You are a landing page optimization specialist. You take a pre-designed HTML landing page and refine it for production use in a conversion-optimized A/B testing platform.
-
-## YOUR TASK
-
-You will receive a beautifully designed HTML page from a design AI. Your job is to refine it while PRESERVING the visual design as much as possible. Do NOT redesign the page — make surgical, targeted changes.
+  const system = `You are a web design optimization specialist. You take a pre-designed HTML page and refine it for production use while PRESERVING the visual design as much as possible. Do NOT redesign the page — make surgical, targeted changes.
 
 ## REQUIRED CHANGES
 
-1. **Remove all navigation**: Delete any <header> with nav links, <nav> elements, hamburger menus, or header link bars. The ONLY clickable elements should be CTA buttons and footer links (privacy/terms).
+1. **Navbar — ensure it exists**: If the page has a navbar, keep and improve it. If missing, ADD a sticky top navbar with: company logo/name on left, 4-5 smooth-scroll anchor links to sections, a CTA button on the right, transparent-to-solid scroll behaviour (tiny inline JS), and a hamburger menu for mobile.
 
-2. **Inline all CSS**: If the page uses Tailwind CDN (\`cdn.tailwindcss.com\`), convert all Tailwind classes to equivalent inline CSS in a single \`<style>\` block in \`<head>\`. Remove the Tailwind CDN script tag and any tailwind.config script. Keep Google Fonts \`<link>\` tags.
+2. **Inline all CSS**: If the page uses Tailwind CDN (\`cdn.tailwindcss.com\`), convert Tailwind classes to equivalent CSS in a single \`<style>\` block in \`<head>\`. Remove Tailwind CDN script tags. Keep Google Fonts \`<link>\` tags.
 
 3. **Add SplitLab data attributes**:
-   - Add \`data-sl-section="hero|features|testimonials|cta|process|faq|about|services|stats|pricing|footer"\` to each major \`<section>\`
-   - Add \`data-sl-editable="true"\` to ALL text elements (h1-h6, p, li, button text, span with text content)
+   - Add \`data-sl-section="nav|hero|features|testimonials|cta|process|faq|about|services|stats|pricing|footer"\` to the \`<nav>\` and each major \`<section>\`
+   - Add \`data-sl-editable="true"\` to ALL text elements (h1-h6, p, li, button text, spans with text)
 
-4. **Replace images**: Swap all image URLs (Google-hosted, placeholder, AI-generated) with the provided Unsplash image URLs. Match images to their sections contextually. Use descriptive alt text.
+4. **Replace images**: Swap all image URLs with the provided Unsplash image URLs. Match images to sections contextually. Use descriptive alt text.
 
 5. **Add compliance copy** for the specific vertical (see below).
 
-6. **Brand enforcement**: If brand settings are provided, ensure the company name, phone number, and colors are used correctly throughout.
+6. **Brand enforcement**: If brand settings are provided, ensure company name, phone number, and colors are used correctly throughout.
 
-7. **Ensure responsive**: Verify media queries exist for 768px and 480px breakpoints. Add them if missing.
+7. **Ensure responsive**: Verify media queries exist for 768px and 480px. Add them if missing. Add a fixed-bottom CTA bar for mobile if not already present.
 
-8. **Add sticky mobile CTA**: If not already present, add a fixed-bottom CTA bar visible only on mobile (<768px).
-
-9. **Keep total HTML under 150KB**.
+8. **Keep total HTML under 180KB**.
 
 ## OUTPUT
 
