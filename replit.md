@@ -37,6 +37,20 @@ SplitLab is a Next.js 14 A/B testing platform migrated from Vercel + Supabase to
 - Workflow: `npm run dev` on port 5000
 - App URL: determined by `REPLIT_DEV_DOMAIN` env var
 
+## Key Pages
+- `/` — Public marketing landing page (`src/app/LandingPage.tsx`). Redirects logged-in users to `/dashboard`. All CSS in a `<style>` tag (no Tailwind). Google Fonts loaded via `<link>` in `src/app/layout.tsx`.
+- `/dashboard` — Main dashboard
+- `/clients/[id]/pages` — A/B tests + AI Pages list for a workspace
+- `/clients/[id]/pages/builder` — AI Page Builder (supports `?pageId=` to load an existing page)
+
+## V2 Features (AI Page Builder)
+- `src/app/api/pages/generate/route.ts` — SSE streaming page generation via Claude (`claude-sonnet-4-20250514`, maxTokens 8192, 120s timeout)
+- `src/lib/page-builder-prompts.ts` — System prompts and vertical templates
+- `src/lib/claude.ts` — Claude API wrapper (streaming + non-streaming)
+- `src/app/api/pages/[id]/serve/route.ts` — Publicly serves AI pages (no auth). Uses `REPLIT_DEV_DOMAIN` for tracker URL.
+- `src/app/api/pages/[id]/publish/route.ts` — Marks page active and sets published_url using `REPLIT_DEV_DOMAIN`
+- AI Pages section in `PagesClient.tsx` fetches from `/api/workspaces/[id]/pages` and lists all builder-generated pages with View/Edit links
+
 ## Key Relations (RELATIONS map in db.ts)
 Defines FK relationships for nested query building. Both `has_many` and `belongs_to` use:
 - `fk`: column in the child/junction table
