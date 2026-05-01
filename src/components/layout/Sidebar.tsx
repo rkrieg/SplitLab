@@ -23,6 +23,8 @@ import { cn, slugify } from '@/lib/utils';
 import { useState, useEffect, useRef } from 'react';
 import { useTheme } from 'next-themes';
 import toast from 'react-hot-toast';
+import { usePlanLimit, isPlanLimitError } from '@/hooks/usePlanLimit';
+import UpgradeModal from '@/components/upgrade/UpgradeModal';
 
 interface Client {
   id: string;
@@ -61,6 +63,7 @@ export default function Sidebar() {
   const [newClientName, setNewClientName] = useState('');
   const [creating, setCreating] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const { guardedFetch, isOpen: limitModalOpen, modalProps: limitModalProps, closeModal: closeLimitModal } = usePlanLimit();
 
   useEffect(() => setMounted(true), []);
 
@@ -133,14 +136,15 @@ export default function Sidebar() {
     if (!newClientName.trim()) return;
     setCreating(true);
     try {
-      const res = await fetch('/api/clients', {
+      const res = await guardedFetch('/api/clients', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: newClientName.trim(), slug: slugify(newClientName.trim()) }),
       });
       if (!res.ok) {
         const err = await res.json();
-        toast.error(err.error || 'Failed to create client');
+        if (!isPlanLimitError(err)) toast.error(err.error || 'Failed to create client');
+        setCreateModalOpen(false);
         return;
       }
       const client = await res.json();
@@ -158,6 +162,7 @@ export default function Sidebar() {
   }
 
   return (
+    <>
     <aside className="w-60 min-h-screen bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col">
       {/* Logo */}
       <div className="h-16 flex items-center px-5 border-b border-slate-200 dark:border-slate-800">
@@ -328,5 +333,13 @@ export default function Sidebar() {
         </div>
       )}
     </aside>
+    {limitModalOpen && limitModalProps && (
+      <UpgradeModal
+        isOpen={limitModalOpen}
+        onClose={closeLimitModal}
+        {...limitModalProps}
+      />
+    )}
+  </>
   );
 }

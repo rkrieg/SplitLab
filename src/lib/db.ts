@@ -478,6 +478,16 @@ function from(table: string): QueryBuilder<unknown> {
   return new QueryBuilder(table);
 }
 
+// ─── Raw query helper ─────────────────────────────────────────────────────────
+export async function rawQuery<T = Record<string, unknown>>(
+  sql: string,
+  params: unknown[] = []
+): Promise<T[]> {
+  const pool = getPool();
+  const res = await pool.query(sql, params);
+  return res.rows as T[];
+}
+
 // ─── Public db proxy ──────────────────────────────────────────────────────────
 export const db = {
   from,

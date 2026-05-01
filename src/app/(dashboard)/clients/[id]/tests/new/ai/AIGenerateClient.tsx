@@ -12,6 +12,8 @@ import {
 } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import HtmlPreview, { type HtmlPreviewHandle } from '@/components/HtmlPreview';
+import { usePlanLimit, isPlanLimitError } from '@/hooks/usePlanLimit';
+import UpgradeModal from '@/components/upgrade/UpgradeModal';
 
 function fixUrl(url: string): string {
   if (typeof window === 'undefined' || !url) return url;
@@ -64,6 +66,7 @@ type PreviewMode = 'desktop' | 'mobile';
 
 export default function AIGenerateClient({ workspaceId, clientId, domain }: Props) {
   const router = useRouter();
+  const { isOpen: limitModalOpen, modalProps: limitModalProps, closeModal: closeLimitModal, handleLimitError } = usePlanLimit();
 
   // Step state
   const [step, setStep] = useState<Step>('input');
@@ -309,12 +312,14 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
       });
 
       if (!res.ok) {
-        let errMsg = 'Generation failed';
         try {
           const err = await res.json();
-          errMsg = err.error || errMsg;
-        } catch { /* non-JSON body */ }
-        toast.error(errMsg);
+          if (isPlanLimitError(err)) {
+            handleLimitError(err);
+          } else {
+            toast.error(err.error || 'Generation failed');
+          }
+        } catch { toast.error('Generation failed'); }
         setStep('analyzed');
         return;
       }
@@ -466,7 +471,11 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
 
       if (!res.ok) {
         const err = await res.json();
-        toast.error(err.error || 'Failed to create test');
+        if (isPlanLimitError(err)) {
+          handleLimitError(err);
+        } else {
+          toast.error(err.error || 'Failed to create test');
+        }
         return;
       }
 
@@ -566,6 +575,7 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
   const activeVariant = variants[activeTab];
 
   return (
+    <>
     <div className="max-w-5xl mx-auto space-y-6">
       {/* Back link */}
       <button
@@ -1317,5 +1327,13 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
         </>
       )}
     </div>
+    {limitModalOpen && limitModalProps && (
+      <UpgradeModal
+        isOpen={limitModalOpen}
+        onClose={closeLimitModal}
+        {...limitModalProps}
+      />
+    )}
+    </>
   );
 }

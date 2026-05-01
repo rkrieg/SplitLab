@@ -43,6 +43,17 @@ SplitLab is a Next.js 14 A/B testing platform migrated from Vercel + Supabase to
 - `/clients/[id]/pages` — A/B tests + AI Pages list for a workspace
 - `/clients/[id]/pages/builder` — AI Page Builder (supports `?pageId=` to load an existing page)
 
+## Plan Limits & Permissions (V2)
+- `src/lib/plans.ts` — Plan definitions (Free/Pro/Agency/Scale) with limits per plan
+- `src/lib/planLimits.ts` — Server-side limit checking utilities (`checkTestLimit`, `checkClientLimit`, `checkAiGenerationAllowed`)
+- `src/hooks/usePlanLimit.ts` — Client-side hook for handling `plan_limit_exceeded` API errors
+- `src/components/upgrade/UpgradeModal.tsx` — Upgrade prompt modal shown when limits are hit
+- Limits enforced on: `POST /api/clients`, `POST /api/workspaces/[id]/tests`, `POST /api/ai/generate`
+- Free plan: 1 active test, 1 client, no AI generation
+- Pro ($49/mo): 10 tests, 5 clients, AI generation
+- Agency ($149/mo): 50 tests, 20 clients, AI generation
+- Scale ($349/mo): unlimited everything
+
 ## V2 Features (AI Page Builder)
 - `src/app/api/pages/generate/route.ts` — SSE streaming page generation via Claude (`claude-sonnet-4-20250514`, maxTokens 8192, 120s timeout)
 - `src/lib/page-builder-prompts.ts` — System prompts and vertical templates

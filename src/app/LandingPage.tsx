@@ -76,7 +76,7 @@ export default function LandingPage() {
             <a href="#how-it-works">How It Works</a>
             <a href="#pricing">Pricing</a>
             <a href="#use-cases">Use Cases</a>
-            <a href="/signup" className="nav-cta">Get Started Free</a>
+            <a href="#pricing" className="nav-cta">Get Started Free</a>
           </div>
           <button className="mobile-toggle" onClick={() => setMobileOpen(!mobileOpen)}>
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
@@ -89,7 +89,7 @@ export default function LandingPage() {
         <h1>A/B Test <span className="gradient">Any URL</span><br />In Under 5 Minutes</h1>
         <p className="hero-sub">Route traffic through your domain. Test Lovable pages, Replit apps, raw HTML, or any URL. One script tag for conversion tracking. Statistical confidence built in.</p>
         <div className="hero-ctas">
-          <a href="/signup" className="btn-primary">Start Testing Free <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg></a>
+          <a href="#pricing" className="btn-primary">Start Testing Free <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg></a>
           <a href="#how-it-works" className="btn-secondary">See How It Works</a>
         </div>
         <div className="hero-proof">

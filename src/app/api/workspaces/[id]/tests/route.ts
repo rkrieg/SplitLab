@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { z } from 'zod';
+import { checkTestLimit } from '@/lib/planLimits';
 
 const variantSchema = z.object({
   name: z.string().min(1),
@@ -55,6 +56,9 @@ export async function POST(
 ) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const limitCheck = await checkTestLimit(session.user.id);
+  if (!limitCheck.allowed) return limitCheck.response!;
 
   try {
     const body = await request.json();
