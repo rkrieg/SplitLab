@@ -1,7 +1,6 @@
 'use client';
 
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
-import { parseShadowContent } from '@/lib/html-clean';
 
 export interface HtmlPreviewHandle {
   getHtml(): string;
@@ -17,35 +16,27 @@ interface Props {
 }
 
 /**
- * Build a self-contained, script-free HTML document suitable for srcdoc.
- * parseShadowContent strips <script> tags and extracts <style>/<link> blocks
- * so we can reconstruct a clean document where body-scoped CSS applies
- * correctly (unlike shadow DOM which drops <html>/<body> elements).
+ * Build the srcdoc string for the iframe.
+ * We preserve scripts so the page renders exactly as it would in a real browser
+ * (navbar scroll behaviour, hamburger menu, animations, etc.).
+ * A <base> tag is kept if present so relative assets resolve correctly.
  */
 function buildSrcdoc(rawHtml: string): string {
   if (!rawHtml) return '';
 
-  // If the raw HTML already looks like a complete document, use it directly
-  // after stripping scripts for safety.
-  const cleaned = rawHtml
-    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
-    .replace(/<noscript\b[^>]*>[\s\S]*?<\/noscript>/gi, '');
-
-  // If it's a proper <!DOCTYPE html> doc, return as-is (scripts stripped)
-  if (/^\s*<!DOCTYPE\s+html/i.test(cleaned) || /^\s*<html/i.test(cleaned)) {
-    return cleaned;
+  // Already a complete document — use as-is
+  if (/^\s*<!DOCTYPE\s+html/i.test(rawHtml) || /^\s*<html/i.test(rawHtml)) {
+    return rawHtml;
   }
 
-  // Otherwise treat as a fragment — wrap with head/body
-  const { styles, body } = parseShadowContent(rawHtml);
+  // Fragment fallback: wrap in a minimal document
   return `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-${styles}
 </head>
-<body style="margin:0">${body}</body>
+<body style="margin:0">${rawHtml}</body>
 </html>`;
 }
 
@@ -106,9 +97,7 @@ const HtmlPreview = forwardRef<HtmlPreviewHandle, Props>(function HtmlPreview(
       } catch { /* cross-origin sandbox — ignore */ }
     }
 
-    // Apply immediately in case the doc is already loaded
     applyEditMode();
-    // Also apply after the next load (srcdoc swap resets the document)
     iframe.addEventListener('load', applyEditMode);
     return () => iframe.removeEventListener('load', applyEditMode);
   }, [editMode, html, onSelectionChange]);
@@ -119,9 +108,7 @@ const HtmlPreview = forwardRef<HtmlPreviewHandle, Props>(function HtmlPreview(
       srcDoc={srcdoc}
       className={className}
       title="Page Preview"
-      // allow-same-origin lets us access contentDocument for designMode / getHtml()
-      // allow-popups lets CTA links open in a new tab (harmless in preview)
-      sandbox="allow-same-origin allow-popups"
+      sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-modals"
       style={{
         display: 'block',
         width: '100%',
