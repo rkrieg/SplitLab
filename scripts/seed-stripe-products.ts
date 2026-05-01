@@ -1,6 +1,14 @@
 import { getUncachableStripeClient } from '../src/lib/stripeClient';
 
-const PLANS = [
+interface Plan {
+  key: string;
+  name: string;
+  description: string;
+  amount: number;
+  metadata: Record<string, string>;
+}
+
+const PLANS: Plan[] = [
   {
     key: 'pro',
     name: 'Pro',
