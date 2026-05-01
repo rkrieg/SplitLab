@@ -4,7 +4,6 @@ import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { ask } from '@/lib/claude';
 import { prepareHtml, injectBaseTag } from '@/lib/variant-utils';
-import { checkAiGenerationAllowed } from '@/lib/planLimits';
 
 export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
@@ -194,15 +193,6 @@ export async function POST(request: NextRequest) {
   }
   if (session.user.role !== 'admin' && session.user.role !== 'manager') {
     return new Response(JSON.stringify({ error: 'Forbidden' }), {
-      status: 403,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
-
-  const aiCheck = await checkAiGenerationAllowed(session.user.id);
-  if (!aiCheck.allowed) {
-    const body = await aiCheck.response!.json();
-    return new Response(JSON.stringify(body), {
       status: 403,
       headers: { 'Content-Type': 'application/json' },
     });

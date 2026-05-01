@@ -17,7 +17,6 @@ export interface UpgradeModalProps {
 const LIMIT_META: Record<string, { icon: string; label: string }> = {
   active_tests: { icon: '🧪', label: 'Active Tests' },
   clients:      { icon: '🏢', label: 'Clients / Workspaces' },
-  ai_generation:{ icon: '✨', label: 'AI Page Generation' },
 };
 
 const UPGRADE_PLANS: PlanId[] = ['pro', 'agency', 'scale'];
@@ -81,18 +80,14 @@ export default function UpgradeModal({
         </div>
 
         <h2 style={{ color: '#fff', fontSize: '20px', fontWeight: 700, marginBottom: '8px' }}>
-          {limitType === 'ai_generation' ? 'Upgrade to use AI Generation' : `${meta.label} limit reached`}
+          {meta.label} limit reached
         </h2>
 
         <p style={{ color: 'rgba(255,255,255,0.55)', fontSize: '15px', lineHeight: 1.6, marginBottom: '24px' }}>
-          {message ?? (
-            limitType === 'ai_generation'
-              ? `AI Page Generation is a paid feature. Upgrade your plan to start generating AI-powered variants.`
-              : `Your ${planName ?? 'current'} plan includes ${isUnlimited ? 'unlimited' : formatLimit(max!)} ${meta.label.toLowerCase()}. Upgrade to unlock more.`
-          )}
+          {message ?? `Your ${planName ?? 'current'} plan includes ${isUnlimited ? 'unlimited' : formatLimit(max!)} ${meta.label.toLowerCase()}. Upgrade to unlock more.`}
         </p>
 
-        {!isUnlimited && typeof current === 'number' && typeof max === 'number' && max < Infinity && limitType !== 'ai_generation' && (
+        {!isUnlimited && typeof current === 'number' && typeof max === 'number' && max < Infinity && (
           <div style={{ marginBottom: '24px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: 'rgba(255,255,255,0.4)', marginBottom: '6px' }}>
               <span>{meta.label}</span>

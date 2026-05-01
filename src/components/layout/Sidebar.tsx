@@ -18,6 +18,7 @@ import {
   Moon,
   Sparkles,
   Wand2,
+  type LucideIcon,
 } from 'lucide-react';
 import { cn, slugify } from '@/lib/utils';
 import { useState, useEffect, useRef } from 'react';
@@ -32,7 +33,9 @@ interface Client {
   slug: string;
 }
 
-const globalNavItems = [
+interface NavItem { href: string; label: string; icon: LucideIcon; exact?: boolean; }
+
+const globalNavItems: NavItem[] = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/pages', label: 'Pages', icon: FileCode2 },
   { href: '/scripts', label: 'Scripts', icon: Code2 },
@@ -40,7 +43,7 @@ const globalNavItems = [
   { href: '/settings', label: 'Settings', icon: Settings },
 ];
 
-function getClientNavItems(clientId: string) {
+function getClientNavItems(clientId: string): NavItem[] {
   return [
     { href: `/clients/${clientId}/pages`, label: 'Pages', icon: FileCode2, exact: true },
     { href: `/clients/${clientId}/pages/builder`, label: 'AI Page Builder', icon: Wand2 },

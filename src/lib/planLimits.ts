@@ -104,30 +104,3 @@ export async function checkClientLimit(userId: string): Promise<LimitCheckResult
   };
 }
 
-export async function checkAiGenerationAllowed(userId: string): Promise<LimitCheckResult> {
-  const planId = await getUserPlan(userId);
-  const limits = getPlan(planId);
-  const allowed = limits.aiGeneration;
-  return {
-    allowed,
-    current: allowed ? 0 : 1,
-    max: allowed ? 1 : 0,
-    plan: planId,
-    planName: limits.name,
-    limitType: 'ai_generation',
-    response: allowed
-      ? undefined
-      : NextResponse.json(
-          {
-            error: 'plan_limit_exceeded',
-            limitType: 'ai_generation',
-            current: 0,
-            max: 0,
-            plan: planId,
-            planName: limits.name,
-            message: `AI Page Generation is not available on the ${limits.name} plan. Upgrade to Pro or higher to use this feature.`,
-          },
-          { status: 403 }
-        ),
-  };
-}
