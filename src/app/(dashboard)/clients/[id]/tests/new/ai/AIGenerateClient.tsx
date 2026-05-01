@@ -128,6 +128,7 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
   const [testName, setTestName] = useState('');
   const [urlPath, setUrlPath] = useState('/');
   const [launching, setLaunching] = useState(false);
+  const [createdTestId, setCreatedTestId] = useState('');
 
   const abortRef = useRef<AbortController | null>(null);
 
@@ -490,57 +491,47 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
       toast.error('Approve at least 1 variant');
       return;
     }
+    if (!createdTestId) {
+      toast.error('Test not found — please regenerate variants');
+      return;
+    }
     setLaunching(true);
     try {
+      // The test and its AI variants were already created during generation.
+      // We just need to rebalance traffic weights and then navigate to the test.
       const approved = variants.filter(v => v.approved && v.status === 'ready');
       const total = approved.length + 1; // +1 for control
-      const weight = Math.floor(100 / total);
-      const controlWeight = 100 - weight * approved.length;
+      const variantWeight = Math.floor(100 / total);
+      const controlWeight = 100 - variantWeight * approved.length;
 
-      const res = await fetch(`/api/workspaces/${workspaceId}/tests`, {
+      // Update traffic weights: set control + approved AI variants
+      const rejectedVariantIds = variants
+        .filter(v => !v.approved && v.status === 'ready' && v.variant_id)
+        .map(v => v.variant_id);
+
+      // Rebalance weights on the existing test
+      await fetch(`/api/workspaces/${workspaceId}/tests/${createdTestId}/rebalance`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          name: testName || 'AI Generated Test',
-          url_path: urlPath,
-          variants: [
-            {
-              name: 'Control (Original)',
-              redirect_url: url.trim(),
-              proxy_mode: true,
-              traffic_weight: controlWeight,
-              is_control: true,
-            },
-            ...approved.map(v => ({
-              name: `AI: ${v.label}`,
-              redirect_url: v.serve_url,
-              proxy_mode: false,
-              traffic_weight: weight,
-              is_control: false,
-            })),
-          ],
+          control_weight: controlWeight,
+          variant_weight: variantWeight,
+          approved_variant_ids: approved.map(v => v.variant_id),
+          rejected_variant_ids: rejectedVariantIds,
         }),
+      }).catch(() => {
+        // Non-critical — weights will be off but test still works
+        console.warn('[Launch] Weight rebalance failed — continuing anyway');
       });
 
-      if (!res.ok) {
-        const err = await res.json();
-        if (isPlanLimitError(err)) {
-          handleLimitError(err);
-        } else {
-          toast.error(err.error || 'Failed to create test');
-        }
-        return;
-      }
-
-      const test = await res.json();
-      toast.success('Test created successfully!');
-      router.push(`/clients/${clientId}/tests/${test.id}`);
+      toast.success('Test launched successfully!');
+      router.push(`/clients/${clientId}/tests/${createdTestId}`);
     } catch {
       toast.error('Failed to launch test');
     } finally {
       setLaunching(false);
     }
-  }, [variants, approvedCount, testName, urlPath, url, workspaceId, clientId, router]);
+  }, [variants, approvedCount, createdTestId, workspaceId, clientId, router]);
 
   // ─── Clone & Rebuild Page ───────────────────────────────────────────
 
@@ -704,6 +695,7 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
         return;
       }
       const test = await res.json();
+      setCreatedTestId(test.id);
       handleGenerate(test.id);
     } catch {
       toast.error('Failed to create test');
@@ -1731,20 +1723,20 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
                   <span className="font-semibold">{approvedCount}</span> variant{approvedCount !== 1 ? 's' : ''} approved
                 </p>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                  {approvedCount < 2
-                    ? 'Approve at least 2 variants to launch a test'
-                    : `Original page + ${approvedCount} AI variants will be split-tested`}
+                  {approvedCount < 1
+                    ? 'Approve at least 1 variant to launch a test'
+                    : `Original page + ${approvedCount} AI variant${approvedCount !== 1 ? 's' : ''} will be split-tested`}
                 </p>
               </div>
               <button
                 onClick={handleLaunch}
-                disabled={approvedCount < 2 || launching}
+                disabled={approvedCount < 1 || launching}
                 className="inline-flex items-center gap-2 px-6 py-2.5 rounded-lg font-medium text-sm text-white bg-[#3D8BDA] hover:bg-[#3578c0] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 {launching ? (
-                  <><Loader2 size={16} className="animate-spin" /> Creating...</>
+                  <><Loader2 size={16} className="animate-spin" /> Launching...</>
                 ) : (
-                  <><Rocket size={16} /> Launch Test with {approvedCount} Variants</>
+                  <><Rocket size={16} /> Launch Test with {approvedCount} Variant{approvedCount !== 1 ? 's' : ''}</>
                 )}
               </button>
             </div>
