@@ -3,12 +3,14 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { ask } from '@/lib/claude';
-import { prepareHtml, injectBaseTag } from '@/lib/variant-utils';
+import { searchImages } from '@/lib/unsplash';
+import { buildClonePrompt } from '@/lib/page-builder-prompts';
+import { scorePage } from '@/lib/page-quality';
+import { uploadHtml } from '@/lib/storage';
+import { prepareHtml } from '@/lib/variant-utils';
 
 export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
-
-const VARIANTS_BUCKET = 'variants';
 
 interface VariantAngle {
   label: string;
@@ -21,166 +23,82 @@ const DEFAULT_ANGLES: VariantAngle[] = [
   {
     label: 'Headline & Value Prop',
     focus: 'headlines and value proposition',
-    hypothesis: 'Clearer, benefit-driven headlines and value propositions will increase engagement and CTA clicks.',
-    guidance: `Focus on: section headlines, subheadlines, primary value proposition text.
-Leave alone: navigation, footer, testimonials, specific numbers/stats.`,
+    hypothesis: 'Clearer, benefit-driven headlines will increase engagement and CTA clicks by 15–25%.',
+    guidance:
+      'Rewrite ALL section headlines and the main value proposition to be more specific and benefit-driven. Keep the exact same visual design, layout, colors, images, and structure. Only change the wording of headlines and value prop text.',
   },
   {
-    label: 'CTA & Action Copy',
+    label: 'Outcome-Focused CTAs',
     focus: 'calls-to-action and action-oriented copy',
-    hypothesis: 'More specific, outcome-focused CTAs will increase click-through rates.',
-    guidance: `Focus on: CTA button text, text near CTAs, generic actions like "Contact Us"/"Learn More".
-Leave alone: headlines, body paragraphs, navigation, testimonials.`,
+    hypothesis: 'More specific, outcome-focused CTAs will increase click-through rates by 10–20%.',
+    guidance:
+      'Rewrite all CTA button text and nearby action copy to communicate a specific outcome (e.g., "Get My Free Strategy Session" instead of "Contact Us"). Keep the exact same visual design, layout, colors, images, and all non-CTA text.',
   },
   {
     label: 'Benefit-Driven Body Copy',
     focus: 'body copy and service descriptions',
     hypothesis: 'Rewriting feature-focused copy to lead with client benefits will better communicate value.',
-    guidance: `Focus on: body paragraphs, service descriptions, "about us" copy.
-Leave alone: headlines, CTA buttons, testimonials, navigation.`,
+    guidance:
+      'Rewrite all body paragraphs and service descriptions to lead with the benefit the client gets, not the feature. Keep the exact same visual design, layout, colors, images, headlines, and CTAs.',
   },
 ];
 
-function buildPatchPrompt(
-  html: string,
+/**
+ * Generate a complete standalone HTML page for one variant angle.
+ * Uses buildClonePrompt so each variant is a real page (not a text patch).
+ */
+async function generateVariantPage(
   angle: VariantAngle,
+  scrapedHtml: string,
   sourceUrl: string,
-  instructions?: string
-): string {
-  const preparedHtml = prepareHtml(html);
+  analysis: Record<string, unknown>,
+  imageUrls: Awaited<ReturnType<typeof searchImages>>,
+  baseInstructions?: string
+): Promise<string> {
+  const angleInstructions = [
+    `## CRO STRATEGY: ${angle.label}`,
+    `HYPOTHESIS: ${angle.hypothesis}`,
+    `FOCUS: ${angle.focus}`,
+    `INSTRUCTIONS: ${angle.guidance}`,
+    baseInstructions?.trim()
+      ? `\n## ADDITIONAL USER INSTRUCTIONS (apply these too):\n${baseInstructions.trim()}`
+      : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
 
-  return `You are a senior CRO specialist creating an A/B test variant of a landing page.
+  const originalHtmlContext = prepareHtml(scrapedHtml).slice(0, 30_000);
 
-## Strategy: ${angle.label}
-**Hypothesis:** ${angle.hypothesis}
-${angle.guidance}
+  const { system, user } = buildClonePrompt({
+    originalHtmlContext,
+    sourceUrl,
+    analysis: analysis as Parameters<typeof buildClonePrompt>[0]['analysis'],
+    instructions: angleInstructions,
+    imageUrls,
+  });
 
-${instructions ? `## Custom Instructions (HIGHEST PRIORITY)\n${instructions}\n\nApply these instructions. If they conflict with the strategy, custom instructions win. You CAN make visual/structural changes (CSS, backgrounds, images, layout) if the instructions ask for them.\n` : ''}
+  const html = await ask(user, {
+    system,
+    model: 'claude-sonnet-4-20250514',
+    maxTokens: 8192,
+  });
 
-## Your Task
-Produce 4-10 HTML search-and-replace patches. Each patch replaces a chunk of the original HTML with a modified version.
-
-## Rules
-1. Each "find" must be an EXACT substring from the HTML below (copy-paste, including tags and attributes)
-2. Each "find" must be unique in the document — include enough surrounding HTML to be unambiguous
-3. The "replace" is the modified version of that same HTML chunk
-4. You can change text, CSS styles, classes, attributes, images, structure — anything within the chunk
-5. Keep changes focused on supporting the hypothesis
-6. Do NOT change scripts, meta tags, or analytics code
-7. Make "find" strings at least 30 characters long, but NO MORE THAN 200 characters — short, tight finds are more reliable
-
-## Critical Targeting Rules (READ CAREFULLY)
-- **Button/CTA text**: Target the INNERMOST text span only, e.g. \`<span class="elementor-button-text">Contact Us</span>\` — NEVER target the outer \`<a>\` or \`<div>\` wrapper; those have complex nested children that are hard to match exactly
-- **Headings**: Target just \`<h1>\`, \`<h2>\`, \`<h3>\` tags and their content directly — not their parent wrapper divs
-- **Paragraphs**: Target the \`<p>\` tag and its content; if the paragraph is long, target only the FIRST SENTENCE within it
-- **Avoid containers**: Never use \`<div class="elementor-element ...">\` as a find target — those wrappers contain many child elements and are prone to mismatch
-- **Short finds win**: The minimum unique string is better than a long block. If a heading text is unique in the document, \`<h2>Your Heading Text</h2>\` alone is enough
-- **Prefer text-bearing leaf elements**: \`<span>\`, \`<p>\`, \`<h1>-<h6>\`, \`<a>\` (only the anchor text, not the whole link), \`<li>\`, \`<td>\`
-
-## Source URL: ${sourceUrl}
-
-## Original HTML:
-${preparedHtml}
-
-## Response Format
-Return ONLY valid JSON (no markdown fences):
-{
-  "patches": [
-    {
-      "find": "<exact HTML substring from the original>",
-      "replace": "<modified HTML>",
-      "description": "What was changed and why"
-    }
-  ],
-  "changes_summary": [{"change": "what was changed", "reason": "why this helps conversion"}],
-  "variant_label": "${angle.label}",
-  "impact_hypothesis": "specific prediction about how this variant will perform"
-}`;
-}
-
-interface PatchResponse {
-  patches: Array<{ find: string; replace: string; description: string }>;
-  changes_summary: Array<{ change: string; reason: string }>;
-  variant_label: string;
-  impact_hypothesis: string;
-}
-
-function parsePatchResponse(response: string): PatchResponse {
-  let cleaned = response.trim();
-  if (cleaned.startsWith('```')) {
-    cleaned = cleaned.replace(/^```json?\n?/, '').replace(/\n?```$/, '');
+  let finalHtml = html.trim();
+  if (finalHtml.startsWith('```')) {
+    finalHtml = finalHtml.replace(/^```html?\n?/, '').replace(/\n?```$/, '');
   }
-  try {
-    return JSON.parse(cleaned);
-  } catch {
-    const match = cleaned.match(/\{[\s\S]*\}/);
-    if (match) return JSON.parse(match[0]);
-    throw new Error('Claude returned invalid JSON for variant generation');
-  }
-}
-
-/**
- * Collapse all whitespace runs to a single space — mirrors what prepareHtml does
- * so find strings from the AI (which saw the collapsed HTML) will match.
- */
-function collapseWS(s: string): string {
-  return s.replace(/\s+/g, ' ');
-}
-
-/**
- * Build a regex from a find string where every run of whitespace becomes \s+
- * and all regex-special chars in non-whitespace parts are escaped.
- */
-function buildWSFlexibleRegex(findStr: string): RegExp | null {
-  try {
-    // Split into alternating non-ws / ws chunks
-    const parts = findStr.split(/(\s+)/);
-    const regexParts = parts.map(part =>
-      /^\s+$/.test(part)
-        ? '\\s+'
-        : part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    );
-    return new RegExp(regexParts.join(''));
-  } catch {
-    return null;
-  }
-}
-
-function applyPatches(html: string, patches: Array<{ find: string; replace: string; description: string }>): string {
-  // Normalise the working copy so AI-generated find strings match.
-  // prepareHtml collapses \s{2,} → ' '; we collapse all \s+ → ' ' which is a
-  // superset (single spaces already stay single) — identical end result.
-  let result = collapseWS(html);
-  let applied = 0;
-
-  for (const patch of patches) {
-    if (!patch.find || patch.find === patch.replace) continue;
-
-    // Level 1 — exact match on the collapsed HTML
-    if (result.includes(patch.find)) {
-      result = result.replace(patch.find, patch.replace);
-      applied++;
-      console.log(`[AI Generate] Patch applied: ${patch.description?.slice(0, 80)}`);
-      continue;
-    }
-
-    // Level 2 — whitespace-flexible regex (handles any remaining WS differences)
-    const regex = buildWSFlexibleRegex(patch.find);
-    if (regex) {
-      const match = result.match(regex);
-      if (match && match[0]) {
-        result = result.replace(regex, patch.replace);
-        applied++;
-        console.log(`[AI Generate] Patch applied (fuzzy): ${patch.description?.slice(0, 80)}`);
-        continue;
-      }
-    }
-
-    console.warn(`[AI Generate] Patch NOT found: ${patch.find.slice(0, 100)}`);
+  if (!finalHtml.startsWith('<!DOCTYPE') && !finalHtml.startsWith('<html')) {
+    finalHtml = '<!DOCTYPE html>\n' + finalHtml;
   }
 
-  console.log(`[AI Generate] Applied ${applied}/${patches.length} patches`);
-  return result;
+  const lower = finalHtml.toLowerCase();
+  if (!lower.includes('</body>') && !lower.includes('</html>')) {
+    finalHtml += '\n</body></html>';
+  } else if (!lower.includes('</html>')) {
+    finalHtml += '\n</html>';
+  }
+
+  return finalHtml;
 }
 
 export async function POST(request: NextRequest) {
@@ -210,12 +128,8 @@ export async function POST(request: NextRequest) {
     numVariants = body.num_variants ?? 3;
     instructions = body.instructions;
 
-    if (!scrapedPageId || !testId) {
-      throw new Error('Missing required fields');
-    }
-    if (numVariants < 1 || numVariants > 3) {
-      numVariants = Math.min(3, Math.max(1, numVariants));
-    }
+    if (!scrapedPageId || !testId) throw new Error('Missing required fields');
+    numVariants = Math.min(3, Math.max(1, numVariants));
   } catch {
     return new Response(
       JSON.stringify({ error: 'Invalid request. Required: scraped_page_id, test_id' }),
@@ -240,7 +154,10 @@ export async function POST(request: NextRequest) {
     .from('scraped_pages')
     .select('*')
     .eq('id', scrapedPageId)
-    .single() as unknown as Promise<{ data: { id: string; html: string; url: string } | null; error: { message: string } | null }>);
+    .single() as unknown as Promise<{
+      data: { id: string; html: string; url: string; analysis: Record<string, unknown> } | null;
+      error: { message: string } | null;
+    }>);
 
   if (scrapeErr || !scrapedPage) {
     return new Response(JSON.stringify({ error: 'Scraped page not found' }), {
@@ -250,169 +167,184 @@ export async function POST(request: NextRequest) {
   }
 
   const angles = DEFAULT_ANGLES.slice(0, numVariants);
-
-  const { data: buckets } = await (db.storage.listBuckets() as unknown as Promise<{ data: { name: string }[] | null }>);
-  const bucketExists = buckets?.some((b) => b.name === VARIANTS_BUCKET);
-  if (!bucketExists) {
-    const { error: createErr } = await (db.storage.createBucket(VARIANTS_BUCKET, {
-      public: true,
-      fileSizeLimit: 5 * 1024 * 1024,
-    }) as unknown as Promise<{ error: { message: string } | null }>);
-    if (createErr) {
-      console.error('Failed to create variants bucket:', createErr);
-      return new Response(
-        JSON.stringify({ error: `Storage setup failed: ${createErr.message}` }),
-        { status: 500, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-  }
+  const workspaceId = test.workspace_id as string;
+  const analysis = (scrapedPage.analysis || {}) as Record<string, unknown>;
 
   const encoder = new TextEncoder();
+  let keepalive: ReturnType<typeof setInterval> | null = null;
+
   const stream = new ReadableStream({
     async start(controller) {
+      let closed = false;
+
       function sendEvent(event: string, data: unknown) {
-        controller.enqueue(
-          encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
-        );
+        if (closed) return;
+        try {
+          controller.enqueue(
+            encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
+          );
+        } catch {
+          closed = true;
+        }
       }
 
-      sendEvent('started', {
-        total_variants: angles.length,
-        strategies: angles.map((a) => a.label),
-      });
-
-      sendEvent('generating', {
-        strategies: angles.map((a, i) => ({ index: i, label: a.label, status: 'in_progress' })),
-      });
-
-      const keepalive = setInterval(() => {
+      keepalive = setInterval(() => {
         sendEvent('keepalive', { timestamp: Date.now() });
-      }, 10_000);
+      }, 8_000);
 
-      const variantPromises = angles.map(async (angle, index) => {
-        const prompt = buildPatchPrompt(
-          scrapedPage.html,
-          angle,
-          scrapedPage.url,
-          instructions
-        );
-
-        console.log(`[AI Generate] Starting variant ${index} (${angle.label}), prompt length: ${prompt.length} chars`);
-        const response = await ask(prompt, {
-          system: 'You are a senior CRO specialist. You create A/B test variants by producing precise HTML patches. Your patches must use exact HTML substrings from the original document as "find" values.',
-          model: 'claude-sonnet-4-20250514',
-          maxTokens: 8192,
+      try {
+        sendEvent('started', {
+          total_variants: angles.length,
+          strategies: angles.map(a => a.label),
         });
-        console.log(`[AI Generate] Variant ${index} response length: ${response.length} chars`);
 
-        return { index, angle, prompt, response };
-      });
+        // Search images once for all variants
+        const searchQuery = [
+          (analysis.primary_offer as string | undefined),
+          (analysis.page_type as string | undefined),
+          (analysis.target_audience as string | undefined),
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .slice(0, 200) || 'professional business';
 
-      const results = await Promise.allSettled(variantPromises);
-      clearInterval(keepalive);
-      const completed: unknown[] = [];
+        const imageUrls = await searchImages(searchQuery, 'other');
 
-      for (const result of results) {
-        if (result.status === 'rejected') {
-          const idx = results.indexOf(result);
-          console.error(`Variant ${idx} failed:`, result.reason);
-          sendEvent('variant_error', {
-            index: idx,
-            label: angles[idx]?.label,
-            error: result.reason?.message || 'Generation failed',
-          });
-          continue;
-        }
+        sendEvent('generating', {
+          strategies: angles.map((a, i) => ({ index: i, label: a.label, status: 'in_progress' })),
+        });
 
-        const { index, angle, prompt, response } = result.value;
-        try {
-          console.log(`[AI Generate] Variant ${index}: parsing patches`);
-          const parsed = parsePatchResponse(response);
-          console.log(`[AI Generate] Variant ${index}: parsed ${parsed.patches?.length ?? 0} patches`);
+        // Generate all variants in parallel
+        const variantPromises = angles.map(async (angle, index) => {
+          const html = await generateVariantPage(
+            angle,
+            scrapedPage.html,
+            scrapedPage.url,
+            analysis,
+            imageUrls,
+            instructions
+          );
+          return { index, angle, html };
+        });
 
-          // Apply HTML patches to the original
-          const modifiedHtml = applyPatches(scrapedPage.html, parsed.patches || []);
-          const variantHtml = injectBaseTag(modifiedHtml, scrapedPage.url);
-          console.log(`[AI Generate] Variant ${index}: HTML ready (${variantHtml.length} chars), inserting DB record`);
+        const results = await Promise.allSettled(variantPromises);
 
-          const variantId = crypto.randomUUID();
-          const weight = Math.floor(100 / (angles.length + 1));
+        for (const result of results) {
+          if (result.status === 'rejected') {
+            const idx = results.indexOf(result);
+            const errMsg = (result.reason as Error)?.message || 'Generation failed';
+            console.error(`[AI Generate] Variant ${idx} failed:`, errMsg);
+            sendEvent('variant_error', {
+              index: idx,
+              label: angles[idx]?.label,
+              error: errMsg,
+            });
+            continue;
+          }
 
-          const { error: variantErr } = await (db.from('test_variants').insert({
-            id: variantId,
-            test_id: testId,
-            name: `AI: ${angle.label}`,
-            traffic_weight: weight,
-            is_control: false,
-            is_ai_generated: true,
-            variant_type: 'hosted',
-          }) as unknown as Promise<{ error: { message: string } | null }>);
+          const { index, angle, html: finalHtml } = result.value;
 
-          if (variantErr) throw new Error(`Failed to create variant: ${variantErr.message}`);
-          console.log(`[AI Generate] Variant ${index}: DB record created (${variantId}), uploading HTML`);
+          try {
+            // Score quality
+            const quality = scorePage(finalHtml, 'other');
 
-          const storagePath = `${testId}/${variantId}.html`;
-          const { error: uploadErr } = await (db.storage
-            .from(VARIANTS_BUCKET)
-            .upload(storagePath, variantHtml, {
-              contentType: 'text/html; charset=utf-8',
-              upsert: true,
+            // Save to pages table
+            const pageId = crypto.randomUUID();
+            const storagePath = `pages/${workspaceId}/${pageId}.html`;
+            const publicUrl = await uploadHtml(storagePath, finalHtml);
+
+            const pageName = `${angle.label} Variant`;
+            const { error: pageInsertErr } = await db.from('pages').insert({
+              id: pageId,
+              workspace_id: workspaceId,
+              name: pageName,
+              slug: pageId,
+              html_url: publicUrl,
+              html_content: finalHtml.length < 500_000 ? finalHtml : null,
+              status: 'active',
+              prompt: `A/B Variant: ${angle.label}\n${angle.hypothesis}`,
+              vertical: 'other',
+              quality_score: quality.score,
+              quality_details: quality.details,
+              source_type: 'ai_generated',
+              version: 1,
+            });
+
+            if (pageInsertErr) throw new Error(`Failed to save page: ${pageInsertErr.message}`);
+
+            const serveUrl = `/api/pages/${pageId}/serve`;
+            const variantId = crypto.randomUUID();
+            const weight = Math.floor(100 / (angles.length + 1));
+
+            // Save to test_variants — hosted_url points to our generated page
+            const { error: variantErr } = await (db.from('test_variants').insert({
+              id: variantId,
+              test_id: testId,
+              name: `AI: ${angle.label}`,
+              traffic_weight: weight,
+              is_control: false,
+              is_ai_generated: true,
+              variant_type: 'hosted',
+              hosted_url: serveUrl,
             }) as unknown as Promise<{ error: { message: string } | null }>);
 
-          if (uploadErr) throw new Error(`Failed to upload HTML: ${uploadErr.message}`);
-          console.log(`[AI Generate] Variant ${index}: HTML uploaded to ${storagePath}`);
+            if (variantErr) throw new Error(`Failed to create variant record: ${variantErr.message}`);
 
-          const { data: urlData } = db.storage
-            .from(VARIANTS_BUCKET)
-            .getPublicUrl(storagePath) as unknown as { data: { publicUrl: string } };
+            // Save variant_pages for tracking
+            await (db.from('variant_pages').insert({
+              variant_id: variantId,
+              html_storage_path: storagePath,
+              source_url: scrapedPage.url,
+              generation_prompt: `${angle.label}: ${angle.hypothesis}`.slice(0, 10000),
+              changes_summary: [
+                { change: angle.label, reason: angle.hypothesis },
+                { change: angle.guidance, reason: angle.focus },
+              ],
+              status: 'ready',
+            }) as unknown as Promise<{ error: { message: string } | null }>);
 
-          await db
-            .from('test_variants')
-            .update({ hosted_url: urlData.publicUrl })
-            .eq('id', variantId);
-          console.log(`[AI Generate] Variant ${index}: hosted_url updated, inserting variant_pages`);
-
-          const { error: pageErr } = await (db.from('variant_pages').insert({
-            variant_id: variantId,
-            html_storage_path: storagePath,
-            source_url: scrapedPage.url,
-            generation_prompt: prompt.slice(0, 10000),
-            changes_summary: parsed.changes_summary,
-            status: 'ready',
-          }) as unknown as Promise<{ error: { message: string } | null }>);
-
-          if (pageErr) throw new Error(`Failed to create variant_page: ${pageErr.message}`);
-          console.log(`[AI Generate] Variant ${index}: variant_pages inserted, sending variant_ready`);
-
-          const previewUrl = `/api/variants/${testId}/${variantId}`;
-
-          const variantResult = {
-            index,
-            variant_id: variantId,
-            label: parsed.variant_label,
-            impact_hypothesis: parsed.impact_hypothesis,
-            changes_summary: parsed.changes_summary,
-            hosted_url: previewUrl,
-            html: variantHtml,
-            status: 'ready',
-          };
-
-          sendEvent('variant_ready', variantResult);
-          completed.push(variantResult);
-        } catch (err: unknown) {
-          const message = err instanceof Error ? err.message : 'Generation failed';
-          console.error(`Variant ${index} (${angle.label}) failed:`, err);
-          sendEvent('variant_error', { index, label: angle.label, error: message });
+            sendEvent('variant_ready', {
+              index,
+              variant_id: variantId,
+              page_id: pageId,
+              label: angle.label,
+              impact_hypothesis: angle.hypothesis,
+              changes_summary: [
+                { change: `${angle.label} rewrite`, reason: angle.hypothesis },
+                { change: 'Standalone generated page', reason: 'No dependency on original site assets or URLs' },
+              ],
+              serve_url: serveUrl,
+              hosted_url: serveUrl,
+              html: finalHtml,
+              status: 'ready',
+            });
+          } catch (saveErr) {
+            const errMsg = saveErr instanceof Error ? saveErr.message : 'Save failed';
+            console.error(`[AI Generate] Variant ${index} save failed:`, errMsg);
+            sendEvent('variant_error', { index, label: angle.label, error: errMsg });
+          }
         }
+
+        const succeeded = results.filter(r => r.status === 'fulfilled').length;
+        sendEvent('complete', {
+          total: angles.length,
+          succeeded,
+          failed: angles.length - succeeded,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Generation failed';
+        console.error('[AI Generate] Fatal error:', message);
+        sendEvent('error', { error: message });
+      } finally {
+        if (keepalive) clearInterval(keepalive);
+        keepalive = null;
+        closed = true;
+        try { controller.close(); } catch { /* already closed */ }
       }
-
-      sendEvent('complete', {
-        total: angles.length,
-        succeeded: completed.length,
-        failed: angles.length - completed.length,
-      });
-
-      controller.close();
+    },
+    cancel() {
+      if (keepalive) clearInterval(keepalive);
+      keepalive = null;
     },
   });
 

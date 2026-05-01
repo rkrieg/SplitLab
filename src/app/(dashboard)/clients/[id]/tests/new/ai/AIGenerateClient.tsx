@@ -35,10 +35,11 @@ interface ChangeItem {
 interface GeneratedVariant {
   index: number;
   variant_id: string;
+  page_id: string;
   label: string;
   impact_hypothesis: string;
   changes_summary: ChangeItem[];
-  hosted_url: string;
+  serve_url: string;
   html: string;
   status: 'ready' | 'error';
   error?: string;
@@ -174,7 +175,7 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
     setSaving(true);
     try {
       const html = previewRef.current.getHtml();
-      const res = await fetch(`/api/ai/variants/${variant.variant_id}`, {
+      const res = await fetch(`/api/pages/${variant.page_id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ html }),
@@ -185,6 +186,9 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
         return;
       }
       const data = await res.json();
+      setVariants(prev => prev.map(v =>
+        v.variant_id === variant.variant_id ? { ...v, html } : v
+      ));
       toast.success(`Saved (v${data.version})`);
     } catch {
       toast.error('Failed to save');
@@ -201,11 +205,19 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
 
     setRegenerating(true);
     try {
-      const res = await fetch(`/api/ai/variants/${variant.variant_id}/regenerate`, {
+      const combinedInstructions = [
+        variant.label ? `CRO STRATEGY: ${variant.label}\nHYPOTHESIS: ${variant.impact_hypothesis}` : '',
+        regenInstructions.trim(),
+      ].filter(Boolean).join('\n\n');
+
+      const res = await fetch('/api/ai/clone', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          instructions: regenInstructions.trim() || undefined,
+          scraped_page_id: scrapedPageId,
+          instructions: combinedInstructions || undefined,
+          workspace_id: workspaceId,
+          client_id: clientId,
         }),
       });
       if (!res.ok) {
@@ -213,22 +225,51 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
         toast.error(err.error || 'Regeneration failed');
         return;
       }
-      const data = await res.json();
-      // Update variant in state
-      setVariants(prev => prev.map(v =>
-        v.variant_id === variant.variant_id
-          ? {
-              ...v,
-              label: data.label || v.label,
-              impact_hypothesis: data.impact_hypothesis || v.impact_hypothesis,
-              changes_summary: data.changes_summary || v.changes_summary,
-              html: data.html || v.html,
+
+      const reader = res.body?.getReader();
+      if (!reader) { toast.error('No response stream'); return; }
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split('\n\n');
+        buffer = parts.pop() || '';
+
+        for (const part of parts) {
+          if (!part.trim()) continue;
+          let eventType = '';
+          let dataStr = '';
+          for (const line of part.split('\n')) {
+            if (line.startsWith('event: ')) eventType = line.slice(7).trim();
+            else if (line.startsWith('data: ')) dataStr = line.slice(6);
+          }
+          if (!dataStr) continue;
+          try {
+            const data = JSON.parse(dataStr);
+            if (eventType === 'complete') {
+              setVariants(prev => prev.map(v =>
+                v.variant_id === variant.variant_id
+                  ? {
+                      ...v,
+                      page_id: data.page_id as string,
+                      serve_url: fixUrl(data.serve_url as string),
+                      html: data.html as string,
+                    }
+                  : v
+              ));
+              toast.success('Variant regenerated!');
+              setShowRegenInput(false);
+              setRegenInstructions('');
+            } else if (eventType === 'error') {
+              toast.error((data.error as string) || 'Regeneration failed');
             }
-          : v
-      ));
-      toast.success('Variant regenerated!');
-      setShowRegenInput(false);
-      setRegenInstructions('');
+          } catch { /* skip malformed */ }
+        }
+      }
     } catch {
       toast.error('Regeneration failed');
     } finally {
@@ -358,10 +399,11 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
                 collectedVariants.push({
                   index: data.index as number,
                   variant_id: data.variant_id as string,
+                  page_id: (data.page_id as string) || '',
                   label: data.label as string,
                   impact_hypothesis: data.impact_hypothesis as string,
                   changes_summary: data.changes_summary as ChangeItem[],
-                  hosted_url: fixUrl(data.hosted_url as string),
+                  serve_url: fixUrl((data.serve_url as string) || (data.hosted_url as string)),
                   html: (data.html as string) || '',
                   status: 'ready',
                   approved: true,
@@ -405,10 +447,11 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
         setVariants(prev => [...prev, {
           index: data.index as number,
           variant_id: data.variant_id as string,
+          page_id: (data.page_id as string) || '',
           label: data.label as string,
           impact_hypothesis: data.impact_hypothesis as string,
           changes_summary: data.changes_summary as ChangeItem[],
-          hosted_url: fixUrl(data.hosted_url as string),
+          serve_url: fixUrl((data.serve_url as string) || (data.hosted_url as string)),
           html: (data.html as string) || '',
           status: 'ready',
           approved: true,
@@ -421,10 +464,11 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
         setVariants(prev => [...prev, {
           index: data.index as number,
           variant_id: '',
+          page_id: '',
           label: data.label as string,
           impact_hypothesis: '',
           changes_summary: [],
-          hosted_url: '',
+          serve_url: '',
           html: '',
           status: 'error' as const,
           error: data.error as string,
@@ -469,7 +513,7 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
             },
             ...approved.map(v => ({
               name: `AI: ${v.label}`,
-              redirect_url: v.hosted_url,
+              redirect_url: v.serve_url,
               proxy_mode: false,
               traffic_weight: weight,
               is_control: false,
@@ -1611,12 +1655,23 @@ export default function AIGenerateClient({ workspaceId, clientId, domain }: Prop
                             <div className="w-2.5 h-2.5 rounded-full bg-green-400/50" />
                           </div>
                           <span className="text-xs text-slate-400 font-mono truncate flex-1 text-center">
-                            {activeVariant.label} — AI Generated Variant
+                            {activeVariant.serve_url || `${activeVariant.label} — AI Generated Variant`}
                           </span>
                           {editMode && (
                             <span className="text-[10px] font-medium text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded">
                               EDIT MODE
                             </span>
+                          )}
+                          {activeVariant.serve_url && (
+                            <a
+                              href={activeVariant.serve_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex-shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 transition-colors"
+                              title="Open live page in new tab"
+                            >
+                              <Rocket size={10} /> Open
+                            </a>
                           )}
                         </div>
                         {activeVariant.html ? (
