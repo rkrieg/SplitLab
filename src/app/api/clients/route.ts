@@ -34,9 +34,6 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  if (session.user.role !== 'admin' && session.user.role !== 'manager') {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  }
 
   const limitCheck = await checkClientLimit(session.user.id);
   if (!limitCheck.allowed) return limitCheck.response!;
