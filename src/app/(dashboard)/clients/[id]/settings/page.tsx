@@ -20,24 +20,13 @@ export default async function ClientSettingsPage({ params }: { params: { id: str
   const workspace = await getWorkspaceForClient(params.id);
   if (!workspace) notFound();
 
-  const { data: domains } = await db
-    .from('domains')
-    .select('*')
-    .eq('workspace_id', workspace.id)
-    .order('created_at', { ascending: false })
-    .limit(1) as unknown as { data: { id: string; domain: string; cname_target: string | null; verified: boolean; verified_at: string | null; created_at: string }[] | null };
-
-  const appHostname = process.env.APP_HOSTNAME || 'cname.vercel-dns.com';
-
   return (
     <div>
       <Header title="Settings" subtitle={client.name} />
       <div className="p-6">
         <ClientSettingsClient
           client={client}
-          initialDomains={domains ?? []}
           workspaceId={workspace.id}
-          appHostname={appHostname}
           canManage={session.user.role !== 'viewer'}
         />
       </div>
