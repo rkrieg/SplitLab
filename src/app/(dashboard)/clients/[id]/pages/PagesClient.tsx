@@ -124,6 +124,7 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
           }),
         });
       } else {
+        const normalizedUrl = destinationUrl.match(/^https?:\/\//) ? destinationUrl : `https://${destinationUrl}`;
         res = await fetch(`/api/workspaces/${workspaceId}/tests`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -132,7 +133,7 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
             url_path: urlPath,
             variants: [{
               name: 'Control',
-              redirect_url: destinationUrl,
+              redirect_url: normalizedUrl,
               proxy_mode: true,
               traffic_weight: 100,
               is_control: true,
@@ -627,7 +628,7 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
           {createMode === 'url' ? (
             <div>
               <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Your Page URL</label>
-              <input type="url" value={destinationUrl} onChange={(e) => setDestinationUrl(e.target.value)} className="input-base font-mono text-sm" placeholder="https://yoursite.com/landing" required />
+              <input type="text" value={destinationUrl} onChange={(e) => setDestinationUrl(e.target.value)} className="input-base font-mono text-sm" placeholder="https://yoursite.com/landing" required />
               <p className="text-slate-400 dark:text-slate-500 text-xs mt-1">SplitLab will proxy this page through your domain so A/B tests run on your URL.</p>
             </div>
           ) : (
@@ -653,6 +654,7 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
                 ? <span className="font-mono">{domain}{urlPath}</span>
                 : 'Where on your domain this page will be served (e.g. / or /landing).'}
             </p>
+            <p className="text-slate-400 dark:text-slate-500 text-xs mt-1">You can connect or change your domain at any time in the Domains section.</p>
           </div>
 
           <div className="flex justify-end gap-3 pt-2">
