@@ -170,10 +170,7 @@ export default function Sidebar() {
       {/* Logo */}
       <div className="h-16 flex items-center px-4 border-b border-slate-200 dark:border-slate-800">
         <Link href="/dashboard" className="flex items-center">
-          <div style={{width:'40px',height:'40px',overflow:'hidden',flexShrink:0,display:'flex',alignItems:'center'}}>
-            <img src="/splitlab-logo.png" alt="SplitLab" style={{height:'40px',width:'auto',flexShrink:0}} />
-          </div>
-          <span style={{fontWeight:700,fontSize:'18px',letterSpacing:'-0.3px'}} className="text-slate-900 dark:text-white">Split<span style={{color:'#3D8BDA',fontWeight:600}}>Lab</span></span>
+          <img src="/splitlab-logo.png" alt="SplitLab" style={{height:'48px',width:'auto'}} />
         </Link>
       </div>
 
