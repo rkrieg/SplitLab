@@ -37,7 +37,7 @@ export async function POST(request: NextRequest) {
         name: data.name,
         email: data.email.toLowerCase(),
         password_hash: passwordHash,
-        role: 'viewer',
+        role: 'manager',
       })
       .select('id, name, email, role, status, created_at')
       .single();
