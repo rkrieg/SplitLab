@@ -168,14 +168,12 @@ export default function Sidebar() {
     <>
     <aside className="w-60 min-h-screen bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col">
       {/* Logo */}
-      <div className="h-16 flex items-center px-5 border-b border-slate-200 dark:border-slate-800">
+      <div className="h-16 flex items-center px-4 border-b border-slate-200 dark:border-slate-800">
         <Link href="/dashboard" className="flex items-center">
-          <svg width="140" height="32" viewBox="0 0 220 48" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <circle cx="18" cy="24" r="16" fill="#3D8BDA" opacity="0.15"/>
-            <circle cx="18" cy="24" r="14" stroke="#3D8BDA" strokeWidth="1.5"/>
-            <path d="M20 12L13 26H18L15 36L24 22H19L20 12Z" fill="#3D8BDA"/>
-            <text x="42" y="21" fontFamily="system-ui, sans-serif" fontWeight="700" fontSize="24" fill="currentColor" letterSpacing="-0.5" className="text-slate-900 dark:text-white">Split<tspan fill="#3D8BDA" fontWeight="600">Lab</tspan></text>
-          </svg>
+          <div style={{width:'40px',height:'40px',overflow:'hidden',flexShrink:0,display:'flex',alignItems:'center'}}>
+            <img src="/splitlab-logo.png" alt="SplitLab" style={{height:'40px',width:'auto',flexShrink:0}} />
+          </div>
+          <span style={{fontWeight:700,fontSize:'18px',letterSpacing:'-0.3px'}} className="text-slate-900 dark:text-white">Split<span style={{color:'#3D8BDA',fontWeight:600}}>Lab</span></span>
         </Link>
       </div>
 

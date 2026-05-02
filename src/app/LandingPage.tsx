@@ -68,7 +68,9 @@ export default function LandingPage() {
       <nav id="nav" className={navScrolled ? 'scrolled' : ''}>
         <div className="nav-inner">
           <a href="#" className="nav-logo">
-            <div className="nav-logo-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M16 3h5v5"/><path d="M4 20L21 3"/><path d="M21 16v5h-5"/><path d="M15 15l6 6"/><path d="M4 4l5 5"/></svg></div>
+            <div style={{width:'46px',height:'46px',overflow:'hidden',flexShrink:0,display:'flex',alignItems:'center'}}>
+              <img src="/splitlab-logo.png" alt="SplitLab" style={{height:'46px',width:'auto',flexShrink:0}} />
+            </div>
             <div className="nav-logo-text">Split<span>Lab</span></div>
           </a>
           <div className={`nav-links${mobileOpen ? ' show' : ''}`}>
@@ -266,7 +268,7 @@ export default function LandingPage() {
       <footer>
         <div className="footer-inner">
           <div className="footer-left">
-            <div className="footer-logo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M16 3h5v5"/><path d="M4 20L21 3"/><path d="M21 16v5h-5"/><path d="M15 15l6 6"/><path d="M4 4l5 5"/></svg></div>
+            <img src="/splitlab-logo.png" alt="SplitLab" style={{height:'28px',width:'auto',objectFit:'contain'}} />
             <span className="footer-copy">&copy; 2026 SplitLab. Built by Infinity Media.</span>
           </div>
           <div className="footer-links"><a href="#">Privacy</a><a href="#">Terms</a><a href="#">Support</a></div>
