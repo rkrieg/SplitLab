@@ -68,8 +68,8 @@ export default function SignupPage() {
     <div className="w-full max-w-md">
       {/* Logo */}
       <div className="flex items-center justify-center mb-8">
-        <img src="/splitlab-logo-light.png" alt="SplitLab" className="dark:hidden" style={{height:'52px',width:'auto'}} />
-        <img src="/splitlab-logo-dark.png" alt="SplitLab" className="hidden dark:block" style={{height:'52px',width:'auto'}} />
+        <img src="/splitlab-logo-light.png" alt="SplitLab" className="dark:hidden" style={{height:'110px',width:'auto'}} />
+        <img src="/splitlab-logo-dark.png" alt="SplitLab" className="hidden dark:block" style={{height:'110px',width:'auto'}} />
       </div>
 
       {/* Card */}

@@ -172,8 +172,8 @@ export default function Sidebar() {
       {/* Logo */}
       <div className="h-16 flex items-center px-4 border-b border-slate-200 dark:border-slate-800">
         <Link href="/dashboard" className="flex items-center">
-          <img src="/splitlab-logo-light.png" alt="SplitLab" className="dark:hidden" style={{height:'48px',width:'auto'}} />
-          <img src="/splitlab-logo-dark.png" alt="SplitLab" className="hidden dark:block" style={{height:'48px',width:'auto'}} />
+          <img src="/splitlab-logo-light.png" alt="SplitLab" className="dark:hidden" style={{height:'68px',width:'auto'}} />
+          <img src="/splitlab-logo-dark.png" alt="SplitLab" className="hidden dark:block" style={{height:'68px',width:'auto'}} />
         </Link>
       </div>
 
