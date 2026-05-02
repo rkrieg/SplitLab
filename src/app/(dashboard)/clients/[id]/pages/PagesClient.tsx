@@ -297,25 +297,23 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
     <>
       <div className="flex items-center justify-between mb-6">
         <p className="text-slate-500 dark:text-slate-400 text-sm">{tests.length} page{tests.length !== 1 ? 's' : ''}</p>
-        {canManage && (
-          <div className="flex items-center gap-2">
-            <Link
-              href={`/clients/${clientId}/pages/builder`}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm text-white bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-600 hover:to-indigo-600 transition-colors"
-            >
-              <Wand2 size={16} /> Build with AI
-            </Link>
-            <Link
-              href={`/clients/${clientId}/tests/new/ai`}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm text-white bg-[#3D8BDA] hover:bg-[#3578c0] transition-colors"
-            >
-              <Sparkles size={16} /> Generate with AI
-            </Link>
-            <Button onClick={() => setCreateOpen(true)}>
-              <Plus size={16} /> New Page
-            </Button>
-          </div>
-        )}
+        <div className="flex items-center gap-2">
+          <Link
+            href={`/clients/${clientId}/pages/builder`}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm text-white bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-600 hover:to-indigo-600 transition-colors"
+          >
+            <Wand2 size={16} /> Build with AI
+          </Link>
+          <Link
+            href={`/clients/${clientId}/tests/new/ai`}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm text-white bg-[#3D8BDA] hover:bg-[#3578c0] transition-colors"
+          >
+            <Sparkles size={16} /> Generate with AI
+          </Link>
+          <Button onClick={() => setCreateOpen(true)}>
+            <Plus size={16} /> New Page
+          </Button>
+        </div>
       </div>
 
       {tests.length === 0 && (
