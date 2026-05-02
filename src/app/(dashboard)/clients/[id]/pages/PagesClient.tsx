@@ -583,21 +583,26 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
       {/* Create Page Modal */}
       <Modal open={createOpen} onClose={() => { setCreateOpen(false); resetCreateForm(); }} title="New Page" size="sm">
         <form onSubmit={handleCreate} className="space-y-4">
+          <p className="text-sm text-slate-500 dark:text-slate-400 -mt-1">
+            Paste the URL of any existing page. SplitLab will serve it through your domain so you can run A/B tests on your own URL.
+          </p>
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Page Name</label>
             <input type="text" value={pageName} onChange={(e) => setPageName(e.target.value)} className="input-base" placeholder="Homepage" required autoFocus />
           </div>
           <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">URL Path</label>
-            <input type="text" value={urlPath} onChange={(e) => setUrlPath(e.target.value)} className="input-base font-mono" placeholder="/" required />
-            {domain && urlPath && (
-              <p className="text-slate-400 dark:text-slate-500 text-xs mt-1 font-mono">{domain}{urlPath}</p>
-            )}
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Your Page URL</label>
+            <input type="url" value={destinationUrl} onChange={(e) => setDestinationUrl(e.target.value)} className="input-base font-mono text-sm" placeholder="https://yoursite.com/landing" required />
+            <p className="text-slate-400 dark:text-slate-500 text-xs mt-1">The existing page you want to A/B test.</p>
           </div>
           <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Destination URL</label>
-            <input type="url" value={destinationUrl} onChange={(e) => setDestinationUrl(e.target.value)} className="input-base font-mono text-sm" placeholder="https://my-app.lovable.app/landing" required />
-            <p className="text-slate-400 dark:text-slate-500 text-xs mt-1">The page visitors will see when they hit your domain.</p>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Path on your domain</label>
+            <input type="text" value={urlPath} onChange={(e) => setUrlPath(e.target.value)} className="input-base font-mono" placeholder="/" required />
+            <p className="text-slate-400 dark:text-slate-500 text-xs mt-1">
+              {domain && urlPath
+                ? <span className="font-mono">{domain}{urlPath}</span>
+                : 'Where on your domain this page will be served (e.g. / or /landing).'}
+            </p>
           </div>
           <div className="flex justify-end gap-3 pt-2">
             <Button variant="secondary" type="button" onClick={() => { setCreateOpen(false); resetCreateForm(); }}>Cancel</Button>
