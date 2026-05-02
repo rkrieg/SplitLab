@@ -88,7 +88,7 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
       setDomains([d]);
       setModalOpen(false);
       resetAddModal();
-      toast.success('Domain registered — now configure your DNS records');
+      toast.success('Domain registered. Now configure your DNS records.');
     } finally { setAdding(false); }
   }
 
@@ -111,7 +111,7 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
       setVerifyStatus((prev) => { const n = { ...prev }; delete n[editDomain.id]; return n; });
       setVerifyMessage((prev) => { const n = { ...prev }; delete n[editDomain.id]; return n; });
       setEditModalOpen(false);
-      toast.success('Domain updated — configure DNS for the new domain');
+      toast.success('Domain updated. Configure DNS for the new domain.');
     } finally { setSaving(false); }
   }
 
@@ -133,7 +133,7 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
       } else if (result.status === 'misconfigured') {
         setVerifyMessage((prev) => ({ ...prev, [domainId]: "DNS records not found. Make sure you've added the CNAME record at your registrar and try again." }));
       } else {
-        setVerifyMessage((prev) => ({ ...prev, [domainId]: 'DNS not yet propagated — this can take up to 48 hours. Try again later.' }));
+        setVerifyMessage((prev) => ({ ...prev, [domainId]: 'DNS not yet propagated. This can take up to 48 hours. Try again later.' }));
       }
     } catch { toast.error('Failed to check domain verification'); } finally { setVerifying(null); }
   }
@@ -184,7 +184,7 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
         {baseDomain.trim() && (
           <div className="rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/50 px-3 py-2.5">
             <p className="text-slate-500 text-xs mb-1">Domain preview</p>
-            <p className="text-slate-900 dark:text-slate-100 font-mono text-sm">{preview || '—'}</p>
+            <p className="text-slate-900 dark:text-slate-100 font-mono text-sm">{preview || '-'}</p>
           </div>
         )}
       </>
@@ -323,18 +323,14 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
           </div>
           <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100 mb-2">Connect your custom domain</h2>
           <p className="text-slate-500 dark:text-slate-400 text-sm max-w-md mx-auto mb-8">
-            Route traffic through your own domain so A/B tests run on your URL — not ours. Takes about 2 minutes to set up.
+            Route traffic through your own domain so A/B tests run on your URL, not ours. Takes about 2 minutes to set up.
           </p>
-          {canManage ? (
-            <button
-              onClick={() => { resetAddModal(); setModalOpen(true); }}
-              className="inline-flex items-center gap-2 px-6 py-2.5 rounded-lg font-semibold text-sm text-white bg-[#3D8BDA] hover:bg-[#3578c0] transition-colors shadow-sm"
-            >
-              <Plus size={16} /> Add Your Domain
-            </button>
-          ) : (
-            <p className="text-sm text-slate-400">Ask your account manager to connect a domain.</p>
-          )}
+          <button
+            onClick={() => { resetAddModal(); setModalOpen(true); }}
+            className="inline-flex items-center gap-2 px-6 py-2.5 rounded-lg font-semibold text-sm text-white bg-[#3D8BDA] hover:bg-[#3578c0] transition-colors shadow-sm"
+          >
+            <Plus size={16} /> Add Your Domain
+          </button>
         </div>
       )}
 

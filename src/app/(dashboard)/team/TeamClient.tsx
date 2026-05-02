@@ -62,7 +62,7 @@ export default function TeamClient({ initialUsers, currentUserId }: Props) {
       if (user.emailError) {
         // Email failed — show the invite link so admin can share it manually
         setInviteLink(user.inviteUrl || '');
-        toast.error('Invite email failed — copy the link below to share manually');
+        toast.error('Invite email failed. Copy the link below to share manually.');
       } else {
         setModalOpen(false);
         toast.success('Invite sent!');
@@ -179,9 +179,9 @@ export default function TeamClient({ initialUsers, currentUserId }: Props) {
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Role</label>
             <select value={role} onChange={(e) => setRole(e.target.value as 'admin' | 'manager' | 'viewer')} className="input-base">
-              <option value="viewer">Viewer — read-only access</option>
-              <option value="manager">Manager — manage clients & tests</option>
-              <option value="admin">Admin — full access + user management</option>
+              <option value="viewer">Viewer (read-only access)</option>
+              <option value="manager">Manager (manage clients and tests)</option>
+              <option value="admin">Admin (full access and user management)</option>
             </select>
           </div>
           {inviteLink && (

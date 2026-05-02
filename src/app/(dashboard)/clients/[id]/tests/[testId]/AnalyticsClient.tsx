@@ -208,7 +208,7 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
       toast.success(
         data.hasGoal
           ? `Simulated ${variantIds.length} pageview${variantIds.length !== 1 ? 's' : ''} + conversions`
-          : `Simulated ${variantIds.length} pageview${variantIds.length !== 1 ? 's' : ''} (no goals set — add goals in Settings to test conversions)`
+          : `Simulated ${variantIds.length} pageview${variantIds.length !== 1 ? 's' : ''} (no goals set - add goals in Settings to test conversions)`
       );
       await fetchAnalytics();
     } catch {
@@ -659,7 +659,7 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
         </div>
       ) : (
         <div className="border-b border-slate-200 dark:border-slate-800 px-6 py-2 bg-amber-50 dark:bg-amber-500/5 flex items-center gap-2">
-          <span className="text-[11px] text-amber-600 dark:text-amber-400">No domain configured —</span>
+          <span className="text-[11px] text-amber-600 dark:text-amber-400">No domain configured.</span>
           <Link href={`/clients/${clientId}/settings`} className="text-[11px] text-indigo-500 hover:underline">
             add a custom domain in Settings
           </Link>
@@ -842,12 +842,12 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
                           <td className={`px-5 py-3.5 text-right text-slate-700 dark:text-slate-300 ${rowBg}`}>{stat.conversions.toLocaleString()}</td>
                           <td className={`px-5 py-3.5 text-right font-semibold text-slate-900 dark:text-slate-100 ${rowBg}`}>{formatPercent(cvr)}</td>
                           <td className={`px-5 py-3.5 text-right ${rowBg}`}>
-                            {stat.variant.is_control ? <span className="text-slate-500">—</span> :
+                            {stat.variant.is_control ? <span className="text-slate-500">-</span> :
                              stat.confidence !== null ? (
                               <span className={stat.confidence >= 95 ? 'text-green-400 font-semibold' : stat.confidence >= 80 ? 'text-amber-400' : 'text-slate-400'}>
                                 {formatPercent(stat.confidence)}
                               </span>
-                            ) : <span className="text-slate-500">—</span>}
+                            ) : <span className="text-slate-500">-</span>}
                           </td>
                           <td className={`px-5 py-3.5 text-center ${rowBg}`}>
                             <div className="flex items-center justify-center gap-1">
@@ -1020,13 +1020,13 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
                           {lead.visitor_hash.slice(0, 8)}...
                         </td>
                         <td className="px-5 py-3 text-slate-700 dark:text-slate-300">
-                          {lead.test_variants?.name || '—'}
+                          {lead.test_variants?.name || '-'}
                         </td>
                         <td className="px-5 py-3 text-slate-700 dark:text-slate-300">
-                          {lead.conversion_goals?.name || '—'}
+                          {lead.conversion_goals?.name || '-'}
                         </td>
                         <td className="px-5 py-3 text-slate-500 text-xs font-mono">
-                          {(lead.metadata as Record<string, string>)?.trigger || '—'}
+                          {(lead.metadata as Record<string, string>)?.trigger || '-'}
                         </td>
                       </tr>
                     ))}

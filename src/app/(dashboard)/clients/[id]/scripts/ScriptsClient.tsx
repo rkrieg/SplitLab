@@ -127,22 +127,33 @@ export default function ScriptsClient({ initialScripts, pages, workspaceId, canM
     <>
       <div className="flex items-center justify-between mb-6">
         <p className="text-slate-500 dark:text-slate-400 text-sm">{scripts.length} script{scripts.length !== 1 ? 's' : ''}</p>
-        {canManage && <Button onClick={() => setModalOpen(true)}><Plus size={16} /> Add Script</Button>}
+        {scripts.length > 0 && <Button onClick={() => setModalOpen(true)}><Plus size={16} /> Add Script</Button>}
       </div>
 
       {/* Info banner */}
-      <div className="card p-4 mb-6 border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-800/50 text-sm text-slate-500 dark:text-slate-400">
-        Scripts marked as <strong className="text-slate-700 dark:text-slate-300">workspace-level</strong> will be injected into every page served for this client.
-        You can also assign a script to a specific page only.
-      </div>
+      {scripts.length > 0 && (
+        <div className="card p-4 mb-6 border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-800/50 text-sm text-slate-500 dark:text-slate-400">
+          Scripts marked as <strong className="text-slate-700 dark:text-slate-300">workspace-level</strong> will be injected into every page served for this client.
+          You can also assign a script to a specific page only.
+        </div>
+      )}
 
       {scripts.length === 0 && (
-        <EmptyState
-          icon={Code2}
-          title="No scripts yet"
-          description="Add GTM, Meta Pixel, GA4, or any custom script to inject into your pages."
-          action={canManage ? <Button onClick={() => setModalOpen(true)}><Plus size={16} /> Add Script</Button> : undefined}
-        />
+        <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 p-10 text-center my-6">
+          <div className="w-14 h-14 rounded-full bg-indigo-50 dark:bg-indigo-500/10 flex items-center justify-center mx-auto mb-5">
+            <Code2 size={28} className="text-indigo-500 dark:text-indigo-400" />
+          </div>
+          <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100 mb-2">Add your first script</h2>
+          <p className="text-slate-500 dark:text-slate-400 text-sm max-w-md mx-auto mb-8">
+            Inject GTM, Meta Pixel, GA4, or any custom script into every page served for this client.
+          </p>
+          <button
+            onClick={() => setModalOpen(true)}
+            className="inline-flex items-center gap-2 px-6 py-2.5 rounded-lg font-semibold text-sm text-white bg-[#3D8BDA] hover:bg-[#3578c0] transition-colors shadow-sm"
+          >
+            <Plus size={16} /> Add Your First Script
+          </button>
+        </div>
       )}
 
       {scripts.length > 0 && (
@@ -193,7 +204,7 @@ export default function ScriptsClient({ initialScripts, pages, workspaceId, canM
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Display Name</label>
-              <input type="text" value={sName} onChange={(e) => setSName(e.target.value)} className="input-base" placeholder={`${selectedType.label} — Production`} required />
+              <input type="text" value={sName} onChange={(e) => setSName(e.target.value)} className="input-base" placeholder={`${selectedType.label} - Production`} required />
             </div>
           </div>
 

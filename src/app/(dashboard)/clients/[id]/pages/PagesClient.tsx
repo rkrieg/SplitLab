@@ -306,32 +306,28 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
           </div>
           <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100 mb-2">Let&apos;s build your first page</h2>
           <p className="text-slate-500 dark:text-slate-400 text-sm max-w-md mx-auto mb-8">
-            Add a URL to A/B test, generate a page with AI, or build one from scratch — then start routing traffic and tracking conversions.
+            Add a URL to A/B test, generate a page with AI, or build one from scratch. Start routing traffic and tracking conversions.
           </p>
-          {canManage ? (
-            <div className="flex flex-wrap items-center justify-center gap-3">
-              <Link
-                href={`/clients/${clientId}/pages/builder`}
-                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg font-semibold text-sm text-white bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-600 hover:to-indigo-600 transition-colors shadow-sm"
-              >
-                <Wand2 size={16} /> Build with AI
-              </Link>
-              <Link
-                href={`/clients/${clientId}/tests/new/ai`}
-                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg font-semibold text-sm text-white bg-[#3D8BDA] hover:bg-[#3578c0] transition-colors shadow-sm"
-              >
-                <Sparkles size={16} /> Generate with AI
-              </Link>
-              <button
-                onClick={() => setCreateOpen(true)}
-                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg font-semibold text-sm border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
-              >
-                <Plus size={16} /> New Page
-              </button>
-            </div>
-          ) : (
-            <p className="text-sm text-slate-400">Ask your account manager to add the first page.</p>
-          )}
+          <div className="flex flex-wrap items-center justify-center gap-3">
+            <Link
+              href={`/clients/${clientId}/pages/builder`}
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg font-semibold text-sm text-white bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-600 hover:to-indigo-600 transition-colors shadow-sm"
+            >
+              <Wand2 size={16} /> Build with AI
+            </Link>
+            <Link
+              href={`/clients/${clientId}/tests/new/ai`}
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg font-semibold text-sm text-white bg-[#3D8BDA] hover:bg-[#3578c0] transition-colors shadow-sm"
+            >
+              <Sparkles size={16} /> Generate with AI
+            </Link>
+            <button
+              onClick={() => setCreateOpen(true)}
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg font-semibold text-sm border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+            >
+              <Plus size={16} /> New Page
+            </button>
+          </div>
         </div>
       )}
 
