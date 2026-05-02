@@ -3,19 +3,20 @@ import type { NextRequest } from 'next/server';
 import { getToken } from 'next-auth/jwt';
 
 const APP_HOSTNAME = process.env.APP_HOSTNAME || 'splitlab.agency';
+const CANONICAL_HOST = process.env.CANONICAL_HOST || '';
+const NAKED_HOST = CANONICAL_HOST.replace(/^www\./, '');
 
 function isCustomDomain(host: string): boolean {
-  return (
-    !host.includes(APP_HOSTNAME) &&
-    !host.includes('localhost') &&
-    !host.includes('127.0.0.1') &&
-    !host.includes('.vercel.app') &&
-    !host.startsWith('192.168.')
-  );
+  // Never treat Replit-managed domains as custom client domains
+  if (host.includes('.replit.app') || host.includes('.replit.dev') || host.includes('.picard.replit.dev')) return false;
+  // Never treat the app's own hostname as a custom domain
+  if (APP_HOSTNAME && host.includes(APP_HOSTNAME)) return false;
+  // Never treat the canonical marketing domain as a custom domain
+  if (CANONICAL_HOST && (host === CANONICAL_HOST || host === NAKED_HOST)) return false;
+  // Standard exclusions
+  if (host.includes('localhost') || host.includes('127.0.0.1') || host.startsWith('192.168.')) return false;
+  return true;
 }
-
-const CANONICAL_HOST = process.env.CANONICAL_HOST || 'www.trysplitlab.com';
-const NAKED_HOST = CANONICAL_HOST.replace(/^www\./, '');
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
