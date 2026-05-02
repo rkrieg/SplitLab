@@ -68,7 +68,7 @@ export default function LandingPage() {
       <nav id="nav" className={navScrolled ? 'scrolled' : ''}>
         <div className="nav-inner">
           <a href="#" className="nav-logo">
-            <img src="/splitlab-logo.png" alt="SplitLab" />
+            <img src="/splitlab-logo-dark.png" alt="SplitLab" />
           </a>
           <div className={`nav-links${mobileOpen ? ' show' : ''}`}>
             <a href="#features">Features</a>
@@ -266,7 +266,7 @@ export default function LandingPage() {
       <footer>
         <div className="footer-inner">
           <div className="footer-left">
-            <img src="/splitlab-logo.png" alt="SplitLab" style={{height:'40px',width:'auto'}} />
+            <img src="/splitlab-logo-dark.png" alt="SplitLab" style={{height:'40px',width:'auto'}} />
             <span className="footer-copy">&copy; 2026 SplitLab. Built by Infinity Media.</span>
           </div>
           <div className="footer-links"><a href="#">Privacy</a><a href="#">Terms</a><a href="#">Support</a></div>

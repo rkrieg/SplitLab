@@ -45,12 +45,8 @@ function LoginForm() {
     <div className="w-full max-w-md">
       {/* Logo */}
       <div className="flex items-center justify-center mb-8">
-        <svg width="180" height="42" viewBox="0 0 220 48" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <circle cx="18" cy="24" r="16" fill="#3D8BDA" opacity="0.15"/>
-          <circle cx="18" cy="24" r="14" stroke="#3D8BDA" strokeWidth="1.5"/>
-          <path d="M20 12L13 26H18L15 36L24 22H19L20 12Z" fill="#3D8BDA"/>
-          <text x="42" y="21" fontFamily="system-ui, sans-serif" fontWeight="700" fontSize="24" fill="currentColor" letterSpacing="-0.5" className="text-slate-900 dark:text-white">Split<tspan fill="#3D8BDA" fontWeight="600">Lab</tspan></text>
-        </svg>
+        <img src="/splitlab-logo-light.png" alt="SplitLab" className="dark:hidden" style={{height:'52px',width:'auto'}} />
+        <img src="/splitlab-logo-dark.png" alt="SplitLab" className="hidden dark:block" style={{height:'52px',width:'auto'}} />
       </div>
 
       {/* Card */}
