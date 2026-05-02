@@ -151,7 +151,6 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
       setCreateOpen(false);
       resetCreateForm();
       toast.success('Page created');
-      router.refresh();
     } catch {
       toast.error('Unexpected error');
     } finally {
@@ -227,7 +226,6 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
       setTests((prev) => prev.map((t) => (t.id === editTestId ? { ...t, ...updated } : t)));
       setEditTestId(null);
       toast.success('Page updated');
-      router.refresh();
     } catch { toast.error('Unexpected error'); } finally { setEditSaving(false); }
   }
 

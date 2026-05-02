@@ -24,6 +24,15 @@ async function getTests(workspaceId: string): Promise<any[]> {
   return (data ?? []) as unknown[];
 }
 
+async function getClientName(clientId: string): Promise<{ name: string } | null> {
+  const { data } = await db
+    .from('clients')
+    .select('name')
+    .eq('id', clientId)
+    .single() as unknown as { data: { name: string } | null };
+  return data;
+}
+
 async function getDomain(workspaceId: string): Promise<{ domain: string; verified: boolean } | null> {
   const { data } = await db
     .from('domains')
@@ -56,8 +65,8 @@ export default async function PagesPage({ params }: { params: { id: string } }) 
   const workspace = await getWorkspaceForClient(params.id);
   if (!workspace) notFound();
 
-  const { data: client } = await db.from('clients').select('name').eq('id', params.id).single() as unknown as { data: { name: string } | null };
-  const [tests, domain] = await Promise.all([
+  const [clientRow, tests, domain] = await Promise.all([
+    getClientName(params.id),
     getTests(workspace.id),
     getDomain(workspace.id),
   ]);
@@ -67,7 +76,7 @@ export default async function PagesPage({ params }: { params: { id: string } }) 
 
   return (
     <div>
-      <Header title="Pages" subtitle={client?.name} />
+      <Header title="Pages" subtitle={clientRow?.name} />
       <div className="p-6">
         <PagesClient
           tests={tests}

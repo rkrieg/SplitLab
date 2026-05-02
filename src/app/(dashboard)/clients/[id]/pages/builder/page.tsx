@@ -25,18 +25,11 @@ export default async function PageBuilderPage({
   if (!session) redirect('/login');
   if (session.user.role === 'viewer') redirect(`/clients/${params.id}/pages`);
 
-  const { data: workspace } = await db
-    .from('workspaces')
-    .select('id, name')
-    .eq('client_id', params.id)
-    .single() as unknown as { data: { id: string; name: string } | null };
+  const [{ data: workspace }, { data: client }] = await Promise.all([
+    db.from('workspaces').select('id, name').eq('client_id', params.id).single() as unknown as Promise<{ data: { id: string; name: string } | null }>,
+    db.from('clients').select('name').eq('id', params.id).single() as unknown as Promise<{ data: { name: string } | null }>,
+  ]);
   if (!workspace) notFound();
-
-  const { data: client } = await db
-    .from('clients')
-    .select('name')
-    .eq('id', params.id)
-    .single() as unknown as { data: { name: string } | null };
 
   let initialPage: InitialPage | null = null;
   if (searchParams.pageId) {
