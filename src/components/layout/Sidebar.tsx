@@ -113,24 +113,27 @@ export default function Sidebar() {
   function selectClient(client: Client | null) {
     setDropdownOpen(false);
     if (client) {
-      // Navigate to equivalent client-scoped route
-      if (pathname.includes('/pages')) {
-        router.push(`/clients/${client.id}/pages`);
+      // Navigate to the equivalent client-scoped route, preserving context
+      if (pathname.includes('/domains')) {
+        router.push(`/clients/${client.id}/domains`);
       } else if (pathname.includes('/scripts')) {
         router.push(`/clients/${client.id}/scripts`);
       } else if (pathname.includes('/settings')) {
         router.push(`/clients/${client.id}/settings`);
       } else {
+        // pages, dashboard, team, or anything else → go to client pages
         router.push(`/clients/${client.id}/pages`);
       }
     } else {
-      // All Clients
-      if (pathname.includes('/pages')) {
-        router.push('/pages');
+      // Switch to All Clients — land on the matching global page
+      if (pathname.includes('/domains')) {
+        router.push('/domains');
       } else if (pathname.includes('/scripts')) {
         router.push('/scripts');
       } else if (pathname.includes('/settings')) {
         router.push('/settings');
+      } else if (pathname.includes('/pages')) {
+        router.push('/pages');
       } else {
         router.push('/dashboard');
       }
