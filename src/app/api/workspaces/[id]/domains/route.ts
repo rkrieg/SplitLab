@@ -19,10 +19,8 @@ const updateSchema = z.object({
   domain: z.string().min(3).max(255),
 });
 
-function getReplitTarget(): string {
-  return process.env.REPLIT_DEV_DOMAIN
-    || process.env.APP_HOSTNAME
-    || 'your-app.replit.app';
+function getCnameTarget(): string {
+  return process.env.APP_HOSTNAME || 'cname.splitlab.agency';
 }
 
 export async function GET(
@@ -68,7 +66,7 @@ export async function POST(
       }
 
       // Check DNS: look for CNAME or A record pointing to our app
-      const target = getReplitTarget();
+      const target = getCnameTarget();
       let dnsOk = false;
       try {
         const res = await fetch(
@@ -161,7 +159,7 @@ export async function POST(
       .insert({
         workspace_id: params.id,
         domain,
-        cname_target: getReplitTarget(),
+        cname_target: getCnameTarget(),
         verified: false,
       })
       .select()
