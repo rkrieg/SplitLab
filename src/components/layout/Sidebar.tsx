@@ -40,6 +40,7 @@ const globalNavItems: NavItem[] = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/pages', label: 'Pages', icon: FileCode2 },
   { href: '/scripts', label: 'Scripts', icon: Code2 },
+  { href: '/domains', label: 'Domains', icon: Globe },
   { href: '/team', label: 'Team', icon: Users },
   { href: '/settings', label: 'Settings', icon: Settings },
 ];
