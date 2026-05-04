@@ -42,7 +42,7 @@ APP_HOSTNAME = "trysplitlab.com"
 STORAGE_PROVIDER = "supabase"
 SUPABASE_STORAGE_BUCKET = "pages"
 CANONICAL_HOST = "splitlab.ai"
-CNAME_TARGET = "split-lab.replit.app"
+CNAME_TARGET = "cname.vercel-dns.com"
 
 [deployment]
 deploymentTarget = "autoscale"
