@@ -21,11 +21,10 @@ const updateSchema = z.object({
 
 function getCnameTarget(): string {
   // CNAME_TARGET is what clients point their DNS at (the SplitLab ingress hostname).
-  // Falls back to APP_HOSTNAME, then to the deployed Replit app domain.
+  // Falls back to cname.trysplitlab.com for branded white-label DNS.
   return (
     process.env.CNAME_TARGET ||
-    process.env.APP_HOSTNAME ||
-    'split-lab.replit.app'
+    'cname.trysplitlab.com'
   );
 }
 
