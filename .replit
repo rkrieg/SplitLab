@@ -38,10 +38,11 @@ externalPort = 80
 
 [userenv.shared]
 NEXTAUTH_URL = "https://64ae0227-d49e-4ac6-a7a4-b577a466d735-00-1vewbqheyel9z.picard.replit.dev"
-APP_HOSTNAME = "cname.trysplitlab.com"
+APP_HOSTNAME = "trysplitlab.com"
 STORAGE_PROVIDER = "supabase"
 SUPABASE_STORAGE_BUCKET = "pages"
 CANONICAL_HOST = "splitlab.ai"
+CNAME_TARGET = "split-lab.replit.app"
 
 [deployment]
 deploymentTarget = "autoscale"

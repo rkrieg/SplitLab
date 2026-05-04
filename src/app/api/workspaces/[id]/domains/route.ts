@@ -20,7 +20,13 @@ const updateSchema = z.object({
 });
 
 function getCnameTarget(): string {
-  return process.env.APP_HOSTNAME || 'cname.splitlab.agency';
+  // CNAME_TARGET is what clients point their DNS at (the SplitLab ingress hostname).
+  // Falls back to APP_HOSTNAME, then to the deployed Replit app domain.
+  return (
+    process.env.CNAME_TARGET ||
+    process.env.APP_HOSTNAME ||
+    'split-lab.replit.app'
+  );
 }
 
 export async function GET(
@@ -69,16 +75,30 @@ export async function POST(
       const target = getCnameTarget();
       let dnsOk = false;
       try {
-        const res = await fetch(
+        // Check CNAME first
+        const cnameRes = await fetch(
           `https://dns.google/resolve?name=${encodeURIComponent(domainRow.domain)}&type=CNAME`,
           { signal: AbortSignal.timeout(5000) }
         );
-        if (res.ok) {
-          const data = await res.json();
-          const answers: Array<{ data: string }> = data.Answer || [];
-          dnsOk = answers.some((a) =>
+        if (cnameRes.ok) {
+          const cnameData = await cnameRes.json();
+          const cnameAnswers: Array<{ data: string }> = cnameData.Answer || [];
+          dnsOk = cnameAnswers.some((a) =>
             a.data.replace(/\.$/, '') === target.replace(/\.$/, '')
           );
+        }
+
+        // If no CNAME match, also resolve the target to IPs and check A records
+        if (!dnsOk) {
+          const [domainARes, targetARes] = await Promise.all([
+            fetch(`https://dns.google/resolve?name=${encodeURIComponent(domainRow.domain)}&type=A`, { signal: AbortSignal.timeout(5000) }),
+            fetch(`https://dns.google/resolve?name=${encodeURIComponent(target)}&type=A`, { signal: AbortSignal.timeout(5000) }),
+          ]);
+          if (domainARes.ok && targetARes.ok) {
+            const domainIPs: string[] = ((await domainARes.json()).Answer || []).map((a: { data: string }) => a.data);
+            const targetIPs: string[] = ((await targetARes.json()).Answer || []).map((a: { data: string }) => a.data);
+            dnsOk = domainIPs.some((ip) => targetIPs.includes(ip));
+          }
         }
       } catch {
         // DNS check timed out — treat as pending

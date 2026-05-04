@@ -27,7 +27,10 @@ export default async function ClientDomainsPage({ params }: { params: { id: stri
     .order('created_at', { ascending: false })
     .limit(1) as unknown as { data: { id: string; domain: string; cname_target: string | null; verified: boolean; verified_at: string | null; created_at: string }[] | null };
 
-  const appHostname = process.env.APP_HOSTNAME || 'cname.splitlab.agency';
+  const appHostname =
+    process.env.CNAME_TARGET ||
+    process.env.APP_HOSTNAME ||
+    'split-lab.replit.app';
 
   return (
     <div>
