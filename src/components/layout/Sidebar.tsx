@@ -16,8 +16,7 @@ import {
   Check,
   Sun,
   Moon,
-  Sparkles,
-  Wand2,
+
   Globe,
   type LucideIcon,
 } from 'lucide-react';
@@ -48,8 +47,6 @@ const globalNavItems: NavItem[] = [
 function getClientNavItems(clientId: string): NavItem[] {
   return [
     { href: `/clients/${clientId}/pages`, label: 'Pages', icon: FileCode2, exact: true },
-    { href: `/clients/${clientId}/pages/builder`, label: 'AI Page Builder', icon: Wand2 },
-    { href: `/clients/${clientId}/tests/new/ai`, label: 'AI Generate', icon: Sparkles },
     { href: `/clients/${clientId}/scripts`, label: 'Scripts', icon: Code2 },
     { href: `/clients/${clientId}/domains`, label: 'Domains', icon: Globe },
     { href: `/clients/${clientId}/settings`, label: 'Settings', icon: Settings },
