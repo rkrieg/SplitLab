@@ -7,6 +7,8 @@ import type { ConversionGoal } from '@/types';
 
 const COOKIE_NAME = 'sl_visitor';
 
+const CNAME_BASE = process.env.CNAME_BASE || 'cname.trysplitlab.com';
+
 export async function GET(request: NextRequest) {
   const APP_URL = new URL(request.url).origin;
   const { searchParams } = new URL(request.url);
@@ -15,11 +17,21 @@ export async function GET(request: NextRequest) {
 
   try {
     // 1. Resolve domain → workspace
-    const { data: domainRow, error: domainError } = await (db
-      .from('domains')
-      .select('workspace_id')
-      .eq('domain', domain)
-      .single() as unknown as Promise<{ data: { workspace_id: string } | null; error: { message: string } | null }>);
+    // If the host IS a *.cname.trysplitlab.com subdomain, look up by cname_target
+    // Otherwise look up by the client's actual domain name
+    const isCnameHost = domain.endsWith(`.${CNAME_BASE}`);
+
+    const { data: domainRow, error: domainError } = isCnameHost
+      ? await (db
+          .from('domains')
+          .select('workspace_id')
+          .eq('cname_target', domain)
+          .single() as unknown as Promise<{ data: { workspace_id: string } | null; error: { message: string } | null }>)
+      : await (db
+          .from('domains')
+          .select('workspace_id')
+          .eq('domain', domain)
+          .single() as unknown as Promise<{ data: { workspace_id: string } | null; error: { message: string } | null }>);
 
     if (domainError || !domainRow) {
       return new NextResponse(notFoundHtml(domain), {

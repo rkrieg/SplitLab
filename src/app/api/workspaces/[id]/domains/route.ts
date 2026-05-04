@@ -19,13 +19,13 @@ const updateSchema = z.object({
   domain: z.string().min(3).max(255),
 });
 
-function getCnameTarget(): string {
-  // CNAME_TARGET is what clients point their DNS at (the SplitLab ingress hostname).
-  // Falls back to cname.trysplitlab.com for branded white-label DNS.
-  return (
-    process.env.CNAME_TARGET ||
-    'cname.trysplitlab.com'
-  );
+function generateUniqueCname(domain: string): string {
+  // Strip leading www. and extract the first label for a readable slug
+  const clean = domain.replace(/^www\./, '');
+  const label = clean.split('.')[0].toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 12);
+  const id = Math.floor(10000 + Math.random() * 90000); // 5-digit random suffix
+  const base = process.env.CNAME_BASE || 'cname.trysplitlab.com';
+  return `${label}-${id}.${base}`;
 }
 
 export async function GET(
@@ -61,20 +61,20 @@ export async function POST(
 
       const { data: domainRow, error: fetchErr } = await (db
         .from('domains')
-        .select('id, domain')
+        .select('id, domain, cname_target')
         .eq('id', domain_id)
         .eq('workspace_id', params.id)
-        .single() as unknown as Promise<{ data: { id: string; domain: string } | null; error: { message: string } | null }>);
+        .single() as unknown as Promise<{ data: { id: string; domain: string; cname_target: string | null } | null; error: { message: string } | null }>);
 
       if (fetchErr || !domainRow) {
         return NextResponse.json({ error: 'Domain not found' }, { status: 404 });
       }
 
-      // Check DNS: look for CNAME or A record pointing to our app
-      const target = getCnameTarget();
+      // Use the domain's stored unique cname_target for verification
+      const target = domainRow.cname_target || 'cname.trysplitlab.com';
       let dnsOk = false;
       try {
-        // Check CNAME first
+        // Check CNAME: client domain should point to their unique SplitLab CNAME
         const cnameRes = await fetch(
           `https://dns.google/resolve?name=${encodeURIComponent(domainRow.domain)}&type=CNAME`,
           { signal: AbortSignal.timeout(5000) }
@@ -87,11 +87,12 @@ export async function POST(
           );
         }
 
-        // If no CNAME match, also resolve the target to IPs and check A records
+        // If no CNAME match, check A records — both domain and target resolve to same IPs
         if (!dnsOk) {
+          const vercelTarget = 'cname.vercel-dns.com';
           const [domainARes, targetARes] = await Promise.all([
             fetch(`https://dns.google/resolve?name=${encodeURIComponent(domainRow.domain)}&type=A`, { signal: AbortSignal.timeout(5000) }),
-            fetch(`https://dns.google/resolve?name=${encodeURIComponent(target)}&type=A`, { signal: AbortSignal.timeout(5000) }),
+            fetch(`https://dns.google/resolve?name=${encodeURIComponent(vercelTarget)}&type=A`, { signal: AbortSignal.timeout(5000) }),
           ]);
           if (domainARes.ok && targetARes.ok) {
             const domainIPs: string[] = ((await domainARes.json()).Answer || []).map((a: { data: string }) => a.data);
@@ -115,7 +116,7 @@ export async function POST(
         status: dnsOk ? 'valid' : 'pending_verification',
         message: dnsOk
           ? 'Domain is verified and serving traffic.'
-          : `DNS not detected yet. Add a CNAME record: ${domainRow.domain} → ${target}`,
+          : `DNS not detected yet. Add a CNAME record pointing ${domainRow.domain} → ${target}`,
       });
     }
 
@@ -150,7 +151,7 @@ export async function POST(
 
       const { data: updated, error: updateErr } = await (db
         .from('domains')
-        .update({ domain: newDomain, verified: false, verified_at: null })
+        .update({ domain: newDomain, cname_target: generateUniqueCname(newDomain), verified: false, verified_at: null })
         .eq('id', domain_id)
         .eq('workspace_id', params.id)
         .select()
@@ -178,7 +179,7 @@ export async function POST(
       .insert({
         workspace_id: params.id,
         domain,
-        cname_target: getCnameTarget(),
+        cname_target: generateUniqueCname(domain),
         verified: false,
       })
       .select()

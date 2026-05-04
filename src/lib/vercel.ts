@@ -100,7 +100,7 @@ export async function getDomainStatus(domain: string): Promise<DomainStatus> {
       return {
         verified: false,
         status: 'misconfigured',
-        message: 'DNS records not configured correctly. Ensure CNAME points to cname.vercel-dns.com.',
+        message: 'DNS records not configured correctly. Ensure your CNAME points to your unique SplitLab address (shown on the domain setup page).',
       };
     }
   }

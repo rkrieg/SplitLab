@@ -6,9 +6,13 @@ const APP_HOSTNAME = process.env.APP_HOSTNAME || 'splitlab.agency';
 const CANONICAL_HOST = process.env.CANONICAL_HOST || '';
 const NAKED_HOST = CANONICAL_HOST.replace(/^www\./, '');
 
+const CNAME_BASE = process.env.CNAME_BASE || 'cname.trysplitlab.com';
+
 function isCustomDomain(host: string): boolean {
   // Never treat Replit-managed domains as custom client domains
   if (host.includes('.replit.app') || host.includes('.replit.dev') || host.includes('.picard.replit.dev')) return false;
+  // *.cname.trysplitlab.com subdomains ARE custom domains (direct CNAME access)
+  if (host.endsWith(`.${CNAME_BASE}`)) return true;
   // Never treat the app's own hostname as a custom domain
   if (APP_HOSTNAME && host.includes(APP_HOSTNAME)) return false;
   // Never treat the canonical marketing domain as a custom domain
