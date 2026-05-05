@@ -15,13 +15,24 @@ export async function GET(request: NextRequest) {
 
   try {
     // 1. Resolve domain → workspace by the client's actual domain name
-    const { data: domainRow, error: domainError } = await (db
-      .from('domains')
-      .select('workspace_id')
-      .eq('domain', domain)
-      .single() as unknown as Promise<{ data: { workspace_id: string } | null; error: { message: string } | null }>);
+    // Try exact match first, then fall back to www/naked normalization so
+    // both "example.com" and "www.example.com" resolve to the same workspace.
+    const domainVariants = Array.from(new Set([
+      domain,
+      domain.startsWith('www.') ? domain.slice(4) : `www.${domain}`,
+    ]));
 
-    if (domainError || !domainRow) {
+    let domainRow: { workspace_id: string } | null = null;
+    for (const variant of domainVariants) {
+      const result = await (db
+        .from('domains')
+        .select('workspace_id')
+        .eq('domain', variant)
+        .single() as unknown as Promise<{ data: { workspace_id: string } | null; error: { message: string } | null }>);
+      if (result.data) { domainRow = result.data; break; }
+    }
+
+    if (!domainRow) {
       return new NextResponse(notFoundHtml(domain), {
         status: 404,
         headers: { 'Content-Type': 'text/html' },
