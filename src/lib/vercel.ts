@@ -70,8 +70,9 @@ export async function removeDomainFromVercel(domain: string): Promise<void> {
 
 export interface DomainStatus {
   verified: boolean;
-  status: 'valid' | 'pending_verification' | 'misconfigured';
+  status: 'valid' | 'pending_verification' | 'misconfigured' | 'needs_txt';
   message: string;
+  vercel_verification?: Array<{ type: string; domain: string; value: string }>;
 }
 
 export async function getDomainStatus(domain: string): Promise<DomainStatus> {
@@ -89,15 +90,29 @@ export async function getDomainStatus(domain: string): Promise<DomainStatus> {
     };
   }
 
-  if (verifyRes.ok) {
-    const data = await verifyRes.json();
-    if (data.domain?.verified === true || data.verified === true) {
-      return {
-        verified: true,
-        status: 'valid',
-        message: 'Domain is verified and serving traffic.',
-      };
-    }
+  const verifyData = await verifyRes.json().catch(() => ({}));
+
+  // Domain claimed by another Vercel project — fetch fresh TXT requirements
+  if (!verifyRes.ok && verifyData?.error?.code === 'existing_project_domain') {
+    const domainRes = await fetch(
+      `${VERCEL_API_BASE}/v9/projects/${getProjectId()}/domains/${domain}`,
+      { method: 'GET', headers: headers() }
+    );
+    const domainData = await domainRes.json().catch(() => ({}));
+    return {
+      verified: false,
+      status: 'needs_txt',
+      message: 'This domain is managed by Vercel. Add the TXT record below to complete ownership transfer.',
+      vercel_verification: domainData.verification || [],
+    };
+  }
+
+  if (verifyRes.ok && (verifyData.domain?.verified === true || verifyData.verified === true)) {
+    return {
+      verified: true,
+      status: 'valid',
+      message: 'Domain is verified and serving traffic.',
+    };
   }
 
   // Step 2: Check DNS config for more detail
@@ -112,7 +127,7 @@ export async function getDomainStatus(domain: string): Promise<DomainStatus> {
       return {
         verified: false,
         status: 'misconfigured',
-        message: 'DNS records not configured correctly. Ensure your CNAME points to your unique SplitLab address (shown on the domain setup page).',
+        message: 'DNS records not configured correctly. Ensure your CNAME points to cname.vercel-dns.com and try again.',
       };
     }
   }
@@ -120,6 +135,6 @@ export async function getDomainStatus(domain: string): Promise<DomainStatus> {
   return {
     verified: false,
     status: 'pending_verification',
-    message: 'DNS records detected. Verification pending — this can take up to 48 hours.',
+    message: 'DNS records detected. Verification pending — this can take a few minutes. Try again shortly.',
   };
 }

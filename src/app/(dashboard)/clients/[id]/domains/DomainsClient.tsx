@@ -53,6 +53,7 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
   const [verifying, setVerifying] = useState<string | null>(null);
   const [verifyStatus, setVerifyStatus] = useState<Record<string, string>>({});
   const [verifyMessage, setVerifyMessage] = useState<Record<string, string>>({});
+  const [verifyTxtRecords, setVerifyTxtRecords] = useState<Record<string, VercelVerification[]>>({});
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
 
@@ -140,11 +141,15 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
       if (result.verified) {
         setDomains((prev) => prev.map((d) => d.id === domainId ? { ...d, verified: true, verified_at: new Date().toISOString() } : d));
         setVerifyMessage((prev) => ({ ...prev, [domainId]: '' }));
+        setVerifyTxtRecords((prev) => { const n = { ...prev }; delete n[domainId]; return n; });
         toast.success('Domain verified successfully!');
+      } else if (result.status === 'needs_txt') {
+        setVerifyTxtRecords((prev) => ({ ...prev, [domainId]: result.vercel_verification || [] }));
+        setVerifyMessage((prev) => ({ ...prev, [domainId]: '' }));
       } else if (result.status === 'misconfigured') {
         setVerifyMessage((prev) => ({ ...prev, [domainId]: "DNS records not found. Make sure you've added the CNAME record at your registrar and try again." }));
       } else {
-        setVerifyMessage((prev) => ({ ...prev, [domainId]: 'DNS not yet propagated. This can take up to 48 hours. Try again later.' }));
+        setVerifyMessage((prev) => ({ ...prev, [domainId]: 'DNS not yet propagated. This can take a few minutes. Try again shortly.' }));
       }
     } catch { toast.error('Failed to check domain verification'); } finally { setVerifying(null); }
   }
@@ -206,6 +211,7 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
     const status = verifyStatus[d.id];
     const errorMsg = verifyMessage[d.id];
     const dnsName = getDomainName(d.domain);
+    const activeTxtRecords = verifyTxtRecords[d.id] ?? d.vercel_verification ?? [];
     const isRoot = isRootDomain(d.domain);
 
     if (d.verified) {
@@ -295,7 +301,7 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
               </div>
             </div>
           </div>
-          {d.vercel_verification && d.vercel_verification.length > 0 && (
+          {activeTxtRecords.length > 0 && (
             <div className="mt-4">
               <div className="flex items-center gap-2 mb-2">
                 <AlertCircle size={13} className="text-amber-400 flex-shrink-0" />
@@ -307,7 +313,7 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
                   <div className="px-3 py-2 text-slate-500 font-medium border-r border-amber-500/20">Name</div>
                   <div className="px-3 py-2 text-slate-500 font-medium">Value</div>
                 </div>
-                {d.vercel_verification.map((v, i) => (
+                {activeTxtRecords.map((v, i) => (
                   <div key={i} className="grid grid-cols-3 bg-white dark:bg-slate-900/50">
                     <div className="px-3 py-2.5 text-slate-800 dark:text-slate-200 font-mono border-r border-amber-500/20">{v.type}</div>
                     <div className="px-3 py-2.5 text-slate-800 dark:text-slate-200 font-mono border-r border-amber-500/20 break-all">{v.domain.replace(/\.$/, '')}</div>

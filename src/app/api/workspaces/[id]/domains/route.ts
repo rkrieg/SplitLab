@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
-import { addDomainToVercel, removeDomainFromVercel } from '@/lib/vercel';
+import { addDomainToVercel, removeDomainFromVercel, getDomainStatus } from '@/lib/vercel';
 import { z } from 'zod';
 
 const addSchema = z.object({
@@ -71,52 +71,16 @@ export async function POST(
         return NextResponse.json({ error: 'Domain not found' }, { status: 404 });
       }
 
-      const VERCEL_CNAME = 'cname.vercel-dns.com';
-      let dnsOk = false;
-      try {
-        // Check CNAME: client domain should point to cname.vercel-dns.com
-        const cnameRes = await fetch(
-          `https://dns.google/resolve?name=${encodeURIComponent(domainRow.domain)}&type=CNAME`,
-          { signal: AbortSignal.timeout(5000) }
-        );
-        if (cnameRes.ok) {
-          const cnameData = await cnameRes.json();
-          const cnameAnswers: Array<{ data: string }> = cnameData.Answer || [];
-          dnsOk = cnameAnswers.some((a) =>
-            a.data.replace(/\.$/, '') === VERCEL_CNAME
-          );
-        }
+      const result = await getDomainStatus(domainRow.domain);
 
-        // If no CNAME match, check A records — domain resolves to same IPs as Vercel
-        if (!dnsOk) {
-          const [domainARes, targetARes] = await Promise.all([
-            fetch(`https://dns.google/resolve?name=${encodeURIComponent(domainRow.domain)}&type=A`, { signal: AbortSignal.timeout(5000) }),
-            fetch(`https://dns.google/resolve?name=${encodeURIComponent(VERCEL_CNAME)}&type=A`, { signal: AbortSignal.timeout(5000) }),
-          ]);
-          if (domainARes.ok && targetARes.ok) {
-            const domainIPs: string[] = ((await domainARes.json()).Answer || []).map((a: { data: string }) => a.data);
-            const targetIPs: string[] = ((await targetARes.json()).Answer || []).map((a: { data: string }) => a.data);
-            dnsOk = domainIPs.some((ip) => targetIPs.includes(ip));
-          }
-        }
-      } catch {
-        // DNS check timed out — treat as pending
-      }
-
-      if (dnsOk) {
+      if (result.verified) {
         await db
           .from('domains')
           .update({ verified: true, verified_at: new Date().toISOString() })
           .eq('id', domain_id);
       }
 
-      return NextResponse.json({
-        verified: dnsOk,
-        status: dnsOk ? 'valid' : 'pending_verification',
-        message: dnsOk
-          ? 'Domain is verified and serving traffic.'
-          : `DNS not detected yet. Add a CNAME record pointing ${domainRow.domain} → ${VERCEL_CNAME}`,
-      });
+      return NextResponse.json(result);
     }
 
     // ── Update domain (rename) ──
