@@ -279,8 +279,8 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
               <div className="px-3 py-2.5 text-slate-800 dark:text-slate-200 font-mono border-r border-slate-200 dark:border-slate-700">CNAME</div>
               <div className="px-3 py-2.5 text-slate-800 dark:text-slate-200 font-mono border-r border-slate-200 dark:border-slate-700">{dnsName}</div>
               <div className="px-3 py-2.5 font-mono flex items-center justify-between gap-2">
-                <span className="text-[#3D8BDA]">{(d.cname_target && !d.cname_target.includes('replit.dev') && !d.cname_target.includes('replit.app')) ? d.cname_target : appHostname}</span>
-                <button onClick={() => copyToClipboard((d.cname_target && !d.cname_target.includes('replit.dev') && !d.cname_target.includes('replit.app')) ? d.cname_target : appHostname)} className="text-slate-500 hover:text-slate-300 flex-shrink-0"><Copy size={12} /></button>
+                <span className="text-[#3D8BDA]">cname.vercel-dns.com</span>
+                <button onClick={() => copyToClipboard('cname.vercel-dns.com')} className="text-slate-500 hover:text-slate-300 flex-shrink-0"><Copy size={12} /></button>
               </div>
             </div>
           </div>

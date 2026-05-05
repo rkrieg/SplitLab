@@ -71,11 +71,10 @@ export async function POST(
         return NextResponse.json({ error: 'Domain not found' }, { status: 404 });
       }
 
-      // Use the domain's stored unique cname_target for verification
-      const target = domainRow.cname_target || 'cname.trysplitlab.com';
+      const VERCEL_CNAME = 'cname.vercel-dns.com';
       let dnsOk = false;
       try {
-        // Check CNAME: client domain should point to their unique SplitLab CNAME
+        // Check CNAME: client domain should point to cname.vercel-dns.com
         const cnameRes = await fetch(
           `https://dns.google/resolve?name=${encodeURIComponent(domainRow.domain)}&type=CNAME`,
           { signal: AbortSignal.timeout(5000) }
@@ -84,16 +83,15 @@ export async function POST(
           const cnameData = await cnameRes.json();
           const cnameAnswers: Array<{ data: string }> = cnameData.Answer || [];
           dnsOk = cnameAnswers.some((a) =>
-            a.data.replace(/\.$/, '') === target.replace(/\.$/, '')
+            a.data.replace(/\.$/, '') === VERCEL_CNAME
           );
         }
 
-        // If no CNAME match, check A records — both domain and target resolve to same IPs
+        // If no CNAME match, check A records — domain resolves to same IPs as Vercel
         if (!dnsOk) {
-          const vercelTarget = 'cname.vercel-dns.com';
           const [domainARes, targetARes] = await Promise.all([
             fetch(`https://dns.google/resolve?name=${encodeURIComponent(domainRow.domain)}&type=A`, { signal: AbortSignal.timeout(5000) }),
-            fetch(`https://dns.google/resolve?name=${encodeURIComponent(vercelTarget)}&type=A`, { signal: AbortSignal.timeout(5000) }),
+            fetch(`https://dns.google/resolve?name=${encodeURIComponent(VERCEL_CNAME)}&type=A`, { signal: AbortSignal.timeout(5000) }),
           ]);
           if (domainARes.ok && targetARes.ok) {
             const domainIPs: string[] = ((await domainARes.json()).Answer || []).map((a: { data: string }) => a.data);
@@ -117,7 +115,7 @@ export async function POST(
         status: dnsOk ? 'valid' : 'pending_verification',
         message: dnsOk
           ? 'Domain is verified and serving traffic.'
-          : `DNS not detected yet. Add a CNAME record pointing ${domainRow.domain} → ${target}`,
+          : `DNS not detected yet. Add a CNAME record pointing ${domainRow.domain} → ${VERCEL_CNAME}`,
       });
     }
 
