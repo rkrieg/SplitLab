@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
+import { addDomainToVercel, removeDomainFromVercel } from '@/lib/vercel';
 import { z } from 'zod';
 
 const addSchema = z.object({
@@ -186,6 +187,12 @@ export async function POST(
       .single() as unknown as Promise<{ data: Record<string, unknown> | null; error: { message: string } | null }>);
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+    // Register domain with Vercel so it can serve traffic (non-fatal if token missing)
+    try { await addDomainToVercel(domain); } catch (e) {
+      console.warn('[domains] addDomainToVercel failed:', (e as Error).message);
+    }
+
     return NextResponse.json(newDomain, { status: 201 });
 
   } catch (err) {
@@ -209,14 +216,14 @@ export async function DELETE(
       return NextResponse.json({ error: 'domain_id is required' }, { status: 400 });
     }
 
-    const { error: fetchErr } = await (db
+    const { data: domainToDelete, error: fetchErr } = await (db
       .from('domains')
       .select('domain')
       .eq('id', domain_id)
       .eq('workspace_id', params.id)
-      .single() as unknown as Promise<{ data: unknown; error: { message: string } | null }>);
+      .single() as unknown as Promise<{ data: { domain: string } | null; error: { message: string } | null }>);
 
-    if (fetchErr) {
+    if (fetchErr || !domainToDelete) {
       return NextResponse.json({ error: 'Domain not found' }, { status: 404 });
     }
 
@@ -227,6 +234,12 @@ export async function DELETE(
       .eq('workspace_id', params.id);
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+    // Remove from Vercel (non-fatal)
+    try { await removeDomainFromVercel(domainToDelete.domain); } catch (e) {
+      console.warn('[domains] removeDomainFromVercel failed:', (e as Error).message);
+    }
+
     return NextResponse.json({ success: true });
   } catch {
     return NextResponse.json({ error: 'Internal error' }, { status: 500 });
