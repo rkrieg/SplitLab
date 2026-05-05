@@ -19,7 +19,11 @@ function headers(): HeadersInit {
   };
 }
 
-export async function addDomainToVercel(domain: string): Promise<void> {
+export interface VercelDomainAddResult {
+  verification?: Array<{ type: string; domain: string; value: string }>;
+}
+
+export async function addDomainToVercel(domain: string): Promise<VercelDomainAddResult> {
   const res = await fetch(
     `${VERCEL_API_BASE}/v10/projects/${getProjectId()}/domains`,
     {
@@ -29,13 +33,21 @@ export async function addDomainToVercel(domain: string): Promise<void> {
     }
   );
 
+  const data = await res.json().catch(() => ({}));
+
   // 409 = already exists on this project — idempotent success
-  if (res.status === 409) return;
+  if (res.status === 409) return {};
+
+  // Domain claimed by another project — return TXT verification requirements
+  if (!res.ok && data?.error?.code === 'existing_project_domain') {
+    return { verification: data.verification || [] };
+  }
 
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err?.error?.message || `Vercel API error (${res.status})`);
+    throw new Error(data?.error?.message || `Vercel API error (${res.status})`);
   }
+
+  return { verification: data.verification || [] };
 }
 
 export async function removeDomainFromVercel(domain: string): Promise<void> {

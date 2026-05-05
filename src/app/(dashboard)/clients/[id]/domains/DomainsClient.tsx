@@ -11,6 +11,12 @@ import Button from '@/components/ui/Button';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import { formatDate } from '@/lib/utils';
 
+interface VercelVerification {
+  type: string;
+  domain: string;
+  value: string;
+}
+
 interface Domain {
   id: string;
   domain: string;
@@ -18,6 +24,7 @@ interface Domain {
   verified: boolean;
   verified_at: string | null;
   created_at: string;
+  vercel_verification?: VercelVerification[];
 }
 
 interface Props {
@@ -88,7 +95,11 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
       setDomains([d]);
       setModalOpen(false);
       resetAddModal();
-      toast.success('Domain registered. Now configure your DNS records.');
+      if (d.vercel_verification?.length > 0) {
+        toast.success('Domain registered. Add the TXT record shown below to complete setup.');
+      } else {
+        toast.success('Domain registered. Now configure your DNS records.');
+      }
     } finally { setAdding(false); }
   }
 
@@ -284,6 +295,31 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
               </div>
             </div>
           </div>
+          {d.vercel_verification && d.vercel_verification.length > 0 && (
+            <div className="mt-4">
+              <div className="flex items-center gap-2 mb-2">
+                <AlertCircle size={13} className="text-amber-400 flex-shrink-0" />
+                <h4 className="text-xs font-medium text-amber-300">Your domain is managed by Vercel — also add this TXT record to complete ownership verification:</h4>
+              </div>
+              <div className="rounded-lg border border-amber-500/30 overflow-hidden text-xs">
+                <div className="grid grid-cols-3 bg-amber-500/5">
+                  <div className="px-3 py-2 text-slate-500 font-medium border-r border-amber-500/20">Type</div>
+                  <div className="px-3 py-2 text-slate-500 font-medium border-r border-amber-500/20">Name</div>
+                  <div className="px-3 py-2 text-slate-500 font-medium">Value</div>
+                </div>
+                {d.vercel_verification.map((v, i) => (
+                  <div key={i} className="grid grid-cols-3 bg-white dark:bg-slate-900/50">
+                    <div className="px-3 py-2.5 text-slate-800 dark:text-slate-200 font-mono border-r border-amber-500/20">{v.type}</div>
+                    <div className="px-3 py-2.5 text-slate-800 dark:text-slate-200 font-mono border-r border-amber-500/20 break-all">{v.domain.replace(/\.$/, '')}</div>
+                    <div className="px-3 py-2.5 font-mono flex items-center justify-between gap-2">
+                      <span className="text-amber-300 break-all">{v.value}</span>
+                      <button onClick={() => copyToClipboard(v.value)} className="text-slate-500 hover:text-slate-300 flex-shrink-0"><Copy size={12} /></button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           {isRoot && (
             <div className="mt-3 rounded-lg border border-slate-200 dark:border-slate-700/50 bg-slate-50 dark:bg-slate-800/30 px-3 py-2.5">
               <p className="text-slate-400 text-xs leading-relaxed">

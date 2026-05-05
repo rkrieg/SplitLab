@@ -186,12 +186,16 @@ export async function POST(
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-    // Register domain with Vercel so it can serve traffic (non-fatal if token missing)
-    try { await addDomainToVercel(domain); } catch (e) {
+    // Register domain with Vercel — capture TXT verification requirements if domain is claimed by another project
+    let vercelVerification: Array<{ type: string; domain: string; value: string }> = [];
+    try {
+      const result = await addDomainToVercel(domain);
+      vercelVerification = result.verification || [];
+    } catch (e) {
       console.warn('[domains] addDomainToVercel failed:', (e as Error).message);
     }
 
-    return NextResponse.json(newDomain, { status: 201 });
+    return NextResponse.json({ ...newDomain, vercel_verification: vercelVerification }, { status: 201 });
 
   } catch (err) {
     if (err instanceof z.ZodError) {
