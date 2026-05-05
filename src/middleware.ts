@@ -13,8 +13,9 @@ function isCustomDomain(host: string): boolean {
   if (host.includes('.replit.app') || host.includes('.replit.dev') || host.includes('.picard.replit.dev')) return false;
   // *.cname.trysplitlab.com subdomains ARE custom domains (direct CNAME access)
   if (host.endsWith(`.${CNAME_BASE}`)) return true;
-  // Never treat the app's own hostname as a custom domain
-  if (APP_HOSTNAME && host.includes(APP_HOSTNAME)) return false;
+  // Never treat the app's own exact hostname or www variant as a custom domain
+  // Use exact/suffix match — NOT .includes() — so subdomains like ab.trysplitlab.com still route correctly
+  if (APP_HOSTNAME && (host === APP_HOSTNAME || host === `www.${APP_HOSTNAME}`)) return false;
   // Never treat the canonical marketing domain as a custom domain
   if (CANONICAL_HOST && (host === CANONICAL_HOST || host === NAKED_HOST)) return false;
   // Standard exclusions
