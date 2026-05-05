@@ -308,18 +308,19 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
                 <h4 className="text-xs font-medium text-amber-300">Your domain is managed by Vercel — also add this TXT record to complete ownership verification:</h4>
               </div>
               <div className="rounded-lg border border-amber-500/30 overflow-hidden text-xs">
-                <div className="grid grid-cols-3 bg-amber-500/5">
+                <div className="grid bg-amber-500/5" style={{gridTemplateColumns:'60px 180px 1fr 28px'}}>
                   <div className="px-3 py-2 text-slate-500 font-medium border-r border-amber-500/20">Type</div>
                   <div className="px-3 py-2 text-slate-500 font-medium border-r border-amber-500/20">Name</div>
-                  <div className="px-3 py-2 text-slate-500 font-medium">Value</div>
+                  <div className="px-3 py-2 text-slate-500 font-medium border-r border-amber-500/20">Value</div>
+                  <div />
                 </div>
                 {activeTxtRecords.map((v, i) => (
-                  <div key={i} className="grid grid-cols-3 bg-white dark:bg-slate-900/50">
+                  <div key={i} className="grid bg-white dark:bg-slate-900/50" style={{gridTemplateColumns:'60px 180px 1fr 28px'}}>
                     <div className="px-3 py-2.5 text-slate-800 dark:text-slate-200 font-mono border-r border-amber-500/20">{v.type}</div>
                     <div className="px-3 py-2.5 text-slate-800 dark:text-slate-200 font-mono border-r border-amber-500/20 break-all">{v.domain.replace(/\.$/, '')}</div>
-                    <div className="px-3 py-2.5 font-mono flex items-center justify-between gap-2">
-                      <span className="text-amber-300 break-all">{v.value}</span>
-                      <button onClick={() => copyToClipboard(v.value)} className="text-slate-500 hover:text-slate-300 flex-shrink-0"><Copy size={12} /></button>
+                    <div className="px-3 py-2.5 text-amber-300 font-mono break-all border-r border-amber-500/20">{v.value}</div>
+                    <div className="flex items-center justify-center">
+                      <button onClick={() => copyToClipboard(v.value)} className="text-slate-500 hover:text-slate-300"><Copy size={12} /></button>
                     </div>
                   </div>
                 ))}
