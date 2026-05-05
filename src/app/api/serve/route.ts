@@ -83,6 +83,18 @@ export async function GET(request: NextRequest) {
 
     // 6a. If variant has a redirect URL
     if (selectedVariant.redirect_url) {
+      // Guard: detect circular redirect — redirect URL points back to this same domain
+      try {
+        const redirectHost = new URL(selectedVariant.redirect_url).hostname.replace(/^www\./, '');
+        const incomingHost = domain.replace(/^www\./, '');
+        if (redirectHost === incomingHost) {
+          return new NextResponse(circularRedirectHtml(domain, selectedVariant.name), {
+            status: 409,
+            headers: { 'Content-Type': 'text/html; charset=utf-8' },
+          });
+        }
+      } catch { /* invalid URL — let it fall through to natural error */ }
+
       // Proxy mode: serve iframe wrapper so URL stays on custom domain
       // The SPA runs in its original context inside the iframe
       if (selectedVariant.proxy_mode !== false) {
@@ -328,6 +340,26 @@ ${proxyTrackingSnippet}
       headers: { 'Content-Type': 'text/html' },
     });
   }
+}
+
+function circularRedirectHtml(domain: string, variantName: string) {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><title>Configuration Error</title>
+<style>body{font-family:sans-serif;background:#0f172a;color:#f8fafc;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}
+.box{text-align:center;max-width:480px;padding:2rem}.icon{font-size:3rem;margin-bottom:1rem}
+h1{margin:.5rem 0;font-size:1.5rem}p{color:#94a3b8;margin:.5rem 0;line-height:1.6}
+.code{display:inline-block;background:#1e293b;border:1px solid #334155;border-radius:.375rem;padding:.25rem .75rem;font-family:monospace;font-size:.85rem;color:#f87171;margin:.5rem 0}
+.hint{background:#1e293b;border:1px solid #334155;border-radius:.5rem;padding:1rem;margin-top:1.5rem;text-align:left;font-size:.85rem;color:#94a3b8}
+.hint strong{color:#f8fafc}</style>
+</head>
+<body><div class="box">
+<div class="icon">⚠️</div>
+<h1>Circular Redirect Detected</h1>
+<p>The <strong>${variantName}</strong> variant is pointing back to <span class="code">${domain}</span> — which routes through this same A/B test, creating an infinite loop.</p>
+<div class="hint"><strong>How to fix:</strong> In SplitLab, edit this variant's Destination URL and set it to your site's <strong>direct hosting URL</strong> (e.g. your Vercel deployment URL), not your custom domain.</div>
+</div></body>
+</html>`;
 }
 
 function notFoundHtml(domain: string) {

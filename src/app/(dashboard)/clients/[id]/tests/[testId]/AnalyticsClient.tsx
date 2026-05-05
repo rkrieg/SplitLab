@@ -896,9 +896,14 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
                                     type="url"
                                     value={variantDraft.redirect_url}
                                     onChange={e => setVariantDraft({ ...variantDraft, redirect_url: e.target.value })}
-                                    className="input-base text-sm font-mono"
+                                    className={`input-base text-sm font-mono ${domain && variantDraft.redirect_url && (() => { try { return new URL(variantDraft.redirect_url).hostname.replace(/^www\./,'') === domain.replace(/^www\./, ''); } catch { return false; } })() ? 'border-red-500 focus:ring-red-500' : ''}`}
                                     placeholder="https://..."
                                   />
+                                  {domain && variantDraft.redirect_url && (() => { try { return new URL(variantDraft.redirect_url).hostname.replace(/^www\./,'') === domain.replace(/^www\./, ''); } catch { return false; } })() && (
+                                    <p className="mt-1 text-xs text-red-400 flex items-center gap-1">
+                                      ⚠️ This URL points to your custom domain — it will create an infinite loop. Use your site&apos;s direct hosting URL instead (e.g. your Vercel deployment URL).
+                                    </p>
+                                  )}
                                 </div>
                               </div>
 
