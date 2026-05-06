@@ -102,8 +102,26 @@ export async function getDomainStatus(domain: string): Promise<DomainStatus> {
     return {
       verified: false,
       status: 'needs_txt',
-      message: 'This domain is managed by Vercel. Add the TXT record below to complete ownership transfer.',
+      message: 'This domain belongs to another Vercel project. Add the TXT record below to complete verification.',
       vercel_verification: domainData.verification || [],
+    };
+  }
+
+  // Missing TXT record — Vercel requires ownership verification via TXT before accepting the domain.
+  // This happens when the parent domain is in a different Vercel project/team.
+  if (!verifyRes.ok && verifyData?.error?.code === 'missing_txt_record') {
+    // Fetch the domain config to get the exact TXT record required
+    const domainRes = await fetch(
+      `${VERCEL_API_BASE}/v9/projects/${getProjectId()}/domains/${domain}`,
+      { method: 'GET', headers: headers() }
+    );
+    const domainData = await domainRes.json().catch(() => ({}));
+    const verification = domainData.verification || [];
+    return {
+      verified: false,
+      status: 'needs_txt',
+      message: 'Vercel requires a TXT record to verify ownership of this subdomain (because the parent domain is in a different project). Add the record below in your Vercel DNS panel, then click Verify DNS again.',
+      vercel_verification: verification,
     };
   }
 
@@ -112,6 +130,16 @@ export async function getDomainStatus(domain: string): Promise<DomainStatus> {
       verified: true,
       status: 'valid',
       message: 'Domain is verified and serving traffic.',
+    };
+  }
+
+  // Verify returned ok but not yet verified — check if verification records are present
+  if (!verifyRes.ok && verifyData?.verification?.length > 0) {
+    return {
+      verified: false,
+      status: 'needs_txt',
+      message: 'Vercel requires a TXT record to verify ownership. Add the record below in your Vercel DNS panel, then click Verify DNS again.',
+      vercel_verification: verifyData.verification,
     };
   }
 
