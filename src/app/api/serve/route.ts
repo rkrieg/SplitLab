@@ -22,13 +22,13 @@ export async function GET(request: NextRequest) {
       domain.startsWith('www.') ? domain.slice(4) : `www.${domain}`,
     ]));
 
-    let domainRow: { workspace_id: string } | null = null;
+    let domainRow: { workspace_id: string; fallback_url: string | null } | null = null;
     for (const variant of domainVariants) {
       const result = await (db
         .from('domains')
-        .select('workspace_id')
+        .select('workspace_id, fallback_url')
         .eq('domain', variant)
-        .single() as unknown as Promise<{ data: { workspace_id: string } | null; error: { message: string } | null }>);
+        .single() as unknown as Promise<{ data: { workspace_id: string; fallback_url: string | null } | null; error: { message: string } | null }>);
       if (result.data) { domainRow = result.data; break; }
     }
 
@@ -40,6 +40,7 @@ export async function GET(request: NextRequest) {
     }
 
     const workspaceId = domainRow.workspace_id;
+    const fallbackUrl = domainRow.fallback_url;
 
     // 2. Find active test matching this URL path
     const { data: test, error: testError } = await (db
@@ -51,6 +52,12 @@ export async function GET(request: NextRequest) {
       .single() as unknown as Promise<{ data: { id: string; workspace_id: string; status: string; url_path: string; head_scripts?: string } | null; error: { message: string } | null }>);
 
     if (testError || !test) {
+      // If no active test, redirect to fallback URL if configured
+      if (fallbackUrl) {
+        const fallback = new URL(fallbackUrl);
+        fallback.pathname = fallback.pathname === '/' && urlPath !== '/' ? urlPath : fallback.pathname;
+        return NextResponse.redirect(fallback.toString(), 302);
+      }
       return new NextResponse(notFoundHtml(domain), {
         status: 404,
         headers: { 'Content-Type': 'text/html' },
@@ -376,12 +383,24 @@ h1{margin:.5rem 0;font-size:1.5rem}p{color:#94a3b8;margin:.5rem 0;line-height:1.
 function notFoundHtml(domain: string) {
   return `<!DOCTYPE html>
 <html lang="en">
-<head><meta charset="UTF-8"><title>Not Found</title>
-<style>body{font-family:sans-serif;background:#0f172a;color:#f8fafc;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}
-.box{text-align:center}.code{font-size:4rem;font-weight:700;color:#3D8BDA}h1{margin:.5rem 0}p{color:#94a3b8}</style>
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${domain}</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f8fafc;min-height:100vh;display:flex;align-items:center;justify-content:center;color:#1e293b}
+.card{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:3rem 2.5rem;text-align:center;max-width:420px;width:90%;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+h1{font-size:1.25rem;font-weight:600;margin-bottom:.5rem;color:#0f172a}
+p{font-size:.9rem;color:#64748b;line-height:1.6}
+.badge{display:inline-flex;align-items:center;gap:.4rem;font-size:.75rem;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:6px;padding:.3rem .75rem;color:#64748b;margin-bottom:1.5rem;font-family:monospace}
+.dot{width:6px;height:6px;border-radius:50%;background:#22c55e;display:inline-block}
+</style>
 </head>
-<body><div class="box"><div class="code">404</div><h1>Page Not Found</h1>
-<p>No active test found for <strong>${domain}</strong></p></div></body>
+<body>
+<div class="card">
+  <div class="badge"><span class="dot"></span>${domain}</div>
+  <h1>Coming Soon</h1>
+  <p>This page is currently being set up. Check back shortly.</p>
+</div>
+</body>
 </html>`;
 }
 

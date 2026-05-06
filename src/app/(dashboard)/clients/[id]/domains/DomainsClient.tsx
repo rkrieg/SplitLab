@@ -4,7 +4,7 @@ import { useState } from 'react';
 import toast from 'react-hot-toast';
 import {
   Plus, Globe, CheckCircle, XCircle, Copy, AlertCircle,
-  Trash2, Clock, Pencil,
+  Trash2, Clock, Pencil, Loader2, Check, X,
 } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
@@ -25,6 +25,7 @@ interface Domain {
   verified_at: string | null;
   created_at: string;
   vercel_verification?: VercelVerification[];
+  fallback_url?: string | null;
 }
 
 interface Props {
@@ -56,6 +57,10 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
   const [verifyTxtRecords, setVerifyTxtRecords] = useState<Record<string, VercelVerification[]>>({});
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+
+  const [editingFallback, setEditingFallback] = useState<string | null>(null);
+  const [fallbackDraft, setFallbackDraft] = useState('');
+  const [savingFallback, setSavingFallback] = useState(false);
 
   function buildFullDomain(base: string, mode: 'root' | 'subdomain', sub: string): string {
     const clean = base.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/+$/, '');
@@ -158,6 +163,21 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
     } catch { toast.error('Failed to check domain verification'); } finally { setVerifying(null); }
   }
 
+  async function saveFallback(domainId: string) {
+    setSavingFallback(true);
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}/domains`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'set_fallback', domain_id: domainId, fallback_url: fallbackDraft.trim() }),
+      });
+      if (!res.ok) { const err = await res.json(); toast.error(err.error || 'Failed to save'); return; }
+      setDomains((prev) => prev.map((d) => d.id === domainId ? { ...d, fallback_url: fallbackDraft.trim() || null } : d));
+      setEditingFallback(null);
+      toast.success(fallbackDraft.trim() ? 'Fallback URL saved' : 'Fallback URL removed');
+    } finally { setSavingFallback(false); }
+  }
+
   async function handleDelete() {
     if (!deleteId) return;
     setDeleting(true);
@@ -219,6 +239,7 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
     const isRoot = isRootDomain(d.domain);
 
     if (d.verified) {
+      const isEditingFb = editingFallback === d.id;
       return (
         <div key={d.id} className="card overflow-hidden">
           <div className="p-5 flex items-center gap-4">
@@ -243,6 +264,49 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
               <span className="flex items-center gap-1.5 text-green-400"><CheckCircle size={13} /> DNS configured</span>
               <span className="flex items-center gap-1.5 text-green-400"><CheckCircle size={13} /> Verified</span>
             </div>
+          </div>
+          {/* Fallback URL */}
+          <div className="border-t border-slate-200 dark:border-slate-800 px-5 py-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-medium text-slate-700 dark:text-slate-300 mb-0.5">Fallback URL</p>
+                <p className="text-xs text-slate-400 dark:text-slate-500">Where visitors go when no A/B test is running on this domain.</p>
+                {!isEditingFb && (
+                  <p className="mt-1 text-xs font-mono truncate">
+                    {d.fallback_url
+                      ? <span className="text-[#3D8BDA]">{d.fallback_url}</span>
+                      : <span className="text-slate-500 italic">Not set — visitors will see an error page if no test is active</span>}
+                  </p>
+                )}
+              </div>
+              {canManage && !isEditingFb && (
+                <button
+                  onClick={() => { setEditingFallback(d.id); setFallbackDraft(d.fallback_url || ''); }}
+                  className="flex-shrink-0 text-xs text-slate-500 hover:text-slate-200 flex items-center gap-1 mt-0.5"
+                ><Pencil size={12} /> {d.fallback_url ? 'Edit' : 'Set'}</button>
+              )}
+            </div>
+            {isEditingFb && (
+              <div className="mt-2 flex items-center gap-2">
+                <input
+                  type="url"
+                  value={fallbackDraft}
+                  onChange={e => setFallbackDraft(e.target.value)}
+                  className="input-base text-xs font-mono flex-1"
+                  placeholder="https://your-direct-hosting-url.com"
+                  autoFocus
+                />
+                <button
+                  onClick={() => saveFallback(d.id)}
+                  disabled={savingFallback}
+                  className="flex-shrink-0 flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg bg-green-500/20 text-green-400 hover:bg-green-500/30 border border-green-500/30 disabled:opacity-50"
+                >{savingFallback ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />} Save</button>
+                <button
+                  onClick={() => setEditingFallback(null)}
+                  className="flex-shrink-0 flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-700 text-slate-500 hover:text-slate-200 border border-slate-300 dark:border-slate-600"
+                ><X size={11} /></button>
+              </div>
+            )}
           </div>
         </div>
       );
