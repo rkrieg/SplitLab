@@ -20,6 +20,12 @@ const updateSchema = z.object({
   domain: z.string().min(3).max(255),
 });
 
+const fallbackSchema = z.object({
+  action: z.literal('set_fallback'),
+  domain_id: z.string().uuid(),
+  fallback_url: z.string().url().or(z.literal('')),
+});
+
 function generateUniqueCname(domain: string): string {
   // Strip leading www. and extract the first label for a readable slug
   const clean = domain.replace(/^www\./, '');
@@ -87,6 +93,18 @@ export async function POST(
       }
 
       return NextResponse.json(result);
+    }
+
+    // ── Set fallback URL ──
+    if (body.action === 'set_fallback') {
+      const { domain_id, fallback_url } = fallbackSchema.parse(body);
+      const { error: updateErr } = await db
+        .from('domains')
+        .update({ fallback_url: fallback_url || null })
+        .eq('id', domain_id)
+        .eq('workspace_id', params.id);
+      if (updateErr) return NextResponse.json({ error: updateErr.message }, { status: 500 });
+      return NextResponse.json({ success: true });
     }
 
     // ── Update domain (rename) ──
