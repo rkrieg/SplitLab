@@ -308,9 +308,9 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
 
         {/* Error msg */}
         {errorMsg && (
-          <div className="border-t border-red-500/20 px-5 py-3 bg-red-500/5 flex items-start gap-2">
-            <XCircle size={14} className="text-red-400 flex-shrink-0 mt-0.5" />
-            <p className="text-red-300 text-xs">{errorMsg}</p>
+          <div className="border-t border-red-200 dark:border-red-500/20 px-5 py-3 bg-red-50 dark:bg-red-500/5 flex items-start gap-2">
+            <XCircle size={14} className="text-red-500 dark:text-red-400 flex-shrink-0 mt-0.5" />
+            <p className="text-red-700 dark:text-red-300 text-xs">{errorMsg}</p>
           </div>
         )}
 
@@ -318,23 +318,23 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
         <div className="border-t border-slate-200 dark:border-slate-800 px-5 py-5 space-y-4">
 
           {/* Production site untouched notice */}
-          <div className="rounded-lg border border-green-500/25 bg-green-500/5 px-4 py-3 flex items-start gap-3">
-            <ShieldCheck size={15} className="text-green-400 flex-shrink-0 mt-0.5" />
-            <div className="text-xs text-green-300 leading-relaxed">
-              <strong className="text-green-200">Your production site stays untouched.</strong>{' '}
-              Only <span className="font-mono text-green-200">{d.domain}</span> points to SplitLab.
-              {base && <>{' '}<span className="font-mono text-green-400">www.{base}</span> and <span className="font-mono text-green-400">{base}</span> continue working normally.</>}
+          <div className="rounded-lg border border-green-200 dark:border-green-500/25 bg-green-50 dark:bg-green-500/5 px-4 py-3 flex items-start gap-3">
+            <ShieldCheck size={15} className="text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" />
+            <div className="text-xs text-green-800 dark:text-green-200 leading-relaxed">
+              <strong>Your production site stays untouched.</strong>{' '}
+              Only <span className="font-mono">{d.domain}</span> points to SplitLab.
+              {base && <>{' '}<span className="font-mono font-medium">www.{base}</span> and <span className="font-mono font-medium">{base}</span> continue working normally.</>}
             </div>
           </div>
 
           {activeTxtRecords.length > 0 ? (
             /* Vercel-managed domain — TXT only */
             <>
-              <div className="rounded-lg border border-blue-500/30 bg-blue-500/5 px-3 py-2.5 flex items-start gap-2">
-                <AlertCircle size={14} className="text-blue-400 flex-shrink-0 mt-0.5" />
-                <p className="text-xs text-blue-300 leading-relaxed">
-                  <strong className="text-blue-200">Vercel nameservers detected.</strong> Vercel auto-handles routing — you only need to add this one TXT record in your{' '}
-                  <a href="https://vercel.com/dashboard/domains" target="_blank" rel="noopener noreferrer" className="underline hover:text-blue-100">Vercel DNS panel</a>.
+              <div className="rounded-lg border border-blue-200 dark:border-blue-500/30 bg-blue-50 dark:bg-blue-500/5 px-3 py-2.5 flex items-start gap-2">
+                <AlertCircle size={14} className="text-blue-600 dark:text-blue-400 flex-shrink-0 mt-0.5" />
+                <p className="text-xs text-blue-800 dark:text-blue-200 leading-relaxed">
+                  <strong>Vercel nameservers detected.</strong> Vercel auto-handles routing — you only need to add this one TXT record in your{' '}
+                  <a href="https://vercel.com/dashboard/domains" target="_blank" rel="noopener noreferrer" className="underline hover:opacity-80">Vercel DNS panel</a>.
                 </p>
               </div>
               <DnsTable records={activeTxtRecords.map(v => ({ type: v.type, name: v.domain.replace(/\.$/, ''), value: v.value }))} onCopy={copyToClipboard} />
@@ -344,11 +344,11 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
             <>
               <div>
                 <p className="text-xs font-semibold text-slate-700 dark:text-slate-200 mb-3 flex items-center gap-2">
-                  <span className="w-5 h-5 rounded-full bg-[#3D8BDA]/20 text-[#3D8BDA] text-xs flex items-center justify-center font-bold">1</span>
+                  <span className="w-5 h-5 rounded-full bg-[#3D8BDA]/20 text-[#3D8BDA] text-xs flex items-center justify-center font-bold flex-shrink-0">1</span>
                   Log in to your domain registrar (GoDaddy, Namecheap, Cloudflare, etc.)
                 </p>
                 <p className="text-xs font-semibold text-slate-700 dark:text-slate-200 mb-3 flex items-center gap-2">
-                  <span className="w-5 h-5 rounded-full bg-[#3D8BDA]/20 text-[#3D8BDA] text-xs flex items-center justify-center font-bold">2</span>
+                  <span className="w-5 h-5 rounded-full bg-[#3D8BDA]/20 text-[#3D8BDA] text-xs flex items-center justify-center font-bold flex-shrink-0">2</span>
                   Add this DNS record:
                 </p>
                 <DnsTable
@@ -360,18 +360,18 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
                   onCopy={copyToClipboard}
                   highlight
                 />
-                <div className="mt-2.5 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2.5 flex items-start gap-2">
-                  <AlertCircle size={13} className="text-amber-400 flex-shrink-0 mt-0.5" />
-                  <p className="text-xs text-amber-300 leading-relaxed">
-                    <strong className="text-amber-200">Using Cloudflare?</strong> Set the record to <strong className="text-amber-200">DNS only</strong> (grey cloud), not proxied (orange cloud).
+                <div className="mt-2.5 rounded-lg border border-amber-200 dark:border-amber-500/20 bg-amber-50 dark:bg-amber-500/5 px-3 py-2.5 flex items-start gap-2">
+                  <AlertCircle size={13} className="text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
+                  <p className="text-xs text-amber-800 dark:text-amber-200 leading-relaxed">
+                    <strong>Using Cloudflare?</strong> Set the record to <strong>DNS only</strong> (grey cloud), not proxied (orange cloud).
                   </p>
                 </div>
               </div>
               <p className="text-xs font-semibold text-slate-700 dark:text-slate-200 flex items-center gap-2">
-                <span className="w-5 h-5 rounded-full bg-[#3D8BDA]/20 text-[#3D8BDA] text-xs flex items-center justify-center font-bold">3</span>
-                Come back here and click <strong className="text-slate-100">Verify DNS</strong> above
+                <span className="w-5 h-5 rounded-full bg-[#3D8BDA]/20 text-[#3D8BDA] text-xs flex items-center justify-center font-bold flex-shrink-0">3</span>
+                Come back here and click <strong className="text-[#3D8BDA]">Verify DNS</strong> above
               </p>
-              <p className="text-xs text-slate-500">DNS changes can take a few minutes to propagate. If Verify fails, wait 5 minutes and try again.</p>
+              <p className="text-xs text-slate-500 dark:text-slate-500">DNS changes can take a few minutes to propagate. If Verify fails, wait 5 minutes and try again.</p>
             </>
           )}
         </div>
