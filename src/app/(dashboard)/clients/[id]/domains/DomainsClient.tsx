@@ -4,7 +4,7 @@ import { useState } from 'react';
 import toast from 'react-hot-toast';
 import {
   Plus, Globe, CheckCircle, XCircle, Copy, AlertCircle,
-  Trash2, Clock, Pencil, Loader2, Check, X,
+  Trash2, Clock, Pencil, Loader2, Check, X, ShieldCheck, ArrowRight,
 } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
@@ -39,16 +39,14 @@ interface Props {
 export default function DomainsClient({ initialDomains, workspaceId, appHostname, canManage }: Props) {
   const [domains, setDomains] = useState(initialDomains);
   const [modalOpen, setModalOpen] = useState(false);
-  const [addBaseDomain, setAddBaseDomain] = useState('');
-  const [addMode, setAddMode] = useState<'root' | 'subdomain'>('root');
-  const [addSubdomain, setAddSubdomain] = useState('');
+  const [addWebsiteDomain, setAddWebsiteDomain] = useState('');
+  const [addPrefix, setAddPrefix] = useState('test');
   const [adding, setAdding] = useState(false);
 
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [editDomain, setEditDomain] = useState<Domain | null>(null);
   const [editBaseDomain, setEditBaseDomain] = useState('');
-  const [editMode, setEditMode] = useState<'root' | 'subdomain'>('root');
-  const [editSubdomain, setEditSubdomain] = useState('');
+  const [editPrefix, setEditPrefix] = useState('test');
   const [saving, setSaving] = useState(false);
 
   const [verifying, setVerifying] = useState<string | null>(null);
@@ -62,33 +60,46 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
   const [fallbackDraft, setFallbackDraft] = useState('');
   const [savingFallback, setSavingFallback] = useState(false);
 
-  function buildFullDomain(base: string, mode: 'root' | 'subdomain', sub: string): string {
-    const clean = base.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/+$/, '');
-    if (mode === 'subdomain' && sub.trim()) return `${sub.trim().toLowerCase()}.${clean}`;
-    return clean;
+  function cleanDomain(raw: string) {
+    return raw.trim().toLowerCase()
+      .replace(/^https?:\/\//, '')
+      .replace(/^www\./, '')
+      .replace(/\/+$/, '');
   }
 
-  function getAddPreview() { return buildFullDomain(addBaseDomain, addMode, addSubdomain); }
-  function getEditPreview() { return buildFullDomain(editBaseDomain, editMode, editSubdomain); }
-  function getDomainName(domain: string) { const p = domain.split('.'); return p.length <= 2 ? '@' : p.slice(0, -2).join('.'); }
-  function isRootDomain(domain: string) { return domain.split('.').length <= 2; }
+  function getAddPreview() {
+    const base = cleanDomain(addWebsiteDomain);
+    const prefix = addPrefix.trim().replace(/[^a-zA-Z0-9-]/g, '') || 'test';
+    return base ? `${prefix}.${base}` : '';
+  }
+
+  function getEditPreview() {
+    const base = cleanDomain(editBaseDomain);
+    const prefix = editPrefix.trim().replace(/[^a-zA-Z0-9-]/g, '') || 'test';
+    return base ? `${prefix}.${base}` : '';
+  }
+
+  function getDomainPrefix(domain: string) {
+    const parts = domain.split('.');
+    return parts.length > 2 ? parts.slice(0, -2).join('.') : '';
+  }
+
   function getBaseDomain(domain: string) { return domain.split('.').slice(-2).join('.'); }
-  function getSubdomainPart(domain: string) { const p = domain.split('.'); return p.length <= 2 ? '' : p.slice(0, -2).join('.'); }
-  function copyToClipboard(text: string) { navigator.clipboard.writeText(text); toast.success('Copied to clipboard'); }
-  function resetAddModal() { setAddBaseDomain(''); setAddMode('root'); setAddSubdomain(''); }
+  function copyToClipboard(text: string) { navigator.clipboard.writeText(text); toast.success('Copied!'); }
+
+  function resetAddModal() { setAddWebsiteDomain(''); setAddPrefix('test'); }
 
   function openEditModal(d: Domain) {
     setEditDomain(d);
     setEditBaseDomain(getBaseDomain(d.domain));
-    const sub = getSubdomainPart(d.domain);
-    if (sub) { setEditMode('subdomain'); setEditSubdomain(sub); } else { setEditMode('root'); setEditSubdomain(''); }
+    setEditPrefix(getDomainPrefix(d.domain) || 'test');
     setEditModalOpen(true);
   }
 
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault();
     const domain = getAddPreview();
-    if (!domain || domain.split('.').length < 2) { toast.error('Enter a valid domain'); return; }
+    if (!domain || domain.split('.').length < 3) { toast.error('Enter a valid domain'); return; }
     setAdding(true);
     try {
       const res = await fetch(`/api/workspaces/${workspaceId}/domains`, {
@@ -101,64 +112,49 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
       setDomains([d]);
       setModalOpen(false);
       resetAddModal();
-      if (d.vercel_verification?.length > 0) {
-        toast.success('Domain registered. Add the TXT record shown below to complete setup.');
-      } else {
-        toast.success('Domain registered. Now configure your DNS records.');
-      }
+      toast.success('Domain added — now configure your DNS record below.');
     } finally { setAdding(false); }
   }
 
   async function handleEdit(e: React.FormEvent) {
     e.preventDefault();
     if (!editDomain) return;
-    const newDomain = getEditPreview();
-    if (!newDomain || newDomain.split('.').length < 2) { toast.error('Enter a valid domain'); return; }
-    if (newDomain === editDomain.domain) { setEditModalOpen(false); return; }
+    const domain = getEditPreview();
+    if (!domain) { toast.error('Enter a valid domain'); return; }
     setSaving(true);
     try {
       const res = await fetch(`/api/workspaces/${workspaceId}/domains`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'update', domain_id: editDomain.id, domain: newDomain }),
+        body: JSON.stringify({ action: 'update', domain_id: editDomain.id, domain }),
       });
       if (!res.ok) { const err = await res.json(); toast.error(err.error || 'Failed to update domain'); return; }
       const updated = await res.json();
-      setDomains([updated]);
-      setVerifyStatus((prev) => { const n = { ...prev }; delete n[editDomain.id]; return n; });
-      setVerifyMessage((prev) => { const n = { ...prev }; delete n[editDomain.id]; return n; });
+      setDomains((prev) => prev.map((d) => d.id === editDomain.id ? { ...d, ...updated } : d));
       setEditModalOpen(false);
-      toast.success('Domain updated. Configure DNS for the new domain.');
+      toast.success('Domain updated');
     } finally { setSaving(false); }
   }
 
   async function handleVerify(domainId: string) {
     setVerifying(domainId);
+    setVerifyMessage((p) => ({ ...p, [domainId]: '' }));
     try {
       const res = await fetch(`/api/workspaces/${workspaceId}/domains`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'verify', domain_id: domainId }),
       });
-      if (!res.ok) { const err = await res.json(); toast.error(err.error || 'Verification check failed'); return; }
-      const result = await res.json();
-      setVerifyStatus((prev) => ({ ...prev, [domainId]: result.status }));
-      if (result.verified) {
-        setDomains((prev) => prev.map((d) => d.id === domainId ? { ...d, verified: true, verified_at: new Date().toISOString(), vercel_verification: [] } : d));
-        setVerifyMessage((prev) => ({ ...prev, [domainId]: '' }));
-        setVerifyTxtRecords((prev) => { const n = { ...prev }; delete n[domainId]; return n; });
-        toast.success('Domain verified successfully!');
-      } else if (result.status === 'needs_txt') {
-        const txtRecords = result.vercel_verification || [];
-        setVerifyTxtRecords((prev) => ({ ...prev, [domainId]: txtRecords }));
-        // Also persist to domain object so it survives state re-renders
-        setDomains((prev) => prev.map((d) => d.id === domainId ? { ...d, vercel_verification: txtRecords } : d));
-        setVerifyMessage((prev) => ({ ...prev, [domainId]: '' }));
-      } else if (result.status === 'misconfigured') {
-        // Use the server-supplied message (may include Cloudflare-specific guidance)
-        setVerifyMessage((prev) => ({ ...prev, [domainId]: result.message || "DNS records not found. Double-check the records below are added correctly and try again." }));
+      const data = await res.json();
+      if (data.verified) {
+        setDomains((prev) => prev.map((d) => d.id === domainId ? { ...d, verified: true, verified_at: new Date().toISOString() } : d));
+        toast.success('Domain verified!');
       } else {
-        setVerifyMessage((prev) => ({ ...prev, [domainId]: result.message || 'DNS not yet propagated. This can take a few minutes. Try again shortly.' }));
+        setVerifyStatus((p) => ({ ...p, [domainId]: data.status || 'misconfigured' }));
+        setVerifyMessage((p) => ({ ...p, [domainId]: data.message || 'DNS record not found yet.' }));
+        if (data.vercel_verification?.length) {
+          setVerifyTxtRecords((p) => ({ ...p, [domainId]: data.vercel_verification }));
+        }
       }
     } catch { toast.error('Failed to check domain verification'); } finally { setVerifying(null); }
   }
@@ -183,60 +179,23 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
     setDeleting(true);
     try {
       const res = await fetch(`/api/workspaces/${workspaceId}/domains`, {
-        method: 'DELETE',
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ domain_id: deleteId }),
+        body: JSON.stringify({ action: 'delete', domain_id: deleteId }),
       });
-      if (!res.ok) { const err = await res.json(); toast.error(err.error || 'Failed to delete domain'); return; }
-      setDomains([]);
+      if (!res.ok) { const err = await res.json(); toast.error(err.error || 'Failed to delete'); return; }
+      setDomains((prev) => prev.filter((d) => d.id !== deleteId));
+      setDeleteId(null);
       toast.success('Domain removed');
-    } finally { setDeleting(false); setDeleteId(null); }
-  }
-
-  function renderModeSelector(
-    mode: 'root' | 'subdomain', setMode: (m: 'root' | 'subdomain') => void,
-    baseDomain: string, setBaseDomainFn: (v: string) => void,
-    subdomain: string, setSubdomainFn: (v: string) => void,
-    preview: string,
-  ) {
-    return (
-      <>
-        <div>
-          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Base Domain</label>
-          <input type="text" value={baseDomain} onChange={(e) => setBaseDomainFn(e.target.value)} className="input-base font-mono" placeholder="example.com" required />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Type</label>
-          <div className="flex gap-2">
-            <button type="button" onClick={() => setMode('root')} className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${mode === 'root' ? 'bg-[#3D8BDA]/15 border-[#3D8BDA]/40 text-[#3D8BDA]' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:border-slate-300 dark:hover:border-slate-600'}`}>Root domain (@)</button>
-            <button type="button" onClick={() => setMode('subdomain')} className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${mode === 'subdomain' ? 'bg-[#3D8BDA]/15 border-[#3D8BDA]/40 text-[#3D8BDA]' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:border-slate-300 dark:hover:border-slate-600'}`}>Subdomain</button>
-          </div>
-        </div>
-        {mode === 'subdomain' && (
-          <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Subdomain Prefix</label>
-            <div className="flex items-center gap-0">
-              <input type="text" value={subdomain} onChange={(e) => setSubdomainFn(e.target.value.replace(/[^a-zA-Z0-9-]/g, ''))} className="input-base font-mono rounded-r-none border-r-0" placeholder="testing" required autoFocus />
-              <div className="px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-r-lg text-slate-500 text-sm font-mono whitespace-nowrap">.{baseDomain.trim().toLowerCase() || 'example.com'}</div>
-            </div>
-          </div>
-        )}
-        {baseDomain.trim() && (
-          <div className="rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/50 px-3 py-2.5">
-            <p className="text-slate-500 text-xs mb-1">Domain preview</p>
-            <p className="text-slate-900 dark:text-slate-100 font-mono text-sm">{preview || '-'}</p>
-          </div>
-        )}
-      </>
-    );
+    } finally { setDeleting(false); }
   }
 
   function renderDomainCard(d: Domain) {
     const status = verifyStatus[d.id];
     const errorMsg = verifyMessage[d.id];
-    const dnsName = getDomainName(d.domain);
     const activeTxtRecords = verifyTxtRecords[d.id] ?? d.vercel_verification ?? [];
-    const isRoot = isRootDomain(d.domain);
+    const prefix = getDomainPrefix(d.domain); // e.g. "test"
+    const base = getBaseDomain(d.domain);     // e.g. "linkedupai.xyz"
 
     if (d.verified) {
       const isEditingFb = editingFallback === d.id;
@@ -247,7 +206,7 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
               <div className="flex items-center gap-2 mb-1">
                 <Globe size={15} className="text-green-400 flex-shrink-0" />
                 <span className="font-medium text-slate-900 dark:text-slate-100">{d.domain}</span>
-                <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-green-500/15 text-green-400 border border-green-500/25"><CheckCircle size={11} /> Domain Active</span>
+                <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-green-500/15 text-green-400 border border-green-500/25"><CheckCircle size={11} /> Active</span>
               </div>
               <p className="text-slate-400 dark:text-slate-500 text-xs ml-[23px]">Verified {d.verified_at ? formatDate(d.verified_at) : ''} • Added {formatDate(d.created_at)}</p>
             </div>
@@ -275,7 +234,7 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
                   <p className="mt-1 text-xs font-mono truncate">
                     {d.fallback_url
                       ? <span className="text-[#3D8BDA]">{d.fallback_url}</span>
-                      : <span className="text-slate-500 italic">Not set — visitors will see an error page if no test is active</span>}
+                      : <span className="text-slate-500 italic">Not set — visitors will see a placeholder page if no test is active</span>}
                   </p>
                 )}
               </div>
@@ -293,7 +252,7 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
                   value={fallbackDraft}
                   onChange={e => setFallbackDraft(e.target.value)}
                   className="input-base text-xs font-mono flex-1"
-                  placeholder="https://your-direct-hosting-url.com"
+                  placeholder="https://www.yoursite.com"
                   autoFocus
                 />
                 <button
@@ -312,8 +271,10 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
       );
     }
 
+    // ── Pending DNS card ──
     return (
       <div key={d.id} className="card overflow-hidden">
+        {/* Header */}
         <div className="p-5 flex items-center gap-4">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-1">
@@ -335,6 +296,8 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
             )}
           </div>
         </div>
+
+        {/* Progress bar */}
         <div className="border-t border-slate-200 dark:border-slate-800 px-5 py-3 bg-slate-50 dark:bg-slate-800/30">
           <div className="flex items-center gap-6 text-xs">
             <span className="flex items-center gap-1.5 text-green-400"><CheckCircle size={13} /> Domain registered</span>
@@ -342,102 +305,82 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
             <span className="flex items-center gap-1.5 text-slate-500"><span className="w-[13px] h-[13px] rounded-full border border-slate-600 flex-shrink-0" /> Verify</span>
           </div>
         </div>
-        <div className="border-t border-amber-500/20 px-5 py-3 bg-amber-500/5 flex items-center gap-2">
-          <AlertCircle size={14} className="text-amber-400 flex-shrink-0" />
-          <p className="text-amber-300 text-xs font-medium">1 step remaining: Update your DNS records below, then click Verify DNS</p>
-        </div>
+
+        {/* Error msg */}
         {errorMsg && (
           <div className="border-t border-red-500/20 px-5 py-3 bg-red-500/5 flex items-start gap-2">
             <XCircle size={14} className="text-red-400 flex-shrink-0 mt-0.5" />
             <p className="text-red-300 text-xs">{errorMsg}</p>
           </div>
         )}
-        <div className="border-t border-slate-200 dark:border-slate-800 px-5 py-4">
+
+        {/* DNS setup guide */}
+        <div className="border-t border-slate-200 dark:border-slate-800 px-5 py-5 space-y-4">
+
+          {/* Production site untouched notice */}
+          <div className="rounded-lg border border-green-500/25 bg-green-500/5 px-4 py-3 flex items-start gap-3">
+            <ShieldCheck size={15} className="text-green-400 flex-shrink-0 mt-0.5" />
+            <div className="text-xs text-green-300 leading-relaxed">
+              <strong className="text-green-200">Your production site stays untouched.</strong>{' '}
+              Only <span className="font-mono text-green-200">{d.domain}</span> points to SplitLab.
+              {base && <>{' '}<span className="font-mono text-green-400">www.{base}</span> and <span className="font-mono text-green-400">{base}</span> continue working normally.</>}
+            </div>
+          </div>
+
           {activeTxtRecords.length > 0 ? (
-            /* Vercel-managed domain — routing is auto-configured, only TXT needed */
+            /* Vercel-managed domain — TXT only */
             <>
-              <div className="mb-3 rounded-lg border border-blue-500/30 bg-blue-500/5 px-3 py-2.5 flex items-start gap-2">
+              <div className="rounded-lg border border-blue-500/30 bg-blue-500/5 px-3 py-2.5 flex items-start gap-2">
                 <AlertCircle size={14} className="text-blue-400 flex-shrink-0 mt-0.5" />
-                <div className="text-xs text-blue-300 leading-relaxed">
-                  <strong className="text-blue-200">Your domain uses Vercel nameservers.</strong> Vercel automatically manages the routing records (ALIAS/CNAME) — you do <strong className="text-blue-200">not</strong> need to add those manually. You only need to add the one TXT record below in your{' '}
+                <p className="text-xs text-blue-300 leading-relaxed">
+                  <strong className="text-blue-200">Vercel nameservers detected.</strong> Vercel auto-handles routing — you only need to add this one TXT record in your{' '}
                   <a href="https://vercel.com/dashboard/domains" target="_blank" rel="noopener noreferrer" className="underline hover:text-blue-100">Vercel DNS panel</a>.
-                </div>
-              </div>
-              <h4 className="text-xs font-medium text-slate-700 dark:text-slate-300 mb-3">Add this TXT record in your Vercel DNS panel:</h4>
-              <div className="rounded-lg border border-amber-500/30 overflow-hidden text-xs">
-                <div className="grid bg-amber-500/5" style={{gridTemplateColumns:'60px 180px 1fr 28px'}}>
-                  <div className="px-3 py-2 text-slate-500 font-medium border-r border-amber-500/20">Type</div>
-                  <div className="px-3 py-2 text-slate-500 font-medium border-r border-amber-500/20">Name</div>
-                  <div className="px-3 py-2 text-slate-500 font-medium border-r border-amber-500/20">Value</div>
-                  <div />
-                </div>
-                {activeTxtRecords.map((v, i) => (
-                  <div key={i} className="grid bg-white dark:bg-slate-900/50 border-t border-amber-500/20" style={{gridTemplateColumns:'60px 180px 1fr 28px'}}>
-                    <div className="px-3 py-2.5 text-slate-800 dark:text-slate-200 font-mono border-r border-amber-500/20">{v.type}</div>
-                    <div className="px-3 py-2.5 text-slate-800 dark:text-slate-200 font-mono border-r border-amber-500/20 break-all">{v.domain.replace(/\.$/, '')}</div>
-                    <div className="px-3 py-2.5 text-amber-300 font-mono break-all border-r border-amber-500/20">{v.value}</div>
-                    <div className="flex items-center justify-center">
-                      <button onClick={() => copyToClipboard(v.value)} className="text-slate-500 hover:text-slate-300"><Copy size={12} /></button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </>
-          ) : (
-            /* Standard registrar flow */
-            <>
-              <h4 className="text-xs font-medium text-slate-700 dark:text-slate-300 mb-3">
-                Add this DNS record at your domain provider (GoDaddy, Namecheap, Squarespace, etc.)
-              </h4>
-              <div className="rounded-lg border border-slate-700 overflow-hidden text-xs">
-                <div className="grid bg-slate-50 dark:bg-slate-800/60" style={{gridTemplateColumns:'60px 140px 1fr 28px'}}>
-                  <div className="px-3 py-2 text-slate-500 font-medium border-r border-slate-200 dark:border-slate-700">Type</div>
-                  <div className="px-3 py-2 text-slate-500 font-medium border-r border-slate-200 dark:border-slate-700">Name</div>
-                  <div className="px-3 py-2 text-slate-500 font-medium border-r border-slate-200 dark:border-slate-700">Value</div>
-                  <div />
-                </div>
-                {!isRoot ? (
-                  <div className="grid bg-white dark:bg-slate-900/50" style={{gridTemplateColumns:'60px 140px 1fr 28px'}}>
-                    <div className="px-3 py-2.5 text-slate-800 dark:text-slate-200 font-mono border-r border-slate-200 dark:border-slate-700">CNAME</div>
-                    <div className="px-3 py-2.5 text-slate-800 dark:text-slate-200 font-mono border-r border-slate-200 dark:border-slate-700">{dnsName}</div>
-                    <div className="px-3 py-2.5 font-mono text-[#3D8BDA] break-all border-r border-slate-200 dark:border-slate-700">cname.vercel-dns.com</div>
-                    <div className="flex items-center justify-center">
-                      <button onClick={() => copyToClipboard('cname.vercel-dns.com')} className="text-slate-500 hover:text-slate-300"><Copy size={12} /></button>
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    <div className="grid bg-white dark:bg-slate-900/50" style={{gridTemplateColumns:'60px 140px 1fr 28px'}}>
-                      <div className="px-3 py-2.5 text-slate-800 dark:text-slate-200 font-mono border-r border-slate-200 dark:border-slate-700">A</div>
-                      <div className="px-3 py-2.5 text-slate-800 dark:text-slate-200 font-mono border-r border-slate-200 dark:border-slate-700">@</div>
-                      <div className="px-3 py-2.5 font-mono text-[#3D8BDA] break-all border-r border-slate-200 dark:border-slate-700">76.76.21.21</div>
-                      <div className="flex items-center justify-center">
-                        <button onClick={() => copyToClipboard('76.76.21.21')} className="text-slate-500 hover:text-slate-300"><Copy size={12} /></button>
-                      </div>
-                    </div>
-                    <div className="grid bg-white dark:bg-slate-900/50 border-t border-slate-200 dark:border-slate-700" style={{gridTemplateColumns:'60px 140px 1fr 28px'}}>
-                      <div className="px-3 py-2.5 text-slate-500 font-mono border-r border-slate-200 dark:border-slate-700">CNAME</div>
-                      <div className="px-3 py-2.5 text-slate-500 font-mono border-r border-slate-200 dark:border-slate-700">www</div>
-                      <div className="px-3 py-2.5 font-mono text-slate-500 break-all border-r border-slate-200 dark:border-slate-700">cname.vercel-dns.com <span className="text-slate-600">(optional, for www)</span></div>
-                      <div className="flex items-center justify-center">
-                        <button onClick={() => copyToClipboard('cname.vercel-dns.com')} className="text-slate-500 hover:text-slate-300"><Copy size={12} /></button>
-                      </div>
-                    </div>
-                  </>
-                )}
-              </div>
-              <div className="mt-3 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2.5 flex items-start gap-2">
-                <AlertCircle size={13} className="text-amber-400 flex-shrink-0 mt-0.5" />
-                <p className="text-xs text-amber-300 leading-relaxed">
-                  <strong className="text-amber-200">Using Cloudflare?</strong> Make sure the record is set to <strong className="text-amber-200">DNS only</strong> (grey cloud icon), not proxied (orange cloud). Proxied records will fail verification.
                 </p>
               </div>
+              <DnsTable records={activeTxtRecords.map(v => ({ type: v.type, name: v.domain.replace(/\.$/, ''), value: v.value }))} onCopy={copyToClipboard} />
+            </>
+          ) : (
+            /* Standard registrar — CNAME guide */
+            <>
+              <div>
+                <p className="text-xs font-semibold text-slate-700 dark:text-slate-200 mb-3 flex items-center gap-2">
+                  <span className="w-5 h-5 rounded-full bg-[#3D8BDA]/20 text-[#3D8BDA] text-xs flex items-center justify-center font-bold">1</span>
+                  Log in to your domain registrar (GoDaddy, Namecheap, Cloudflare, etc.)
+                </p>
+                <p className="text-xs font-semibold text-slate-700 dark:text-slate-200 mb-3 flex items-center gap-2">
+                  <span className="w-5 h-5 rounded-full bg-[#3D8BDA]/20 text-[#3D8BDA] text-xs flex items-center justify-center font-bold">2</span>
+                  Add this DNS record:
+                </p>
+                <DnsTable
+                  records={[{
+                    type: 'CNAME',
+                    name: prefix || d.domain,
+                    value: 'cname.vercel-dns.com',
+                  }]}
+                  onCopy={copyToClipboard}
+                  highlight
+                />
+                <div className="mt-2.5 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2.5 flex items-start gap-2">
+                  <AlertCircle size={13} className="text-amber-400 flex-shrink-0 mt-0.5" />
+                  <p className="text-xs text-amber-300 leading-relaxed">
+                    <strong className="text-amber-200">Using Cloudflare?</strong> Set the record to <strong className="text-amber-200">DNS only</strong> (grey cloud), not proxied (orange cloud).
+                  </p>
+                </div>
+              </div>
+              <p className="text-xs font-semibold text-slate-700 dark:text-slate-200 flex items-center gap-2">
+                <span className="w-5 h-5 rounded-full bg-[#3D8BDA]/20 text-[#3D8BDA] text-xs flex items-center justify-center font-bold">3</span>
+                Come back here and click <strong className="text-slate-100">Verify DNS</strong> above
+              </p>
+              <p className="text-xs text-slate-500">DNS changes can take a few minutes to propagate. If Verify fails, wait 5 minutes and try again.</p>
             </>
           )}
         </div>
       </div>
     );
   }
+
+  const addPreview = getAddPreview();
+  const addBase = cleanDomain(addWebsiteDomain);
 
   return (
     <div className="max-w-3xl space-y-4">
@@ -461,7 +404,7 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
           </div>
           <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100 mb-2">Connect your custom domain</h2>
           <p className="text-slate-500 dark:text-slate-400 text-sm max-w-md mx-auto mb-8">
-            Route traffic through your own domain so A/B tests run on your URL, not ours. Takes about 2 minutes to set up.
+            Run A/B tests on a subdomain (e.g. <span className="font-mono">test.yoursite.com</span>) — your main site stays completely untouched.
           </p>
           <button
             onClick={() => { resetAddModal(); setModalOpen(true); }}
@@ -488,26 +431,132 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
         loading={deleting}
       />
 
-      <Modal open={modalOpen} onClose={() => setModalOpen(false)} title="Add Custom Domain" size="sm">
-        <form onSubmit={handleAdd} className="space-y-4">
-          {renderModeSelector(addMode, setAddMode, addBaseDomain, setAddBaseDomain, addSubdomain, setAddSubdomain, getAddPreview())}
-          <div className="flex justify-end gap-3 pt-2">
+      {/* ── Add Domain Modal ── */}
+      <Modal open={modalOpen} onClose={() => setModalOpen(false)} title="Add Test Subdomain" size="sm">
+        <form onSubmit={handleAdd} className="space-y-5">
+          {/* Step 1 */}
+          <div>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+              Your website domain
+            </label>
+            <input
+              type="text"
+              value={addWebsiteDomain}
+              onChange={e => setAddWebsiteDomain(e.target.value)}
+              className="input-base font-mono"
+              placeholder="linkedupai.xyz"
+              autoFocus
+              required
+            />
+            <p className="text-xs text-slate-500 mt-1">Enter your root domain — without www or https.</p>
+          </div>
+
+          {/* Step 2 — subdomain prefix */}
+          <div>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+              Test subdomain prefix
+            </label>
+            <div className="flex items-center gap-0">
+              <input
+                type="text"
+                value={addPrefix}
+                onChange={e => setAddPrefix(e.target.value.replace(/[^a-zA-Z0-9-]/g, ''))}
+                className="input-base font-mono rounded-r-none border-r-0 w-28"
+                placeholder="test"
+              />
+              <div className="px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-r-lg text-slate-500 text-sm font-mono whitespace-nowrap">
+                .{addBase || 'yoursite.com'}
+              </div>
+            </div>
+            <p className="text-xs text-slate-500 mt-1">Common choices: <button type="button" onClick={() => setAddPrefix('test')} className="text-[#3D8BDA] hover:underline">test</button>, <button type="button" onClick={() => setAddPrefix('ab')} className="text-[#3D8BDA] hover:underline">ab</button>, <button type="button" onClick={() => setAddPrefix('try')} className="text-[#3D8BDA] hover:underline">try</button></p>
+          </div>
+
+          {/* Preview */}
+          {addPreview && (
+            <div className="rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden text-sm">
+              <div className="bg-slate-50 dark:bg-slate-800/60 px-4 py-2 text-xs font-medium text-slate-500 border-b border-slate-200 dark:border-slate-700">Setup preview</div>
+              <div className="divide-y divide-slate-100 dark:divide-slate-800">
+                <div className="flex items-center justify-between px-4 py-2.5">
+                  <span className="font-mono text-xs text-green-400">{addPreview}</span>
+                  <span className="text-xs text-slate-500 flex items-center gap-1.5"><ArrowRight size={11} /> SplitLab A/B tests</span>
+                </div>
+                {addBase && (
+                  <div className="flex items-center justify-between px-4 py-2.5">
+                    <span className="font-mono text-xs text-slate-400">www.{addBase}</span>
+                    <span className="text-xs text-slate-500 flex items-center gap-1.5"><ShieldCheck size={11} className="text-green-500" /> Your site — untouched</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          <div className="flex justify-end gap-3 pt-1">
             <Button variant="secondary" type="button" onClick={() => setModalOpen(false)}>Cancel</Button>
-            <Button type="submit" loading={adding} disabled={!addBaseDomain.trim()}>Add Domain</Button>
+            <Button type="submit" loading={adding} disabled={!addBase.trim() || !addPrefix.trim()}>Continue</Button>
           </div>
         </form>
       </Modal>
 
+      {/* ── Edit Domain Modal ── */}
       <Modal open={editModalOpen} onClose={() => setEditModalOpen(false)} title="Edit Domain" size="sm">
         <form onSubmit={handleEdit} className="space-y-4">
-          {renderModeSelector(editMode, setEditMode, editBaseDomain, setEditBaseDomain, editSubdomain, setEditSubdomain, getEditPreview())}
-          <p className="text-slate-400 dark:text-slate-500 text-xs">Changing the domain will reset its verification status. You&apos;ll need to update DNS records for the new domain.</p>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Base Domain</label>
+            <input type="text" value={editBaseDomain} onChange={e => setEditBaseDomain(e.target.value)} className="input-base font-mono" placeholder="linkedupai.xyz" required />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Subdomain Prefix</label>
+            <div className="flex items-center gap-0">
+              <input type="text" value={editPrefix} onChange={e => setEditPrefix(e.target.value.replace(/[^a-zA-Z0-9-]/g, ''))} className="input-base font-mono rounded-r-none border-r-0 w-28" placeholder="test" />
+              <div className="px-3 py-2 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-r-lg text-slate-500 text-sm font-mono whitespace-nowrap">.{cleanDomain(editBaseDomain) || 'example.com'}</div>
+            </div>
+          </div>
+          {getEditPreview() && (
+            <div className="rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/50 px-3 py-2.5">
+              <p className="text-slate-500 text-xs mb-1">Preview</p>
+              <p className="font-mono text-sm text-slate-900 dark:text-slate-100">{getEditPreview()}</p>
+            </div>
+          )}
+          <p className="text-slate-400 dark:text-slate-500 text-xs">Changing the domain will reset its verification status. Update your DNS record for the new subdomain.</p>
           <div className="flex justify-end gap-3 pt-2">
             <Button variant="secondary" type="button" onClick={() => setEditModalOpen(false)}>Cancel</Button>
             <Button type="submit" loading={saving} disabled={!editBaseDomain.trim()}>Save Changes</Button>
           </div>
         </form>
       </Modal>
+    </div>
+  );
+}
+
+function DnsTable({ records, onCopy, highlight }: {
+  records: { type: string; name: string; value: string }[];
+  onCopy: (v: string) => void;
+  highlight?: boolean;
+}) {
+  const borderColor = highlight ? 'border-[#3D8BDA]/30' : 'border-amber-500/30';
+  const headerBg = highlight ? 'bg-[#3D8BDA]/5' : 'bg-amber-500/5';
+  const headerBorder = highlight ? 'border-[#3D8BDA]/20' : 'border-amber-500/20';
+  const rowBorder = highlight ? 'border-[#3D8BDA]/20' : 'border-amber-500/20';
+  const valueColor = highlight ? 'text-[#3D8BDA]' : 'text-amber-300';
+
+  return (
+    <div className={`rounded-lg border ${borderColor} overflow-hidden text-xs`}>
+      <div className={`grid ${headerBg}`} style={{ gridTemplateColumns: '64px 140px 1fr 32px' }}>
+        <div className={`px-3 py-2 text-slate-500 font-medium border-r ${headerBorder}`}>Type</div>
+        <div className={`px-3 py-2 text-slate-500 font-medium border-r ${headerBorder}`}>Name</div>
+        <div className={`px-3 py-2 text-slate-500 font-medium border-r ${headerBorder}`}>Value</div>
+        <div />
+      </div>
+      {records.map((r, i) => (
+        <div key={i} className={`grid bg-white dark:bg-slate-900/50 border-t ${rowBorder}`} style={{ gridTemplateColumns: '64px 140px 1fr 32px' }}>
+          <div className={`px-3 py-2.5 text-slate-800 dark:text-slate-200 font-mono border-r ${rowBorder}`}>{r.type}</div>
+          <div className={`px-3 py-2.5 text-slate-800 dark:text-slate-200 font-mono border-r ${rowBorder} break-all`}>{r.name}</div>
+          <div className={`px-3 py-2.5 font-mono ${valueColor} break-all border-r ${rowBorder}`}>{r.value}</div>
+          <div className="flex items-center justify-center">
+            <button onClick={() => onCopy(r.value)} className="text-slate-500 hover:text-slate-300" title="Copy"><Copy size={12} /></button>
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
