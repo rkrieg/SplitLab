@@ -124,10 +124,15 @@ export async function getDomainStatus(domain: string): Promise<DomainStatus> {
   if (configRes.ok) {
     const config = await configRes.json();
     if (config.misconfigured === true) {
+      // Check for Cloudflare proxy as common cause
+      const isCloudflareProxy = config.cnames?.some((c: string) => /cloudflare/.test(c));
       return {
         verified: false,
         status: 'misconfigured',
-        message: 'DNS records not configured correctly. Ensure your CNAME points to cname.vercel-dns.com and try again.',
+        misconfigured_detail: isCloudflareProxy ? 'cloudflare_proxy' : 'wrong_record',
+        message: isCloudflareProxy
+          ? 'Your domain is proxied through Cloudflare. Set the DNS record to "DNS only" (grey cloud) and try again.'
+          : 'DNS records not found or incorrect. Double-check the CNAME record and try again.',
       };
     }
   }

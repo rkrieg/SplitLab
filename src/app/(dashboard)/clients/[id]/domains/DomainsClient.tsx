@@ -139,17 +139,21 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
       const result = await res.json();
       setVerifyStatus((prev) => ({ ...prev, [domainId]: result.status }));
       if (result.verified) {
-        setDomains((prev) => prev.map((d) => d.id === domainId ? { ...d, verified: true, verified_at: new Date().toISOString() } : d));
+        setDomains((prev) => prev.map((d) => d.id === domainId ? { ...d, verified: true, verified_at: new Date().toISOString(), vercel_verification: [] } : d));
         setVerifyMessage((prev) => ({ ...prev, [domainId]: '' }));
         setVerifyTxtRecords((prev) => { const n = { ...prev }; delete n[domainId]; return n; });
         toast.success('Domain verified successfully!');
       } else if (result.status === 'needs_txt') {
-        setVerifyTxtRecords((prev) => ({ ...prev, [domainId]: result.vercel_verification || [] }));
+        const txtRecords = result.vercel_verification || [];
+        setVerifyTxtRecords((prev) => ({ ...prev, [domainId]: txtRecords }));
+        // Also persist to domain object so it survives state re-renders
+        setDomains((prev) => prev.map((d) => d.id === domainId ? { ...d, vercel_verification: txtRecords } : d));
         setVerifyMessage((prev) => ({ ...prev, [domainId]: '' }));
       } else if (result.status === 'misconfigured') {
-        setVerifyMessage((prev) => ({ ...prev, [domainId]: "DNS records not found. Make sure you've added the CNAME record at your registrar and try again." }));
+        // Use the server-supplied message (may include Cloudflare-specific guidance)
+        setVerifyMessage((prev) => ({ ...prev, [domainId]: result.message || "DNS records not found. Double-check the records below are added correctly and try again." }));
       } else {
-        setVerifyMessage((prev) => ({ ...prev, [domainId]: 'DNS not yet propagated. This can take a few minutes. Try again shortly.' }));
+        setVerifyMessage((prev) => ({ ...prev, [domainId]: result.message || 'DNS not yet propagated. This can take a few minutes. Try again shortly.' }));
       }
     } catch { toast.error('Failed to check domain verification'); } finally { setVerifying(null); }
   }
@@ -327,34 +331,52 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
           ) : (
             /* Standard registrar flow */
             <>
-              <h4 className="text-xs font-medium text-slate-700 dark:text-slate-300 mb-3">Point your domain to SplitLab by adding this DNS record at your registrar (GoDaddy, Namecheap, Cloudflare, etc.)</h4>
+              <h4 className="text-xs font-medium text-slate-700 dark:text-slate-300 mb-3">
+                Add this DNS record at your domain provider (GoDaddy, Namecheap, Squarespace, etc.)
+              </h4>
               <div className="rounded-lg border border-slate-700 overflow-hidden text-xs">
-                <div className="grid grid-cols-3 bg-slate-50 dark:bg-slate-800/60">
+                <div className="grid bg-slate-50 dark:bg-slate-800/60" style={{gridTemplateColumns:'60px 140px 1fr 28px'}}>
                   <div className="px-3 py-2 text-slate-500 font-medium border-r border-slate-200 dark:border-slate-700">Type</div>
                   <div className="px-3 py-2 text-slate-500 font-medium border-r border-slate-200 dark:border-slate-700">Name</div>
-                  <div className="px-3 py-2 text-slate-500 font-medium">Value</div>
+                  <div className="px-3 py-2 text-slate-500 font-medium border-r border-slate-200 dark:border-slate-700">Value</div>
+                  <div />
                 </div>
-                <div className="grid grid-cols-3 bg-white dark:bg-slate-900/50">
-                  <div className="px-3 py-2.5 text-slate-800 dark:text-slate-200 font-mono border-r border-slate-200 dark:border-slate-700">CNAME</div>
-                  <div className="px-3 py-2.5 text-slate-800 dark:text-slate-200 font-mono border-r border-slate-200 dark:border-slate-700">{dnsName}</div>
-                  <div className="px-3 py-2.5 font-mono flex items-center justify-between gap-2">
-                    <span className="text-[#3D8BDA]">cname.vercel-dns.com</span>
-                    <button onClick={() => copyToClipboard('cname.vercel-dns.com')} className="text-slate-500 hover:text-slate-300 flex-shrink-0"><Copy size={12} /></button>
+                {!isRoot ? (
+                  <div className="grid bg-white dark:bg-slate-900/50" style={{gridTemplateColumns:'60px 140px 1fr 28px'}}>
+                    <div className="px-3 py-2.5 text-slate-800 dark:text-slate-200 font-mono border-r border-slate-200 dark:border-slate-700">CNAME</div>
+                    <div className="px-3 py-2.5 text-slate-800 dark:text-slate-200 font-mono border-r border-slate-200 dark:border-slate-700">{dnsName}</div>
+                    <div className="px-3 py-2.5 font-mono text-[#3D8BDA] break-all border-r border-slate-200 dark:border-slate-700">cname.vercel-dns.com</div>
+                    <div className="flex items-center justify-center">
+                      <button onClick={() => copyToClipboard('cname.vercel-dns.com')} className="text-slate-500 hover:text-slate-300"><Copy size={12} /></button>
+                    </div>
                   </div>
-                </div>
+                ) : (
+                  <>
+                    <div className="grid bg-white dark:bg-slate-900/50" style={{gridTemplateColumns:'60px 140px 1fr 28px'}}>
+                      <div className="px-3 py-2.5 text-slate-800 dark:text-slate-200 font-mono border-r border-slate-200 dark:border-slate-700">A</div>
+                      <div className="px-3 py-2.5 text-slate-800 dark:text-slate-200 font-mono border-r border-slate-200 dark:border-slate-700">@</div>
+                      <div className="px-3 py-2.5 font-mono text-[#3D8BDA] break-all border-r border-slate-200 dark:border-slate-700">76.76.21.21</div>
+                      <div className="flex items-center justify-center">
+                        <button onClick={() => copyToClipboard('76.76.21.21')} className="text-slate-500 hover:text-slate-300"><Copy size={12} /></button>
+                      </div>
+                    </div>
+                    <div className="grid bg-white dark:bg-slate-900/50 border-t border-slate-200 dark:border-slate-700" style={{gridTemplateColumns:'60px 140px 1fr 28px'}}>
+                      <div className="px-3 py-2.5 text-slate-500 font-mono border-r border-slate-200 dark:border-slate-700">CNAME</div>
+                      <div className="px-3 py-2.5 text-slate-500 font-mono border-r border-slate-200 dark:border-slate-700">www</div>
+                      <div className="px-3 py-2.5 font-mono text-slate-500 break-all border-r border-slate-200 dark:border-slate-700">cname.vercel-dns.com <span className="text-slate-600">(optional, for www)</span></div>
+                      <div className="flex items-center justify-center">
+                        <button onClick={() => copyToClipboard('cname.vercel-dns.com')} className="text-slate-500 hover:text-slate-300"><Copy size={12} /></button>
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
-              {isRoot && (
-                <div className="mt-3 rounded-lg border border-slate-200 dark:border-slate-700/50 bg-slate-50 dark:bg-slate-800/30 px-3 py-2.5">
-                  <p className="text-slate-400 text-xs leading-relaxed">
-                    <strong className="text-slate-700 dark:text-slate-300">Root domain?</strong> Some registrars don&apos;t support CNAME on root domains. Use an <strong className="text-slate-700 dark:text-slate-300">A record</strong> instead:
-                  </p>
-                  <div className="grid grid-cols-3 mt-2 text-xs font-mono">
-                    <span className="text-slate-700 dark:text-slate-300">A</span>
-                    <span className="text-slate-700 dark:text-slate-300">@</span>
-                    <span className="text-[#3D8BDA] flex items-center gap-2">76.76.21.21 <button onClick={() => copyToClipboard('76.76.21.21')} className="text-slate-500 hover:text-slate-300"><Copy size={12} /></button></span>
-                  </div>
-                </div>
-              )}
+              <div className="mt-3 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2.5 flex items-start gap-2">
+                <AlertCircle size={13} className="text-amber-400 flex-shrink-0 mt-0.5" />
+                <p className="text-xs text-amber-300 leading-relaxed">
+                  <strong className="text-amber-200">Using Cloudflare?</strong> Make sure the record is set to <strong className="text-amber-200">DNS only</strong> (grey cloud icon), not proxied (orange cloud). Proxied records will fail verification.
+                </p>
+              </div>
             </>
           )}
         </div>
