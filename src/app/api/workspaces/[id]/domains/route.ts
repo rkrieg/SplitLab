@@ -76,7 +76,13 @@ export async function POST(
       if (result.verified) {
         await db
           .from('domains')
-          .update({ verified: true, verified_at: new Date().toISOString() })
+          .update({ verified: true, verified_at: new Date().toISOString(), vercel_verification: null })
+          .eq('id', domain_id);
+      } else if (result.status === 'needs_txt' && result.vercel_verification?.length) {
+        // Persist fresh TXT records so they survive page refresh
+        await db
+          .from('domains')
+          .update({ vercel_verification: result.vercel_verification })
           .eq('id', domain_id);
       }
 
@@ -157,6 +163,14 @@ export async function POST(
       vercelVerification = result.verification || [];
     } catch (e) {
       console.warn('[domains] addDomainToVercel failed:', (e as Error).message);
+    }
+
+    // Persist TXT records to DB so they survive page refresh
+    if (vercelVerification.length > 0 && newDomain) {
+      await db
+        .from('domains')
+        .update({ vercel_verification: vercelVerification })
+        .eq('id', (newDomain as unknown as { id: string }).id);
     }
 
     return NextResponse.json({ ...newDomain, vercel_verification: vercelVerification }, { status: 201 });
