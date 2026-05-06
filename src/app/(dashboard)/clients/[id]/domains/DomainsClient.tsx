@@ -290,37 +290,28 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
         )}
         <div className="border-t border-slate-200 dark:border-slate-800 px-5 py-4">
           {activeTxtRecords.length > 0 ? (
-            /* Vercel-managed domain — all records go in Vercel DNS panel */
+            /* Vercel-managed domain — routing is auto-configured, only TXT needed */
             <>
               <div className="mb-3 rounded-lg border border-blue-500/30 bg-blue-500/5 px-3 py-2.5 flex items-start gap-2">
                 <AlertCircle size={14} className="text-blue-400 flex-shrink-0 mt-0.5" />
                 <div className="text-xs text-blue-300 leading-relaxed">
-                  <strong className="text-blue-200">Your domain uses Vercel nameservers.</strong> Add both records below in your{' '}
-                  <a href="https://vercel.com/dashboard/domains" target="_blank" rel="noopener noreferrer" className="underline hover:text-blue-100">Vercel DNS panel</a>
-                  {' '}— not at your domain registrar.
+                  <strong className="text-blue-200">Your domain uses Vercel nameservers.</strong> Vercel automatically manages the routing records (ALIAS/CNAME) — you do <strong className="text-blue-200">not</strong> need to add those manually. You only need to add the one TXT record below in your{' '}
+                  <a href="https://vercel.com/dashboard/domains" target="_blank" rel="noopener noreferrer" className="underline hover:text-blue-100">Vercel DNS panel</a>.
                 </div>
               </div>
-              <h4 className="text-xs font-medium text-slate-700 dark:text-slate-300 mb-3">Add these 2 DNS records in your Vercel DNS panel:</h4>
-              <div className="rounded-lg border border-slate-700 overflow-hidden text-xs">
-                <div className="grid bg-slate-50 dark:bg-slate-800/60" style={{gridTemplateColumns:'60px 180px 1fr 28px'}}>
-                  <div className="px-3 py-2 text-slate-500 font-medium border-r border-slate-200 dark:border-slate-700">Type</div>
-                  <div className="px-3 py-2 text-slate-500 font-medium border-r border-slate-200 dark:border-slate-700">Name</div>
-                  <div className="px-3 py-2 text-slate-500 font-medium border-r border-slate-200 dark:border-slate-700">Value</div>
+              <h4 className="text-xs font-medium text-slate-700 dark:text-slate-300 mb-3">Add this TXT record in your Vercel DNS panel:</h4>
+              <div className="rounded-lg border border-amber-500/30 overflow-hidden text-xs">
+                <div className="grid bg-amber-500/5" style={{gridTemplateColumns:'60px 180px 1fr 28px'}}>
+                  <div className="px-3 py-2 text-slate-500 font-medium border-r border-amber-500/20">Type</div>
+                  <div className="px-3 py-2 text-slate-500 font-medium border-r border-amber-500/20">Name</div>
+                  <div className="px-3 py-2 text-slate-500 font-medium border-r border-amber-500/20">Value</div>
                   <div />
                 </div>
-                <div className="grid bg-white dark:bg-slate-900/50" style={{gridTemplateColumns:'60px 180px 1fr 28px'}}>
-                  <div className="px-3 py-2.5 text-slate-800 dark:text-slate-200 font-mono border-r border-slate-200 dark:border-slate-700">CNAME</div>
-                  <div className="px-3 py-2.5 text-slate-800 dark:text-slate-200 font-mono border-r border-slate-200 dark:border-slate-700">{dnsName}</div>
-                  <div className="px-3 py-2.5 font-mono text-[#3D8BDA] break-all border-r border-slate-200 dark:border-slate-700">cname.vercel-dns.com</div>
-                  <div className="flex items-center justify-center">
-                    <button onClick={() => copyToClipboard('cname.vercel-dns.com')} className="text-slate-500 hover:text-slate-300"><Copy size={12} /></button>
-                  </div>
-                </div>
                 {activeTxtRecords.map((v, i) => (
-                  <div key={i} className="grid bg-white dark:bg-slate-900/50 border-t border-slate-200 dark:border-slate-700" style={{gridTemplateColumns:'60px 180px 1fr 28px'}}>
-                    <div className="px-3 py-2.5 text-slate-800 dark:text-slate-200 font-mono border-r border-slate-200 dark:border-slate-700">{v.type}</div>
-                    <div className="px-3 py-2.5 text-slate-800 dark:text-slate-200 font-mono border-r border-slate-200 dark:border-slate-700 break-all">{v.domain.replace(/\.$/, '')}</div>
-                    <div className="px-3 py-2.5 text-amber-300 font-mono break-all border-r border-slate-200 dark:border-slate-700">{v.value}</div>
+                  <div key={i} className="grid bg-white dark:bg-slate-900/50 border-t border-amber-500/20" style={{gridTemplateColumns:'60px 180px 1fr 28px'}}>
+                    <div className="px-3 py-2.5 text-slate-800 dark:text-slate-200 font-mono border-r border-amber-500/20">{v.type}</div>
+                    <div className="px-3 py-2.5 text-slate-800 dark:text-slate-200 font-mono border-r border-amber-500/20 break-all">{v.domain.replace(/\.$/, '')}</div>
+                    <div className="px-3 py-2.5 text-amber-300 font-mono break-all border-r border-amber-500/20">{v.value}</div>
                     <div className="flex items-center justify-center">
                       <button onClick={() => copyToClipboard(v.value)} className="text-slate-500 hover:text-slate-300"><Copy size={12} /></button>
                     </div>
