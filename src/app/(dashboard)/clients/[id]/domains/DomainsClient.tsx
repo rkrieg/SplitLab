@@ -196,9 +196,8 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
   function renderDomainCard(d: Domain) {
     const status = verifyStatus[d.id];
     const errorMsg = verifyMessage[d.id];
-    // Only show TXT records if they came from an explicit Verify click (verifyTxtRecords).
-    // Never show TXT records from the initial add response — the CNAME guide is always correct for subdomains.
-    const activeTxtRecords = verifyTxtRecords[d.id] ?? [];
+    // TXT records: use whatever came back from the last Verify click, falling back to the initial add response.
+    const activeTxtRecords = verifyTxtRecords[d.id] ?? d.vercel_verification ?? [];
     const prefix = getDomainPrefix(d.domain); // e.g. "test"
     const base = getBaseDomain(d.domain);     // e.g. "linkedupai.xyz"
 
@@ -332,53 +331,58 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
             </div>
           </div>
 
-          {activeTxtRecords.length > 0 ? (
-            /* Vercel-managed domain — TXT only */
-            <>
-              <div className="rounded-lg border border-blue-200 dark:border-blue-500/30 bg-blue-50 dark:bg-blue-500/5 px-3 py-2.5 flex items-start gap-2">
-                <AlertCircle size={14} className="text-blue-600 dark:text-blue-400 flex-shrink-0 mt-0.5" />
-                <p className="text-xs text-blue-800 dark:text-blue-200 leading-relaxed">
-                  <strong>Vercel nameservers detected.</strong> Vercel auto-handles routing — you only need to add this one TXT record in your{' '}
-                  <a href="https://vercel.com/dashboard/domains" target="_blank" rel="noopener noreferrer" className="underline hover:opacity-80">Vercel DNS panel</a>.
-                </p>
-              </div>
-              <DnsTable records={activeTxtRecords.map(v => ({ type: v.type, name: v.domain.replace(/\.$/, ''), value: v.value }))} onCopy={copyToClipboard} />
-            </>
-          ) : (
-            /* Standard registrar — CNAME guide */
-            <>
-              <div>
-                <p className="text-xs font-semibold text-slate-700 dark:text-slate-200 mb-3 flex items-center gap-2">
-                  <span className="w-5 h-5 rounded-full bg-[#3D8BDA]/20 text-[#3D8BDA] text-xs flex items-center justify-center font-bold flex-shrink-0">1</span>
-                  Log in to your domain registrar (GoDaddy, Namecheap, Cloudflare, etc.)
-                </p>
-                <p className="text-xs font-semibold text-slate-700 dark:text-slate-200 mb-3 flex items-center gap-2">
-                  <span className="w-5 h-5 rounded-full bg-[#3D8BDA]/20 text-[#3D8BDA] text-xs flex items-center justify-center font-bold flex-shrink-0">2</span>
-                  Add this DNS record:
-                </p>
-                <DnsTable
-                  records={[{
-                    type: 'CNAME',
-                    name: prefix || d.domain,
-                    value: 'cname.vercel-dns.com',
-                  }]}
-                  onCopy={copyToClipboard}
-                  highlight
-                />
-                <div className="mt-2.5 rounded-lg border border-amber-200 dark:border-amber-500/20 bg-amber-50 dark:bg-amber-500/5 px-3 py-2.5 flex items-start gap-2">
-                  <AlertCircle size={13} className="text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
-                  <p className="text-xs text-amber-800 dark:text-amber-200 leading-relaxed">
-                    <strong>Using Cloudflare?</strong> Set the record to <strong>DNS only</strong> (grey cloud), not proxied (orange cloud).
-                  </p>
-                </div>
-              </div>
-              <p className="text-xs font-semibold text-slate-700 dark:text-slate-200 flex items-center gap-2">
-                <span className="w-5 h-5 rounded-full bg-[#3D8BDA]/20 text-[#3D8BDA] text-xs flex items-center justify-center font-bold flex-shrink-0">3</span>
-                Come back here and click <strong className="text-[#3D8BDA]">Verify DNS</strong> above
+          {/* Step 1 */}
+          <p className="text-xs font-semibold text-slate-700 dark:text-slate-200 flex items-center gap-2">
+            <span className="w-5 h-5 rounded-full bg-[#3D8BDA]/20 text-[#3D8BDA] text-xs flex items-center justify-center font-bold flex-shrink-0">1</span>
+            Log in to your domain registrar (GoDaddy, Namecheap, Cloudflare, etc.)
+          </p>
+
+          {/* Step 2 — CNAME (always required) */}
+          <div>
+            <p className="text-xs font-semibold text-slate-700 dark:text-slate-200 mb-2 flex items-center gap-2">
+              <span className="w-5 h-5 rounded-full bg-[#3D8BDA]/20 text-[#3D8BDA] text-xs flex items-center justify-center font-bold flex-shrink-0">2</span>
+              Add this CNAME record:
+            </p>
+            <DnsTable
+              records={[{ type: 'CNAME', name: prefix || d.domain, value: 'cname.vercel-dns.com' }]}
+              onCopy={copyToClipboard}
+              highlight
+            />
+            <div className="mt-2 rounded-lg border border-amber-200 dark:border-amber-500/20 bg-amber-50 dark:bg-amber-500/5 px-3 py-2 flex items-start gap-2">
+              <AlertCircle size={13} className="text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
+              <p className="text-xs text-amber-800 dark:text-amber-200 leading-relaxed">
+                <strong>Using Cloudflare?</strong> Set to <strong>DNS only</strong> (grey cloud), not proxied (orange cloud).
               </p>
-              <p className="text-xs text-slate-500 dark:text-slate-500">DNS changes can take a few minutes to propagate. If Verify fails, wait 5 minutes and try again.</p>
-            </>
+            </div>
+          </div>
+
+          {/* Step 3 — TXT ownership record (only when parent domain is in another Vercel project) */}
+          {activeTxtRecords.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold text-slate-700 dark:text-slate-200 mb-2 flex items-center gap-2">
+                <span className="w-5 h-5 rounded-full bg-purple-100 dark:bg-purple-500/20 text-purple-700 dark:text-purple-300 text-xs flex items-center justify-center font-bold flex-shrink-0">3</span>
+                Also add this TXT record in your{' '}
+                <a href="https://vercel.com/dashboard/domains" target="_blank" rel="noopener noreferrer" className="text-[#3D8BDA] underline">Vercel DNS panel</a>:
+              </p>
+              <div className="mb-2 rounded-lg border border-purple-200 dark:border-purple-500/30 bg-purple-50 dark:bg-purple-500/5 px-3 py-2 flex items-start gap-2">
+                <AlertCircle size={13} className="text-purple-600 dark:text-purple-400 flex-shrink-0 mt-0.5" />
+                <p className="text-xs text-purple-800 dark:text-purple-200 leading-relaxed">
+                  <strong>Why?</strong> Your domain <span className="font-mono">{base}</span> is managed by your own Vercel project. This TXT record proves you own it and authorizes SplitLab to route the <span className="font-mono">{prefix}</span> subdomain.
+                </p>
+              </div>
+              <DnsTable
+                records={activeTxtRecords.map(v => ({ type: v.type, name: v.domain.replace(/\.$/, ''), value: v.value }))}
+                onCopy={copyToClipboard}
+              />
+            </div>
           )}
+
+          {/* Final step */}
+          <p className="text-xs font-semibold text-slate-700 dark:text-slate-200 flex items-center gap-2">
+            <span className="w-5 h-5 rounded-full bg-[#3D8BDA]/20 text-[#3D8BDA] text-xs flex items-center justify-center font-bold flex-shrink-0">{activeTxtRecords.length > 0 ? '4' : '3'}</span>
+            Come back here and click <strong className="text-[#3D8BDA]">Verify DNS</strong> above
+          </p>
+          <p className="text-xs text-slate-500">DNS changes can take a few minutes. If Verify fails, wait 5 minutes and try again.</p>
         </div>
       </div>
     );
