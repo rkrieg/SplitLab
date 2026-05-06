@@ -179,9 +179,9 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
     setDeleting(true);
     try {
       const res = await fetch(`/api/workspaces/${workspaceId}/domains`, {
-        method: 'POST',
+        method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'delete', domain_id: deleteId }),
+        body: JSON.stringify({ domain_id: deleteId }),
       });
       if (!res.ok) { const err = await res.json(); toast.error(err.error || 'Failed to delete'); return; }
       setDomains((prev) => prev.filter((d) => d.id !== deleteId));
