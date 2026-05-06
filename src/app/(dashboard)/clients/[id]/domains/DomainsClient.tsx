@@ -154,6 +154,9 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
         setVerifyMessage((p) => ({ ...p, [domainId]: data.message || 'DNS record not found yet.' }));
         if (data.vercel_verification?.length) {
           setVerifyTxtRecords((p) => ({ ...p, [domainId]: data.vercel_verification }));
+        } else {
+          // Clear any previously shown TXT records if this verify attempt no longer needs them
+          setVerifyTxtRecords((p) => { const n = { ...p }; delete n[domainId]; return n; });
         }
       }
     } catch { toast.error('Failed to check domain verification'); } finally { setVerifying(null); }
