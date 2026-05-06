@@ -285,59 +285,77 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
           </div>
         )}
         <div className="border-t border-slate-200 dark:border-slate-800 px-5 py-4">
-          <h4 className="text-xs font-medium text-slate-700 dark:text-slate-300 mb-3">Point your domain to SplitLab by adding this DNS record at your registrar (GoDaddy, Namecheap, Cloudflare, etc.)</h4>
-          <div className="rounded-lg border border-slate-700 overflow-hidden text-xs">
-            <div className="grid grid-cols-3 bg-slate-50 dark:bg-slate-800/60">
-              <div className="px-3 py-2 text-slate-500 font-medium border-r border-slate-200 dark:border-slate-700">Type</div>
-              <div className="px-3 py-2 text-slate-500 font-medium border-r border-slate-200 dark:border-slate-700">Name</div>
-              <div className="px-3 py-2 text-slate-500 font-medium">Value</div>
-            </div>
-            <div className="grid grid-cols-3 bg-white dark:bg-slate-900/50">
-              <div className="px-3 py-2.5 text-slate-800 dark:text-slate-200 font-mono border-r border-slate-200 dark:border-slate-700">CNAME</div>
-              <div className="px-3 py-2.5 text-slate-800 dark:text-slate-200 font-mono border-r border-slate-200 dark:border-slate-700">{dnsName}</div>
-              <div className="px-3 py-2.5 font-mono flex items-center justify-between gap-2">
-                <span className="text-[#3D8BDA]">cname.vercel-dns.com</span>
-                <button onClick={() => copyToClipboard('cname.vercel-dns.com')} className="text-slate-500 hover:text-slate-300 flex-shrink-0"><Copy size={12} /></button>
+          {activeTxtRecords.length > 0 ? (
+            /* Vercel-managed domain — all records go in Vercel DNS panel */
+            <>
+              <div className="mb-3 rounded-lg border border-blue-500/30 bg-blue-500/5 px-3 py-2.5 flex items-start gap-2">
+                <AlertCircle size={14} className="text-blue-400 flex-shrink-0 mt-0.5" />
+                <div className="text-xs text-blue-300 leading-relaxed">
+                  <strong className="text-blue-200">Your domain uses Vercel nameservers.</strong> Add both records below in your{' '}
+                  <a href="https://vercel.com/dashboard/domains" target="_blank" rel="noopener noreferrer" className="underline hover:text-blue-100">Vercel DNS panel</a>
+                  {' '}— not at your domain registrar.
+                </div>
               </div>
-            </div>
-          </div>
-          {activeTxtRecords.length > 0 && (
-            <div className="mt-4">
-              <div className="flex items-center gap-2 mb-2">
-                <AlertCircle size={13} className="text-amber-400 flex-shrink-0" />
-                <h4 className="text-xs font-medium text-amber-300">Your domain is managed by Vercel — also add this TXT record to complete ownership verification:</h4>
-              </div>
-              <div className="rounded-lg border border-amber-500/30 overflow-hidden text-xs">
-                <div className="grid bg-amber-500/5" style={{gridTemplateColumns:'60px 180px 1fr 28px'}}>
-                  <div className="px-3 py-2 text-slate-500 font-medium border-r border-amber-500/20">Type</div>
-                  <div className="px-3 py-2 text-slate-500 font-medium border-r border-amber-500/20">Name</div>
-                  <div className="px-3 py-2 text-slate-500 font-medium border-r border-amber-500/20">Value</div>
+              <h4 className="text-xs font-medium text-slate-700 dark:text-slate-300 mb-3">Add these 2 DNS records in your Vercel DNS panel:</h4>
+              <div className="rounded-lg border border-slate-700 overflow-hidden text-xs">
+                <div className="grid bg-slate-50 dark:bg-slate-800/60" style={{gridTemplateColumns:'60px 180px 1fr 28px'}}>
+                  <div className="px-3 py-2 text-slate-500 font-medium border-r border-slate-200 dark:border-slate-700">Type</div>
+                  <div className="px-3 py-2 text-slate-500 font-medium border-r border-slate-200 dark:border-slate-700">Name</div>
+                  <div className="px-3 py-2 text-slate-500 font-medium border-r border-slate-200 dark:border-slate-700">Value</div>
                   <div />
                 </div>
+                <div className="grid bg-white dark:bg-slate-900/50" style={{gridTemplateColumns:'60px 180px 1fr 28px'}}>
+                  <div className="px-3 py-2.5 text-slate-800 dark:text-slate-200 font-mono border-r border-slate-200 dark:border-slate-700">CNAME</div>
+                  <div className="px-3 py-2.5 text-slate-800 dark:text-slate-200 font-mono border-r border-slate-200 dark:border-slate-700">{dnsName}</div>
+                  <div className="px-3 py-2.5 font-mono text-[#3D8BDA] break-all border-r border-slate-200 dark:border-slate-700">cname.vercel-dns.com</div>
+                  <div className="flex items-center justify-center">
+                    <button onClick={() => copyToClipboard('cname.vercel-dns.com')} className="text-slate-500 hover:text-slate-300"><Copy size={12} /></button>
+                  </div>
+                </div>
                 {activeTxtRecords.map((v, i) => (
-                  <div key={i} className="grid bg-white dark:bg-slate-900/50" style={{gridTemplateColumns:'60px 180px 1fr 28px'}}>
-                    <div className="px-3 py-2.5 text-slate-800 dark:text-slate-200 font-mono border-r border-amber-500/20">{v.type}</div>
-                    <div className="px-3 py-2.5 text-slate-800 dark:text-slate-200 font-mono border-r border-amber-500/20 break-all">{v.domain.replace(/\.$/, '')}</div>
-                    <div className="px-3 py-2.5 text-amber-300 font-mono break-all border-r border-amber-500/20">{v.value}</div>
+                  <div key={i} className="grid bg-white dark:bg-slate-900/50 border-t border-slate-200 dark:border-slate-700" style={{gridTemplateColumns:'60px 180px 1fr 28px'}}>
+                    <div className="px-3 py-2.5 text-slate-800 dark:text-slate-200 font-mono border-r border-slate-200 dark:border-slate-700">{v.type}</div>
+                    <div className="px-3 py-2.5 text-slate-800 dark:text-slate-200 font-mono border-r border-slate-200 dark:border-slate-700 break-all">{v.domain.replace(/\.$/, '')}</div>
+                    <div className="px-3 py-2.5 text-amber-300 font-mono break-all border-r border-slate-200 dark:border-slate-700">{v.value}</div>
                     <div className="flex items-center justify-center">
                       <button onClick={() => copyToClipboard(v.value)} className="text-slate-500 hover:text-slate-300"><Copy size={12} /></button>
                     </div>
                   </div>
                 ))}
               </div>
-            </div>
-          )}
-          {isRoot && (
-            <div className="mt-3 rounded-lg border border-slate-200 dark:border-slate-700/50 bg-slate-50 dark:bg-slate-800/30 px-3 py-2.5">
-              <p className="text-slate-400 text-xs leading-relaxed">
-                <strong className="text-slate-700 dark:text-slate-300">Root domain?</strong> Some registrars don&apos;t support CNAME on root domains. Use an <strong className="text-slate-700 dark:text-slate-300">A record</strong> instead:
-              </p>
-              <div className="grid grid-cols-3 mt-2 text-xs font-mono">
-                <span className="text-slate-700 dark:text-slate-300">A</span>
-                <span className="text-slate-700 dark:text-slate-300">@</span>
-                <span className="text-[#3D8BDA] flex items-center gap-2">76.76.21.21 <button onClick={() => copyToClipboard('76.76.21.21')} className="text-slate-500 hover:text-slate-300"><Copy size={12} /></button></span>
+            </>
+          ) : (
+            /* Standard registrar flow */
+            <>
+              <h4 className="text-xs font-medium text-slate-700 dark:text-slate-300 mb-3">Point your domain to SplitLab by adding this DNS record at your registrar (GoDaddy, Namecheap, Cloudflare, etc.)</h4>
+              <div className="rounded-lg border border-slate-700 overflow-hidden text-xs">
+                <div className="grid grid-cols-3 bg-slate-50 dark:bg-slate-800/60">
+                  <div className="px-3 py-2 text-slate-500 font-medium border-r border-slate-200 dark:border-slate-700">Type</div>
+                  <div className="px-3 py-2 text-slate-500 font-medium border-r border-slate-200 dark:border-slate-700">Name</div>
+                  <div className="px-3 py-2 text-slate-500 font-medium">Value</div>
+                </div>
+                <div className="grid grid-cols-3 bg-white dark:bg-slate-900/50">
+                  <div className="px-3 py-2.5 text-slate-800 dark:text-slate-200 font-mono border-r border-slate-200 dark:border-slate-700">CNAME</div>
+                  <div className="px-3 py-2.5 text-slate-800 dark:text-slate-200 font-mono border-r border-slate-200 dark:border-slate-700">{dnsName}</div>
+                  <div className="px-3 py-2.5 font-mono flex items-center justify-between gap-2">
+                    <span className="text-[#3D8BDA]">cname.vercel-dns.com</span>
+                    <button onClick={() => copyToClipboard('cname.vercel-dns.com')} className="text-slate-500 hover:text-slate-300 flex-shrink-0"><Copy size={12} /></button>
+                  </div>
+                </div>
               </div>
-            </div>
+              {isRoot && (
+                <div className="mt-3 rounded-lg border border-slate-200 dark:border-slate-700/50 bg-slate-50 dark:bg-slate-800/30 px-3 py-2.5">
+                  <p className="text-slate-400 text-xs leading-relaxed">
+                    <strong className="text-slate-700 dark:text-slate-300">Root domain?</strong> Some registrars don&apos;t support CNAME on root domains. Use an <strong className="text-slate-700 dark:text-slate-300">A record</strong> instead:
+                  </p>
+                  <div className="grid grid-cols-3 mt-2 text-xs font-mono">
+                    <span className="text-slate-700 dark:text-slate-300">A</span>
+                    <span className="text-slate-700 dark:text-slate-300">@</span>
+                    <span className="text-[#3D8BDA] flex items-center gap-2">76.76.21.21 <button onClick={() => copyToClipboard('76.76.21.21')} className="text-slate-500 hover:text-slate-300"><Copy size={12} /></button></span>
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>
