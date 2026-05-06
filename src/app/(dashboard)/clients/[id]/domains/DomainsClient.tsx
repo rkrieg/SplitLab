@@ -193,7 +193,9 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
   function renderDomainCard(d: Domain) {
     const status = verifyStatus[d.id];
     const errorMsg = verifyMessage[d.id];
-    const activeTxtRecords = verifyTxtRecords[d.id] ?? d.vercel_verification ?? [];
+    // Only show TXT records if they came from an explicit Verify click (verifyTxtRecords).
+    // Never show TXT records from the initial add response — the CNAME guide is always correct for subdomains.
+    const activeTxtRecords = verifyTxtRecords[d.id] ?? [];
     const prefix = getDomainPrefix(d.domain); // e.g. "test"
     const base = getBaseDomain(d.domain);     // e.g. "linkedupai.xyz"
 
