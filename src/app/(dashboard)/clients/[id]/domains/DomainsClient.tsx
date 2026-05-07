@@ -11,7 +11,11 @@ import Button from '@/components/ui/Button';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import { formatDate } from '@/lib/utils';
 
-const PROXY_CNAME_TARGET = 'proxy.trysplitlab.com';
+interface VercelVerification {
+  type: string;
+  domain: string;
+  value: string;
+}
 
 interface Domain {
   id: string;
@@ -19,6 +23,7 @@ interface Domain {
   verified: boolean;
   verified_at: string | null;
   created_at: string;
+  vercel_verification?: VercelVerification[];
   fallback_url?: string | null;
 }
 
@@ -81,6 +86,7 @@ export default function DomainsClient({ initialDomains, workspaceId, canManage }
   const [verifying, setVerifying] = useState<string | null>(null);
   const [verifyStatus, setVerifyStatus] = useState<Record<string, string>>({});
   const [verifyMessage, setVerifyMessage] = useState<Record<string, string>>({});
+  const [verifyTxtRecords, setVerifyTxtRecords] = useState<Record<string, VercelVerification[]>>({});
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
 
@@ -178,8 +184,13 @@ export default function DomainsClient({ initialDomains, workspaceId, canManage }
         setVerifyStatus((p) => ({ ...p, [domainId]: '' }));
         toast.success('Domain verified!');
       } else {
-        setVerifyStatus((p) => ({ ...p, [domainId]: data.status || 'pending_cname' }));
-        setVerifyMessage((p) => ({ ...p, [domainId]: data.message || 'CNAME record not detected yet.' }));
+        setVerifyStatus((p) => ({ ...p, [domainId]: data.status || 'misconfigured' }));
+        setVerifyMessage((p) => ({ ...p, [domainId]: data.message || 'DNS record not found yet.' }));
+        if (data.vercel_verification?.length) {
+          setVerifyTxtRecords((p) => ({ ...p, [domainId]: data.vercel_verification }));
+        } else {
+          setVerifyTxtRecords((p) => { const n = { ...p }; delete n[domainId]; return n; });
+        }
       }
     } catch { toast.error('Failed to check domain verification'); } finally { setVerifying(null); }
   }
@@ -218,6 +229,7 @@ export default function DomainsClient({ initialDomains, workspaceId, canManage }
   function renderDomainCard(d: Domain) {
     const status = verifyStatus[d.id];
     const errorMsg = verifyMessage[d.id];
+    const activeTxtRecords = verifyTxtRecords[d.id] ?? d.vercel_verification ?? [];
     const prefix = getDomainPrefix(d.domain);
     const base = getBaseDomain(d.domain);
 
@@ -355,7 +367,7 @@ export default function DomainsClient({ initialDomains, workspaceId, canManage }
               Add this CNAME record:
             </p>
             <DnsTable
-              records={[{ type: 'CNAME', name: prefix || d.domain, value: PROXY_CNAME_TARGET }]}
+              records={[{ type: 'CNAME', name: prefix || d.domain, value: 'cname.vercel-dns.com' }]}
               onCopy={copyToClipboard}
               highlight
             />
@@ -367,8 +379,28 @@ export default function DomainsClient({ initialDomains, workspaceId, canManage }
             </div>
           </div>
 
+          {activeTxtRecords.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold text-slate-700 dark:text-slate-200 mb-2 flex items-center gap-2">
+                <span className="w-5 h-5 rounded-full bg-purple-100 dark:bg-purple-500/20 text-purple-700 dark:text-purple-300 text-xs flex items-center justify-center font-bold flex-shrink-0">3</span>
+                Also add this TXT record in your{' '}
+                <a href="https://vercel.com/dashboard/domains" target="_blank" rel="noopener noreferrer" className="text-[#3D8BDA] underline">Vercel DNS panel</a>:
+              </p>
+              <div className="mb-2 rounded-lg border border-purple-200 dark:border-purple-500/30 bg-purple-50 dark:bg-purple-500/5 px-3 py-2 flex items-start gap-2">
+                <AlertCircle size={13} className="text-purple-600 dark:text-purple-400 flex-shrink-0 mt-0.5" />
+                <p className="text-xs text-purple-800 dark:text-purple-200 leading-relaxed">
+                  <strong>Why?</strong> Your domain <span className="font-mono">{base}</span> is managed by Vercel. This TXT record proves you own it and authorizes SplitLab to route the <span className="font-mono">{prefix}</span> subdomain. Your main site stays untouched.
+                </p>
+              </div>
+              <DnsTable
+                records={activeTxtRecords.map(v => ({ type: v.type, name: v.domain.replace(/\.$/, ''), value: v.value }))}
+                onCopy={copyToClipboard}
+              />
+            </div>
+          )}
+
           <p className="text-xs font-semibold text-slate-700 dark:text-slate-200 flex items-center gap-2">
-            <span className="w-5 h-5 rounded-full bg-[#3D8BDA]/20 text-[#3D8BDA] text-xs flex items-center justify-center font-bold flex-shrink-0">3</span>
+            <span className="w-5 h-5 rounded-full bg-[#3D8BDA]/20 text-[#3D8BDA] text-xs flex items-center justify-center font-bold flex-shrink-0">{activeTxtRecords.length > 0 ? '4' : '3'}</span>
             Come back here and click <strong className="text-[#3D8BDA]">Verify DNS</strong> above
           </p>
           <p className="text-xs text-slate-500">DNS changes can take a few minutes. If Verify fails, wait 5 minutes and try again.</p>
