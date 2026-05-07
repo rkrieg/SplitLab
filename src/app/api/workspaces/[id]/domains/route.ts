@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
-import { addDomainToVercel, removeDomainFromVercel, getDomainStatus } from '@/lib/vercel';
 import { z } from 'zod';
+
+const PROXY_CNAME_TARGET = (process.env.PROXY_CNAME_TARGET || 'proxy.trysplitlab.com').toLowerCase();
 
 const addSchema = z.object({
   domain: z.string().min(3).max(255),
@@ -26,13 +27,21 @@ const fallbackSchema = z.object({
   fallback_url: z.string().url().or(z.literal('')),
 });
 
-function generateUniqueCname(domain: string): string {
-  // Strip leading www. and extract the first label for a readable slug
-  const clean = domain.replace(/^www\./, '');
-  const label = clean.split('.')[0].toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 12);
-  const id = Math.floor(10000 + Math.random() * 90000); // 5-digit random suffix
-  const base = process.env.CNAME_BASE || 'cname.trysplitlab.com';
-  return `${label}-${id}.${base}`;
+async function checkCnamePointsToProxy(domain: string): Promise<boolean> {
+  try {
+    const res = await fetch(
+      `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(domain)}&type=CNAME`,
+      { headers: { Accept: 'application/dns-json' } }
+    );
+    if (!res.ok) return false;
+    const data = await res.json();
+    const answers: Array<{ type: number; data: string }> = data.Answer || [];
+    return answers.some(
+      (a) => a.type === 5 && a.data.replace(/\.$/, '').toLowerCase() === PROXY_CNAME_TARGET
+    );
+  } catch {
+    return false;
+  }
 }
 
 export async function GET(
@@ -68,31 +77,31 @@ export async function POST(
 
       const { data: domainRow, error: fetchErr } = await (db
         .from('domains')
-        .select('id, domain, cname_target')
+        .select('id, domain')
         .eq('id', domain_id)
         .eq('workspace_id', params.id)
-        .single() as unknown as Promise<{ data: { id: string; domain: string; cname_target: string | null } | null; error: { message: string } | null }>);
+        .single() as unknown as Promise<{ data: { id: string; domain: string } | null; error: { message: string } | null }>);
 
       if (fetchErr || !domainRow) {
         return NextResponse.json({ error: 'Domain not found' }, { status: 404 });
       }
 
-      const result = await getDomainStatus(domainRow.domain);
+      const cnameOk = await checkCnamePointsToProxy(domainRow.domain);
 
-      if (result.verified) {
+      if (cnameOk) {
         await db
           .from('domains')
-          .update({ verified: true, verified_at: new Date().toISOString(), vercel_verification: null })
+          .update({ verified: true, verified_at: new Date().toISOString() })
           .eq('id', domain_id);
-      } else if (result.status === 'needs_txt' && result.vercel_verification?.length) {
-        // Persist fresh TXT records so they survive page refresh
-        await db
-          .from('domains')
-          .update({ vercel_verification: result.vercel_verification })
-          .eq('id', domain_id);
+
+        return NextResponse.json({ verified: true });
       }
 
-      return NextResponse.json(result);
+      return NextResponse.json({
+        verified: false,
+        status: 'pending_cname',
+        message: `CNAME not detected yet. Make sure ${domainRow.domain} has a CNAME record pointing to ${PROXY_CNAME_TARGET}. DNS changes can take a few minutes to propagate.`,
+      });
     }
 
     // ── Set fallback URL ──
@@ -138,7 +147,7 @@ export async function POST(
 
       const { data: updated, error: updateErr } = await (db
         .from('domains')
-        .update({ domain: newDomain, cname_target: generateUniqueCname(newDomain), verified: false, verified_at: null })
+        .update({ domain: newDomain, verified: false, verified_at: null })
         .eq('id', domain_id)
         .eq('workspace_id', params.id)
         .select()
@@ -166,7 +175,6 @@ export async function POST(
       .insert({
         workspace_id: params.id,
         domain,
-        cname_target: generateUniqueCname(domain),
         verified: false,
       })
       .select()
@@ -174,24 +182,7 @@ export async function POST(
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-    // Register domain with Vercel — capture TXT verification requirements if domain is claimed by another project
-    let vercelVerification: Array<{ type: string; domain: string; value: string }> = [];
-    try {
-      const result = await addDomainToVercel(domain);
-      vercelVerification = result.verification || [];
-    } catch (e) {
-      console.warn('[domains] addDomainToVercel failed:', (e as Error).message);
-    }
-
-    // Persist TXT records to DB so they survive page refresh
-    if (vercelVerification.length > 0 && newDomain) {
-      await db
-        .from('domains')
-        .update({ vercel_verification: vercelVerification })
-        .eq('id', (newDomain as unknown as { id: string }).id);
-    }
-
-    return NextResponse.json({ ...newDomain, vercel_verification: vercelVerification }, { status: 201 });
+    return NextResponse.json(newDomain, { status: 201 });
 
   } catch (err) {
     if (err instanceof z.ZodError) {
@@ -232,11 +223,6 @@ export async function DELETE(
       .eq('workspace_id', params.id);
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-
-    // Remove from Vercel (non-fatal)
-    try { await removeDomainFromVercel(domainToDelete.domain); } catch (e) {
-      console.warn('[domains] removeDomainFromVercel failed:', (e as Error).message);
-    }
 
     return NextResponse.json({ success: true });
   } catch {
