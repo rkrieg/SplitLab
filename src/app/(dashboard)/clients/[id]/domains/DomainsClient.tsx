@@ -11,20 +11,14 @@ import Button from '@/components/ui/Button';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import { formatDate } from '@/lib/utils';
 
-interface VercelVerification {
-  type: string;
-  domain: string;
-  value: string;
-}
+const PROXY_CNAME_TARGET = 'proxy.trysplitlab.com';
 
 interface Domain {
   id: string;
   domain: string;
-  cname_target: string | null;
   verified: boolean;
   verified_at: string | null;
   created_at: string;
-  vercel_verification?: VercelVerification[];
   fallback_url?: string | null;
 }
 
@@ -36,7 +30,42 @@ interface Props {
   canManage: boolean;
 }
 
-export default function DomainsClient({ initialDomains, workspaceId, appHostname, canManage }: Props) {
+function DnsTable({ records, onCopy, highlight }: {
+  records: { type: string; name: string; value: string }[];
+  onCopy: (v: string) => void;
+  highlight?: boolean;
+}) {
+  return (
+    <div className={`rounded-lg border overflow-hidden text-xs ${highlight ? 'border-[#3D8BDA]/40' : 'border-slate-200 dark:border-slate-700'}`}>
+      <table className="w-full">
+        <thead>
+          <tr className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-700">
+            <th className="text-left px-3 py-2 text-slate-500 font-medium w-16">Type</th>
+            <th className="text-left px-3 py-2 text-slate-500 font-medium w-24">Name</th>
+            <th className="text-left px-3 py-2 text-slate-500 font-medium">Value</th>
+            <th className="w-8" />
+          </tr>
+        </thead>
+        <tbody>
+          {records.map((r, i) => (
+            <tr key={i} className="bg-white dark:bg-slate-900/40">
+              <td className="px-3 py-2.5 font-mono font-semibold text-[#3D8BDA]">{r.type}</td>
+              <td className="px-3 py-2.5 font-mono text-slate-700 dark:text-slate-300">{r.name}</td>
+              <td className="px-3 py-2.5 font-mono text-slate-700 dark:text-slate-300 break-all">{r.value}</td>
+              <td className="px-2 py-2.5">
+                <button onClick={() => onCopy(r.value)} className="p-1 text-slate-400 hover:text-slate-200 transition-colors rounded">
+                  <Copy size={12} />
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+export default function DomainsClient({ initialDomains, workspaceId, canManage }: Props) {
   const [domains, setDomains] = useState(initialDomains);
   const [modalOpen, setModalOpen] = useState(false);
   const [addWebsiteDomain, setAddWebsiteDomain] = useState('');
@@ -52,7 +81,6 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
   const [verifying, setVerifying] = useState<string | null>(null);
   const [verifyStatus, setVerifyStatus] = useState<Record<string, string>>({});
   const [verifyMessage, setVerifyMessage] = useState<Record<string, string>>({});
-  const [verifyTxtRecords, setVerifyTxtRecords] = useState<Record<string, VercelVerification[]>>({});
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
 
@@ -86,7 +114,6 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
 
   function getBaseDomain(domain: string) { return domain.split('.').slice(-2).join('.'); }
   function copyToClipboard(text: string) { navigator.clipboard.writeText(text); toast.success('Copied!'); }
-
   function resetAddModal() { setAddWebsiteDomain(''); setAddPrefix('test'); }
 
   function openEditModal(d: Domain) {
@@ -148,16 +175,11 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
       const data = await res.json();
       if (data.verified) {
         setDomains((prev) => prev.map((d) => d.id === domainId ? { ...d, verified: true, verified_at: new Date().toISOString() } : d));
+        setVerifyStatus((p) => ({ ...p, [domainId]: '' }));
         toast.success('Domain verified!');
       } else {
-        setVerifyStatus((p) => ({ ...p, [domainId]: data.status || 'misconfigured' }));
-        setVerifyMessage((p) => ({ ...p, [domainId]: data.message || 'DNS record not found yet.' }));
-        if (data.vercel_verification?.length) {
-          setVerifyTxtRecords((p) => ({ ...p, [domainId]: data.vercel_verification }));
-        } else {
-          // Clear any previously shown TXT records if this verify attempt no longer needs them
-          setVerifyTxtRecords((p) => { const n = { ...p }; delete n[domainId]; return n; });
-        }
+        setVerifyStatus((p) => ({ ...p, [domainId]: data.status || 'pending_cname' }));
+        setVerifyMessage((p) => ({ ...p, [domainId]: data.message || 'CNAME record not detected yet.' }));
       }
     } catch { toast.error('Failed to check domain verification'); } finally { setVerifying(null); }
   }
@@ -196,10 +218,8 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
   function renderDomainCard(d: Domain) {
     const status = verifyStatus[d.id];
     const errorMsg = verifyMessage[d.id];
-    // TXT records: use whatever came back from the last Verify click, falling back to the initial add response.
-    const activeTxtRecords = verifyTxtRecords[d.id] ?? d.vercel_verification ?? [];
-    const prefix = getDomainPrefix(d.domain); // e.g. "test"
-    const base = getBaseDomain(d.domain);     // e.g. "linkedupai.xyz"
+    const prefix = getDomainPrefix(d.domain);
+    const base = getBaseDomain(d.domain);
 
     if (d.verified) {
       const isEditingFb = editingFallback === d.id;
@@ -228,7 +248,6 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
               <span className="flex items-center gap-1.5 text-green-400"><CheckCircle size={13} /> Verified</span>
             </div>
           </div>
-          {/* Fallback URL */}
           <div className="border-t border-slate-200 dark:border-slate-800 px-5 py-3">
             <div className="flex items-start justify-between gap-3">
               <div className="flex-1 min-w-0">
@@ -278,14 +297,13 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
     // ── Pending DNS card ──
     return (
       <div key={d.id} className="card overflow-hidden">
-        {/* Header */}
         <div className="p-5 flex items-center gap-4">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-1">
               <Globe size={15} className="text-slate-400 flex-shrink-0" />
               <span className="font-medium text-slate-900 dark:text-slate-100">{d.domain}</span>
-              {status === 'misconfigured'
-                ? <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-red-500/15 text-red-400 border border-red-500/25"><XCircle size={11} /> DNS Not Found</span>
+              {status === 'pending_cname'
+                ? <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-red-500/15 text-red-400 border border-red-500/25"><XCircle size={11} /> CNAME Not Found</span>
                 : <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/25"><Clock size={11} /> Pending DNS</span>}
             </div>
             <p className="text-slate-400 dark:text-slate-500 text-xs ml-[23px]">Added {formatDate(d.created_at)}</p>
@@ -301,7 +319,6 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
           </div>
         </div>
 
-        {/* Progress bar */}
         <div className="border-t border-slate-200 dark:border-slate-800 px-5 py-3 bg-slate-50 dark:bg-slate-800/30">
           <div className="flex items-center gap-6 text-xs">
             <span className="flex items-center gap-1.5 text-green-400"><CheckCircle size={13} /> Domain registered</span>
@@ -310,7 +327,6 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
           </div>
         </div>
 
-        {/* Error msg */}
         {errorMsg && (
           <div className="border-t border-red-200 dark:border-red-500/20 px-5 py-3 bg-red-50 dark:bg-red-500/5 flex items-start gap-2">
             <XCircle size={14} className="text-red-500 dark:text-red-400 flex-shrink-0 mt-0.5" />
@@ -318,10 +334,7 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
           </div>
         )}
 
-        {/* DNS setup guide */}
         <div className="border-t border-slate-200 dark:border-slate-800 px-5 py-5 space-y-4">
-
-          {/* Production site untouched notice */}
           <div className="rounded-lg border border-green-200 dark:border-green-500/25 bg-green-50 dark:bg-green-500/5 px-4 py-3 flex items-start gap-3">
             <ShieldCheck size={15} className="text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" />
             <div className="text-xs text-green-800 dark:text-green-200 leading-relaxed">
@@ -331,20 +344,18 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
             </div>
           </div>
 
-          {/* Step 1 */}
           <p className="text-xs font-semibold text-slate-700 dark:text-slate-200 flex items-center gap-2">
             <span className="w-5 h-5 rounded-full bg-[#3D8BDA]/20 text-[#3D8BDA] text-xs flex items-center justify-center font-bold flex-shrink-0">1</span>
             Log in to your domain registrar (GoDaddy, Namecheap, Cloudflare, etc.)
           </p>
 
-          {/* Step 2 — CNAME (always required) */}
           <div>
             <p className="text-xs font-semibold text-slate-700 dark:text-slate-200 mb-2 flex items-center gap-2">
               <span className="w-5 h-5 rounded-full bg-[#3D8BDA]/20 text-[#3D8BDA] text-xs flex items-center justify-center font-bold flex-shrink-0">2</span>
               Add this CNAME record:
             </p>
             <DnsTable
-              records={[{ type: 'CNAME', name: prefix || d.domain, value: 'cname.vercel-dns.com' }]}
+              records={[{ type: 'CNAME', name: prefix || d.domain, value: PROXY_CNAME_TARGET }]}
               onCopy={copyToClipboard}
               highlight
             />
@@ -356,30 +367,8 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
             </div>
           </div>
 
-          {/* Step 3 — TXT ownership record (only when parent domain is in another Vercel project) */}
-          {activeTxtRecords.length > 0 && (
-            <div>
-              <p className="text-xs font-semibold text-slate-700 dark:text-slate-200 mb-2 flex items-center gap-2">
-                <span className="w-5 h-5 rounded-full bg-purple-100 dark:bg-purple-500/20 text-purple-700 dark:text-purple-300 text-xs flex items-center justify-center font-bold flex-shrink-0">3</span>
-                Also add this TXT record in your{' '}
-                <a href="https://vercel.com/dashboard/domains" target="_blank" rel="noopener noreferrer" className="text-[#3D8BDA] underline">Vercel DNS panel</a>:
-              </p>
-              <div className="mb-2 rounded-lg border border-purple-200 dark:border-purple-500/30 bg-purple-50 dark:bg-purple-500/5 px-3 py-2 flex items-start gap-2">
-                <AlertCircle size={13} className="text-purple-600 dark:text-purple-400 flex-shrink-0 mt-0.5" />
-                <p className="text-xs text-purple-800 dark:text-purple-200 leading-relaxed">
-                  <strong>Why?</strong> Your domain <span className="font-mono">{base}</span> is managed by your own Vercel project. This TXT record proves you own it and authorizes SplitLab to route the <span className="font-mono">{prefix}</span> subdomain.
-                </p>
-              </div>
-              <DnsTable
-                records={activeTxtRecords.map(v => ({ type: v.type, name: v.domain.replace(/\.$/, ''), value: v.value }))}
-                onCopy={copyToClipboard}
-              />
-            </div>
-          )}
-
-          {/* Final step */}
           <p className="text-xs font-semibold text-slate-700 dark:text-slate-200 flex items-center gap-2">
-            <span className="w-5 h-5 rounded-full bg-[#3D8BDA]/20 text-[#3D8BDA] text-xs flex items-center justify-center font-bold flex-shrink-0">{activeTxtRecords.length > 0 ? '4' : '3'}</span>
+            <span className="w-5 h-5 rounded-full bg-[#3D8BDA]/20 text-[#3D8BDA] text-xs flex items-center justify-center font-bold flex-shrink-0">3</span>
             Come back here and click <strong className="text-[#3D8BDA]">Verify DNS</strong> above
           </p>
           <p className="text-xs text-slate-500">DNS changes can take a few minutes. If Verify fails, wait 5 minutes and try again.</p>
@@ -393,7 +382,6 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
 
   return (
     <div className="max-w-3xl space-y-4">
-      {/* Header row */}
       <div className="flex items-center justify-between mb-2">
         <p className="text-sm text-slate-500 dark:text-slate-400">
           {domains.length === 0 ? 'No domains configured yet' : `${domains.length} domain${domains.length !== 1 ? 's' : ''}`}
@@ -405,7 +393,6 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
         )}
       </div>
 
-      {/* Empty state */}
       {domains.length === 0 && (
         <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 p-10 text-center">
           <div className="w-14 h-14 rounded-full bg-blue-50 dark:bg-blue-500/10 flex items-center justify-center mx-auto mb-5">
@@ -424,7 +411,6 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
         </div>
       )}
 
-      {/* Domain cards */}
       {domains.length > 0 && (
         <div className="space-y-4">
           {domains.map((d) => renderDomainCard(d))}
@@ -443,7 +429,6 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
       {/* ── Add Domain Modal ── */}
       <Modal open={modalOpen} onClose={() => setModalOpen(false)} title="Add Test Subdomain" size="sm">
         <form onSubmit={handleAdd} className="space-y-5">
-          {/* Step 1 */}
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
               Your website domain
@@ -460,7 +445,6 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
             <p className="text-xs text-slate-500 mt-1">Enter your root domain — without www or https.</p>
           </div>
 
-          {/* Step 2 — subdomain prefix */}
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
               Test subdomain prefix
@@ -480,7 +464,6 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
             <p className="text-xs text-slate-500 mt-1">Common choices: <button type="button" onClick={() => setAddPrefix('test')} className="text-[#3D8BDA] hover:underline">test</button>, <button type="button" onClick={() => setAddPrefix('ab')} className="text-[#3D8BDA] hover:underline">ab</button>, <button type="button" onClick={() => setAddPrefix('try')} className="text-[#3D8BDA] hover:underline">try</button></p>
           </div>
 
-          {/* Preview */}
           {addPreview && (
             <div className="rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden text-sm">
               <div className="bg-slate-50 dark:bg-slate-800/60 px-4 py-2 text-xs font-medium text-slate-500 border-b border-slate-200 dark:border-slate-700">Setup preview</div>
@@ -526,46 +509,15 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
               <p className="font-mono text-sm text-slate-900 dark:text-slate-100">{getEditPreview()}</p>
             </div>
           )}
-          <p className="text-slate-400 dark:text-slate-500 text-xs">Changing the domain will reset its verification status. Update your DNS record for the new subdomain.</p>
-          <div className="flex justify-end gap-3 pt-2">
+          <p className="text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20 rounded-lg px-3 py-2">
+            Editing will reset DNS verification — you will need to re-verify after saving.
+          </p>
+          <div className="flex justify-end gap-3 pt-1">
             <Button variant="secondary" type="button" onClick={() => setEditModalOpen(false)}>Cancel</Button>
-            <Button type="submit" loading={saving} disabled={!editBaseDomain.trim()}>Save Changes</Button>
+            <Button type="submit" loading={saving}>Save Changes</Button>
           </div>
         </form>
       </Modal>
-    </div>
-  );
-}
-
-function DnsTable({ records, onCopy, highlight }: {
-  records: { type: string; name: string; value: string }[];
-  onCopy: (v: string) => void;
-  highlight?: boolean;
-}) {
-  const borderColor = highlight ? 'border-[#3D8BDA]/30' : 'border-amber-500/30';
-  const headerBg = highlight ? 'bg-[#3D8BDA]/5' : 'bg-amber-500/5';
-  const headerBorder = highlight ? 'border-[#3D8BDA]/20' : 'border-amber-500/20';
-  const rowBorder = highlight ? 'border-[#3D8BDA]/20' : 'border-amber-500/20';
-  const valueColor = highlight ? 'text-[#3D8BDA]' : 'text-amber-300';
-
-  return (
-    <div className={`rounded-lg border ${borderColor} overflow-hidden text-xs`}>
-      <div className={`grid ${headerBg}`} style={{ gridTemplateColumns: '64px 140px 1fr 32px' }}>
-        <div className={`px-3 py-2 text-slate-500 font-medium border-r ${headerBorder}`}>Type</div>
-        <div className={`px-3 py-2 text-slate-500 font-medium border-r ${headerBorder}`}>Name</div>
-        <div className={`px-3 py-2 text-slate-500 font-medium border-r ${headerBorder}`}>Value</div>
-        <div />
-      </div>
-      {records.map((r, i) => (
-        <div key={i} className={`grid bg-white dark:bg-slate-900/50 border-t ${rowBorder}`} style={{ gridTemplateColumns: '64px 140px 1fr 32px' }}>
-          <div className={`px-3 py-2.5 text-slate-800 dark:text-slate-200 font-mono border-r ${rowBorder}`}>{r.type}</div>
-          <div className={`px-3 py-2.5 text-slate-800 dark:text-slate-200 font-mono border-r ${rowBorder} break-all`}>{r.name}</div>
-          <div className={`px-3 py-2.5 font-mono ${valueColor} break-all border-r ${rowBorder}`}>{r.value}</div>
-          <div className="flex items-center justify-center">
-            <button onClick={() => onCopy(r.value)} className="text-slate-500 hover:text-slate-300" title="Copy"><Copy size={12} /></button>
-          </div>
-        </div>
-      ))}
     </div>
   );
 }
