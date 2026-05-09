@@ -73,7 +73,7 @@ export async function middleware(request: NextRequest) {
   // ── Custom domain page serving ──────────────────────────────────────────
   const APP_ROUTES = [
     '/login', '/dashboard', '/clients', '/api', '/tests', '/pages',
-    '/scripts', '/team', '/settings', '/admin', '/_next', '/favicon.ico', '/static', '/tracker.js',
+    '/scripts', '/team', '/settings', '/admin', '/billing', '/_next', '/favicon.ico', '/static', '/tracker.js',
   ];
   const isAppRoute = APP_ROUTES.some((r) => pathname === r || pathname.startsWith(r + '/') || pathname.startsWith(r + '?'));
 
@@ -92,7 +92,8 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith('/clients') ||
     pathname.startsWith('/team') ||
     pathname.startsWith('/settings') ||
-    pathname.startsWith('/admin');
+    pathname.startsWith('/admin') ||
+    pathname.startsWith('/billing');
 
   // Fetch token once — used for auth checks + impersonation injection
   const token = isDashboardRoute || isAuthRoute

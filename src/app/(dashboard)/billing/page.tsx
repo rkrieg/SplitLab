@@ -7,21 +7,28 @@ import BillingClient from './BillingClient';
 
 export default async function BillingPage() {
   const session = await getServerSession(authOptions);
-  if (!session) redirect('/login');
+  if (!session?.user?.id) redirect('/login');
 
-  const rows = await rawQuery<{
-    plan: string;
-    stripe_customer_id: string | null;
-    subscription_status: string;
-  }>(
-    'SELECT plan, stripe_customer_id, subscription_status FROM users WHERE id = $1',
-    [session.user.id]
-  );
+  let plan = 'starter';
+  let status = 'active';
+  let hasStripeCustomer = false;
 
-  const user = rows[0];
-  const plan = user?.plan ?? 'starter';
-  const status = user?.subscription_status ?? 'active';
-  const hasStripeCustomer = !!user?.stripe_customer_id;
+  try {
+    const rows = await rawQuery<{
+      plan: string;
+      stripe_customer_id: string | null;
+      subscription_status: string;
+    }>(
+      'SELECT plan, stripe_customer_id, subscription_status FROM users WHERE id = $1',
+      [session.user.id]
+    );
+    const user = rows[0];
+    plan = user?.plan ?? 'starter';
+    status = user?.subscription_status ?? 'active';
+    hasStripeCustomer = !!user?.stripe_customer_id;
+  } catch (err) {
+    console.error('[billing-page] DB error:', err);
+  }
 
   return (
     <div>
