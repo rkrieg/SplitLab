@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { ask } from '@/lib/claude';
+import { checkAiGenerationAllowed } from '@/lib/planLimits';
 import { searchImages } from '@/lib/unsplash';
 import {
   buildPageGenerationPrompt,
@@ -36,11 +37,22 @@ export async function POST(request: NextRequest) {
       headers: { 'Content-Type': 'application/json' },
     });
   }
-  if (session.user.role !== 'admin' && session.user.role !== 'manager') {
+  if (!['admin', 'manager', 'super_admin'].includes(session.user.role)) {
     return new Response(JSON.stringify({ error: 'Forbidden' }), {
       status: 403,
       headers: { 'Content-Type': 'application/json' },
     });
+  }
+
+  const aiCheck = await checkAiGenerationAllowed(session.user.id);
+  if (!aiCheck.allowed) {
+    return new Response(JSON.stringify({
+      error: 'plan_limit_exceeded',
+      limitType: 'ai_generation',
+      plan: aiCheck.plan,
+      planName: aiCheck.planName,
+      message: aiCheck.message,
+    }), { status: 403, headers: { 'Content-Type': 'application/json' } });
   }
 
   let workspaceId: string;
