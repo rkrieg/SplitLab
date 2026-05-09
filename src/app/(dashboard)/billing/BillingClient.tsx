@@ -16,7 +16,7 @@ interface BillingInfo {
   subscriptionStatus: string;
 }
 
-interface UsageStat { used: number; limit: number; pct: number; limitLabel: string; }
+interface UsageStat { used: number; limit: number | null; pct: number; limitLabel: string; }
 interface UsageData {
   plan: string;
   planName: string;
@@ -40,8 +40,8 @@ const PLAN_FEATURES: Record<string, string[]> = {
   scale: ['Unlimited tests', 'Unlimited clients', 'Unlimited visitors', 'Unlimited seats', 'AI page builder', 'Priority support'],
 };
 
-function MeterBar({ pct, limit }: { pct: number; limit: number }) {
-  const isUnlimited = limit === Infinity || limit > 999_999_999;
+function MeterBar({ pct, limit }: { pct: number; limit: number | null }) {
+  const isUnlimited = limit === null || limit === Infinity || limit > 999_999_999;
   if (isUnlimited) return (
     <div className="flex-1 h-2 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
       <div className="h-full bg-green-500 rounded-full" style={{ width: '8%' }} />
@@ -216,7 +216,7 @@ export default function BillingClient({ initialPlan, initialStatus, hasStripeCus
               { icon: Building2, label: 'Clients', stat: usage.clients },
               { icon: Users, label: 'Team Seats', stat: usage.seats },
             ] as const).map(({ icon: Icon, label, stat }) => {
-              const isUnlimited = stat.limit > 999_999_999;
+              const isUnlimited = stat.limit === null || stat.limit > 999_999_999;
               return (
                 <div key={label} className="flex items-center gap-3">
                   <Icon size={14} className="text-slate-400 flex-shrink-0" />

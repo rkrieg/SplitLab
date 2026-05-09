@@ -11,7 +11,7 @@ export const dynamic = 'force-dynamic';
  */
 export async function POST() {
   const session = await getServerSession(authOptions);
-  if (!session || session.user.role !== 'admin') {
+  if (!session || !['admin', 'super_admin'].includes(session.user.role)) {
     return NextResponse.json({ error: 'Admin only' }, { status: 403 });
   }
 

@@ -3,11 +3,15 @@ import { PLANS, getPlan, currentMonth, type PlanId } from '@/lib/plans';
 import { NextResponse } from 'next/server';
 
 export async function getUserPlan(userId: string): Promise<PlanId> {
-  const rows = await rawQuery<{ plan: string }>(
-    'SELECT plan FROM users WHERE id = $1',
+  const rows = await rawQuery<{ plan: string; role: string }>(
+    'SELECT plan, role FROM users WHERE id = $1',
     [userId]
   );
-  const plan = rows[0]?.plan ?? 'starter';
+  const row = rows[0];
+  if (!row) return 'starter';
+  // Super-admins are never plan-limited — they effectively have Scale access
+  if (row.role === 'super_admin') return 'scale';
+  const plan = row.plan ?? 'starter';
   return (plan in PLANS ? plan : 'starter') as PlanId;
 }
 
@@ -228,6 +232,27 @@ export async function checkClientLimit(userId: string): Promise<LimitCheckResult
           },
           { status: 403 }
         ),
+  };
+}
+
+export interface AiGenerationCheckResult {
+  allowed: boolean;
+  plan: PlanId;
+  planName: string;
+  message: string;
+}
+
+export async function checkAiGenerationAllowed(userId: string): Promise<AiGenerationCheckResult> {
+  const planId = await getUserPlan(userId);
+  const limits = getPlan(planId);
+  const allowed = limits.allowAiGeneration;
+  return {
+    allowed,
+    plan: planId,
+    planName: limits.name,
+    message: allowed
+      ? ''
+      : `Your ${limits.name} plan does not include AI generation. Upgrade to Pro or higher to unlock this feature.`,
   };
 }
 

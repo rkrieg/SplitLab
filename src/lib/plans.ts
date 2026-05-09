@@ -6,6 +6,7 @@ export interface PlanLimits {
   maxClients: number;
   monthlyVisitors: number;
   maxTeamSeats: number;
+  allowAiGeneration: boolean;
   priceId?: string;
   monthlyPrice?: number;
 }
@@ -17,6 +18,7 @@ export const PLANS: Record<PlanId, PlanLimits> = {
     maxClients: 1,
     monthlyVisitors: 1_000,
     maxTeamSeats: 1,
+    allowAiGeneration: false,
   },
   pro: {
     name: 'Pro',
@@ -24,6 +26,7 @@ export const PLANS: Record<PlanId, PlanLimits> = {
     maxClients: 1,
     monthlyVisitors: 25_000,
     maxTeamSeats: 3,
+    allowAiGeneration: true,
     monthlyPrice: 49,
   },
   agency: {
@@ -32,6 +35,7 @@ export const PLANS: Record<PlanId, PlanLimits> = {
     maxClients: 10,
     monthlyVisitors: 100_000,
     maxTeamSeats: 10,
+    allowAiGeneration: true,
     monthlyPrice: 149,
   },
   scale: {
@@ -40,6 +44,7 @@ export const PLANS: Record<PlanId, PlanLimits> = {
     maxClients: Infinity,
     monthlyVisitors: Infinity,
     maxTeamSeats: Infinity,
+    allowAiGeneration: true,
     monthlyPrice: 349,
   },
 };
