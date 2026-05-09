@@ -36,6 +36,15 @@ export async function GET(
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
+  // Verify the session user is a member of this workspace
+  const { data: membership } = await db
+    .from('workspace_members')
+    .select('role')
+    .eq('workspace_id', params.id)
+    .eq('user_id', session.user.id)
+    .single();
+  if (!membership) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+
   const { data, error } = await (db
     .from('tests')
     .select(`
