@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { randomBytes } from 'crypto';
 import { z } from 'zod';
+import { checkTeamSeatLimit } from '@/lib/planLimits';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,6 +35,12 @@ export async function POST(request: NextRequest) {
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   if (session.user.role !== 'admin') {
     return NextResponse.json({ error: 'Only admins can create users' }, { status: 403 });
+  }
+
+  // Enforce team seat limit
+  const seatCheck = await checkTeamSeatLimit(session.user.id);
+  if (!seatCheck.allowed) {
+    return seatCheck.response!;
   }
 
   try {
