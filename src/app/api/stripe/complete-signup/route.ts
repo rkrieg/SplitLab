@@ -77,6 +77,9 @@ export async function POST(request: NextRequest) {
     if (err?.name === 'ZodError') {
       return NextResponse.json({ error: 'Invalid request data' }, { status: 400 });
     }
+    if (err?.raw?.statusCode === 404) {
+      return NextResponse.json({ error: err.message || 'Checkout session not found' }, { status: 404 });
+    }
     return NextResponse.json({ error: err.message || 'Failed to complete signup' }, { status: 500 });
   }
 }
