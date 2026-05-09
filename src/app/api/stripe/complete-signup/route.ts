@@ -19,7 +19,7 @@ export async function POST(request: NextRequest) {
 
     const stripe = await getUncachableStripeClient();
     const session = await stripe.checkout.sessions.retrieve(sessionId, {
-      expand: ['customer'],
+      expand: ['customer', 'subscription'],
     });
 
     if (session.payment_status !== 'paid') {
@@ -30,6 +30,8 @@ export async function POST(request: NextRequest) {
     const email = (session.customer_details?.email || customer?.email || '').toLowerCase();
     const plan = (session.metadata?.plan || 'pro') as string;
     const stripeCustomerId = typeof customer === 'string' ? customer : customer?.id;
+    const sub = session.subscription as any;
+    const stripeSubscriptionId = typeof sub === 'string' ? sub : sub?.id ?? null;
 
     if (!email) {
       return NextResponse.json({ error: 'No email found in Stripe session' }, { status: 400 });
@@ -44,7 +46,7 @@ export async function POST(request: NextRequest) {
     if (existing) {
       await db
         .from('users')
-        .update({ stripe_customer_id: stripeCustomerId, plan } as any)
+        .update({ stripe_customer_id: stripeCustomerId, plan, stripe_subscription_id: stripeSubscriptionId, subscription_status: 'active' } as any)
         .eq('id', existing.id);
 
       return NextResponse.json({ email, existed: true });
@@ -59,6 +61,8 @@ export async function POST(request: NextRequest) {
       role: 'admin',
       status: 'active',
       stripe_customer_id: stripeCustomerId,
+      stripe_subscription_id: stripeSubscriptionId,
+      subscription_status: 'active',
       plan,
     } as any);
 

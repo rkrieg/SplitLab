@@ -19,6 +19,7 @@ import {
   Globe,
   Shield,
   Zap,
+  CreditCard,
   type LucideIcon,
 } from 'lucide-react';
 import { cn, slugify } from '@/lib/utils';
@@ -42,6 +43,7 @@ const globalNavItems: NavItem[] = [
   { href: '/scripts', label: 'Scripts', icon: Code2 },
   { href: '/domains', label: 'Domains', icon: Globe },
   { href: '/team', label: 'Team', icon: Users },
+  { href: '/billing', label: 'Billing', icon: CreditCard },
   { href: '/settings', label: 'Settings', icon: Settings },
 ];
 
