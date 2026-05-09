@@ -365,7 +365,11 @@ class QueryBuilder<TRow = unknown, TResult = TRow[]> {
           : '';
         // Re-add condition params
         const allParams = [...params, ...this._params];
-        const sql = `UPDATE "${this._table}" SET ${sets.join(', ')} ${where} RETURNING *`;
+        const hasRelations = this._selectStr.includes('(');
+        const returningCols = (!hasRelations && this._selectStr && this._selectStr !== '*')
+          ? this._selectStr.split(',').map(c => `"${c.trim()}"`).join(', ')
+          : '*';
+        const sql = `UPDATE "${this._table}" SET ${sets.join(', ')} ${where} RETURNING ${returningCols}`;
         const res = await pool.query(sql, allParams);
         const data = this._single || this._maybeSingle ? (res.rows[0] ?? null) : res.rows;
         return { data: data as unknown, error: null };
@@ -486,6 +490,31 @@ export async function rawQuery<T = Record<string, unknown>>(
   const pool = getPool();
   const res = await pool.query(sql, params);
   return res.rows as T[];
+}
+
+// ─── Transaction helper ───────────────────────────────────────────────────────
+// Runs callback inside an explicit BEGIN/COMMIT transaction.
+// The callback receives a query function bound to the dedicated connection.
+export async function withTransaction<T>(
+  callback: (query: <R = Record<string, unknown>>(sql: string, params?: unknown[]) => Promise<R[]>) => Promise<T>
+): Promise<T> {
+  const pool = getPool();
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const query = async <R = Record<string, unknown>>(sql: string, params: unknown[] = []): Promise<R[]> => {
+      const res = await client.query(sql, params);
+      return res.rows as R[];
+    };
+    const result = await callback(query);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 // ─── Public db proxy ──────────────────────────────────────────────────────────
