@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/supabase-server';
 import { z } from 'zod';
+import { getWorkspaceOwner, incrementVisitorCount, maybeSendVisitorWarning, getUserPlan } from '@/lib/planLimits';
+import { getPlan } from '@/lib/plans';
 
 function corsHeaders(request: NextRequest) {
   const origin = request.headers.get('origin') || '*';
@@ -28,6 +30,7 @@ export async function POST(request: NextRequest) {
     const data = schema.parse(body);
 
     // Deduplicate pageviews: one pageview per visitor per test per day
+    let isNewUniqueVisitor = false;
     if (data.type === 'pageview') {
       const today = new Date().toISOString().slice(0, 10);
       const { data: existing } = await db
@@ -44,6 +47,7 @@ export async function POST(request: NextRequest) {
       if (existing) {
         return NextResponse.json({ ok: true, duplicate: true }, { headers });
       }
+      isNewUniqueVisitor = true;
     }
 
     // Auto-match goal_id from metadata.trigger when not explicitly provided
@@ -70,6 +74,31 @@ export async function POST(request: NextRequest) {
     });
 
     if (error) throw error;
+
+    // Update monthly visitor usage count for new unique visitors
+    if (isNewUniqueVisitor) {
+      try {
+        const { data: testRow } = await (db
+          .from('tests')
+          .select('workspace_id')
+          .eq('id', data.testId)
+          .single() as unknown as Promise<{ data: { workspace_id: string } | null }>);
+
+        if (testRow?.workspace_id) {
+          const userId = await getWorkspaceOwner(testRow.workspace_id);
+          if (userId) {
+            const planId = await getUserPlan(userId);
+            const limits = getPlan(planId);
+            if (limits.monthlyVisitors !== Infinity) {
+              const newCount = await incrementVisitorCount(userId);
+              maybeSendVisitorWarning(userId, newCount, limits.monthlyVisitors, '').catch(() => {});
+            }
+          }
+        }
+      } catch (visitorErr) {
+        console.error('[event] visitor tracking error:', visitorErr);
+      }
+    }
 
     // Aggregate AI page performance data
     if (data.type === 'pageview' || data.type === 'conversion') {
