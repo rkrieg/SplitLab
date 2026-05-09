@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
+import { rawQuery } from '@/lib/db';
 import { z } from 'zod';
 
 const goalSchema = z.object({
@@ -40,12 +41,26 @@ function fullTestSelect() {
   return '*, test_variants(*, pages(id, name)), conversion_goals(*)';
 }
 
+async function requireTestMembership(testId: string, userId: string) {
+  const rows = await rawQuery<{ workspace_id: string }>(
+    `SELECT t.workspace_id FROM tests t
+     JOIN workspace_members wm ON wm.workspace_id = t.workspace_id
+     WHERE t.id = $1 AND wm.user_id = $2 LIMIT 1`,
+    [testId, userId]
+  );
+  return rows[0] ?? null;
+}
+
 export async function GET(
   _req: NextRequest,
   { params }: { params: { id: string } }
 ) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  if (!await requireTestMembership(params.id, session.user.id)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
 
   const { data, error } = await (db
     .from('tests')
@@ -64,11 +79,14 @@ export async function PATCH(
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
+  if (!await requireTestMembership(params.id, session.user.id)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+
   try {
     const body = await request.json();
     const { goals, weights, variant_updates, delete_variant_id, ...testFields } = updateSchema.parse(body);
 
-    // Update test fields if any provided
     if (Object.keys(testFields).length > 0) {
       const { error } = await db
         .from('tests')
@@ -78,7 +96,6 @@ export async function PATCH(
       if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    // Update variant weights if provided
     if (weights) {
       const totalWeight = weights.reduce((s, w) => s + w.traffic_weight, 0);
       if (totalWeight !== 100) {
@@ -94,7 +111,6 @@ export async function PATCH(
       }
     }
 
-    // Update variant fields (name, redirect_url, proxy_mode) if provided
     if (variant_updates) {
       for (const vu of variant_updates) {
         const updateFields: Record<string, unknown> = {};
@@ -112,7 +128,6 @@ export async function PATCH(
       }
     }
 
-    // Delete variant if requested, then rebalance remaining weights
     if (delete_variant_id) {
       const { error: delErr } = await db
         .from('test_variants')
@@ -121,7 +136,6 @@ export async function PATCH(
         .eq('test_id', params.id);
       if (delErr) return NextResponse.json({ error: delErr.message }, { status: 500 });
 
-      // Rebalance traffic weights across remaining variants
       const { data: remaining } = await (db
         .from('test_variants')
         .select('id, is_control')
@@ -142,7 +156,6 @@ export async function PATCH(
       }
     }
 
-    // Replace goals if provided
     if (goals) {
       await db.from('conversion_goals').delete().eq('test_id', params.id);
       if (goals.length > 0) {
@@ -160,7 +173,6 @@ export async function PATCH(
       }
     }
 
-    // Return full test with relations
     const { data: updated, error: fetchError } = await (db
       .from('tests')
       .select(fullTestSelect())
@@ -183,7 +195,12 @@ export async function DELETE(
 ) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
   if (session.user.role === 'viewer') {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+
+  if (!await requireTestMembership(params.id, session.user.id)) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
