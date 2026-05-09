@@ -87,7 +87,7 @@ export default function UsageBanner() {
             </p>
           </div>
           <Link
-            href="/settings"
+            href="/billing"
             className="flex-shrink-0 flex items-center gap-1 text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:underline"
           >
             Upgrade <ArrowRight size={12} />
@@ -102,7 +102,7 @@ export default function UsageBanner() {
             <span className="text-xs font-semibold text-slate-900 dark:text-slate-100">Plan Usage</span>
             <span className="ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded bg-indigo-100 dark:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 uppercase tracking-wide">{usage.planName}</span>
           </div>
-          <Link href="/settings" className="text-xs text-indigo-500 dark:text-indigo-400 hover:underline">Upgrade →</Link>
+          <Link href="/billing" className="text-xs text-indigo-500 dark:text-indigo-400 hover:underline">Upgrade →</Link>
         </div>
 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-3">
