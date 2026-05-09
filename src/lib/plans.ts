@@ -5,6 +5,7 @@ export interface PlanLimits {
   maxActiveTests: number;
   maxClients: number;
   monthlyVisitors: number;
+  maxTeamSeats: number;
   priceId?: string;
   monthlyPrice?: number;
 }
@@ -15,12 +16,14 @@ export const PLANS: Record<PlanId, PlanLimits> = {
     maxActiveTests: 1,
     maxClients: 1,
     monthlyVisitors: 1_000,
+    maxTeamSeats: 1,
   },
   pro: {
     name: 'Pro',
     maxActiveTests: 10,
     maxClients: 1,
     monthlyVisitors: 25_000,
+    maxTeamSeats: 3,
     monthlyPrice: 49,
   },
   agency: {
@@ -28,6 +31,7 @@ export const PLANS: Record<PlanId, PlanLimits> = {
     maxActiveTests: 50,
     maxClients: 10,
     monthlyVisitors: 100_000,
+    maxTeamSeats: 10,
     monthlyPrice: 149,
   },
   scale: {
@@ -35,6 +39,7 @@ export const PLANS: Record<PlanId, PlanLimits> = {
     maxActiveTests: Infinity,
     maxClients: Infinity,
     monthlyVisitors: Infinity,
+    maxTeamSeats: Infinity,
     monthlyPrice: 349,
   },
 };
@@ -48,4 +53,8 @@ export function formatLimit(value: number): string {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
   if (value >= 1_000) return `${(value / 1_000).toFixed(0)}k`;
   return String(value);
+}
+
+export function currentMonth(): string {
+  return new Date().toISOString().slice(0, 7); // YYYY-MM
 }
