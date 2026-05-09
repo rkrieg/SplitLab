@@ -159,6 +159,30 @@ export interface VisitorUsageRow {
   visitor_count: number;
 }
 
+export interface WebhookEndpointRow {
+  id: string;
+  workspace_id: string;
+  name: string;
+  url: string;
+  events: string[];
+  secret: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WebhookDeliveryRow {
+  id: string;
+  endpoint_id: string;
+  event_type: string;
+  payload: Record<string, unknown>;
+  response_status: number | null;
+  response_body: string | null;
+  error: string | null;
+  duration_ms: number | null;
+  created_at: string;
+}
+
 // Map from table name → row type. Used by the db client for type inference.
 export interface TableSchema {
   users: UserRow;
@@ -176,4 +200,6 @@ export interface TableSchema {
   scraped_pages: ScrapedPageRow;
   invite_tokens: InviteTokenRow;
   visitor_usage: VisitorUsageRow;
+  webhook_endpoints: WebhookEndpointRow;
+  webhook_deliveries: WebhookDeliveryRow;
 }
