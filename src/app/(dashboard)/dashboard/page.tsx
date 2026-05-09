@@ -8,6 +8,7 @@ import {
   XCircle, Eye, TrendingUp, FlaskConical as ABIcon,
   MoreHorizontal, ExternalLink,
 } from 'lucide-react';
+import UsageBanner from '@/components/usage/UsageBanner';
 
 interface TestRow {
   id: string;
@@ -144,6 +145,9 @@ export default async function DashboardPage() {
       />
 
       <div className="p-6 space-y-5">
+
+        {/* Usage meters + warnings */}
+        <UsageBanner />
 
         {/* Summary strip */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
