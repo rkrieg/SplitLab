@@ -34,6 +34,14 @@ export async function PATCH(
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
+    // Only super_admins can modify super_admin accounts (except their own name/password)
+    if (!isSelf) {
+      const targetUser = await db.from('users').select('role').eq('id', params.id).single();
+      if (targetUser.data?.role === 'super_admin' && session.user.role !== 'super_admin') {
+        return NextResponse.json({ error: 'Cannot modify a super admin' }, { status: 403 });
+      }
+    }
+
     const updatePayload: Record<string, unknown> = {};
     if (data.name) updatePayload.name = data.name;
     if (data.role) updatePayload.role = data.role;
@@ -70,6 +78,12 @@ export async function DELETE(
   }
   if (session.user.id === params.id) {
     return NextResponse.json({ error: 'Cannot delete yourself' }, { status: 400 });
+  }
+
+  // Protect super_admin accounts from being deleted by non-super_admins
+  const target = await db.from('users').select('role').eq('id', params.id).single();
+  if (target.data?.role === 'super_admin' && session.user.role !== 'super_admin') {
+    return NextResponse.json({ error: 'Cannot delete a super admin' }, { status: 403 });
   }
 
   const { error } = await db.from('users').delete().eq('id', params.id);
