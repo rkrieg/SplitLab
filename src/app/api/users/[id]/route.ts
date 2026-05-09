@@ -21,7 +21,7 @@ export async function PATCH(
 
   // Non-admin can only update their own name/password
   const isSelf = session.user.id === params.id;
-  if (!isSelf && session.user.role !== 'admin') {
+  if (!isSelf && !['admin', 'super_admin'].includes(session.user.role)) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
@@ -30,7 +30,7 @@ export async function PATCH(
     const data = updateSchema.parse(body);
 
     // Only admins can change roles or status
-    if ((data.role || data.status) && session.user.role !== 'admin') {
+    if ((data.role || data.status) && !['admin', 'super_admin'].includes(session.user.role)) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
@@ -65,7 +65,7 @@ export async function DELETE(
 ) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  if (session.user.role !== 'admin') {
+  if (!['admin', 'super_admin'].includes(session.user.role)) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
   if (session.user.id === params.id) {
