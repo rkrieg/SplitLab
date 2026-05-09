@@ -18,6 +18,7 @@ import {
   Moon,
   Globe,
   Shield,
+  Zap,
   type LucideIcon,
 } from 'lucide-react';
 import { cn, slugify } from '@/lib/utils';
@@ -49,6 +50,7 @@ function getClientNavItems(clientId: string): NavItem[] {
     { href: `/clients/${clientId}/pages`, label: 'Pages', icon: FileCode2, exact: true },
     { href: `/clients/${clientId}/scripts`, label: 'Scripts', icon: Code2 },
     { href: `/clients/${clientId}/domains`, label: 'Domains', icon: Globe },
+    { href: `/clients/${clientId}/webhooks`, label: 'Webhooks', icon: Zap },
     { href: `/clients/${clientId}/settings`, label: 'Settings', icon: Settings },
   ];
 }
