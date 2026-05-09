@@ -2,7 +2,18 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
+import { rawQuery } from '@/lib/db';
 import { confidencePercent, findWinner } from '@/lib/stats';
+
+async function requireTestMembership(testId: string, userId: string) {
+  const rows = await rawQuery<{ workspace_id: string }>(
+    `SELECT t.workspace_id FROM tests t
+     JOIN workspace_members wm ON wm.workspace_id = t.workspace_id
+     WHERE t.id = $1 AND wm.user_id = $2 LIMIT 1`,
+    [testId, userId]
+  );
+  return rows[0] ?? null;
+}
 
 export async function GET(
   request: NextRequest,
@@ -10,6 +21,10 @@ export async function GET(
 ) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  if (!await requireTestMembership(params.id, session.user.id)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
 
   const { searchParams } = new URL(request.url);
   const from = searchParams.get('from');
@@ -21,7 +36,6 @@ export async function GET(
     conversion_goals: { id: string; is_primary: boolean }[];
   };
 
-  // Fetch test with variants and primary goal
   const { data: test, error: testError } = await (db
     .from('tests')
     .select('*, test_variants(*, pages(id, name)), conversion_goals(*)')
@@ -35,7 +49,6 @@ export async function GET(
     (g: { is_primary: boolean }) => g.is_primary
   ) || (test.conversion_goals || [])[0] || null;
 
-  // Build date filter
   let dateFilter = db
     .from('events')
     .select('variant_id, type, goal_id')
@@ -46,7 +59,6 @@ export async function GET(
 
   const { data: events } = await (dateFilter as unknown as Promise<{ data: { variant_id: string; type: string; goal_id: string | null }[] | null; error: unknown }>);
 
-  // Aggregate per variant
   const variantStats = variants.map((variant: { id: string; name: string; is_control: boolean; traffic_weight: number; pages?: { id: string; name: string } | null }) => {
     const varEvents = (events || []).filter(
       (e: { variant_id: string; type: string; goal_id: string | null }) => e.variant_id === variant.id
@@ -69,7 +81,6 @@ export async function GET(
     };
   });
 
-  // Compute confidence vs control
   const control = variantStats.find((v: { variant: { is_control: boolean } }) => v.variant.is_control) || variantStats[0];
   for (const stat of variantStats) {
     if (stat.variant.id === control.variant.id) continue;
@@ -81,7 +92,6 @@ export async function GET(
     );
   }
 
-  // Mark winner
   const winnerId = findWinner(
     variantStats.map((s: { variant: { id: string }; views: number; conversions: number }) => ({
       id: s.variant.id,
