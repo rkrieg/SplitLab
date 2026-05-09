@@ -3,6 +3,7 @@ import { db } from '@/lib/supabase-server';
 import { z } from 'zod';
 import { getWorkspaceOwner, incrementVisitorCount, maybeSendVisitorWarning, getUserPlan } from '@/lib/planLimits';
 import { getPlan } from '@/lib/plans';
+import { fireWebhooks } from '@/lib/webhooks';
 
 function corsHeaders(request: NextRequest) {
   const origin = request.headers.get('origin') || '*';
@@ -152,6 +153,59 @@ export async function POST(request: NextRequest) {
       } catch (perfErr) {
         console.error('[event] page_performance error:', perfErr);
       }
+    }
+
+    // Fire webhooks for conversion events (non-blocking)
+    if (data.type === 'conversion') {
+      Promise.resolve().then(async () => {
+        try {
+          const { data: testRow } = await (db
+            .from('tests')
+            .select('id, name, url_path, workspace_id')
+            .eq('id', data.testId)
+            .single() as unknown as Promise<{ data: { id: string; name: string; url_path: string; workspace_id: string } | null }>);
+
+          if (!testRow?.workspace_id) return;
+
+          const { data: variant } = await (db
+            .from('test_variants')
+            .select('id, name')
+            .eq('id', data.variantId)
+            .single() as unknown as Promise<{ data: { id: string; name: string } | null }>);
+
+          let goalName: string | null = null;
+          let goalType: string | null = null;
+          let isPrimary = false;
+          if (goalId) {
+            const { data: goal } = await (db
+              .from('conversion_goals')
+              .select('id, name, type, is_primary')
+              .eq('id', goalId)
+              .single() as unknown as Promise<{ data: { id: string; name: string; type: string; is_primary: boolean } | null }>);
+            if (goal) {
+              goalName = goal.name;
+              goalType = goal.type;
+              isPrimary = goal.is_primary;
+            }
+          }
+
+          await fireWebhooks(testRow.workspace_id, 'conversion', {
+            test_id: testRow.id,
+            test_name: testRow.name,
+            test_url: testRow.url_path,
+            variant_id: data.variantId,
+            variant_name: variant?.name ?? null,
+            goal_id: goalId,
+            goal_name: goalName,
+            goal_type: goalType,
+            is_primary_goal: isPrimary,
+            visitor_hash: data.visitorHash,
+            metadata: data.metadata || {},
+          });
+        } catch (whErr) {
+          console.error('[event] webhook error:', whErr);
+        }
+      });
     }
 
     return NextResponse.json({ ok: true }, { headers });
