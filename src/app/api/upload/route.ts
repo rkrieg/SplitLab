@@ -31,6 +31,17 @@ export async function POST(request: NextRequest) {
 
     const name = formData.get('name') as string;
     const workspaceId = formData.get('workspace_id') as string;
+
+    // Verify the caller is a member of the target workspace before upload
+    if (workspaceId) {
+      const { data: membership } = await db
+        .from('workspace_members')
+        .select('role')
+        .eq('workspace_id', workspaceId)
+        .eq('user_id', session.user.id)
+        .single();
+      if (!membership) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
     const tagsRaw = formData.get('tags') as string | null;
     const tags = tagsRaw ? tagsRaw.split(',').map((t) => t.trim()).filter(Boolean) : [];
 
