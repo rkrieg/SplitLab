@@ -12,6 +12,15 @@ export async function POST(
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
+  // Verify caller is a member of this workspace
+  const { data: membership } = await db
+    .from('workspace_members')
+    .select('role')
+    .eq('workspace_id', params.id)
+    .eq('user_id', session.user.id)
+    .single();
+  if (!membership) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+
   const { testId } = params;
 
   let approvedVariantIds: string[];
