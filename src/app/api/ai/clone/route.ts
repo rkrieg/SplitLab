@@ -20,7 +20,7 @@ export async function POST(request: NextRequest) {
       headers: { 'Content-Type': 'application/json' },
     });
   }
-  if (session.user.role !== 'admin' && session.user.role !== 'manager') {
+  if (!['admin', 'manager', 'super_admin'].includes(session.user.role)) {
     return new Response(JSON.stringify({ error: 'Forbidden' }), {
       status: 403,
       headers: { 'Content-Type': 'application/json' },
