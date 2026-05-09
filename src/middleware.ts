@@ -8,19 +8,23 @@ const NAKED_HOST = CANONICAL_HOST.replace(/^www\./, '');
 
 const CNAME_BASE = process.env.CNAME_BASE || 'cname.trysplitlab.com';
 
+const IMP_COOKIE = 'sl_imp';
+const IMP_HEADER = 'x-sl-impersonating';
+
 function isCustomDomain(host: string): boolean {
-  // Never treat Replit-managed domains as custom client domains
   if (host.includes('.replit.app') || host.includes('.replit.dev') || host.includes('.picard.replit.dev')) return false;
-  // *.cname.trysplitlab.com subdomains ARE custom domains (direct CNAME access)
   if (host.endsWith(`.${CNAME_BASE}`)) return true;
-  // Never treat the app's own exact hostname or www variant as a custom domain
-  // Use exact/suffix match — NOT .includes() — so subdomains like ab.trysplitlab.com still route correctly
   if (APP_HOSTNAME && (host === APP_HOSTNAME || host === `www.${APP_HOSTNAME}`)) return false;
-  // Never treat the canonical marketing domain as a custom domain
   if (CANONICAL_HOST && (host === CANONICAL_HOST || host === NAKED_HOST)) return false;
-  // Standard exclusions
   if (host.includes('localhost') || host.includes('127.0.0.1') || host.startsWith('192.168.')) return false;
   return true;
+}
+
+// Build a NextResponse.next() with the impersonation header injected into the request
+function nextWithImpersonation(request: NextRequest, targetUserId: string) {
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set(IMP_HEADER, targetUserId);
+  return NextResponse.next({ request: { headers: requestHeaders } });
 }
 
 export async function middleware(request: NextRequest) {
@@ -67,11 +71,9 @@ export async function middleware(request: NextRequest) {
   }
 
   // ── Custom domain page serving ──────────────────────────────────────────
-  // Only intercept requests on custom client domains. App routes, API routes,
-  // and Next.js internals are never rewritten.
   const APP_ROUTES = [
     '/login', '/dashboard', '/clients', '/api', '/tests', '/pages',
-    '/scripts', '/team', '/settings', '/_next', '/favicon.ico', '/static', '/tracker.js',
+    '/scripts', '/team', '/settings', '/admin', '/_next', '/favicon.ico', '/static', '/tracker.js',
   ];
   const isAppRoute = APP_ROUTES.some((r) => pathname === r || pathname.startsWith(r + '/') || pathname.startsWith(r + '?'));
 
@@ -83,35 +85,53 @@ export async function middleware(request: NextRequest) {
     return NextResponse.rewrite(url);
   }
 
-  // ── Auth protection for dashboard routes ────────────────────────────────
+  // ── Auth protection for dashboard + admin routes ────────────────────────
   const isAuthRoute = pathname.startsWith('/login') || pathname.startsWith('/signup');
   const isDashboardRoute =
     pathname.startsWith('/dashboard') ||
     pathname.startsWith('/clients') ||
     pathname.startsWith('/team') ||
-    pathname.startsWith('/settings');
+    pathname.startsWith('/settings') ||
+    pathname.startsWith('/admin');
+
+  // Fetch token once — used for auth checks + impersonation injection
+  const token = isDashboardRoute || isAuthRoute
+    ? await getToken({ req: request, secret: process.env.NEXTAUTH_SECRET })
+    : null;
 
   if (isDashboardRoute) {
-    const token = await getToken({
-      req: request,
-      secret: process.env.NEXTAUTH_SECRET,
-    });
-
     if (!token) {
       const loginUrl = new URL('/login', request.url);
       loginUrl.searchParams.set('callbackUrl', pathname);
       return NextResponse.redirect(loginUrl);
     }
+
+    // ── Super-admin-only: /admin routes ─────────────────────────────────
+    if (pathname.startsWith('/admin') || pathname.startsWith('/api/admin/')) {
+      if (token.role !== 'super_admin') {
+        return NextResponse.redirect(new URL('/dashboard', request.url));
+      }
+    }
   }
 
   // Redirect logged-in users away from login page
-  if (isAuthRoute) {
-    const token = await getToken({
-      req: request,
-      secret: process.env.NEXTAUTH_SECRET,
-    });
-    if (token) {
-      return NextResponse.redirect(new URL('/dashboard', request.url));
+  if (isAuthRoute && token) {
+    return NextResponse.redirect(new URL('/dashboard', request.url));
+  }
+
+  // ── Impersonation header injection ──────────────────────────────────────
+  // For super_admin users with an active sl_imp cookie, inject the target
+  // user ID as a request header so server components can read it.
+  const fetchedToken = token ?? (
+    (isDashboardRoute || pathname.startsWith('/api/'))
+      ? await getToken({ req: request, secret: process.env.NEXTAUTH_SECRET })
+      : null
+  );
+
+  if (fetchedToken?.role === 'super_admin') {
+    const impCookie = request.cookies.get(IMP_COOKIE)?.value;
+    if (impCookie) {
+      return nextWithImpersonation(request, impCookie);
     }
   }
 

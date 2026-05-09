@@ -16,8 +16,8 @@ import {
   Check,
   Sun,
   Moon,
-
   Globe,
+  Shield,
   type LucideIcon,
 } from 'lucide-react';
 import { cn, slugify } from '@/lib/utils';
@@ -262,6 +262,27 @@ export default function Sidebar() {
             {label}
           </Link>
         ))}
+
+        {/* Super Admin link */}
+        {session?.user?.role === 'super_admin' && (
+          <>
+            <div className="pt-3 pb-1 px-3">
+              <p className="text-xs font-semibold text-slate-400 dark:text-slate-600 uppercase tracking-wider">Super Admin</p>
+            </div>
+            <Link
+              href="/admin"
+              className={cn(
+                'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
+                isActive('/admin')
+                  ? 'bg-amber-500/15 text-amber-500 border border-amber-500/30'
+                  : 'text-amber-600 dark:text-amber-500 hover:bg-amber-500/10 hover:text-amber-500'
+              )}
+            >
+              <Shield size={16} className="flex-shrink-0" />
+              All Accounts
+            </Link>
+          </>
+        )}
       </nav>
 
       {/* User menu */}
