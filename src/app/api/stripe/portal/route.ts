@@ -40,6 +40,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ url: portalSession.url });
   } catch (err: any) {
     console.error('[stripe-portal]', err);
+    if (err?.code === 'resource_missing' || err?.raw?.code === 'resource_missing') {
+      return NextResponse.json(
+        { error: 'Billing account not found. Please contact support.' },
+        { status: 404 }
+      );
+    }
     return NextResponse.json(
       { error: err.message || 'Failed to open billing portal' },
       { status: 500 }

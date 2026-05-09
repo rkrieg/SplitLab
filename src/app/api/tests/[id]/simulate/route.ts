@@ -2,6 +2,17 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
+import { rawQuery } from '@/lib/db';
+
+async function requireTestMembership(testId: string, userId: string) {
+  const rows = await rawQuery<{ workspace_id: string }>(
+    `SELECT t.workspace_id FROM tests t
+     JOIN workspace_members wm ON wm.workspace_id = t.workspace_id
+     WHERE t.id = $1 AND wm.user_id = $2 LIMIT 1`,
+    [testId, userId]
+  );
+  return rows[0] ?? null;
+}
 
 export async function POST(
   request: NextRequest,
@@ -9,6 +20,10 @@ export async function POST(
 ) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  if (!await requireTestMembership(params.id, session.user.id)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
 
   try {
     const { variantIds } = await request.json();
@@ -30,6 +45,7 @@ export async function POST(
       || null;
 
     const now = new Date();
+    void now;
     const records: {
       test_id: string;
       variant_id: string;

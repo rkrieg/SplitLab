@@ -13,12 +13,26 @@ const createSchema = z.object({
   is_active: z.boolean().optional(),
 });
 
+async function requireMembership(workspaceId: string, userId: string) {
+  const { data } = await db
+    .from('workspace_members')
+    .select('role')
+    .eq('workspace_id', workspaceId)
+    .eq('user_id', userId)
+    .single();
+  return data;
+}
+
 export async function GET(
   _req: NextRequest,
   { params }: { params: { id: string } }
 ) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  if (!await requireMembership(params.id, session.user.id)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
 
   const { data, error } = await db
     .from('scripts')
@@ -36,6 +50,10 @@ export async function POST(
 ) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  if (!await requireMembership(params.id, session.user.id)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
 
   try {
     const body = await request.json();
@@ -59,36 +77,52 @@ export async function POST(
 
 export async function PATCH(
   request: NextRequest,
-  { params: _params }: { params: { id: string } }
+  { params }: { params: { id: string } }
 ) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  if (!await requireMembership(params.id, session.user.id)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
 
   const { id, ...fields } = await request.json();
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
 
-  const { data, error } = await db
+  // Ensure the script belongs to this workspace
+  const { data: script, error } = await db
     .from('scripts')
     .update(fields)
     .eq('id', id)
+    .eq('workspace_id', params.id)
     .select()
     .single();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json(data);
+  return NextResponse.json(script);
 }
 
 export async function DELETE(
   request: NextRequest,
-  { params: _params }: { params: { id: string } }
+  { params }: { params: { id: string } }
 ) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
+  if (!await requireMembership(params.id, session.user.id)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+
   const { id } = await request.json();
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
 
-  const { error } = await db.from('scripts').delete().eq('id', id);
+  // Ensure the script belongs to this workspace before deleting
+  const { error } = await db
+    .from('scripts')
+    .delete()
+    .eq('id', id)
+    .eq('workspace_id', params.id);
+
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ ok: true });
 }
