@@ -61,12 +61,20 @@ export async function POST(request: NextRequest) {
 
     if (error || !client) return NextResponse.json({ error: error?.message ?? 'Insert failed' }, { status: 500 });
 
-    // Auto-create a default workspace
-    await db.from('workspaces').insert({
-      client_id: client.id,
-      name: data.name,
-      slug: 'default',
-    });
+    // Auto-create a default workspace and add the creator as admin member
+    const { data: workspace } = await (db
+      .from('workspaces')
+      .insert({ client_id: client.id, name: data.name, slug: 'default' })
+      .select('id')
+      .single() as unknown as Promise<{ data: { id: string } | null; error: unknown }>);
+
+    if (workspace?.id && session.user?.id) {
+      await db.from('workspace_members').insert({
+        workspace_id: workspace.id,
+        user_id: session.user.id,
+        role: 'manager',
+      });
+    }
 
     return NextResponse.json(client, { status: 201 });
   } catch (err) {
