@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
 import { getUncachableStripeClient } from '@/lib/stripeClient';
+import { rawQuery } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,22 +26,52 @@ export async function POST(request: NextRequest) {
       ? `https://${process.env.REPLIT_DEV_DOMAIN}`
       : process.env.NEXTAUTH_URL || 'http://localhost:5000';
 
-    const session = await stripe.checkout.sessions.create({
+    const session = await getServerSession(authOptions);
+    const isLoggedIn = !!session?.user?.id;
+
+    const checkoutParams: Parameters<typeof stripe.checkout.sessions.create>[0] = {
       mode: 'subscription',
       payment_method_types: ['card'],
       line_items: [{ price: priceId, quantity: 1 }],
-      success_url: `${host}/welcome?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${host}/#pricing`,
       allow_promotion_codes: true,
       subscription_data: {
         metadata: { plan },
       },
-      metadata: { plan },
-    });
+      metadata: { plan, ...(isLoggedIn ? { userId: session!.user.id } : {}) },
+    };
 
-    return NextResponse.json({ url: session.url });
+    if (isLoggedIn) {
+      const rows = await rawQuery<{ stripe_customer_id: string | null; email: string; name: string }>(
+        'SELECT stripe_customer_id, email, name FROM users WHERE id = $1',
+        [session!.user.id]
+      );
+      const user = rows[0];
+
+      checkoutParams.success_url = `${host}/billing?upgraded=1`;
+      checkoutParams.cancel_url = `${host}/billing`;
+
+      if (user?.stripe_customer_id) {
+        checkoutParams.customer = user.stripe_customer_id;
+      } else if (user?.email) {
+        checkoutParams.customer_email = user.email;
+      }
+
+      if (checkoutParams.subscription_data) {
+        checkoutParams.subscription_data.metadata = {
+          ...checkoutParams.subscription_data.metadata,
+          userId: session!.user.id,
+        };
+      }
+    } else {
+      checkoutParams.success_url = `${host}/welcome?session_id={CHECKOUT_SESSION_ID}`;
+      checkoutParams.cancel_url = `${host}/#pricing`;
+    }
+
+    const stripeSession = await stripe.checkout.sessions.create(checkoutParams);
+
+    return NextResponse.json({ url: stripeSession.url });
   } catch (err: any) {
-    console.error('Stripe checkout error:', err);
+    console.error('[stripe-checkout] error:', err);
     return NextResponse.json({ error: err.message || 'Checkout failed' }, { status: 500 });
   }
 }
