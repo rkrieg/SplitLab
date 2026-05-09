@@ -26,12 +26,26 @@ const fallbackSchema = z.object({
   fallback_url: z.string().url().or(z.literal('')),
 });
 
+async function requireMembership(workspaceId: string, userId: string) {
+  const { data } = await db
+    .from('workspace_members')
+    .select('role')
+    .eq('workspace_id', workspaceId)
+    .eq('user_id', userId)
+    .single();
+  return data;
+}
+
 export async function GET(
   _req: NextRequest,
   { params }: { params: { id: string } }
 ) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  if (!await requireMembership(params.id, session.user.id)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
 
   const { data, error } = await (db
     .from('domains')
@@ -49,6 +63,10 @@ export async function POST(
 ) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  if (!await requireMembership(params.id, session.user.id)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
 
   try {
     const body = await request.json();
@@ -136,7 +154,6 @@ export async function POST(
 
       if (updateErr) return NextResponse.json({ error: updateErr.message }, { status: 500 });
 
-      // Re-register with Vercel under new domain name
       try {
         await removeDomainFromVercel(oldRow.domain);
         const result = await addDomainToVercel(newDomain);
@@ -169,17 +186,12 @@ export async function POST(
 
     const { data: newDomain, error } = await (db
       .from('domains')
-      .insert({
-        workspace_id: params.id,
-        domain,
-        verified: false,
-      })
+      .insert({ workspace_id: params.id, domain, verified: false })
       .select()
       .single() as unknown as Promise<{ data: Record<string, unknown> | null; error: { message: string } | null }>);
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-    // Register domain with Vercel — capture TXT verification requirements if domain is claimed by another project
     let vercelVerification: Array<{ type: string; domain: string; value: string }> = [];
     try {
       const result = await addDomainToVercel(domain);
@@ -188,7 +200,6 @@ export async function POST(
       console.warn('[domains] addDomainToVercel failed:', (e as Error).message);
     }
 
-    // Persist TXT records to DB so they survive page refresh
     if (vercelVerification.length > 0 && newDomain) {
       await db
         .from('domains')
@@ -212,6 +223,10 @@ export async function DELETE(
 ) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  if (!await requireMembership(params.id, session.user.id)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
 
   try {
     const { domain_id } = await request.json();
@@ -238,7 +253,6 @@ export async function DELETE(
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-    // Remove from Vercel (non-fatal)
     try { await removeDomainFromVercel(domainToDelete.domain); } catch (e) {
       console.warn('[domains] removeDomainFromVercel failed:', (e as Error).message);
     }
