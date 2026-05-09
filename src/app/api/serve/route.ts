@@ -4,6 +4,7 @@ import { downloadHtml } from '@/lib/storage';
 import { buildTrackingSnippet, injectIntoHtml, buildScriptTag } from '@/lib/tracking';
 import { assignVariant } from '@/lib/utils';
 import type { ConversionGoal } from '@/types';
+import { checkVisitorLimitForWorkspace, incrementVisitorCount, maybeSendVisitorWarning } from '@/lib/planLimits';
 
 const COOKIE_NAME = 'sl_visitor';
 
@@ -41,6 +42,27 @@ export async function GET(request: NextRequest) {
 
     const workspaceId = domainRow.workspace_id;
     const fallbackUrl = domainRow.fallback_url;
+
+    // 1b. Check visitor limit for this workspace's account owner
+    const limitCheck = await checkVisitorLimitForWorkspace(workspaceId);
+    if (!limitCheck.allowed) {
+      // Over limit — redirect to fallback or show limit page
+      if (fallbackUrl) {
+        return NextResponse.redirect(fallbackUrl, 302);
+      }
+      return new NextResponse(visitorLimitHtml(domain, limitCheck.used, limitCheck.limit), {
+        status: 429,
+        headers: { 'Content-Type': 'text/html; charset=utf-8' },
+      });
+    }
+
+    // Increment visitor count (non-blocking — fire and forget)
+    if (limitCheck.userId) {
+      const APP_URL = new URL(request.url).origin;
+      incrementVisitorCount(limitCheck.userId).then((newCount) => {
+        maybeSendVisitorWarning(limitCheck.userId!, newCount, limitCheck.limit, APP_URL).catch(() => {});
+      }).catch(() => {});
+    }
 
     // 2. Find active test matching this URL path
     const { data: test, error: testError } = await (db
@@ -358,6 +380,32 @@ ${proxyTrackingSnippet}
       headers: { 'Content-Type': 'text/html' },
     });
   }
+}
+
+function visitorLimitHtml(domain: string, used: number, limit: number) {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><title>${domain}</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0f172a;min-height:100vh;display:flex;align-items:center;justify-content:center;color:#f8fafc}
+.card{background:#1e293b;border:1px solid #ef444440;border-radius:12px;padding:3rem 2.5rem;text-align:center;max-width:440px;width:90%}
+.icon{font-size:2.5rem;margin-bottom:1rem}
+h1{font-size:1.25rem;font-weight:600;margin-bottom:.5rem;color:#f8fafc}
+p{font-size:.9rem;color:#94a3b8;line-height:1.6;margin-bottom:1rem}
+.badge{display:inline-block;background:#ef444420;border:1px solid #ef444440;color:#fca5a5;border-radius:6px;padding:.3rem .8rem;font-size:.75rem;font-weight:600;margin-bottom:1.5rem}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="icon">⚠️</div>
+  <div class="badge">Traffic Paused</div>
+  <h1>Monthly Visitor Limit Reached</h1>
+  <p>This site has reached its monthly visitor limit (${limit.toLocaleString()} visitors). The site owner needs to upgrade their SplitLab plan to resume serving traffic.</p>
+  <p style="font-size:.75rem;color:#475569">${used.toLocaleString()} / ${limit.toLocaleString()} visitors used this month</p>
+</div>
+</body>
+</html>`;
 }
 
 function circularRedirectHtml(domain: string, variantName: string) {

@@ -12,6 +12,8 @@ export interface UserRow {
   status: string;
   invite_token: string | null;
   invite_expires_at: string | null;
+  visitor_warning_level: number;
+  visitor_warning_month: string | null;
   created_at: string;
 }
 
@@ -151,6 +153,12 @@ export interface InviteTokenRow {
   created_at: string;
 }
 
+export interface VisitorUsageRow {
+  user_id: string;
+  month: string;
+  visitor_count: number;
+}
+
 // Map from table name → row type. Used by the db client for type inference.
 export interface TableSchema {
   users: UserRow;
@@ -167,4 +175,5 @@ export interface TableSchema {
   variant_pages: VariantPageRow;
   scraped_pages: ScrapedPageRow;
   invite_tokens: InviteTokenRow;
+  visitor_usage: VisitorUsageRow;
 }
