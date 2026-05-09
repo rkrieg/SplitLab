@@ -30,6 +30,7 @@ export async function GET(request: NextRequest) {
     });
   } catch (err: any) {
     console.error('Stripe session error:', err);
-    return NextResponse.json({ error: err.message || 'Failed to retrieve session' }, { status: 500 });
+    const statusCode = err?.raw?.statusCode === 404 ? 404 : 500;
+    return NextResponse.json({ error: err.message || 'Failed to retrieve session' }, { status: statusCode });
   }
 }
