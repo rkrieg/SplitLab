@@ -29,7 +29,7 @@ export async function OPTIONS(request: NextRequest) {
 
 function buildTrackerScript(appUrl: string): string {
   return `/**
- * SplitLab Conversion Tracker v2.0
+ * SplitLab Conversion Tracker v2.1
  * Zero-config tracking. One script tag, no setup needed.
  * <script src="${appUrl}/tracker.js"></script>
  */
@@ -113,6 +113,44 @@ function buildTrackerScript(appUrl: string): string {
     send(payload);
   }
 
+  // ─── URL goal checking ───────────────────────────────────────────────────────
+
+  function checkUrlGoals(href) {
+    if (!_ctx || !_ctx.goals || !_ctx.goals.length) return;
+    var url = href || window.location.href;
+    var pathname = window.location.pathname + window.location.search;
+    _ctx.goals.forEach(function(goal) {
+      if (goal.type !== "url_reached" || !goal.urlPattern) return;
+      try {
+        var pattern = new RegExp(goal.urlPattern, "i");
+        if (pattern.test(url) || pattern.test(pathname)) {
+          track("conversion", goal.id);
+        }
+      } catch(e) {}
+    });
+  }
+
+  function wireUrlGoals() {
+    if (!_ctx || !_ctx.goals || !_ctx.goals.length) return;
+
+    // Check immediately on load
+    checkUrlGoals();
+
+    // SPA navigation: pushState / replaceState
+    function wrapHistory(method) {
+      var orig = history[method];
+      history[method] = function() {
+        orig.apply(this, arguments);
+        checkUrlGoals();
+      };
+    }
+    try { wrapHistory("pushState"); wrapHistory("replaceState"); } catch(e) {}
+
+    // Browser back/forward + hash changes
+    window.addEventListener("popstate", function() { checkUrlGoals(); });
+    window.addEventListener("hashchange", function() { checkUrlGoals(); });
+  }
+
   // ─── Auto-wire conversions (zero config) ────────────────────────────────────
 
   function wireAutoConversions() {
@@ -163,23 +201,30 @@ function buildTrackerScript(appUrl: string): string {
     var vh  = params.get("sl_vh");
     if (tid && vid && vh) {
       cleanUrl(["sl_tid", "sl_vid", "sl_vh"]);
-      return callback({ tid: tid, vid: vid, vh: vh });
+      // Still resolve to get goals
+      fetchGoals(vid, function(goals) {
+        callback({ tid: tid, vid: vid, vh: vh, goals: goals });
+      });
+      return;
     }
 
-    // Method 2: Variant ID only (?sl_vid=xxx) — resolve test ID via API
+    // Method 2: Variant ID only (?sl_vid=xxx) — resolve test ID + goals via API
     if (vid && !tid) {
       cleanUrl(["sl_vid"]);
-      // Store partial context immediately so it survives CORS failures
       var tempVh = vh || uuid();
-      store({ tid: null, vid: vid, vh: tempVh });
       var xhr = new XMLHttpRequest();
       xhr.open("GET", RESOLVE_URL + "?vid=" + encodeURIComponent(vid), true);
       xhr.withCredentials = false;
       xhr.onload = function() {
         try {
           var data = JSON.parse(xhr.responseText);
-          if (data.testId) callback({ tid: data.testId, vid: data.variantId, vh: tempVh });
-          else callback(load());
+          if (data.testId) {
+            var ctx = { tid: data.testId, vid: data.variantId, vh: tempVh, goals: data.goals || [] };
+            store(ctx);
+            callback(ctx);
+          } else {
+            callback(load());
+          }
         } catch(e) { callback(load()); }
       };
       xhr.onerror = function() { callback(load()); };
@@ -197,8 +242,13 @@ function buildTrackerScript(appUrl: string): string {
       xhr2.onload = function() {
         try {
           var data = JSON.parse(xhr2.responseText);
-          if (data.testId) callback({ tid: data.testId, vid: data.variantId, vh: uuid() });
-          else callback(load());
+          if (data.testId) {
+            var ctx = { tid: data.testId, vid: data.variantId, vh: uuid(), goals: data.goals || [] };
+            store(ctx);
+            callback(ctx);
+          } else {
+            callback(load());
+          }
         } catch(e) { callback(load()); }
       };
       xhr2.onerror = function() { callback(load()); };
@@ -206,8 +256,32 @@ function buildTrackerScript(appUrl: string): string {
       return;
     }
 
-    // Method 4: localStorage (returning visitor)
-    callback(load());
+    // Method 4: localStorage (returning visitor — goals may not be stored, re-fetch if we have vid)
+    var stored = load();
+    if (stored && stored.vid && (!stored.goals || !stored.goals.length)) {
+      fetchGoals(stored.vid, function(goals) {
+        stored.goals = goals;
+        callback(stored);
+      });
+      return;
+    }
+    callback(stored);
+  }
+
+  // ─── Fetch just goals for a known vid ───────────────────────────────────────
+
+  function fetchGoals(vid, callback) {
+    var xhr = new XMLHttpRequest();
+    xhr.open("GET", RESOLVE_URL + "?vid=" + encodeURIComponent(vid), true);
+    xhr.withCredentials = false;
+    xhr.onload = function() {
+      try {
+        var data = JSON.parse(xhr.responseText);
+        callback(data.goals || []);
+      } catch(e) { callback([]); }
+    };
+    xhr.onerror = function() { callback([]); };
+    xhr.send();
   }
 
   // ─── Boot ───────────────────────────────────────────────────────────────────
@@ -217,7 +291,13 @@ function buildTrackerScript(appUrl: string): string {
     if (!_ctx) return;
     store(_ctx);
 
-    function onReady() { wireAutoConversions(); }
+    // Fire pageview immediately
+    track("pageview");
+
+    function onReady() {
+      wireUrlGoals();
+      wireAutoConversions();
+    }
     if (document.readyState === "loading") {
       document.addEventListener("DOMContentLoaded", onReady);
     } else {

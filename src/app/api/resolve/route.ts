@@ -28,7 +28,18 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Variant not found' }, { status: 404, headers });
   }
 
-  return NextResponse.json({ testId: data.test_id, variantId: data.id }, { headers });
+  // Also return url_reached goals so tracker.js can fire URL-based conversions
+  const { data: goals } = await (db
+    .from('conversion_goals')
+    .select('id, type, url_pattern')
+    .eq('test_id', data.test_id)
+    .eq('type', 'url_reached') as unknown as Promise<{ data: { id: string; type: string; url_pattern: string | null }[] | null; error: unknown }>);
+
+  return NextResponse.json({
+    testId: data.test_id,
+    variantId: data.id,
+    goals: (goals || []).filter(g => g.url_pattern).map(g => ({ id: g.id, type: g.type, urlPattern: g.url_pattern })),
+  }, { headers });
 }
 
 export async function OPTIONS(request: NextRequest) {
