@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, Fragment } from 'react';
+import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import toast from 'react-hot-toast';
 import {
@@ -83,6 +84,7 @@ interface Props {
 type Tab = 'overview' | 'leads' | 'settings';
 
 export default function AnalyticsClient({ test: initialTest, appUrl, clientId, clientName, domain }: Props) {
+  const router = useRouter();
   const [test, setTest] = useState(initialTest);
   const [tab, setTab] = useState<Tab>('overview');
 
@@ -114,6 +116,10 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
   const [deleteVariantId, setDeleteVariantId] = useState<string | null>(null);
   const [deletingVariant, setDeletingVariant] = useState(false);
 
+  // Delete test
+  const [deleteTestOpen, setDeleteTestOpen] = useState(false);
+  const [deletingTest, setDeletingTest] = useState(false);
+
   // Add variant
   const [addVariantOpen, setAddVariantOpen] = useState(false);
   const [newVariantName, setNewVariantName] = useState('');
@@ -125,6 +131,21 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
   // Tracking verification
   const [checkingTracking, setCheckingTracking] = useState<string | null>(null);
   const [variantOverrides, setVariantOverrides] = useState<Record<string, boolean>>({});
+
+  async function handleDeleteTest() {
+    setDeletingTest(true);
+    try {
+      const res = await fetch(`/api/tests/${test.id}`, { method: 'DELETE' });
+      if (!res.ok) { toast.error('Failed to delete test'); return; }
+      toast.success('Test deleted');
+      router.push(`/clients/${clientId}/pages`);
+    } catch {
+      toast.error('Failed to delete test');
+    } finally {
+      setDeletingTest(false);
+      setDeleteTestOpen(false);
+    }
+  }
 
   // Goals (settings tab)
   const [editGoals, setEditGoals] = useState<Goal[]>(() =>
@@ -1167,6 +1188,25 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
                 </div>
               </div>
             </div>
+
+            {/* Danger Zone */}
+            <div className="card overflow-hidden border border-red-200 dark:border-red-900/40">
+              <div className="px-5 py-4 border-b border-red-200 dark:border-red-900/40">
+                <h3 className="font-medium text-red-600 dark:text-red-400">Danger Zone</h3>
+              </div>
+              <div className="px-5 py-4 flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-sm font-medium text-slate-800 dark:text-slate-200">Delete this test</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Permanently remove this test and all its analytics data. This cannot be undone.</p>
+                </div>
+                <button
+                  onClick={() => setDeleteTestOpen(true)}
+                  className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-red-500 border border-red-300 dark:border-red-700 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                >
+                  <Trash2 size={14} /> Delete Test
+                </button>
+              </div>
+            </div>
           </>
         )}
       </div>
@@ -1248,6 +1288,15 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
         title="Delete Variant"
         description="This will permanently delete the variant and its event data. Traffic weights will be redistributed automatically."
         loading={deletingVariant}
+      />
+
+      <ConfirmDialog
+        open={deleteTestOpen}
+        onClose={() => setDeleteTestOpen(false)}
+        onConfirm={handleDeleteTest}
+        title="Delete Test"
+        description={`Are you sure you want to delete "${test.name}"? All analytics data, variants, and goals will be permanently removed. This cannot be undone.`}
+        loading={deletingTest}
       />
     </div>
   );
