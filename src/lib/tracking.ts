@@ -35,16 +35,25 @@ export function buildTrackingSnippet(
       if (this._sent[key]) return;
       this._sent[key] = true;
       var self = this;
+      var payload = JSON.stringify({
+        testId: self.testId,
+        variantId: self.variantId,
+        goalId: goalId || null,
+        visitorHash: self.visitorHash,
+        type: type
+      });
+      // Use sendBeacon when available (survives page navigations)
+      if (navigator.sendBeacon) {
+        try {
+          var blob = new Blob([payload], { type: 'application/json' });
+          navigator.sendBeacon(self.apiUrl + '/api/event', blob);
+          return;
+        } catch(e) {}
+      }
       fetch(self.apiUrl + '/api/event', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          testId: self.testId,
-          variantId: self.variantId,
-          goalId: goalId || null,
-          visitorHash: self.visitorHash,
-          type: type
-        })
+        body: payload
       }).catch(function() {});
     }
   };
@@ -53,19 +62,72 @@ export function buildTrackingSnippet(
   _SL.track('pageview');
 
   // Wire up conversion goals
-  function initGoals() {
+  function checkUrlGoals(href) {
+    var url = href || window.location.href;
     _SL.goals.forEach(function(goal) {
-      if (goal.type === 'url_reached') {
-        if (goal.urlPattern && new RegExp(goal.urlPattern).test(window.location.href)) {
+      if (goal.type !== 'url_reached' || !goal.urlPattern) return;
+      try {
+        // Match against full URL or just the pathname+search
+        var pattern = new RegExp(goal.urlPattern, 'i');
+        if (pattern.test(url) || pattern.test(window.location.pathname + window.location.search)) {
           _SL.track('conversion', goal.id);
         }
-      } else if (goal.type === 'form_submit') {
-        var forms = goal.selector ? document.querySelectorAll(goal.selector) : document.querySelectorAll('form');
+      } catch(e) {}
+    });
+  }
+
+  function initGoals() {
+    var urlGoals = _SL.goals.filter(function(g) { return g.type === 'url_reached'; });
+
+    // ── url_reached ──────────────────────────────────────────────────────────
+    if (urlGoals.length > 0) {
+      // Check immediately on load
+      checkUrlGoals();
+
+      // Intercept history.pushState / replaceState (SPA navigation)
+      function wrapHistory(method) {
+        var orig = history[method];
+        history[method] = function() {
+          orig.apply(this, arguments);
+          checkUrlGoals();
+        };
+      }
+      try { wrapHistory('pushState'); wrapHistory('replaceState'); } catch(e) {}
+
+      // Browser back/forward + hash changes
+      window.addEventListener('popstate', function() { checkUrlGoals(); });
+      window.addEventListener('hashchange', function() { checkUrlGoals(); });
+
+      // Proxy-mode iframe: listen for inner-page navigation.
+      // We can't read the cross-origin iframe's URL, but we CAN check the
+      // top-frame href in case allow-top-navigation caused the outer URL to
+      // change, and also try to read same-origin iframes.
+      document.querySelectorAll('iframe').forEach(function(iframe) {
+        iframe.addEventListener('load', function() {
+          // Re-check the outer page URL (catches top-frame navigations)
+          checkUrlGoals();
+          // Attempt to read same-origin iframe URL (throws for cross-origin)
+          try {
+            var innerHref = iframe.contentWindow && iframe.contentWindow.location.href;
+            if (innerHref) checkUrlGoals(innerHref);
+          } catch(e) { /* cross-origin — cannot read URL */ }
+        });
+      });
+    }
+
+    // ── form_submit ──────────────────────────────────────────────────────────
+    _SL.goals.forEach(function(goal) {
+      if (goal.type === 'form_submit') {
+        var forms = goal.selector
+          ? document.querySelectorAll(goal.selector)
+          : document.querySelectorAll('form');
         forms.forEach(function(form) {
           form.addEventListener('submit', function() {
             _SL.track('conversion', goal.id);
           });
         });
+
+      // ── button_click ───────────────────────────────────────────────────────
       } else if (goal.type === 'button_click') {
         if (goal.selector) {
           document.querySelectorAll(goal.selector).forEach(function(el) {
@@ -74,6 +136,8 @@ export function buildTrackingSnippet(
             });
           });
         }
+
+      // ── call_click ─────────────────────────────────────────────────────────
       } else if (goal.type === 'call_click') {
         document.querySelectorAll('a[href^="tel:"]').forEach(function(el) {
           el.addEventListener('click', function() {
