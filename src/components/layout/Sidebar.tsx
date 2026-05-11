@@ -173,7 +173,7 @@ export default function Sidebar() {
 
   return (
     <>
-    <aside className="w-60 min-h-screen bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col">
+    <aside className="w-60 h-screen sticky top-0 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden">
       {/* Logo */}
       <div className="h-16 flex items-center px-4 border-b border-slate-200 dark:border-slate-800">
         <Link href="/dashboard" className="flex items-center">
@@ -250,7 +250,7 @@ export default function Sidebar() {
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 px-3 py-2 space-y-0.5">
+      <nav className="flex-1 px-3 py-2 space-y-0.5 overflow-y-auto">
         {navItems.map(({ href, label, icon: Icon, exact }) => (
           <Link
             key={href}
