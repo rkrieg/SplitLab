@@ -6,8 +6,6 @@ export default function LandingPage() {
   const [navScrolled, setNavScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [checkoutLoading, setCheckoutLoading] = useState<string | null>(null);
-
   useEffect(() => {
     function onScroll() {
       setNavScrolled(window.scrollY > 40);
@@ -20,27 +18,6 @@ export default function LandingPage() {
     navigator.clipboard.writeText('<script src="https://www.trysplitlab.com/tracker.js"></script>');
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-  }
-
-  async function handleCheckout(plan: string) {
-    setCheckoutLoading(plan);
-    try {
-      const res = await fetch('/api/stripe/checkout', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ plan }),
-      });
-      const data = await res.json();
-      if (data.url) {
-        window.open(data.url, '_blank');
-      } else {
-        alert(data.error || 'Failed to start checkout. Please try again.');
-        setCheckoutLoading(null);
-      }
-    } catch {
-      alert('Failed to start checkout. Please try again.');
-      setCheckoutLoading(null);
-    }
   }
 
   return (
@@ -224,7 +201,7 @@ export default function LandingPage() {
               <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Conversion goals</li>
               <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Priority email support</li>
             </ul>
-            <button onClick={() => handleCheckout('pro')} disabled={checkoutLoading === 'pro'} className="pricing-btn pricing-btn-outline">{checkoutLoading === 'pro' ? 'Loading…' : 'Start Pro'}</button>
+            <a href="/signup?plan=pro" className="pricing-btn pricing-btn-outline">Start Pro</a>
           </div>
           <div className="pricing-card featured">
             <div className="pricing-plan">Agency</div>
@@ -238,7 +215,7 @@ export default function LandingPage() {
               <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Custom scripts per variant</li>
               <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>UTM personalization</li>
             </ul>
-            <button onClick={() => handleCheckout('agency')} disabled={checkoutLoading === 'agency'} className="pricing-btn pricing-btn-primary">{checkoutLoading === 'agency' ? 'Loading…' : 'Start Agency'}</button>
+            <a href="/signup?plan=agency" className="pricing-btn pricing-btn-primary">Start Agency</a>
           </div>
           <div className="pricing-card">
             <div className="pricing-plan">Scale</div>
@@ -252,7 +229,7 @@ export default function LandingPage() {
               <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Webhook integrations</li>
               <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Priority support</li>
             </ul>
-            <button onClick={() => handleCheckout('scale')} disabled={checkoutLoading === 'scale'} className="pricing-btn pricing-btn-secondary">{checkoutLoading === 'scale' ? 'Loading…' : 'Start Scale'}</button>
+            <a href="/signup?plan=scale" className="pricing-btn pricing-btn-secondary">Start Scale</a>
           </div>
         </div>
       </section>
