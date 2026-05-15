@@ -10,6 +10,15 @@ export default function DashboardError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  if (
+    error.message === 'NEXT_REDIRECT' ||
+    error.message === 'NEXT_NOT_FOUND' ||
+    error.digest?.startsWith('NEXT_REDIRECT') ||
+    error.digest?.startsWith('NEXT_NOT_FOUND')
+  ) {
+    throw error;
+  }
+
   useEffect(() => {
     console.error('[dashboard-error]', error);
   }, [error]);
