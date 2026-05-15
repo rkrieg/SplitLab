@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
+import { rawQuery } from '@/lib/db';
 import { addDomainToVercel, removeDomainFromVercel, getDomainStatus } from '@/lib/vercel';
 import { z } from 'zod';
 
@@ -27,6 +28,12 @@ const fallbackSchema = z.object({
 });
 
 async function requireMembership(workspaceId: string, userId: string) {
+  const rows = await rawQuery<{ role: string }>(
+    `SELECT role FROM users WHERE id = $1 AND role IN ('super_admin', 'admin')`,
+    [userId]
+  );
+  if (rows.length > 0) return { role: 'manager' };
+
   const { data } = await db
     .from('workspace_members')
     .select('role')
