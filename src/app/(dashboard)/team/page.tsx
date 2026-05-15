@@ -25,7 +25,7 @@ async function getUsers() {
 export default async function TeamPage() {
   const session = await getServerSession(authOptions);
   if (!session) redirect('/login');
-  if (session.user.role !== 'admin') redirect('/dashboard');
+  if (!['admin', 'super_admin'].includes(session.user.role)) redirect('/dashboard');
 
   const users = await getUsers();
 

@@ -52,6 +52,7 @@ function getClientNavItems(clientId: string): NavItem[] {
     { href: `/clients/${clientId}/pages`, label: 'Pages', icon: FileCode2, exact: true },
     { href: `/clients/${clientId}/scripts`, label: 'Scripts', icon: Code2 },
     { href: `/clients/${clientId}/domains`, label: 'Domains', icon: Globe },
+    { href: `/clients/${clientId}/team`, label: 'Team', icon: Users },
     { href: `/clients/${clientId}/webhooks`, label: 'Webhooks', icon: Zap },
     { href: `/clients/${clientId}/settings`, label: 'Settings', icon: Settings },
   ];
@@ -121,8 +122,10 @@ export default function Sidebar() {
         router.push(`/clients/${client.id}/scripts`);
       } else if (pathname.includes('/settings')) {
         router.push(`/clients/${client.id}/settings`);
+      } else if (pathname.includes('/team')) {
+        router.push(`/clients/${client.id}/team`);
       } else {
-        // pages, dashboard, team, or anything else → go to client pages
+        // pages, dashboard, or anything else → go to client pages
         router.push(`/clients/${client.id}/pages`);
       }
     } else {
@@ -133,6 +136,8 @@ export default function Sidebar() {
         router.push('/scripts');
       } else if (pathname.includes('/settings')) {
         router.push('/settings');
+      } else if (pathname.includes('/team')) {
+        router.push('/team');
       } else if (pathname.includes('/pages')) {
         router.push('/pages');
       } else {
