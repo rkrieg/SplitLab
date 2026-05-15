@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import toast from 'react-hot-toast';
 import {
   UserPlus, Trash2, Crown, Eye, Copy, ExternalLink, X, ChevronDown, Users,
@@ -13,7 +13,6 @@ interface Member {
   id: string;
   role: 'manager' | 'viewer';
   user_id: string;
-  status?: string;
   users: { id: string; name: string; email: string; role: string } | null;
 }
 
@@ -33,6 +32,7 @@ const ROLE_LABELS: Record<string, string> = {
 
 export default function WorkspaceTeamClient({ workspaceId, canManage, currentUserId, initialMembers }: Props) {
   const [members, setMembers] = useState<Member[]>(initialMembers);
+  const inviteFormRef = useRef<HTMLDivElement>(null);
 
   const [inviteName, setInviteName] = useState('');
   const [inviteEmail, setInviteEmail] = useState('');
@@ -60,7 +60,6 @@ export default function WorkspaceTeamClient({ workspaceId, canManage, currentUse
         id: data.id,
         role: data.role,
         user_id: data.user_id,
-        status: data.status,
         users: { id: data.user_id, name: data.name, email: data.email, role: data.role },
       };
       setMembers(prev => [...prev, newMember]);
@@ -116,13 +115,17 @@ export default function WorkspaceTeamClient({ workspaceId, canManage, currentUse
           icon={Users}
           title="No team members yet"
           description="Invite people to give them access to this workspace."
+          action={canManage ? (
+            <Button onClick={() => inviteFormRef.current?.scrollIntoView({ behavior: 'smooth' })}>
+              <UserPlus size={16} /> Invite Member
+            </Button>
+          ) : undefined}
         />
       ) : (
         <div className="card divide-y divide-slate-200 dark:divide-slate-700 overflow-hidden">
           {members.map(m => {
             const user = m.users;
             const isSelf = m.user_id === currentUserId;
-            const isInvited = m.status === 'invited';
             const canEditRole = canManage && !isSelf && ['manager', 'viewer'].includes(m.role);
             return (
               <div key={m.id} className="flex items-center gap-3 px-4 py-3.5">
@@ -135,11 +138,6 @@ export default function WorkspaceTeamClient({ workspaceId, canManage, currentUse
                   <div className="flex items-center gap-1.5">
                     <span className="text-sm font-medium text-slate-900 dark:text-slate-100 truncate">{user?.name || '—'}</span>
                     {isSelf && <span className="text-xs text-slate-400 dark:text-slate-500">(you)</span>}
-                    {isInvited && (
-                      <span className="text-xs px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/25">
-                        Invited
-                      </span>
-                    )}
                   </div>
                   <p className="text-xs text-slate-500 dark:text-slate-400 truncate">{user?.email || '—'}</p>
                 </div>
@@ -216,7 +214,7 @@ export default function WorkspaceTeamClient({ workspaceId, canManage, currentUse
 
       {/* Invite form */}
       {canManage && (
-        <div>
+        <div ref={inviteFormRef}>
           <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100 mb-3 flex items-center gap-2">
             <UserPlus size={14} /> Invite a team member
           </h3>

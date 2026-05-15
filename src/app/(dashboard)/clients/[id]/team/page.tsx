@@ -22,8 +22,8 @@ export default async function ClientTeamPage({ params }: { params: { id: string 
 
   const { data: members } = await (db
     .from('workspace_members')
-    .select('id, role, user_id, status, users(id, name, email, role)')
-    .eq('workspace_id', workspace.id) as unknown as Promise<{ data: { id: string; role: string; user_id: string; status?: string; users: { id: string; name: string; email: string; role: string } | null }[] | null }>);
+    .select('id, role, user_id, users(id, name, email, role)')
+    .eq('workspace_id', workspace.id) as unknown as Promise<{ data: { id: string; role: string; user_id: string; users: { id: string; name: string; email: string; role: string } | null }[] | null }>);
 
   return (
     <div>
