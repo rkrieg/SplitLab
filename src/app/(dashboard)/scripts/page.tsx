@@ -2,6 +2,7 @@ import { getServerSession } from 'next-auth';
 import { redirect } from 'next/navigation';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
+import { rawQuery } from '@/lib/db';
 import Header from '@/components/layout/Header';
 import Link from 'next/link';
 import { Code2 } from 'lucide-react';
@@ -18,10 +19,18 @@ interface ScriptRow {
   workspaces: { name: string; client_id: string; clients: { name: string } } | null;
 }
 
-async function getAllScripts() {
+async function getAllScripts(userId: string) {
+  const wsRows = await rawQuery<{ workspace_id: string }>(
+    `SELECT workspace_id FROM workspace_members WHERE user_id = $1`,
+    [userId]
+  );
+  const userWorkspaceIds = wsRows.map(r => r.workspace_id);
+  if (userWorkspaceIds.length === 0) return [];
+
   const { data } = await (db
     .from('scripts')
     .select('*, workspaces(name, client_id, clients(name))')
+    .in('workspace_id', userWorkspaceIds)
     .order('created_at', { ascending: false }) as unknown as Promise<{ data: ScriptRow[] | null }>);
   return data ?? [];
 }
@@ -30,7 +39,7 @@ export default async function AllScriptsPage() {
   const session = await getServerSession(authOptions);
   if (!session) redirect('/login');
 
-  const scripts = await getAllScripts();
+  const scripts = await getAllScripts(session.user.id);
 
   const typeLabel: Record<string, string> = {
     gtm: 'GTM', meta_pixel: 'Meta Pixel', ga4: 'GA4', custom: 'Custom',

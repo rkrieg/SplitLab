@@ -2,6 +2,7 @@ import { getServerSession } from 'next-auth';
 import { redirect } from 'next/navigation';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
+import { rawQuery } from '@/lib/db';
 import Header from '@/components/layout/Header';
 import Link from 'next/link';
 import { Globe, CheckCircle, Clock, XCircle, Plus } from 'lucide-react';
@@ -18,10 +19,18 @@ interface DomainRow {
   client_name: string;
 }
 
-async function getAllDomains(): Promise<DomainRow[]> {
+async function getAllDomains(userId: string): Promise<DomainRow[]> {
+  const wsRows = await rawQuery<{ workspace_id: string }>(
+    `SELECT workspace_id FROM workspace_members WHERE user_id = $1`,
+    [userId]
+  );
+  const userWorkspaceIds = wsRows.map(r => r.workspace_id);
+  if (userWorkspaceIds.length === 0) return [];
+
   const { data: domains } = await db
     .from('domains')
     .select('id, domain, verified, verified_at, created_at, workspace_id, workspaces(client_id, clients(id, name))')
+    .in('workspace_id', userWorkspaceIds)
     .order('created_at', { ascending: false }) as unknown as {
       data: Array<{
         id: string;
@@ -52,7 +61,7 @@ export default async function AllDomainsPage() {
   const session = await getServerSession(authOptions);
   if (!session) redirect('/login');
 
-  const domains = await getAllDomains();
+  const domains = await getAllDomains(session.user.id);
   const verifiedCount = domains.filter((d) => d.verified).length;
 
   return (
