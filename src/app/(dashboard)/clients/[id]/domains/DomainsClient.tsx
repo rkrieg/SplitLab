@@ -70,7 +70,7 @@ function DnsTable({ records, onCopy, highlight }: {
   );
 }
 
-export default function DomainsClient({ initialDomains, workspaceId, canManage }: Props) {
+export default function DomainsClient({ initialDomains, workspaceId, appHostname, canManage }: Props) {
   const [domains, setDomains] = useState(initialDomains);
   const [modalOpen, setModalOpen] = useState(false);
   const [addWebsiteDomain, setAddWebsiteDomain] = useState('');
@@ -142,7 +142,7 @@ export default function DomainsClient({ initialDomains, workspaceId, canManage }
       });
       if (!res.ok) { const err = await res.json(); toast.error(err.error || 'Failed to add domain'); return; }
       const d = await res.json();
-      setDomains([d]);
+      setDomains(prev => [...prev, d]);
       setModalOpen(false);
       resetAddModal();
       toast.success('Domain added — now configure your DNS record below.');
@@ -367,7 +367,7 @@ export default function DomainsClient({ initialDomains, workspaceId, canManage }
               Add this CNAME record:
             </p>
             <DnsTable
-              records={[{ type: 'CNAME', name: prefix || d.domain, value: 'cname.vercel-dns.com' }]}
+              records={[{ type: 'CNAME', name: prefix || d.domain, value: appHostname }]}
               onCopy={copyToClipboard}
               highlight
             />

@@ -20,6 +20,11 @@ export default async function ClientSettingsPage({ params }: { params: { id: str
   const workspace = await getWorkspaceForClient(params.id);
   if (!workspace) notFound();
 
+  const { data: members } = await (db
+    .from('workspace_members')
+    .select('id, role, user_id, users(id, name, email, role)')
+    .eq('workspace_id', workspace.id) as unknown as Promise<{ data: { id: string; role: string; user_id: string; users: { id: string; name: string; email: string; role: string } | null }[] | null }>);
+
   return (
     <div>
       <Header title="Settings" subtitle={client.name} />
@@ -28,6 +33,8 @@ export default async function ClientSettingsPage({ params }: { params: { id: str
           client={client}
           workspaceId={workspace.id}
           canManage={session.user.role !== 'viewer'}
+          currentUserId={session.user.id}
+          initialMembers={members ?? []}
         />
       </div>
     </div>
