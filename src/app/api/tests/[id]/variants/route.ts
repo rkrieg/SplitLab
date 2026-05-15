@@ -19,9 +19,6 @@ export async function POST(
 ) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  if (!['admin', 'manager', 'super_admin'].includes(session.user.role)) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  }
 
   try {
     const body = await request.json();
@@ -39,6 +36,21 @@ export async function POST(
       .single() as unknown as Promise<{ data: { id: string; workspace_id: string } | null; error: { message: string } | null }>);
     if (testErr || !test) {
       return NextResponse.json({ error: 'Test not found' }, { status: 404 });
+    }
+
+    // Check authorization: platform admin/super_admin can always proceed;
+    // otherwise the user must be a non-viewer member of this workspace.
+    const isPlatformAdmin = ['admin', 'super_admin'].includes(session.user.role);
+    if (!isPlatformAdmin) {
+      const { data: member } = await db
+        .from('workspace_members')
+        .select('role')
+        .eq('workspace_id', test.workspace_id)
+        .eq('user_id', session.user.id)
+        .single();
+      if (!member || member.role === 'viewer') {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+      }
     }
 
     let pageId: string | null = null;
