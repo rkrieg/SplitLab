@@ -1,6 +1,7 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
+import { rawQuery } from '@/lib/db';
 import Header from '@/components/layout/Header';
 import Link from 'next/link';
 import {
@@ -26,10 +27,18 @@ interface TestRow {
 
 type RawTest = Record<string, unknown>;
 
-async function getAllPages() {
+async function getAllPages(userId: string) {
+  const wsRows = await rawQuery<{ workspace_id: string }>(
+    `SELECT workspace_id FROM workspace_members WHERE user_id = $1`,
+    [userId]
+  );
+  const userWorkspaceIds = wsRows.map(r => r.workspace_id);
+  if (userWorkspaceIds.length === 0) return [];
+
   const { data: tests } = await db
     .from('tests')
     .select('id, name, status, url_path, created_at, workspace_id, workspaces(id, name, clients(id, name))')
+    .in('workspace_id', userWorkspaceIds)
     .order('created_at', { ascending: false }) as unknown as { data: RawTest[] | null };
 
   if (!tests || tests.length === 0) return [];
@@ -130,7 +139,7 @@ function ConfidenceBadge({ views, cvr }: { views: number; cvr: number }) {
 
 export default async function DashboardPage() {
   const session = await getServerSession(authOptions);
-  const pages = await getAllPages();
+  const pages = await getAllPages(session?.user?.id ?? '');
 
   const totalActive = pages.filter(p => p.status === 'active').length;
   const totalViews = pages.reduce((s, p) => s + p.views, 0);

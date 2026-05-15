@@ -2,6 +2,7 @@ import { getServerSession } from 'next-auth';
 import { redirect } from 'next/navigation';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
+import { rawQuery } from '@/lib/db';
 import Header from '@/components/layout/Header';
 import Link from 'next/link';
 import {
@@ -41,10 +42,18 @@ interface TestRow {
   variants: Variant[];
 }
 
-async function getAllTests(): Promise<TestRow[]> {
+async function getAllTests(userId: string): Promise<TestRow[]> {
+  const wsRows = await rawQuery<{ workspace_id: string }>(
+    `SELECT workspace_id FROM workspace_members WHERE user_id = $1`,
+    [userId]
+  );
+  const userWorkspaceIds = wsRows.map(r => r.workspace_id);
+  if (userWorkspaceIds.length === 0) return [];
+
   const { data: tests } = await db
     .from('tests')
     .select('id, name, url_path, status, created_at, workspace_id, workspaces(id, name, client_id, clients(id, name))')
+    .in('workspace_id', userWorkspaceIds)
     .order('created_at', { ascending: false }) as unknown as { data: RawTestRow[] | null };
 
   if (!tests || tests.length === 0) return [];
@@ -142,7 +151,7 @@ export default async function AllPagesPage() {
   const session = await getServerSession(authOptions);
   if (!session) redirect('/login');
 
-  const tests = await getAllTests();
+  const tests = await getAllTests(session.user.id);
 
   return (
     <div>

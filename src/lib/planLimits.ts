@@ -40,10 +40,14 @@ export async function getClientCount(userId: string): Promise<number> {
   return parseInt(rows[0]?.count ?? '0', 10);
 }
 
-export async function getTeamSeatCount(): Promise<number> {
+export async function getTeamSeatCount(userId: string): Promise<number> {
   const rows = await rawQuery<{ count: string }>(
-    `SELECT COUNT(*)::text AS count FROM users WHERE status != 'deleted'`,
-    []
+    `SELECT COUNT(DISTINCT wm2.user_id)::text AS count
+     FROM workspace_members wm2
+     WHERE wm2.workspace_id IN (
+       SELECT workspace_id FROM workspace_members WHERE user_id = $1
+     )`,
+    [userId]
   );
   return parseInt(rows[0]?.count ?? '0', 10);
 }
@@ -259,7 +263,7 @@ export async function checkAiGenerationAllowed(userId: string): Promise<AiGenera
 export async function checkTeamSeatLimit(userId: string): Promise<LimitCheckResult> {
   const planId = await getUserPlan(userId);
   const limits = getPlan(planId);
-  const current = await getTeamSeatCount();
+  const current = await getTeamSeatCount(userId);
   const allowed = limits.maxTeamSeats === Infinity || current < limits.maxTeamSeats;
   return {
     allowed,

@@ -21,7 +21,7 @@ export async function GET() {
     getMonthlyVisitorCount(userId),
     getActiveTestCount(userId),
     getClientCount(userId),
-    getTeamSeatCount(),
+    getTeamSeatCount(userId),
   ]);
 
   const isUnlimitedVisitors = limits.monthlyVisitors === Infinity;
