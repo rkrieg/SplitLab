@@ -1142,31 +1142,137 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
               </form>
             </div>
 
-            {/* Tracking Setup */}
-            <div className="card overflow-hidden">
-              <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-lg bg-indigo-500/20 flex items-center justify-center">
-                    <Code2 size={16} className="text-indigo-400" />
+            {/* Tracking Setup — two distinct script types */}
+
+            {/* Type 1: Conversion Script (hosted / HTML-upload variants) */}
+            {variants.some(v => v.variant_type === 'hosted') && (
+              <div className="card overflow-hidden">
+                <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-green-500/20 flex items-center justify-center">
+                      <Zap size={16} className="text-green-400" />
+                    </div>
+                    <div>
+                      <p className="font-medium text-slate-800 dark:text-slate-200 text-sm">Conversion Script — Auto-Injected</p>
+                      <p className="text-slate-500 text-xs">For variants where you uploaded HTML — no setup needed on your end</p>
+                    </div>
+                    <span className="ml-auto flex-shrink-0 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-green-500/15 text-green-400 border border-green-500/25">Active</span>
+                  </div>
+                </div>
+                <div className="px-5 py-4 space-y-3">
+                  <p className="text-slate-500 dark:text-slate-400 text-sm">
+                    SplitLab automatically injects conversion tracking into your uploaded HTML before serving it. There is nothing to install — just define your goals above and they will be tracked for every visitor.
+                  </p>
+                  <div className="rounded-lg bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 p-4 space-y-2">
+                    <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">What gets tracked automatically</p>
+                    <ul className="space-y-1">
+                      {[
+                        { icon: '⚡', label: 'Pageview — fired immediately on load' },
+                        { icon: '📋', label: 'Form Submit — any form submission on the page' },
+                        { icon: '🖱️', label: 'Button Click — buttons and CTA links' },
+                        { icon: '📞', label: 'Call Click — tel: link taps' },
+                        { icon: '🔗', label: 'URL Reached — when visitor lands on a goal URL' },
+                      ].map(({ icon, label }) => (
+                        <li key={label} className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
+                          <span>{icon}</span>
+                          <span>{label}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Type 2: Tracker Script (redirect / external landing page variants) */}
+            {variants.some(v => v.variant_type !== 'hosted' && !!v.redirect_url) && (
+              <div className="card overflow-hidden">
+                <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-indigo-500/20 flex items-center justify-center">
+                      <Code2 size={16} className="text-indigo-400" />
+                    </div>
+                    <div>
+                      <p className="font-medium text-slate-800 dark:text-slate-200 text-sm">Tracking Script — External Landing Page</p>
+                      <p className="text-slate-500 text-xs">Paste this onto every landing page URL you&apos;re testing</p>
+                    </div>
+                  </div>
+                </div>
+                <div className="px-5 py-4 space-y-4">
+                  <p className="text-slate-500 dark:text-slate-400 text-sm">
+                    Because SplitLab redirects visitors to your existing page, you need to install one script tag on that page. It picks up the test context from URL parameters and sends pageview and conversion events back automatically.
+                  </p>
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">Paste before &lt;/body&gt; on your page</p>
+                      <button
+                        onClick={() => { navigator.clipboard.writeText(snippet); toast.success('Copied'); }}
+                        className="btn-secondary text-xs"
+                      >
+                        <Copy size={12} /> Copy
+                      </button>
+                    </div>
+                    <pre className="bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-4 overflow-x-auto text-xs text-slate-700 dark:text-slate-300">
+                      <code>{snippet}</code>
+                    </pre>
+                  </div>
+                  <div className="rounded-lg bg-amber-50 dark:bg-amber-500/5 border border-amber-200 dark:border-amber-500/20 px-4 py-3">
+                    <p className="text-xs text-amber-700 dark:text-amber-400">
+                      <strong>How it works:</strong> When SplitLab assigns a visitor to a variant it appends tracking parameters to the destination URL. The script reads those parameters, fires a pageview, and wires up your conversion goals — all automatically. No init call needed.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Fallback: no variants yet have a type set — show both */}
+            {variants.every(v => !v.variant_type && !v.redirect_url) && (
+              <div className="card overflow-hidden">
+                <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-indigo-500/20 flex items-center justify-center">
+                      <Code2 size={16} className="text-indigo-400" />
+                    </div>
+                    <div>
+                      <p className="font-medium text-slate-800 dark:text-slate-200 text-sm">Tracking Setup</p>
+                      <p className="text-slate-500 text-xs">Choose the method that matches your test type</p>
+                    </div>
+                  </div>
+                </div>
+                <div className="px-5 py-4 space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="rounded-lg border border-green-200 dark:border-green-500/25 bg-green-50 dark:bg-green-500/5 p-4">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Zap size={14} className="text-green-400" />
+                        <p className="text-sm font-semibold text-green-700 dark:text-green-400">Uploaded HTML</p>
+                      </div>
+                      <p className="text-xs text-slate-600 dark:text-slate-400">Upload your variant HTML and SplitLab injects conversion tracking automatically. Just define goals above — nothing else needed.</p>
+                    </div>
+                    <div className="rounded-lg border border-indigo-200 dark:border-indigo-500/25 bg-indigo-50 dark:bg-indigo-500/5 p-4">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Code2 size={14} className="text-indigo-400" />
+                        <p className="text-sm font-semibold text-indigo-700 dark:text-indigo-400">External Page</p>
+                      </div>
+                      <p className="text-xs text-slate-600 dark:text-slate-400">Add a redirect URL to your variant, then paste the tracking script below onto that page to enable conversion tracking.</p>
+                    </div>
                   </div>
                   <div>
-                    <p className="font-medium text-slate-800 dark:text-slate-200 text-sm">Tracking Snippet</p>
-                    <p className="text-slate-500 text-xs">Paste before &lt;/body&gt; on your external landing page (redirect mode only)</p>
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">Tracker script for external pages</p>
+                      <button
+                        onClick={() => { navigator.clipboard.writeText(snippet); toast.success('Copied'); }}
+                        className="btn-secondary text-xs"
+                      >
+                        <Copy size={12} /> Copy
+                      </button>
+                    </div>
+                    <pre className="bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-4 overflow-x-auto text-xs text-slate-700 dark:text-slate-300">
+                      <code>{snippet}</code>
+                    </pre>
                   </div>
                 </div>
               </div>
-              <div className="px-5 py-4">
-                <div className="flex items-center justify-between mb-3">
-                  <p className="text-slate-500 dark:text-slate-400 text-xs">Tracking context is passed via URL parameters.</p>
-                  <button onClick={() => { navigator.clipboard.writeText(snippet); toast.success('Copied'); }} className="btn-secondary text-xs">
-                    <Copy size={12} /> Copy
-                  </button>
-                </div>
-                <pre className="bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-4 overflow-x-auto text-xs text-slate-700 dark:text-slate-300">
-                  <code>{snippet}</code>
-                </pre>
-              </div>
-            </div>
+            )}
 
             {/* Head Scripts (for proxy mode) */}
             <div className="card overflow-hidden">
