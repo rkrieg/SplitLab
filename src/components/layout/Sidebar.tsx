@@ -28,6 +28,7 @@ import { useTheme } from 'next-themes';
 import toast from 'react-hot-toast';
 import { usePlanLimit, isPlanLimitError } from '@/hooks/usePlanLimit';
 import UpgradeModal from '@/components/upgrade/UpgradeModal';
+import type { PlanId } from '@/lib/plans';
 
 interface Client {
   id: string;
@@ -58,10 +59,11 @@ function getClientNavItems(clientId: string): NavItem[] {
   ];
 }
 
-export default function Sidebar() {
+export default function Sidebar({ userPlan }: { userPlan?: PlanId }) {
   const pathname = usePathname();
   const router = useRouter();
   const { data: session } = useSession();
+  const showClientSwitcher = userPlan === 'agency' || userPlan === 'scale' || session?.user?.role === 'super_admin' || session?.user?.role === 'admin';
   const { theme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -187,72 +189,74 @@ export default function Sidebar() {
         </Link>
       </div>
 
-      {/* Client Dropdown */}
-      <div className="px-3 pt-4 pb-2" ref={dropdownRef}>
-        <button
-          onClick={() => setDropdownOpen(!dropdownOpen)}
-          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600 transition-colors text-sm"
-        >
-          <Building2 size={14} className="text-slate-500 dark:text-slate-400 flex-shrink-0" />
-          <span className="flex-1 text-left text-slate-800 dark:text-slate-200 truncate">
-            {selectedClient ? selectedClient.name : 'All Clients'}
-          </span>
-          <ChevronDown size={14} className={cn('text-slate-400 dark:text-slate-500 transition-transform flex-shrink-0', dropdownOpen && 'rotate-180')} />
-        </button>
+      {/* Client Dropdown — agency/scale/admin only */}
+      {showClientSwitcher && (
+        <div className="px-3 pt-4 pb-2" ref={dropdownRef}>
+          <button
+            onClick={() => setDropdownOpen(!dropdownOpen)}
+            className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600 transition-colors text-sm"
+          >
+            <Building2 size={14} className="text-slate-500 dark:text-slate-400 flex-shrink-0" />
+            <span className="flex-1 text-left text-slate-800 dark:text-slate-200 truncate">
+              {selectedClient ? selectedClient.name : 'All Clients'}
+            </span>
+            <ChevronDown size={14} className={cn('text-slate-400 dark:text-slate-500 transition-transform flex-shrink-0', dropdownOpen && 'rotate-180')} />
+          </button>
 
-        {dropdownOpen && (
-          <div className="mt-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden shadow-xl z-50 relative">
-            {/* All Clients option */}
-            <button
-              onClick={() => selectClient(null)}
-              className={cn(
-                'w-full flex items-center gap-2 px-3 py-2 text-sm transition-colors',
-                !selectedClient
-                  ? 'text-indigo-400 bg-indigo-600/10'
-                  : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
-              )}
-            >
-              <LayoutDashboard size={13} className="flex-shrink-0" />
-              <span className="flex-1 text-left">All Clients</span>
-              {!selectedClient && <Check size={13} className="text-indigo-400" />}
-            </button>
-
-            {/* Divider */}
-            <div className="border-t border-slate-200 dark:border-slate-700" />
-
-            {/* Client list */}
-            <div className="max-h-48 overflow-y-auto">
-              {clients.map((client) => (
-                <button
-                  key={client.id}
-                  onClick={() => selectClient(client)}
-                  className={cn(
-                    'w-full flex items-center gap-2 px-3 py-2 text-sm transition-colors',
-                    selectedClientId === client.id
-                      ? 'text-indigo-400 bg-indigo-600/10'
-                      : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
-                  )}
-                >
-                  <Building2 size={13} className="flex-shrink-0" />
-                  <span className="flex-1 text-left truncate">{client.name}</span>
-                  {selectedClientId === client.id && <Check size={13} className="text-indigo-400" />}
-                </button>
-              ))}
-            </div>
-
-            {/* New Client button */}
-            <div className="border-t border-slate-200 dark:border-slate-700">
+          {dropdownOpen && (
+            <div className="mt-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden shadow-xl z-50 relative">
+              {/* All Clients option */}
               <button
-                onClick={() => { setCreateModalOpen(true); setDropdownOpen(false); }}
-                className="w-full flex items-center gap-2 px-3 py-2 text-sm text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                onClick={() => selectClient(null)}
+                className={cn(
+                  'w-full flex items-center gap-2 px-3 py-2 text-sm transition-colors',
+                  !selectedClient
+                    ? 'text-indigo-400 bg-indigo-600/10'
+                    : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
+                )}
               >
-                <Plus size={13} />
-                New Client
+                <LayoutDashboard size={13} className="flex-shrink-0" />
+                <span className="flex-1 text-left">All Clients</span>
+                {!selectedClient && <Check size={13} className="text-indigo-400" />}
               </button>
+
+              {/* Divider */}
+              <div className="border-t border-slate-200 dark:border-slate-700" />
+
+              {/* Client list */}
+              <div className="max-h-48 overflow-y-auto">
+                {clients.map((client) => (
+                  <button
+                    key={client.id}
+                    onClick={() => selectClient(client)}
+                    className={cn(
+                      'w-full flex items-center gap-2 px-3 py-2 text-sm transition-colors',
+                      selectedClientId === client.id
+                        ? 'text-indigo-400 bg-indigo-600/10'
+                        : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
+                    )}
+                  >
+                    <Building2 size={13} className="flex-shrink-0" />
+                    <span className="flex-1 text-left truncate">{client.name}</span>
+                    {selectedClientId === client.id && <Check size={13} className="text-indigo-400" />}
+                  </button>
+                ))}
+              </div>
+
+              {/* New Client button */}
+              <div className="border-t border-slate-200 dark:border-slate-700">
+                <button
+                  onClick={() => { setCreateModalOpen(true); setDropdownOpen(false); }}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-sm text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                >
+                  <Plus size={13} />
+                  New Client
+                </button>
+              </div>
             </div>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
 
       {/* Navigation */}
       <nav className="flex-1 px-3 py-2 space-y-0.5 overflow-y-auto">
