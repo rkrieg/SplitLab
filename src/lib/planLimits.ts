@@ -181,6 +181,48 @@ export interface LimitCheckResult {
   response?: NextResponse;
 }
 
+export async function getDomainCount(userId: string): Promise<number> {
+  const rows = await rawQuery<{ count: string }>(
+    `SELECT COUNT(DISTINCT d.id)::text AS count
+     FROM domains d
+     JOIN workspaces w ON d.workspace_id = w.id
+     JOIN workspace_members wm ON wm.workspace_id = w.id
+     WHERE wm.user_id = $1`,
+    [userId]
+  );
+  return parseInt(rows[0]?.count ?? '0', 10);
+}
+
+export async function checkDomainLimit(userId: string): Promise<LimitCheckResult> {
+  const planId = await getUserPlan(userId);
+  const limits = getPlan(planId);
+  const current = await getDomainCount(userId);
+  const allowed = limits.maxDomains === Infinity || current < limits.maxDomains;
+  const maxLabel = limits.maxDomains === Infinity ? 'unlimited' : String(limits.maxDomains);
+  return {
+    allowed,
+    current,
+    max: limits.maxDomains,
+    plan: planId,
+    planName: limits.name,
+    limitType: 'domains',
+    response: allowed
+      ? undefined
+      : NextResponse.json(
+          {
+            error: 'plan_limit_exceeded',
+            limitType: 'domains',
+            current,
+            max: limits.maxDomains,
+            plan: planId,
+            planName: limits.name,
+            message: `Your ${limits.name} plan allows ${maxLabel} custom domain${limits.maxDomains === 1 ? '' : 's'}. Upgrade to add more.`,
+          },
+          { status: 403 }
+        ),
+  };
+}
+
 export async function checkTestLimit(userId: string): Promise<LimitCheckResult> {
   const planId = await getUserPlan(userId);
   const limits = getPlan(planId);

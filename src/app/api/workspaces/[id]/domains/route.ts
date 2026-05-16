@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { rawQuery } from '@/lib/db';
 import { addDomainToVercel, removeDomainFromVercel, getDomainStatus } from '@/lib/vercel';
+import { checkDomainLimit } from '@/lib/planLimits';
 import { z } from 'zod';
 
 const addSchema = z.object({
@@ -180,6 +181,12 @@ export async function POST(
 
     // ── Add domain ──
     const { domain } = addSchema.parse(body);
+
+    // Check plan domain limit
+    const domainLimit = await checkDomainLimit(session.user.id);
+    if (!domainLimit.allowed) {
+      return domainLimit.response!;
+    }
 
     const { data: existing } = await (db
       .from('domains')

@@ -10,6 +10,8 @@ import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import { formatDate } from '@/lib/utils';
+import { usePlanLimit, isPlanLimitError } from '@/hooks/usePlanLimit';
+import UpgradeModal from '@/components/upgrade/UpgradeModal';
 
 interface VercelVerification {
   type: string;
@@ -71,6 +73,7 @@ function DnsTable({ records, onCopy, highlight }: {
 }
 
 export default function DomainsClient({ initialDomains, workspaceId, appHostname, canManage }: Props) {
+  const { guardedFetch, isOpen: limitModalOpen, modalProps: limitModalProps, closeModal: closeLimitModal } = usePlanLimit();
   const [domains, setDomains] = useState(initialDomains);
   const [modalOpen, setModalOpen] = useState(false);
   const [addWebsiteDomain, setAddWebsiteDomain] = useState('');
@@ -135,12 +138,17 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
     if (!domain || domain.split('.').length < 3) { toast.error('Enter a valid domain'); return; }
     setAdding(true);
     try {
-      const res = await fetch(`/api/workspaces/${workspaceId}/domains`, {
+      const res = await guardedFetch(`/api/workspaces/${workspaceId}/domains`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ domain }),
       });
-      if (!res.ok) { const err = await res.json(); toast.error(err.error || 'Failed to add domain'); return; }
+      if (!res.ok) {
+        const err = await res.json();
+        if (!isPlanLimitError(err)) toast.error(err.error || 'Failed to add domain');
+        setModalOpen(false);
+        return;
+      }
       const d = await res.json();
       setDomains(prev => [...prev, d]);
       setModalOpen(false);
@@ -550,6 +558,19 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
           </div>
         </form>
       </Modal>
+
+      {limitModalProps && (
+        <UpgradeModal
+          isOpen={limitModalOpen}
+          onClose={closeLimitModal}
+          limitType={limitModalProps.limitType}
+          current={limitModalProps.current}
+          max={limitModalProps.max}
+          plan={limitModalProps.plan}
+          planName={limitModalProps.planName}
+          message={limitModalProps.message}
+        />
+      )}
     </div>
   );
 }
