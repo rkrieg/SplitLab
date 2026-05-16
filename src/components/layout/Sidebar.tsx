@@ -63,7 +63,7 @@ export default function Sidebar({ userPlan }: { userPlan?: PlanId }) {
   const pathname = usePathname();
   const router = useRouter();
   const { data: session } = useSession();
-  const showClientSwitcher = userPlan === 'agency' || userPlan === 'scale' || session?.user?.role === 'super_admin' || session?.user?.role === 'admin';
+  const showClientSwitcher = userPlan === 'agency' || userPlan === 'scale' || session?.user?.role === 'super_admin';
   const { theme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
