@@ -232,6 +232,42 @@ export default function BillingClient({ initialPlan, initialStatus, hasStripeCus
         </div>
       )}
 
+      {/* Free plan CTA */}
+      {isFree && !hasStripeCustomer && (
+        <div className="rounded-xl border border-indigo-200 dark:border-indigo-500/30 bg-indigo-50 dark:bg-indigo-500/10 p-5 flex items-center justify-between gap-4">
+          <div>
+            <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">Ready to unlock more?</p>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Add a payment method to upgrade and run unlimited tests.</p>
+          </div>
+          <button
+            onClick={() => handleUpgrade('pro')}
+            disabled={!!checkoutLoading}
+            className="flex-shrink-0 flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold transition-colors disabled:opacity-60"
+          >
+            {checkoutLoading === 'pro' ? <Loader2 size={14} className="animate-spin" /> : <ArrowRight size={14} />}
+            Add Billing Method
+          </button>
+        </div>
+      )}
+
+      {/* Manage billing for paid users without portal access */}
+      {!isFree && !hasStripeCustomer && (
+        <div className="rounded-xl border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 p-5 flex items-center justify-between gap-4">
+          <div>
+            <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">No billing method on file</p>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Add a payment method to keep your subscription active.</p>
+          </div>
+          <button
+            onClick={() => handleUpgrade(plan)}
+            disabled={!!checkoutLoading}
+            className="flex-shrink-0 flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-sm font-semibold transition-colors disabled:opacity-60"
+          >
+            {checkoutLoading ? <Loader2 size={14} className="animate-spin" /> : <CreditCard size={14} />}
+            Add Billing Method
+          </button>
+        </div>
+      )}
+
       {/* Upgrade Plans (shown for free plan users) */}
       {isFree && (
         <div>

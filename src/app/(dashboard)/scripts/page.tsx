@@ -53,7 +53,12 @@ export default async function AllScriptsPage() {
           <EmptyState
             icon={Code2}
             title="No scripts yet"
-            description="Add scripts from a client workspace."
+            description="Inject tracking scripts like GTM, Meta Pixel, or GA4 into your client workspaces."
+            action={
+              <Link href="/clients" className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg font-semibold text-sm text-white bg-[#3D8BDA] hover:bg-[#3578c0] transition-colors shadow-sm">
+                Add a Script
+              </Link>
+            }
           />
         ) : (
           <div className="card overflow-hidden">

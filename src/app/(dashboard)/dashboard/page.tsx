@@ -182,9 +182,9 @@ export default async function DashboardPage() {
         {pages.length === 0 ? (
           <div className="card p-16 text-center">
             <FlaskConical className="mx-auto text-slate-300 dark:text-slate-600 mb-3" size={40} />
-            <p className="text-slate-600 dark:text-slate-400 font-medium mb-1">No pages yet</p>
-            <p className="text-slate-400 dark:text-slate-500 text-sm mb-5">Create your first A/B test to get started.</p>
-            <Link href="/clients" className="btn-primary inline-flex">Go to Clients</Link>
+            <p className="text-slate-600 dark:text-slate-400 font-medium mb-1">No tests yet</p>
+            <p className="text-slate-400 dark:text-slate-500 text-sm mb-5">Create a client workspace and add your first A/B test to get started.</p>
+            <Link href="/clients" className="btn-primary inline-flex items-center gap-2">Add Your First Test</Link>
           </div>
         ) : (
           <div className="card overflow-hidden">

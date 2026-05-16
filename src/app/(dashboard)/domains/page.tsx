@@ -76,6 +76,11 @@ export default async function AllDomainsPage() {
             icon={Globe}
             title="No domains configured"
             description="Add a custom domain inside a client workspace to route A/B test traffic through your own URL."
+            action={
+              <Link href="/clients" className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg font-semibold text-sm text-white bg-[#3D8BDA] hover:bg-[#3578c0] transition-colors shadow-sm">
+                Add a Domain
+              </Link>
+            }
           />
         ) : (
           <>
