@@ -22,9 +22,8 @@ export async function POST(request: NextRequest) {
     }
 
     const stripe = await getUncachableStripeClient();
-    const host = process.env.REPLIT_DEV_DOMAIN
-      ? `https://${process.env.REPLIT_DEV_DOMAIN}`
-      : process.env.NEXTAUTH_URL || 'http://localhost:5000';
+    const reqUrl = new URL(request.url);
+    const host = `${reqUrl.protocol}//${reqUrl.host}`;
 
     const session = await getServerSession(authOptions);
     const isLoggedIn = !!session?.user?.id;
