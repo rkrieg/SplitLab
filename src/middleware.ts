@@ -94,7 +94,6 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith('/settings') ||
     pathname.startsWith('/admin') ||
     pathname.startsWith('/billing');
-
   // Fetch token once — used for auth checks + impersonation injection
   const token = isDashboardRoute || isAuthRoute
     ? await getToken({ req: request, secret: process.env.NEXTAUTH_SECRET })

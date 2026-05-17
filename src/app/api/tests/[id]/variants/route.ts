@@ -25,7 +25,10 @@ export async function POST(
     const data = addVariantSchema.parse(body);
 
     if (!data.redirect_url && !data.html_content) {
-      return NextResponse.json({ error: 'Either redirect_url or html_content is required' }, { status: 400 });
+      return NextResponse.json(
+        { error: 'Either redirect_url or html_content is required' },
+        { status: 400 }
+      );
     }
 
     // Fetch test with workspace_id
@@ -33,7 +36,11 @@ export async function POST(
       .from('tests')
       .select('id, workspace_id')
       .eq('id', params.id)
-      .single() as unknown as Promise<{ data: { id: string; workspace_id: string } | null; error: { message: string } | null }>);
+      .single() as unknown as Promise<{
+        data: { id: string; workspace_id: string } | null;
+        error: { message: string } | null;
+      }>);
+
     if (testErr || !test) {
       return NextResponse.json({ error: 'Test not found' }, { status: 404 });
     }
@@ -48,6 +55,7 @@ export async function POST(
         .eq('workspace_id', test.workspace_id)
         .eq('user_id', session.user.id)
         .single();
+
       if (!member || member.role === 'viewer') {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
       }
@@ -69,9 +77,15 @@ export async function POST(
           html_content: data.html_content,
         })
         .select('id')
-        .single() as unknown as Promise<{ data: { id: string } | null; error: { message: string } | null }>);
+        .single() as unknown as Promise<{
+          data: { id: string } | null;
+          error: { message: string } | null;
+        }>);
 
-      if (pageErr) return NextResponse.json({ error: pageErr.message }, { status: 500 });
+      if (pageErr) {
+        return NextResponse.json({ error: pageErr.message }, { status: 500 });
+      }
+
       pageId = page!.id;
     }
 
@@ -86,14 +100,19 @@ export async function POST(
       is_control: false,
     });
 
-    if (varErr) return NextResponse.json({ error: varErr.message }, { status: 500 });
+    if (varErr) {
+      return NextResponse.json({ error: varErr.message }, { status: 500 });
+    }
 
     // Return full test with all variants
     const { data: fullTest } = await (db
       .from('tests')
       .select('*, test_variants(*), conversion_goals(*)')
       .eq('id', params.id)
-      .single() as unknown as Promise<{ data: Record<string, unknown> | null; error: unknown }>);
+      .single() as unknown as Promise<{
+        data: Record<string, unknown> | null;
+        error: unknown;
+      }>);
 
     return NextResponse.json(fullTest, { status: 201 });
   } catch (err) {

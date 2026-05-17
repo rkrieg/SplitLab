@@ -27,7 +27,6 @@ export async function GET(
       .single();
     if (!membership) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
-
   const { data, error } = await db
     .from('workspace_members')
     .select('*, users(id, name, email, role)')

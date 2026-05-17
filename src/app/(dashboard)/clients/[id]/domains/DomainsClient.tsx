@@ -72,8 +72,19 @@ function DnsTable({ records, onCopy, highlight }: {
   );
 }
 
-export default function DomainsClient({ initialDomains, workspaceId, appHostname, canManage }: Props) {
-  const { guardedFetch, isOpen: limitModalOpen, modalProps: limitModalProps, closeModal: closeLimitModal } = usePlanLimit();
+export default function DomainsClient({
+  initialDomains,
+  workspaceId,
+  appHostname,
+  canManage,
+}: Props) {
+  const {
+    guardedFetch,
+    isOpen: limitModalOpen,
+    modalProps: limitModalProps,
+    closeModal: closeLimitModal,
+  } = usePlanLimit();
+
   const [domains, setDomains] = useState(initialDomains);
   const [modalOpen, setModalOpen] = useState(false);
   const [addWebsiteDomain, setAddWebsiteDomain] = useState('');
@@ -375,7 +386,13 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
               Add this CNAME record:
             </p>
             <DnsTable
-              records={[{ type: 'CNAME', name: prefix || d.domain, value: appHostname }]}
+              records={[
+                {
+                  type: 'CNAME',
+                  name: prefix || d.domain,
+                  value: appHostname,
+                },
+              ]}
               onCopy={copyToClipboard}
               highlight
             />

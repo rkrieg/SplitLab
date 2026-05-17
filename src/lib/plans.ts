@@ -29,6 +29,7 @@ export const PLANS: Record<PlanId, PlanLimits> = {
     monthlyVisitors: 25_000,
     maxTeamSeats: 3,
     maxDomains: 1,
+
     allowAiGeneration: true,
     monthlyPrice: 49,
   },
