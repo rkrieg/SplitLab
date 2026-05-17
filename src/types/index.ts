@@ -1,7 +1,6 @@
 // ============================================================
 // SplitLab – Core TypeScript Types
 // ============================================================
-
 export type UserRole = 'admin' | 'manager' | 'viewer';
 export type UserStatus = 'active' | 'inactive';
 export type ClientStatus = 'active' | 'archived';
