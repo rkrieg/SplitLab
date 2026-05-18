@@ -1,8 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { getToken } from 'next-auth/jwt';
-
-const APP_HOSTNAME = process.env.APP_HOSTNAME || 'splitlab.agency';
+import { APP_HOSTNAME } from '@/lib/constants';
 
 function isCustomDomain(host: string): boolean {
   return (

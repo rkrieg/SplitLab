@@ -2,6 +2,7 @@ import { getServerSession } from 'next-auth';
 import { redirect, notFound } from 'next/navigation';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
+import { CNAME_TARGET, VERCEL_A_RECORD } from '@/lib/constants';
 import Header from '@/components/layout/Header';
 import ClientSettingsClient from './ClientSettingsClient';
 
@@ -27,7 +28,8 @@ export default async function ClientSettingsPage({ params }: { params: { id: str
     .order('created_at', { ascending: false })
     .limit(1);
 
-  const appHostname = process.env.APP_HOSTNAME || 'cname.vercel-dns.com';
+  const appHostname = CNAME_TARGET;
+  const appARecord = VERCEL_A_RECORD;
 
   return (
     <div>
@@ -38,6 +40,7 @@ export default async function ClientSettingsPage({ params }: { params: { id: str
           initialDomains={domains ?? []}
           workspaceId={workspace.id}
           appHostname={appHostname}
+          appARecord={appARecord}
           canManage={session.user.role !== 'viewer'}
         />
       </div>

@@ -12,6 +12,12 @@ import Button from '@/components/ui/Button';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import { formatDate } from '@/lib/utils';
 
+interface VercelVerification {
+  type: string;
+  domain: string;
+  value: string;
+}
+
 interface Domain {
   id: string;
   domain: string;
@@ -19,6 +25,7 @@ interface Domain {
   verified: boolean;
   verified_at: string | null;
   created_at: string;
+  vercel_verification?: VercelVerification[] | null;
 }
 
 interface Props {
@@ -26,10 +33,11 @@ interface Props {
   initialDomains: Domain[];
   workspaceId: string;
   appHostname: string;
+  appARecord: string;
   canManage: boolean;
 }
 
-export default function ClientSettingsClient({ client, initialDomains, workspaceId, appHostname, canManage }: Props) {
+export default function ClientSettingsClient({ client, initialDomains, workspaceId, appHostname, appARecord, canManage }: Props) {
   const router = useRouter();
 
   // Client name editing
@@ -54,6 +62,7 @@ export default function ClientSettingsClient({ client, initialDomains, workspace
   const [verifying, setVerifying] = useState<string | null>(null);
   const [verifyStatus, setVerifyStatus] = useState<Record<string, string>>({});
   const [verifyMessage, setVerifyMessage] = useState<Record<string, string>>({});
+  const [verifyTxtRecords, setVerifyTxtRecords] = useState<Record<string, VercelVerification[]>>({});
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
 
@@ -179,7 +188,11 @@ export default function ClientSettingsClient({ client, initialDomains, workspace
       if (result.verified) {
         setDomains((prev) => prev.map((d) => d.id === domainId ? { ...d, verified: true, verified_at: new Date().toISOString() } : d));
         setVerifyMessage((prev) => ({ ...prev, [domainId]: '' }));
+        setVerifyTxtRecords((prev) => { const n = { ...prev }; delete n[domainId]; return n; });
         toast.success('Domain verified successfully!');
+      } else if (result.status === 'needs_txt') {
+        setVerifyTxtRecords((prev) => ({ ...prev, [domainId]: result.vercel_verification || [] }));
+        setVerifyMessage((prev) => ({ ...prev, [domainId]: result.message || 'Add the TXT record below, then click Verify DNS again.' }));
       } else if (result.status === 'misconfigured') {
         setVerifyMessage((prev) => ({ ...prev, [domainId]: 'DNS records not found. Make sure you\'ve added the CNAME record at your registrar and try again.' }));
       } else {
@@ -257,6 +270,7 @@ export default function ClientSettingsClient({ client, initialDomains, workspace
     const errorMsg = verifyMessage[d.id];
     const dnsName = getDomainName(d.domain);
     const isRoot = isRootDomain(d.domain);
+    const activeTxtRecords = verifyTxtRecords[d.id] ?? d.vercel_verification ?? [];
 
     if (d.verified) {
       return (
@@ -358,9 +372,34 @@ export default function ClientSettingsClient({ client, initialDomains, workspace
                 <span className="text-slate-700 dark:text-slate-300">A</span>
                 <span className="text-slate-700 dark:text-slate-300">@</span>
                 <span className="text-[#3D8BDA] flex items-center gap-2">
-                  76.76.21.21
-                  <button onClick={() => copyToClipboard('76.76.21.21')} className="text-slate-500 hover:text-slate-300"><Copy size={12} /></button>
+                  {appARecord}
+                  <button onClick={() => copyToClipboard(appARecord)} className="text-slate-500 hover:text-slate-300"><Copy size={12} /></button>
                 </span>
+              </div>
+            </div>
+          )}
+          {activeTxtRecords.length > 0 && (
+            <div className="mt-4">
+              <h4 className="text-xs font-medium text-slate-700 dark:text-slate-300 mb-2">Also add this TXT record to verify domain ownership:</h4>
+              <div className="rounded-lg border border-amber-500/30 overflow-hidden text-xs">
+                <div className="grid grid-cols-3 bg-amber-500/10">
+                  <div className="px-3 py-2 text-slate-500 font-medium border-r border-amber-500/20">Type</div>
+                  <div className="px-3 py-2 text-slate-500 font-medium border-r border-amber-500/20">Name</div>
+                  <div className="px-3 py-2 text-slate-500 font-medium">Value</div>
+                </div>
+                {activeTxtRecords.map((rec, i) => (
+                  <div key={i} className="grid grid-cols-3 bg-white dark:bg-slate-900/50">
+                    <div className="px-3 py-2.5 text-slate-800 dark:text-slate-200 font-mono border-r border-amber-500/20">{rec.type}</div>
+                    <div className="px-3 py-2.5 text-slate-800 dark:text-slate-200 font-mono border-r border-amber-500/20 break-all">
+                      {rec.domain}
+                      <button onClick={() => copyToClipboard(rec.domain)} className="ml-2 text-slate-500 hover:text-slate-300 inline-flex"><Copy size={11} /></button>
+                    </div>
+                    <div className="px-3 py-2.5 font-mono flex items-start justify-between gap-2">
+                      <span className="text-amber-400 break-all">{rec.value}</span>
+                      <button onClick={() => copyToClipboard(rec.value)} className="text-slate-500 hover:text-slate-300 flex-shrink-0 mt-0.5"><Copy size={11} /></button>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           )}
