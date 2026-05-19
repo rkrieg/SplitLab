@@ -12,6 +12,7 @@ import {
 import Button from '@/components/ui/Button';
 import Modal from '@/components/ui/Modal';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
+import { TestStatusBadge } from '@/components/ui/Badge';
 import { formatPercent } from '@/lib/utils';
 
 const GOAL_TYPES = [
@@ -157,6 +158,7 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
       const res = await fetch(`/api/tests/${test.id}/analytics?${params}`);
       if (!res.ok) throw new Error();
       const data = await res.json();
+      if (data.test) setTest(data.test);
       setStats(data.variantStats ?? []);
       setTotalViews(data.totalViews ?? 0);
       setTotalConversions(data.totalConversions ?? 0);
@@ -496,13 +498,16 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
                 }}
               />
             ) : (
-              <h1
-                className="text-xl font-semibold text-slate-900 dark:text-slate-100 cursor-pointer hover:text-indigo-400 transition-colors inline-block"
-                onClick={() => setEditingName(true)}
-                title="Click to edit"
-              >
-                {test.name}
-              </h1>
+              <div className="flex items-center gap-2">
+                <h1
+                  className="text-xl font-semibold text-slate-900 dark:text-slate-100 cursor-pointer hover:text-indigo-400 transition-colors inline-block"
+                  onClick={() => setEditingName(true)}
+                  title="Click to edit"
+                >
+                  {test.name}
+                </h1>
+                <TestStatusBadge status={test.status} />
+              </div>
             )}
 
             <div className="flex items-center gap-2 mt-1">
