@@ -24,6 +24,7 @@ const goalSchema = z.object({
 const createSchema = z.object({
   name: z.string().min(1).max(255),
   url_path: z.string().min(1).max(500),
+  status: z.enum(['draft', 'active']).optional(),
   variants: z.array(variantSchema).min(1).max(5),
   goals: z.array(goalSchema).optional(),
 });
@@ -72,7 +73,7 @@ export async function POST(
     // Create test
     const { data: test, error: testError } = await db
       .from('tests')
-      .insert({ workspace_id: params.id, name: data.name, url_path: data.url_path })
+      .insert({ workspace_id: params.id, name: data.name, url_path: data.url_path, ...(data.status ? { status: data.status } : {}) })
       .select()
       .single();
 

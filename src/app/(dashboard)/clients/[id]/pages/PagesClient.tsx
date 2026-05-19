@@ -84,6 +84,7 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
         body: JSON.stringify({
           name: pageName,
           url_path: urlPath,
+          status: 'active',
           variants: [{
             name: 'Control',
             redirect_url: destinationUrl,
