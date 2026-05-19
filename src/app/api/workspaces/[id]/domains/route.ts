@@ -242,11 +242,13 @@ export async function DELETE(
       return NextResponse.json({ error: 'Domain not found' }, { status: 404 });
     }
 
-    // Remove from Vercel — non-fatal: 403 means the domain was pending/unverified in Vercel
     try {
       await removeDomainFromVercel(domainRow.domain);
     } catch {
-      // Proceed with DB delete regardless — domain may have never been fully registered
+      return NextResponse.json(
+        { error: 'Could not remove domain from Vercel. Please delete it manually from your Vercel dashboard, then try again.' },
+        { status: 502 }
+      );
     }
 
     const { error } = await db
