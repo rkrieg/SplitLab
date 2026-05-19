@@ -56,6 +56,8 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
   const [pageName, setPageName] = useState('');
   const [urlPath, setUrlPath] = useState('/');
   const [destinationUrl, setDestinationUrl] = useState('');
+  const [createMode, setCreateMode] = useState<'url' | 'html'>('url');
+  const [createHtml, setCreateHtml] = useState('');
 
   // Edit state
   const [editTestId, setEditTestId] = useState<string | null>(null);
@@ -78,22 +80,36 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
     e.preventDefault();
     setSaving(true);
     try {
-      const res = await fetch(`/api/workspaces/${workspaceId}/tests`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: pageName,
-          url_path: urlPath,
-          status: 'active',
-          variants: [{
-            name: 'Control',
-            redirect_url: destinationUrl,
-            proxy_mode: true,
-            traffic_weight: 100,
-            is_control: true,
-          }],
-        }),
-      });
+      let res: Response;
+      if (createMode === 'html') {
+        res = await fetch('/api/pages/from-html', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: pageName,
+            html_content: createHtml,
+            workspace_id: workspaceId,
+            url_path: urlPath,
+          }),
+        });
+      } else {
+        const normalizedUrl = destinationUrl.match(/^https?:\/\//) ? destinationUrl : `https://${destinationUrl}`;
+        res = await fetch(`/api/workspaces/${workspaceId}/tests`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: pageName,
+            url_path: urlPath,
+            variants: [{
+              name: 'Control',
+              redirect_url: normalizedUrl,
+              proxy_mode: true,
+              traffic_weight: 100,
+              is_control: true,
+            }],
+          }),
+        });
+      }
       if (!res.ok) {
         const err = await res.json();
         toast.error(err.error || 'Failed to create page');
@@ -116,6 +132,8 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
     setPageName('');
     setUrlPath('/');
     setDestinationUrl('');
+    setCreateMode('url');
+    setCreateHtml('');
   }
 
   // ─── Actions ────────────────────────────────────────────────────────────
@@ -376,22 +394,60 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
       {/* Create Page Modal */}
       <Modal open={createOpen} onClose={() => { setCreateOpen(false); resetCreateForm(); }} title="New Page" size="sm">
         <form onSubmit={handleCreate} className="space-y-4">
+          {/* URL / HTML tabs */}
+          <div className="flex rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden -mt-1">
+            <button
+              type="button"
+              onClick={() => setCreateMode('url')}
+              className={`flex-1 py-2 text-sm font-medium transition-colors ${createMode === 'url' ? 'bg-[#3D8BDA] text-white' : 'bg-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
+            >
+              Paste a URL
+            </button>
+            <button
+              type="button"
+              onClick={() => setCreateMode('html')}
+              className={`flex-1 py-2 text-sm font-medium transition-colors ${createMode === 'html' ? 'bg-[#3D8BDA] text-white' : 'bg-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
+            >
+              Paste HTML
+            </button>
+          </div>
+
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Page Name</label>
             <input type="text" value={pageName} onChange={(e) => setPageName(e.target.value)} className="input-base" placeholder="Homepage" required autoFocus />
           </div>
+
+          {createMode === 'url' ? (
+            <div>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Your Page URL</label>
+              <input type="text" value={destinationUrl} onChange={(e) => setDestinationUrl(e.target.value)} className="input-base font-mono text-sm" placeholder="https://yoursite.com/landing" required />
+              <p className="text-slate-400 dark:text-slate-500 text-xs mt-1">SplitLab will proxy this page through your domain so A/B tests run on your URL.</p>
+            </div>
+          ) : (
+            <div>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">HTML Content</label>
+              <textarea
+                value={createHtml}
+                onChange={(e) => setCreateHtml(e.target.value)}
+                className="input-base font-mono text-xs resize-none"
+                rows={8}
+                placeholder={'<!DOCTYPE html>\n<html>\n  <body>\n    <!-- paste your full page HTML here -->\n  </body>\n</html>'}
+                required
+              />
+              <p className="text-slate-400 dark:text-slate-500 text-xs mt-1">Paste your full page HTML. SplitLab will host and serve it directly.</p>
+            </div>
+          )}
+
           <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">URL Path</label>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Path on your domain</label>
             <input type="text" value={urlPath} onChange={(e) => setUrlPath(e.target.value)} className="input-base font-mono" placeholder="/" required />
-            {domain && urlPath && (
-              <p className="text-slate-400 dark:text-slate-500 text-xs mt-1 font-mono">{domain}{urlPath}</p>
-            )}
+            <p className="text-slate-400 dark:text-slate-500 text-xs mt-1">
+              {domain && urlPath
+                ? <span className="font-mono">{domain}{urlPath}</span>
+                : 'Where on your domain this page will be served (e.g. / or /landing).'}
+            </p>
           </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Destination URL</label>
-            <input type="url" value={destinationUrl} onChange={(e) => setDestinationUrl(e.target.value)} className="input-base font-mono text-sm" placeholder="https://my-app.lovable.app/landing" required />
-            <p className="text-slate-400 dark:text-slate-500 text-xs mt-1">The page visitors will see when they hit your domain.</p>
-          </div>
+
           <div className="flex justify-end gap-3 pt-2">
             <Button variant="secondary" type="button" onClick={() => { setCreateOpen(false); resetCreateForm(); }}>Cancel</Button>
             <Button type="submit" loading={saving}>Create Page</Button>
