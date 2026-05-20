@@ -30,6 +30,7 @@ export default async function ClientSettingsPage({ params }: { params: { id: str
 
   const appHostname = CNAME_TARGET;
   const appARecord = VERCEL_A_RECORD;
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.trysplitlab.com';
 
   return (
     <div>
@@ -41,6 +42,7 @@ export default async function ClientSettingsPage({ params }: { params: { id: str
           workspaceId={workspace.id}
           appHostname={appHostname}
           appARecord={appARecord}
+          appUrl={appUrl}
           canManage={session.user.role !== 'viewer'}
         />
       </div>

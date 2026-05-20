@@ -35,16 +35,24 @@ export function buildTrackingSnippet(
       if (this._sent[key]) return;
       this._sent[key] = true;
       var self = this;
+      var payload = JSON.stringify({
+        testId: self.testId,
+        variantId: self.variantId,
+        goalId: goalId || null,
+        visitorHash: self.visitorHash,
+        type: type
+      });
+      if (navigator.sendBeacon) {
+        try {
+          var blob = new Blob([payload], { type: 'application/json' });
+          navigator.sendBeacon(self.apiUrl + '/api/event', blob);
+          return;
+        } catch(e) {}
+      }
       fetch(self.apiUrl + '/api/event', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          testId: self.testId,
-          variantId: self.variantId,
-          goalId: goalId || null,
-          visitorHash: self.visitorHash,
-          type: type
-        })
+        body: payload
       }).catch(function() {});
     }
   };
@@ -53,12 +61,34 @@ export function buildTrackingSnippet(
   _SL.track('pageview');
 
   // Wire up conversion goals
+  function checkUrlGoals() {
+    var url = window.location.href;
+    var pathname = window.location.pathname + window.location.search;
+    _SL.goals.forEach(function(goal) {
+      if (goal.type !== 'url_reached' || !goal.urlPattern) return;
+      try {
+        var pattern = new RegExp(goal.urlPattern, 'i');
+        if (pattern.test(url) || pattern.test(pathname)) _SL.track('conversion', goal.id);
+      } catch(e) {}
+    });
+  }
+
   function initGoals() {
+    var urlGoals = _SL.goals.filter(function(g) { return g.type === 'url_reached'; });
+    if (urlGoals.length > 0) {
+      checkUrlGoals();
+      function wrapHistory(method) {
+        var orig = history[method];
+        history[method] = function() { orig.apply(this, arguments); checkUrlGoals(); };
+      }
+      try { wrapHistory('pushState'); wrapHistory('replaceState'); } catch(e) {}
+      window.addEventListener('popstate', function() { checkUrlGoals(); });
+      window.addEventListener('hashchange', function() { checkUrlGoals(); });
+    }
+
     _SL.goals.forEach(function(goal) {
       if (goal.type === 'url_reached') {
-        if (goal.urlPattern && new RegExp(goal.urlPattern).test(window.location.href)) {
-          _SL.track('conversion', goal.id);
-        }
+        // handled above
       } else if (goal.type === 'form_submit') {
         var forms = goal.selector ? document.querySelectorAll(goal.selector) : document.querySelectorAll('form');
         forms.forEach(function(form) {

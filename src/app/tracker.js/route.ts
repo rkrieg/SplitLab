@@ -152,6 +152,35 @@ function buildTrackerScript(appUrl: string): string {
     }, true);
   }
 
+  // ─── URL goal checking ───────────────────────────────────────────────────────
+
+  function checkUrlGoals() {
+    if (!_ctx || !_ctx.goals || !_ctx.goals.length) return;
+    var url = window.location.href;
+    var pathname = window.location.pathname + window.location.search;
+    _ctx.goals.forEach(function(goal) {
+      if (goal.type !== "url_reached" || !goal.urlPattern) return;
+      try {
+        var pattern = new RegExp(goal.urlPattern, "i");
+        if (pattern.test(url) || pattern.test(pathname)) {
+          track("conversion", goal.id);
+        }
+      } catch(e) {}
+    });
+  }
+
+  function wireUrlGoals() {
+    if (!_ctx || !_ctx.goals || !_ctx.goals.length) return;
+    checkUrlGoals();
+    function wrapHistory(method) {
+      var orig = history[method];
+      history[method] = function() { orig.apply(this, arguments); checkUrlGoals(); };
+    }
+    try { wrapHistory("pushState"); wrapHistory("replaceState"); } catch(e) {}
+    window.addEventListener("popstate", function() { checkUrlGoals(); });
+    window.addEventListener("hashchange", function() { checkUrlGoals(); });
+  }
+
   // ─── Detection: resolve context from URL params or localStorage ────────────
 
   function detect(callback) {
@@ -163,23 +192,26 @@ function buildTrackerScript(appUrl: string): string {
     var vh  = params.get("sl_vh");
     if (tid && vid && vh) {
       cleanUrl(["sl_tid", "sl_vid", "sl_vh"]);
-      return callback({ tid: tid, vid: vid, vh: vh });
+      return callback({ tid: tid, vid: vid, vh: vh, goals: [] });
     }
 
-    // Method 2: Variant ID only (?sl_vid=xxx) — resolve test ID via API
+    // Method 2: Variant ID only (?sl_vid=xxx) — resolve test ID + goals via API
     if (vid && !tid) {
       cleanUrl(["sl_vid"]);
-      // Store partial context immediately so it survives CORS failures
       var tempVh = vh || uuid();
-      store({ tid: null, vid: vid, vh: tempVh });
       var xhr = new XMLHttpRequest();
       xhr.open("GET", RESOLVE_URL + "?vid=" + encodeURIComponent(vid), true);
       xhr.withCredentials = false;
       xhr.onload = function() {
         try {
           var data = JSON.parse(xhr.responseText);
-          if (data.testId) callback({ tid: data.testId, vid: data.variantId, vh: tempVh });
-          else callback(load());
+          if (data.testId) {
+            var ctx = { tid: data.testId, vid: data.variantId, vh: tempVh, goals: data.goals || [] };
+            store(ctx);
+            callback(ctx);
+          } else {
+            callback(load());
+          }
         } catch(e) { callback(load()); }
       };
       xhr.onerror = function() { callback(load()); };
@@ -197,8 +229,13 @@ function buildTrackerScript(appUrl: string): string {
       xhr2.onload = function() {
         try {
           var data = JSON.parse(xhr2.responseText);
-          if (data.testId) callback({ tid: data.testId, vid: data.variantId, vh: uuid() });
-          else callback(load());
+          if (data.testId) {
+            var ctx = { tid: data.testId, vid: data.variantId, vh: uuid(), goals: data.goals || [] };
+            store(ctx);
+            callback(ctx);
+          } else {
+            callback(load());
+          }
         } catch(e) { callback(load()); }
       };
       xhr2.onerror = function() { callback(load()); };
@@ -217,7 +254,13 @@ function buildTrackerScript(appUrl: string): string {
     if (!_ctx) return;
     store(_ctx);
 
-    function onReady() { wireAutoConversions(); }
+    // Fire pageview immediately
+    track("pageview");
+
+    function onReady() {
+      wireUrlGoals();
+      wireAutoConversions();
+    }
     if (document.readyState === "loading") {
       document.addEventListener("DOMContentLoaded", onReady);
     } else {

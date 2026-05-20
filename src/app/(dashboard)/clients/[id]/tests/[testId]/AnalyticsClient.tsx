@@ -310,6 +310,7 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
       setTest(updated);
       setEditingVariantId(null);
       toast.success('Variant updated');
+      fetchAnalytics();
     } catch { toast.error('Failed to save'); }
     finally { setSavingVariant(false); }
   }
@@ -613,6 +614,22 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
         {/* ─── OVERVIEW TAB ─── */}
         {tab === 'overview' && (
           <>
+            {variants.some(v => v.redirect_url) && (
+              <div className="flex items-start gap-3 bg-indigo-500/10 border border-indigo-500/30 rounded-xl p-4">
+                <Code2 size={16} className="text-indigo-400 flex-shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-indigo-400 font-medium text-sm">Add tracker.js to your destination page to track conversions</p>
+                  <p className="text-slate-500 text-xs mt-0.5">Paste this before &lt;/body&gt; on your external landing page</p>
+                  <div className="flex items-center gap-2 mt-2">
+                    <code className="flex-1 bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-xs text-slate-300 font-mono truncate">{snippet}</code>
+                    <button onClick={() => { navigator.clipboard.writeText(snippet); toast.success('Copied'); }} className="btn-secondary text-xs flex-shrink-0">
+                      <Copy size={12} /> Copy
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {winner && winner.confidence !== null && winner.confidence >= 95 && (
               <div className="flex items-center gap-3 bg-green-500/10 border border-green-500/30 rounded-xl p-4">
                 <Trophy size={20} className="text-green-400 flex-shrink-0" />

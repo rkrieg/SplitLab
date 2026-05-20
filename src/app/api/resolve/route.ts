@@ -28,7 +28,17 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Variant not found' }, { status: 404, headers });
   }
 
-  return NextResponse.json({ testId: data.test_id, variantId: data.id }, { headers });
+  const { data: goals } = await db
+    .from('conversion_goals')
+    .select('id, type, url_pattern')
+    .eq('test_id', data.test_id)
+    .eq('type', 'url_reached');
+
+  return NextResponse.json({
+    testId: data.test_id,
+    variantId: data.id,
+    goals: (goals || []).filter(g => g.url_pattern).map(g => ({ id: g.id, type: g.type, urlPattern: g.url_pattern })),
+  }, { headers });
 }
 
 export async function OPTIONS(request: NextRequest) {
