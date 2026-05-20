@@ -82,17 +82,19 @@ export async function GET(request: NextRequest) {
       // Proxy mode: serve iframe wrapper so URL stays on custom domain
       // The SPA runs in its original context inside the iframe
       if (selectedVariant.proxy_mode !== false) {
-        // Fetch workspace scripts
-        const { data: proxyScripts } = await db
-          .from('scripts')
-          .select('*')
-          .eq('workspace_id', workspaceId)
-          .eq('is_active', true)
-          .is('page_id', null);
+        // Fetch workspace scripts + page-scoped scripts
+        const [{ data: proxyWorkspaceScripts }, { data: proxyPageScripts }] = await Promise.all([
+          db.from('scripts').select('*').eq('workspace_id', workspaceId).eq('is_active', true).is('page_id', null),
+          selectedVariant.page_id
+            ? db.from('scripts').select('*').eq('workspace_id', workspaceId).eq('is_active', true).eq('page_id', selectedVariant.page_id)
+            : Promise.resolve({ data: [] }),
+        ]);
+        const proxyScripts = [...(proxyWorkspaceScripts || []), ...(proxyPageScripts || [])];
 
-        const headScriptTags: string[] = [];
+        const testHeadScriptsProxy = (test as { head_scripts?: string }).head_scripts || '';
+        const headScriptTags: string[] = testHeadScriptsProxy ? [testHeadScriptsProxy] : [];
         const bodyEndScriptTags: string[] = [];
-        for (const script of proxyScripts || []) {
+        for (const script of proxyScripts) {
           const tag = buildScriptTag(script.type, script.content);
           if (script.placement === 'head') headScriptTags.push(tag);
           else bodyEndScriptTags.push(tag);
@@ -111,14 +113,12 @@ export async function GET(request: NextRequest) {
         const iframeUrlObj = new URL(selectedVariant.redirect_url);
         iframeUrlObj.searchParams.set('sl_vid', selectedVariant.id);
         const iframeUrl = iframeUrlObj.toString();
-        const testHeadScripts = (test as { head_scripts?: string }).head_scripts || '';
         const iframeHtml = `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Loading…</title>
-${testHeadScripts}
 ${headScriptTags.join('\n')}
 <style>*{margin:0;padding:0}html,body{width:100%;height:100%;overflow:hidden}iframe{width:100%;height:100vh;border:none;display:block}</style>
 </head>
@@ -201,17 +201,19 @@ ${proxyTrackingSnippet}
         if (fileData) {
           let hostedHtml = await fileData.text();
 
-          // Fetch workspace scripts
-          const { data: hostedScripts } = await db
-            .from('scripts')
-            .select('*')
-            .eq('workspace_id', workspaceId)
-            .eq('is_active', true)
-            .is('page_id', null);
+          // Fetch workspace scripts + page-scoped scripts
+          const [{ data: hostedWorkspaceScripts }, { data: hostedPageScripts }] = await Promise.all([
+            db.from('scripts').select('*').eq('workspace_id', workspaceId).eq('is_active', true).is('page_id', null),
+            selectedVariant.page_id
+              ? db.from('scripts').select('*').eq('workspace_id', workspaceId).eq('is_active', true).eq('page_id', selectedVariant.page_id)
+              : Promise.resolve({ data: [] }),
+          ]);
+          const hostedScripts = [...(hostedWorkspaceScripts || []), ...(hostedPageScripts || [])];
 
-          const hostedHeadScripts: string[] = [];
+          const testHeadScriptsHosted = (test as { head_scripts?: string }).head_scripts || '';
+          const hostedHeadScripts: string[] = testHeadScriptsHosted ? [testHeadScriptsHosted] : [];
           const hostedBodyScripts: string[] = [];
-          for (const script of hostedScripts || []) {
+          for (const script of hostedScripts) {
             const tag = buildScriptTag(script.type, script.content);
             if (script.placement === 'head') hostedHeadScripts.push(tag);
             else hostedBodyScripts.push(tag);
@@ -275,18 +277,20 @@ ${proxyTrackingSnippet}
       });
     }
 
-    // 7. Fetch workspace scripts
-    const { data: scripts } = await db
-      .from('scripts')
-      .select('*')
-      .eq('workspace_id', workspaceId)
-      .eq('is_active', true)
-      .is('page_id', null);
+    // 7. Fetch workspace scripts + page-scoped scripts
+    const [{ data: workspaceScripts }, { data: pageScripts }] = await Promise.all([
+      db.from('scripts').select('*').eq('workspace_id', workspaceId).eq('is_active', true).is('page_id', null),
+      selectedVariant.page_id
+        ? db.from('scripts').select('*').eq('workspace_id', workspaceId).eq('is_active', true).eq('page_id', selectedVariant.page_id)
+        : Promise.resolve({ data: [] }),
+    ]);
+    const scripts = [...(workspaceScripts || []), ...(pageScripts || [])];
 
-    const headScripts: string[] = [];
+    const testHeadScriptsHtml = (test as { head_scripts?: string }).head_scripts || '';
+    const headScripts: string[] = testHeadScriptsHtml ? [testHeadScriptsHtml] : [];
     const bodyEndScripts: string[] = [];
 
-    for (const script of scripts || []) {
+    for (const script of scripts) {
       const tag = buildScriptTag(script.type, script.content);
       if (script.placement === 'head') {
         headScripts.push(tag);
