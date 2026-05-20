@@ -172,6 +172,18 @@ export async function DELETE(
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
+  // Archive pages linked to this test's variants before deleting
+  const { data: variants } = await db
+    .from('test_variants')
+    .select('page_id')
+    .eq('test_id', params.id)
+    .not('page_id', 'is', null);
+
+  const pageIds = Array.from(new Set((variants || []).map((v) => v.page_id).filter(Boolean)));
+  if (pageIds.length > 0) {
+    await db.from('pages').update({ status: 'archived' }).in('id', pageIds);
+  }
+
   const { error } = await db.from('tests').delete().eq('id', params.id);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ ok: true });
