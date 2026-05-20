@@ -4,6 +4,7 @@ import { useState, Suspense } from 'react';
 import { signIn } from 'next-auth/react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Eye, EyeOff, Check, Loader2, ArrowRight, ArrowLeft } from 'lucide-react';
+import Spinner from '@/components/ui/Spinner';
 import Link from 'next/link';
 import toast from 'react-hot-toast';
 
@@ -268,7 +269,7 @@ function SignupFlow() {
                 </div>
               </div>
               <button type="submit" disabled={loading} className="btn-primary w-full justify-center py-2.5 mt-2">
-                {loading ? <><Loader2 size={16} className="animate-spin" /> Creating account…</> : 'Create free account'}
+                {loading ? <><Spinner />Creating account…</> : 'Create free account'}
               </button>
             </form>
 
@@ -290,6 +291,7 @@ function SignupFlow() {
 
 export default function SignupPage() {
   return (
+    // Loader2 here is a page-level Suspense fallback, not a button spinner
     <Suspense fallback={
       <div className="flex items-center justify-center min-h-screen">
         <Loader2 className="w-8 h-8 text-indigo-500 animate-spin" />

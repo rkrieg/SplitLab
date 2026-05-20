@@ -22,6 +22,7 @@ import { cn, slugify } from '@/lib/utils';
 import { useState, useEffect, useRef } from 'react';
 import { useTheme } from 'next-themes';
 import toast from 'react-hot-toast';
+import Spinner from '@/components/ui/Spinner';
 
 interface Client {
   id: string;
@@ -58,9 +59,11 @@ export default function Sidebar() {
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [newClientName, setNewClientName] = useState('');
   const [creating, setCreating] = useState(false);
+  const [navigating, setNavigating] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => setMounted(true), []);
+  useEffect(() => { setNavigating(false); }, [pathname]);
 
   // Parse selected client from pathname
   const clientMatch = pathname.match(/^\/clients\/([^/]+)/);
@@ -101,6 +104,7 @@ export default function Sidebar() {
 
   function selectClient(client: Client | null) {
     setDropdownOpen(false);
+    setNavigating(true);
     if (client) {
       // Navigate to equivalent client-scoped route
       if (pathname.includes('/pages')) {
@@ -179,7 +183,10 @@ export default function Sidebar() {
           <span className="flex-1 text-left text-slate-800 dark:text-slate-200 truncate">
             {selectedClient ? selectedClient.name : 'All Clients'}
           </span>
-          <ChevronDown size={14} className={cn('text-slate-400 dark:text-slate-500 transition-transform flex-shrink-0', dropdownOpen && 'rotate-180')} />
+          {navigating
+            ? <Spinner size="sm" className="text-slate-400" />
+            : <ChevronDown size={14} className={cn('text-slate-400 dark:text-slate-500 transition-transform flex-shrink-0', dropdownOpen && 'rotate-180')} />
+          }
         </button>
 
         {dropdownOpen && (
@@ -318,7 +325,7 @@ export default function Sidebar() {
               <div className="flex justify-end gap-3 pt-2">
                 <button type="button" onClick={() => setCreateModalOpen(false)} className="btn-secondary text-sm">Cancel</button>
                 <button type="submit" disabled={creating} className="btn-primary text-sm">
-                  {creating ? 'Creating...' : 'Create Client'}
+                  {creating ? <><Spinner />Creating…</> : 'Create Client'}
                 </button>
               </div>
             </form>

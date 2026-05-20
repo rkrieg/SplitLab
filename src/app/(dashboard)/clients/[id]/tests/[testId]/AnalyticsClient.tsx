@@ -6,9 +6,10 @@ import toast from 'react-hot-toast';
 import {
   Download, RefreshCw, Trophy, TrendingUp, Code2, Copy,
   ChevronRight, ShieldCheck, ShieldX, FileCode2,
-  Loader2, Globe, ExternalLink, Plus, Trash2, Check, X,
+  Globe, ExternalLink, Plus, Trash2, Check, X,
   Pencil, BarChart3, Users, Settings as SettingsIcon, Sparkles,
 } from 'lucide-react';
+import Spinner from '@/components/ui/Spinner';
 import Button from '@/components/ui/Button';
 import Modal from '@/components/ui/Modal';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
@@ -137,6 +138,8 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
   const [headScriptsDraft, setHeadScriptsDraft] = useState(initialTest.head_scripts || '');
   const [savingScripts, setSavingScripts] = useState(false);
 
+  const [togglingStatus, setTogglingStatus] = useState(false);
+
   // Leads
   const [leads, setLeads] = useState<Lead[]>([]);
   const [leadsLoading, setLeadsLoading] = useState(false);
@@ -211,15 +214,20 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
   // ─── Status toggle ──────────────────────────────────────────────────
 
   async function toggleStatus() {
+    setTogglingStatus(true);
     const newStatus = test.status === 'active' ? 'paused' : 'active';
-    const res = await fetch(`/api/tests/${test.id}`, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: newStatus }),
-    });
-    if (!res.ok) { toast.error('Failed to update status'); return; }
-    const updated = await res.json();
-    setTest(updated);
-    toast.success(newStatus === 'active' ? 'Published' : 'Unpublished');
+    try {
+      const res = await fetch(`/api/tests/${test.id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus }),
+      });
+      if (!res.ok) { toast.error('Failed to update status'); return; }
+      const updated = await res.json();
+      setTest(updated);
+      toast.success(newStatus === 'active' ? 'Published' : 'Unpublished');
+    } finally {
+      setTogglingStatus(false);
+    }
   }
 
   // ─── Weight editing ─────────────────────────────────────────────────
@@ -578,13 +586,14 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
 
             <button
               onClick={toggleStatus}
-              className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+              disabled={togglingStatus}
+              className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-60 ${
                 test.status === 'active'
                   ? 'bg-red-500/15 border border-red-500/30 text-red-400 hover:bg-red-500/25'
                   : 'bg-green-500/15 border border-green-500/30 text-green-400 hover:bg-green-500/25'
               }`}
             >
-              {test.status === 'active' ? 'Unpublish' : 'Publish'}
+              {togglingStatus ? <><Spinner size="sm" />{test.status === 'active' ? 'Unpublishing…' : 'Publishing…'}</> : test.status === 'active' ? 'Unpublish' : 'Publish'}
             </button>
           </div>
         </div>
@@ -829,7 +838,7 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
                                     disabled={checkingTracking === stat.variant.id}
                                     className="btn-secondary text-xs"
                                   >
-                                    {checkingTracking === stat.variant.id ? <Loader2 size={12} className="animate-spin" /> : <ShieldCheck size={12} />}
+                                    {checkingTracking === stat.variant.id ? <Spinner size="sm" /> : <ShieldCheck size={12} />}
                                     Check Tracker
                                   </button>
                                 )}

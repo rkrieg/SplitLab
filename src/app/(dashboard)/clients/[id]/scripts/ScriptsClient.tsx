@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import toast from 'react-hot-toast';
 import { Plus, Code2, ToggleLeft, ToggleRight, Trash2 } from 'lucide-react';
+import Spinner from '@/components/ui/Spinner';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
 import EmptyState from '@/components/ui/EmptyState';
@@ -43,6 +44,7 @@ export default function ScriptsClient({ initialScripts, pages, workspaceId, canM
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
 
   const [sType, setSType] = useState('gtm');
   const [sName, setSName] = useState('');
@@ -83,15 +85,20 @@ export default function ScriptsClient({ initialScripts, pages, workspaceId, canM
   }
 
   async function handleToggle(id: string, is_active: boolean) {
-    const res = await fetch(`/api/workspaces/${workspaceId}/scripts`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, is_active: !is_active }),
-    });
-    if (!res.ok) { toast.error('Failed to update script'); return; }
-    setScripts((prev) =>
-      prev.map((s) => (s.id === id ? { ...s, is_active: !is_active } : s))
-    );
+    setTogglingId(id);
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}/scripts`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, is_active: !is_active }),
+      });
+      if (!res.ok) { toast.error('Failed to update script'); return; }
+      setScripts((prev) =>
+        prev.map((s) => (s.id === id ? { ...s, is_active: !is_active } : s))
+      );
+    } finally {
+      setTogglingId(null);
+    }
   }
 
   async function handleDelete() {
@@ -166,10 +173,12 @@ export default function ScriptsClient({ initialScripts, pages, workspaceId, canM
               </div>
               {canManage && (
                 <div className="flex items-center gap-2">
-                  <button onClick={() => handleToggle(script.id, script.is_active)} className="text-slate-400 hover:text-slate-200 transition-colors">
-                    {script.is_active
-                      ? <ToggleRight size={22} className="text-green-400" />
-                      : <ToggleLeft size={22} />}
+                  <button onClick={() => handleToggle(script.id, script.is_active)} disabled={togglingId === script.id} className="text-slate-400 hover:text-slate-200 transition-colors">
+                    {togglingId === script.id
+                      ? <Spinner size="md" />
+                      : script.is_active
+                        ? <ToggleRight size={22} className="text-green-400" />
+                        : <ToggleLeft size={22} />}
                   </button>
                   <button onClick={() => setDeleteId(script.id)} className="text-slate-500 hover:text-red-400 transition-colors">
                     <Trash2 size={15} />

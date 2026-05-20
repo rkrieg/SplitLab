@@ -6,8 +6,9 @@ import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
 import {
   Plus, FileCode2, MoreHorizontal, Play, Pause, Check, Trash2,
-  Globe, Link2, ShieldCheck, ShieldX, Loader2, Edit2, Sparkles,
+  Globe, Link2, ShieldCheck, ShieldX, Edit2, Sparkles,
 } from 'lucide-react';
+import Spinner from '@/components/ui/Spinner';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
 import EmptyState from '@/components/ui/EmptyState';
@@ -51,6 +52,7 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
   const [saving, setSaving] = useState(false);
   const [activeMenu, setActiveMenu] = useState<string | null>(null);
   const [checkingTracking, setCheckingTracking] = useState<string | null>(null);
+  const [updatingStatusId, setUpdatingStatusId] = useState<string | null>(null);
 
   // Create form
   const [pageName, setPageName] = useState('');
@@ -139,15 +141,20 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
   // ─── Actions ────────────────────────────────────────────────────────────
 
   async function updateStatus(testId: string, status: string) {
-    const res = await fetch(`/api/tests/${testId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status }),
-    });
-    if (!res.ok) { toast.error('Failed to update status'); return; }
-    setTests((prev) => prev.map((t) => (t.id === testId ? { ...t, status } : t)));
-    toast.success(`Page ${status}`);
+    setUpdatingStatusId(testId);
     setActiveMenu(null);
+    try {
+      const res = await fetch(`/api/tests/${testId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status }),
+      });
+      if (!res.ok) { toast.error('Failed to update status'); return; }
+      setTests((prev) => prev.map((t) => (t.id === testId ? { ...t, status } : t)));
+      toast.success(`Page ${status}`);
+    } finally {
+      setUpdatingStatusId(null);
+    }
   }
 
   async function handleDelete() {
@@ -332,7 +339,7 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
                             disabled={checkingTracking === v.id}
                             className="inline-flex items-center gap-1 text-[10px] text-slate-400 hover:text-slate-200 bg-slate-100 dark:bg-slate-700/50 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-600/50 rounded-full px-2 py-0.5 transition-colors disabled:opacity-50"
                           >
-                            {checkingTracking === v.id ? <Loader2 size={9} className="animate-spin" /> : v.tracking_verified === true ? <ShieldCheck size={9} className="text-green-400" /> : v.tracking_verified === false ? <ShieldX size={9} className="text-red-400" /> : <ShieldCheck size={9} />}
+                            {checkingTracking === v.id ? <Spinner size="sm" /> : v.tracking_verified === true ? <ShieldCheck size={9} className="text-green-400" /> : v.tracking_verified === false ? <ShieldX size={9} className="text-red-400" /> : <ShieldCheck size={9} />}
                             Check {v.name}
                           </button>
                         ))}
@@ -345,8 +352,8 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
                     </Link>
                     {canManage && (
                       <div className="relative">
-                        <button onClick={(e) => { e.stopPropagation(); setActiveMenu(activeMenu === test.id ? null : test.id); }} className="btn-secondary p-2">
-                          <MoreHorizontal size={14} />
+                        <button onClick={(e) => { e.stopPropagation(); setActiveMenu(activeMenu === test.id ? null : test.id); }} className="btn-secondary p-2" disabled={updatingStatusId === test.id}>
+                          {updatingStatusId === test.id ? <Spinner size="sm" /> : <MoreHorizontal size={14} />}
                         </button>
                         {activeMenu === test.id && (
                           <div className="absolute right-0 top-full mt-1 w-44 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl z-10 overflow-hidden">

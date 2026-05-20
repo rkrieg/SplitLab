@@ -1,5 +1,6 @@
 import { cn } from '@/lib/utils';
 import type { ButtonHTMLAttributes } from 'react';
+import Spinner from './Spinner';
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: 'primary' | 'secondary' | 'danger' | 'ghost';
@@ -41,7 +42,7 @@ export default function Button({
     >
       {loading ? (
         <>
-          <span className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+          <Spinner />
           Loading…
         </>
       ) : (

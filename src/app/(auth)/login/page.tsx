@@ -5,6 +5,7 @@ import { signIn } from 'next-auth/react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Eye, EyeOff } from 'lucide-react';
 import Link from 'next/link';
+import Spinner from '@/components/ui/Spinner';
 import toast from 'react-hot-toast';
 
 function LoginForm() {
@@ -104,7 +105,7 @@ function LoginForm() {
             disabled={loading}
             className="btn-primary w-full justify-center py-2.5 mt-2"
           >
-            {loading ? 'Signing in…' : 'Sign in'}
+            {loading ? <><Spinner />Signing in…</> : 'Sign in'}
           </button>
         </form>
       </div>
