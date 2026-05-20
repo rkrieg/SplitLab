@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { PLANS } from '@/lib/plans';
 
 export default function LandingPage() {
   const [navScrolled, setNavScrolled] = useState(false);
@@ -175,64 +176,31 @@ export default function LandingPage() {
         <h2 className="section-title">Simple, transparent pricing</h2>
         <p className="section-sub">Start free. Upgrade when you need more. No contracts, cancel anytime.</p>
         <div className="pricing-grid">
-          <div className="pricing-card">
-            <div className="pricing-plan">Starter</div>
-            <div className="pricing-price">Free</div>
-            <div className="pricing-desc">Perfect for trying SplitLab out</div>
-            <ul className="pricing-features">
-              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>1 active test</li>
-              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>2 variants per test</li>
-              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>1,000 visitors/mo</li>
-              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Basic analytics</li>
-              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Zero-config tracker.js</li>
-            </ul>
-            <a href="/signup?plan=free" className="pricing-btn pricing-btn-secondary">Get Started</a>
-          </div>
-          <div className="pricing-card">
-            <div className="pricing-plan">Pro</div>
-            <div className="pricing-price">$49<span>/mo</span></div>
-            <div className="pricing-desc">For marketers running real tests</div>
-            <ul className="pricing-features">
-              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>10 active tests</li>
-              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Unlimited variants</li>
-              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>25,000 visitors/mo</li>
-              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>1 custom domain</li>
-              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>CSV export</li>
-              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Conversion goals</li>
-              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Priority email support</li>
-            </ul>
-            <a href="/signup?plan=pro" className="pricing-btn pricing-btn-outline">Get Started</a>
-          </div>
-          <div className="pricing-card featured">
-            <div className="pricing-plan">Agency</div>
-            <div className="pricing-price">$149<span>/mo</span></div>
-            <div className="pricing-desc">For agencies managing multiple clients</div>
-            <ul className="pricing-features">
-              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>50 active tests</li>
-              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Up to 10 clients</li>
-              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>100,000 visitors/mo</li>
-              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Up to 10 custom domains</li>
-              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Team seats</li>
-              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Custom scripts per variant</li>
-              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>UTM personalization</li>
-            </ul>
-            <a href="/signup?plan=agency" className="pricing-btn pricing-btn-primary">Get Started</a>
-          </div>
-          <div className="pricing-card">
-            <div className="pricing-plan">Scale</div>
-            <div className="pricing-price">$349<span>/mo</span></div>
-            <div className="pricing-desc">For high-volume teams and networks</div>
-            <ul className="pricing-features">
-              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Unlimited tests</li>
-              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Unlimited clients</li>
-              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Unlimited visitors/mo</li>
-              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Unlimited custom domains</li>
-              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>White-label branding</li>
-              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Webhook integrations</li>
-              <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Priority support</li>
-            </ul>
-            <a href="/signup?plan=scale" className="pricing-btn pricing-btn-secondary">Get Started</a>
-          </div>
+          {PLANS.map(plan => (
+            <div key={plan.id} className={`pricing-card${plan.highlight ? ' featured' : ''}`}>
+              <div className="pricing-plan">{plan.label}</div>
+              <div className="pricing-price">
+                {plan.price}{plan.id !== 'free' && <span>/mo</span>}
+              </div>
+              <div className="pricing-desc">{plan.sub}</div>
+              <ul className="pricing-features">
+                {plan.features.map(f => (
+                  <li key={f}>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                    {f}
+                  </li>
+                ))}
+              </ul>
+              <a
+                href={plan.signupHref}
+                className={`pricing-btn ${
+                  plan.highlight ? 'pricing-btn-primary' : plan.id === 'pro' ? 'pricing-btn-outline' : 'pricing-btn-secondary'
+                }`}
+              >
+                Get Started
+              </a>
+            </div>
+          ))}
         </div>
       </section>
 
