@@ -108,7 +108,9 @@ export async function GET(request: NextRequest) {
           test.id, selectedVariant.id, visitorId, proxyGoals || [], APP_URL
         );
 
-        const iframeUrl = selectedVariant.redirect_url;
+        const iframeUrlObj = new URL(selectedVariant.redirect_url);
+        iframeUrlObj.searchParams.set('sl_vid', selectedVariant.id);
+        const iframeUrl = iframeUrlObj.toString();
         const testHeadScripts = (test as { head_scripts?: string }).head_scripts || '';
         const iframeHtml = `<!DOCTYPE html>
 <html lang="en">
