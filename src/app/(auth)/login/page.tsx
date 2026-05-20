@@ -4,6 +4,7 @@ import { Suspense, useState } from 'react';
 import { signIn } from 'next-auth/react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Eye, EyeOff } from 'lucide-react';
+import Link from 'next/link';
 import toast from 'react-hot-toast';
 
 function LoginForm() {
@@ -44,12 +45,10 @@ function LoginForm() {
     <div className="w-full max-w-md">
       {/* Logo */}
       <div className="flex items-center justify-center mb-8">
-        <svg width="180" height="42" viewBox="0 0 220 48" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <circle cx="18" cy="24" r="16" fill="#3D8BDA" opacity="0.15"/>
-          <circle cx="18" cy="24" r="14" stroke="#3D8BDA" strokeWidth="1.5"/>
-          <path d="M20 12L13 26H18L15 36L24 22H19L20 12Z" fill="#3D8BDA"/>
-          <text x="42" y="21" fontFamily="system-ui, sans-serif" fontWeight="700" fontSize="24" fill="currentColor" letterSpacing="-0.5" className="text-slate-900 dark:text-white">Split<tspan fill="#3D8BDA" fontWeight="600">Lab</tspan></text>
-        </svg>
+        <Link href="/">
+          <img src="/splitlab-logo-light.png" alt="SplitLab" className="dark:hidden" style={{ height: '90px', width: 'auto' }} />
+          <img src="/splitlab-logo-dark.png" alt="SplitLab" className="hidden dark:block" style={{ height: '90px', width: 'auto' }} />
+        </Link>
       </div>
 
       {/* Card */}
@@ -110,8 +109,9 @@ function LoginForm() {
         </form>
       </div>
 
-      <p className="text-center text-slate-400 dark:text-slate-500 text-xs mt-6">
-        Account access is managed by your agency administrator.
+      <p className="text-center text-slate-500 dark:text-slate-400 text-sm mt-6">
+        Don&apos;t have an account?{' '}
+        <Link href="/signup" className="text-indigo-500 hover:text-indigo-400 font-medium transition-colors">Sign up</Link>
       </p>
     </div>
   );
