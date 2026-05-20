@@ -5,6 +5,9 @@ import { db } from '@/lib/supabase-server';
 import { uploadHtml, deleteHtmlFile, fileNameFromUrl } from '@/lib/storage';
 import { z } from 'zod';
 
+// TODO (post-trial): Add ownership check — verify the page's workspace belongs to the
+// requesting user before allowing GET/PATCH/DELETE. Same gap as tests/[id]/route.ts.
+
 const updateSchema = z.object({
   name: z.string().min(1).max(255).optional(),
   html_content: z.string().optional(),

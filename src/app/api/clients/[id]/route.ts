@@ -10,12 +10,48 @@ const updateSchema = z.object({
   status: z.enum(['active', 'archived']).optional(),
 });
 
+async function canAccessClient(clientId: string, userId: string, userRole: string) {
+  if (userRole === 'admin') return true;
+
+  const { data: client } = await db
+    .from('clients')
+    .select('owner_id')
+    .eq('id', clientId)
+    .single();
+
+  if (client?.owner_id === userId) return true;
+
+  // Viewers (and managers invited to a workspace) can access the client if they
+  // have membership in at least one workspace under it
+  const { data: workspaces } = await db
+    .from('workspaces')
+    .select('id')
+    .eq('client_id', clientId);
+
+  const workspaceIds = workspaces?.map(w => w.id) ?? [];
+  if (workspaceIds.length === 0) return false;
+
+  const { data: member } = await db
+    .from('workspace_members')
+    .select('id')
+    .eq('user_id', userId)
+    .in('workspace_id', workspaceIds)
+    .limit(1)
+    .single();
+
+  return !!member;
+}
+
 export async function GET(
   _req: NextRequest,
   { params }: { params: { id: string } }
 ) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  if (!await canAccessClient(params.id, session.user.id, session.user.role)) {
+    return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  }
 
   const { data, error } = await db
     .from('clients')
@@ -40,8 +76,12 @@ export async function PATCH(
 ) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  if (session.user.role !== 'admin' && session.user.role !== 'manager') {
+  if (session.user.role === 'viewer') {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+
+  if (!await canAccessClient(params.id, session.user.id, session.user.role)) {
+    return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
 
   try {
@@ -71,8 +111,12 @@ export async function DELETE(
 ) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  if (session.user.role !== 'admin') {
+  if (session.user.role === 'viewer') {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+
+  if (!await canAccessClient(params.id, session.user.id, session.user.role)) {
+    return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
 
   const { error } = await db.from('clients').delete().eq('id', params.id);

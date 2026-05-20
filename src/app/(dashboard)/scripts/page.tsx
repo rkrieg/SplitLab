@@ -8,10 +8,34 @@ import { Code2 } from 'lucide-react';
 import EmptyState from '@/components/ui/EmptyState';
 import { formatDate } from '@/lib/utils';
 
-async function getAllScripts() {
+async function getScripts(userId: string, userRole: string) {
+  if (userRole === 'admin') {
+    const { data } = await db
+      .from('scripts')
+      .select('*, workspaces(name, client_id, clients(name))')
+      .order('created_at', { ascending: false });
+    return data ?? [];
+  }
+
+  let workspaceIds: string[] = [];
+
+  if (userRole === 'manager') {
+    const { data: ownedClients } = await db.from('clients').select('id').eq('owner_id', userId);
+    const clientIds = ownedClients?.map(c => c.id) ?? [];
+    if (clientIds.length === 0) return [];
+    const { data: workspaces } = await db.from('workspaces').select('id').in('client_id', clientIds);
+    workspaceIds = workspaces?.map(w => w.id) ?? [];
+  } else {
+    const { data: memberships } = await db.from('workspace_members').select('workspace_id').eq('user_id', userId);
+    workspaceIds = memberships?.map(m => m.workspace_id) ?? [];
+  }
+
+  if (workspaceIds.length === 0) return [];
+
   const { data } = await db
     .from('scripts')
     .select('*, workspaces(name, client_id, clients(name))')
+    .in('workspace_id', workspaceIds)
     .order('created_at', { ascending: false });
   return data ?? [];
 }
@@ -20,7 +44,7 @@ export default async function AllScriptsPage() {
   const session = await getServerSession(authOptions);
   if (!session) redirect('/login');
 
-  const scripts = await getAllScripts();
+  const scripts = await getScripts(session.user.id, session.user.role);
 
   const typeLabel: Record<string, string> = {
     gtm: 'GTM', meta_pixel: 'Meta Pixel', ga4: 'GA4', custom: 'Custom',

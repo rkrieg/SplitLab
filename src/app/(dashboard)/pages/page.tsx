@@ -8,14 +8,34 @@ import { FileCode2 } from 'lucide-react';
 import { TestStatusBadge } from '@/components/ui/Badge';
 import EmptyState from '@/components/ui/EmptyState';
 
-async function getAllTests() {
+async function getTests(userId: string, userRole: string) {
+  if (userRole === 'admin') {
+    const { data } = await db
+      .from('tests')
+      .select(`id, name, url_path, status, created_at, workspaces(name, client_id, clients(name)), test_variants(id)`)
+      .order('created_at', { ascending: false });
+    return data ?? [];
+  }
+
+  let workspaceIds: string[] = [];
+
+  if (userRole === 'manager') {
+    const { data: ownedClients } = await db.from('clients').select('id').eq('owner_id', userId);
+    const clientIds = ownedClients?.map(c => c.id) ?? [];
+    if (clientIds.length === 0) return [];
+    const { data: workspaces } = await db.from('workspaces').select('id').in('client_id', clientIds);
+    workspaceIds = workspaces?.map(w => w.id) ?? [];
+  } else {
+    const { data: memberships } = await db.from('workspace_members').select('workspace_id').eq('user_id', userId);
+    workspaceIds = memberships?.map(m => m.workspace_id) ?? [];
+  }
+
+  if (workspaceIds.length === 0) return [];
+
   const { data } = await db
     .from('tests')
-    .select(`
-      id, name, url_path, status, created_at,
-      workspaces ( name, client_id, clients ( name ) ),
-      test_variants ( id )
-    `)
+    .select(`id, name, url_path, status, created_at, workspaces(name, client_id, clients(name)), test_variants(id)`)
+    .in('workspace_id', workspaceIds)
     .order('created_at', { ascending: false });
   return data ?? [];
 }
@@ -24,7 +44,7 @@ export default async function AllPagesPage() {
   const session = await getServerSession(authOptions);
   if (!session) redirect('/login');
 
-  const tests = await getAllTests();
+  const tests = await getTests(session.user.id, session.user.role);
 
   return (
     <div>

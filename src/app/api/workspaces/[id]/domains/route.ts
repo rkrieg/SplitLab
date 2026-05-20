@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { addDomainToVercel, removeDomainFromVercel, getDomainStatus } from '@/lib/vercel';
+import { resolveWorkspaceRole } from '@/lib/workspace-auth';
 import { z } from 'zod';
 
 const addSchema = z.object({
@@ -20,24 +21,6 @@ const updateSchema = z.object({
   domain: z.string().min(3).max(255),
 });
 
-async function requireMembership(workspaceId: string, userId: string) {
-  // Global admins always have access
-  const { data: user } = await db
-    .from('users')
-    .select('role')
-    .eq('id', userId)
-    .single();
-  if (user?.role === 'super_admin' || user?.role === 'admin') return { role: 'manager' };
-
-  const { data } = await db
-    .from('workspace_members')
-    .select('role')
-    .eq('workspace_id', workspaceId)
-    .eq('user_id', userId)
-    .single();
-  return data;
-}
-
 export async function GET(
   _req: NextRequest,
   { params }: { params: { id: string } }
@@ -45,7 +28,7 @@ export async function GET(
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  if (!await requireMembership(params.id, session.user.id)) {
+  if (!await resolveWorkspaceRole(params.id, session.user.id, session.user.role)) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
@@ -66,152 +49,88 @@ export async function POST(
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  if (!await requireMembership(params.id, session.user.id)) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  }
+  const wsRole = await resolveWorkspaceRole(params.id, session.user.id, session.user.role);
+  if (!wsRole) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  if (wsRole !== 'manager') return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
-  try {
-    const body = await request.json();
+  const body = await request.json();
 
-    // ── Verify action ──
-    if (body.action === 'verify') {
-      const { domain_id } = verifySchema.parse(body);
-
-      const { data: domainRow, error: fetchErr } = await db
-        .from('domains')
-        .select('id, domain')
-        .eq('id', domain_id)
-        .eq('workspace_id', params.id)
-        .single();
-
-      if (fetchErr || !domainRow) {
-        return NextResponse.json({ error: 'Domain not found' }, { status: 404 });
-      }
-
-      const result = await getDomainStatus(domainRow.domain);
-
-      if (result.verified) {
-        await db
-          .from('domains')
-          .update({ verified: true, verified_at: new Date().toISOString(), vercel_verification: null })
-          .eq('id', domain_id);
-      } else if (result.status === 'needs_txt' && result.vercel_verification?.length) {
-        await db
-          .from('domains')
-          .update({ vercel_verification: result.vercel_verification })
-          .eq('id', domain_id);
-      }
-
-      return NextResponse.json(result);
-    }
-
-    // ── Update domain (rename) ──
-    if (body.action === 'update') {
-      const { domain_id, domain: newDomain } = updateSchema.parse(body);
-
-      const { data: oldRow, error: fetchErr } = await db
-        .from('domains')
-        .select('id, domain')
-        .eq('id', domain_id)
-        .eq('workspace_id', params.id)
-        .single();
-
-      if (fetchErr || !oldRow) {
-        return NextResponse.json({ error: 'Domain not found' }, { status: 404 });
-      }
-
-      if (oldRow.domain === newDomain) {
-        return NextResponse.json({ error: 'Domain unchanged' }, { status: 400 });
-      }
-
-      const { data: existing } = await db
-        .from('domains')
-        .select('id')
-        .eq('domain', newDomain)
-        .single();
-
-      if (existing) {
-        return NextResponse.json({ error: 'Domain already registered' }, { status: 409 });
-      }
-
-      // Register new domain with Vercel first
-      let vercelVerification: Array<{ type: string; domain: string; value: string }> = [];
-      try {
-        const result = await addDomainToVercel(newDomain);
-        vercelVerification = result.verification || [];
-      } catch (vercelErr: unknown) {
-        const msg = vercelErr instanceof Error ? vercelErr.message : 'Vercel API error';
-        return NextResponse.json(
-          { error: `Failed to register new domain with Vercel: ${msg}` },
-          { status: 502 }
-        );
-      }
-
-      // Remove old domain from Vercel (non-fatal)
-      try {
-        await removeDomainFromVercel(oldRow.domain);
-      } catch {
-        // Non-fatal — old domain cleanup can fail
-      }
-
-      const { data: updated, error: updateErr } = await db
-        .from('domains')
-        .update({ domain: newDomain, verified: false, verified_at: null, vercel_verification: vercelVerification.length ? vercelVerification : null })
-        .eq('id', domain_id)
-        .eq('workspace_id', params.id)
-        .select()
-        .single();
-
-      if (updateErr) return NextResponse.json({ error: updateErr.message }, { status: 500 });
-      return NextResponse.json(updated);
-    }
-
-    // ── Add domain ──
-    const { domain } = addSchema.parse(body);
-
-    const { data: existing } = await db
+  // Verify action
+  const verifyResult = verifySchema.safeParse(body);
+  if (verifyResult.success) {
+    const { domain_id } = verifyResult.data;
+    const { data: domain } = await db
       .from('domains')
-      .select('id')
-      .eq('domain', domain)
+      .select('domain')
+      .eq('id', domain_id)
+      .eq('workspace_id', params.id)
       .single();
 
-    if (existing) {
-      return NextResponse.json({ error: 'Domain already registered' }, { status: 409 });
-    }
+    if (!domain) return NextResponse.json({ error: 'Domain not found' }, { status: 404 });
 
-    // Register with Vercel first — fatal if rejected
-    let vercelVerification: Array<{ type: string; domain: string; value: string }> = [];
-    try {
-      const result = await addDomainToVercel(domain);
-      vercelVerification = result.verification || [];
-    } catch (vercelErr: unknown) {
-      const msg = vercelErr instanceof Error ? vercelErr.message : 'Vercel API error';
-      return NextResponse.json(
-        { error: `Failed to register domain with Vercel: ${msg}` },
-        { status: 502 }
-      );
+    const status = await getDomainStatus(domain.domain);
+    if (status.verified) {
+      await db
+        .from('domains')
+        .update({ verified: true, verified_at: new Date().toISOString() })
+        .eq('id', domain_id);
     }
+    return NextResponse.json({ verified: status.verified, status });
+  }
 
-    const { data: newDomain, error } = await db
+  // Update action
+  const updateResult = updateSchema.safeParse(body);
+  if (updateResult.success) {
+    const { domain_id, domain: newDomain } = updateResult.data;
+    const { data: existing } = await db
       .from('domains')
-      .insert({
-        workspace_id: params.id,
-        domain,
+      .select('domain')
+      .eq('id', domain_id)
+      .eq('workspace_id', params.id)
+      .single();
+
+    if (!existing) return NextResponse.json({ error: 'Domain not found' }, { status: 404 });
+
+    await removeDomainFromVercel(existing.domain);
+    await addDomainToVercel(newDomain);
+
+    const { data: updated, error } = await db
+      .from('domains')
+      .update({
+        domain: newDomain,
+        cname_target: null,
         verified: false,
-        ...(vercelVerification.length ? { vercel_verification: vercelVerification } : {}),
+        verified_at: null,
       })
+      .eq('id', domain_id)
       .select()
       .single();
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-    return NextResponse.json({ ...newDomain, vercel_verification: vercelVerification }, { status: 201 });
-
-  } catch (err) {
-    if (err instanceof z.ZodError) {
-      return NextResponse.json({ error: err.errors }, { status: 400 });
-    }
-    return NextResponse.json({ error: 'Internal error' }, { status: 500 });
+    return NextResponse.json(updated);
   }
+
+  // Add domain
+  const addResult = addSchema.safeParse(body);
+  if (!addResult.success) {
+    return NextResponse.json({ error: addResult.error.errors }, { status: 400 });
+  }
+
+  const { domain } = addResult.data;
+  await addDomainToVercel(domain);
+
+  const { data: created, error } = await db
+    .from('domains')
+    .insert({
+      workspace_id: params.id,
+      domain,
+      cname_target: null,
+    })
+    .select()
+    .single();
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  return NextResponse.json(created, { status: 201 });
 }
 
 export async function DELETE(
@@ -221,45 +140,26 @@ export async function DELETE(
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  if (!await requireMembership(params.id, session.user.id)) {
+  const wsRole = await resolveWorkspaceRole(params.id, session.user.id, session.user.role);
+  if (!wsRole || wsRole !== 'manager') {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
-  try {
-    const { domain_id } = await request.json();
-    if (!domain_id) {
-      return NextResponse.json({ error: 'domain_id is required' }, { status: 400 });
-    }
+  const { domain_id } = await request.json();
+  if (!domain_id) return NextResponse.json({ error: 'domain_id required' }, { status: 400 });
 
-    const { data: domainRow, error: fetchErr } = await db
-      .from('domains')
-      .select('domain')
-      .eq('id', domain_id)
-      .eq('workspace_id', params.id)
-      .single();
+  const { data: domain } = await db
+    .from('domains')
+    .select('domain')
+    .eq('id', domain_id)
+    .eq('workspace_id', params.id)
+    .single();
 
-    if (fetchErr || !domainRow) {
-      return NextResponse.json({ error: 'Domain not found' }, { status: 404 });
-    }
+  if (!domain) return NextResponse.json({ error: 'Domain not found' }, { status: 404 });
 
-    try {
-      await removeDomainFromVercel(domainRow.domain);
-    } catch {
-      return NextResponse.json(
-        { error: 'Could not remove domain from Vercel. Please delete it manually from your Vercel dashboard, then try again.' },
-        { status: 502 }
-      );
-    }
+  await removeDomainFromVercel(domain.domain);
 
-    const { error } = await db
-      .from('domains')
-      .delete()
-      .eq('id', domain_id)
-      .eq('workspace_id', params.id);
-
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-    return NextResponse.json({ success: true });
-  } catch {
-    return NextResponse.json({ error: 'Internal error' }, { status: 500 });
-  }
+  const { error } = await db.from('domains').delete().eq('id', domain_id);
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  return NextResponse.json({ ok: true });
 }

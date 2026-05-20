@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
+import { resolveWorkspaceRole } from '@/lib/workspace-auth';
 import { z } from 'zod';
 
 const variantSchema = z.object({
@@ -36,6 +37,10 @@ export async function GET(
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
+  if (!await resolveWorkspaceRole(params.id, session.user.id, session.user.role)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+
   const { data, error } = await db
     .from('tests')
     .select(`
@@ -57,11 +62,15 @@ export async function POST(
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
+  const wsRole = await resolveWorkspaceRole(params.id, session.user.id, session.user.role);
+  if (!wsRole || wsRole !== 'manager') {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+
   try {
     const body = await request.json();
     const data = createSchema.parse(body);
 
-    // Validate weights sum to 100
     const totalWeight = data.variants.reduce((s, v) => s + v.traffic_weight, 0);
     if (totalWeight !== 100) {
       return NextResponse.json(
@@ -70,7 +79,6 @@ export async function POST(
       );
     }
 
-    // Create test
     const { data: test, error: testError } = await db
       .from('tests')
       .insert({ workspace_id: params.id, name: data.name, url_path: data.url_path, ...(data.status ? { status: data.status } : {}) })
@@ -79,7 +87,6 @@ export async function POST(
 
     if (testError) return NextResponse.json({ error: testError.message }, { status: 500 });
 
-    // Create variants
     const variantRows = data.variants.map((v, i) => ({
       test_id: test.id,
       name: v.name,
@@ -93,7 +100,6 @@ export async function POST(
     const { error: varError } = await db.from('test_variants').insert(variantRows);
     if (varError) return NextResponse.json({ error: varError.message }, { status: 500 });
 
-    // Create goals
     if (data.goals && data.goals.length > 0) {
       const goalRows = data.goals.map((g) => ({
         test_id: test.id,
@@ -106,7 +112,6 @@ export async function POST(
       await db.from('conversion_goals').insert(goalRows);
     }
 
-    // Return full test with relations
     const { data: fullTest } = await db
       .from('tests')
       .select('*, test_variants(*), conversion_goals(*)')

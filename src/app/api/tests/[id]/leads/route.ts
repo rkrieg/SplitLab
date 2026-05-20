@@ -3,6 +3,9 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 
+// TODO (post-trial): Add ownership check — verify the test belongs to the requesting
+// user's workspace before returning lead/conversion data.
+
 export async function GET(
   request: NextRequest,
   { params }: { params: { id: string } }

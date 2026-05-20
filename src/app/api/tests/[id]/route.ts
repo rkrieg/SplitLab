@@ -36,6 +36,11 @@ const updateSchema = z.object({
   delete_variant_id: z.string().uuid().optional(),
 });
 
+// TODO (post-trial): Add ownership check — verify the test's workspace belongs to the
+// requesting user before allowing GET/PATCH/DELETE. Currently any authenticated user
+// can access any test by UUID. Low immediate risk (UUIDs are unguessable) but should
+// be locked down the same way workspace routes are.
+
 function fullTestSelect() {
   return '*, test_variants(*, pages(id, name)), conversion_goals(*)';
 }

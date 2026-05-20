@@ -27,6 +27,7 @@ export interface Client {
   slug: string;
   logo_url: string | null;
   status: ClientStatus;
+  owner_id: string | null;
   created_at: string;
   updated_at: string;
 }

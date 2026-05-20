@@ -93,9 +93,11 @@ export default function Sidebar() {
     return () => document.removeEventListener('mousedown', handleClick);
   }, []);
 
+  const isAdmin = session?.user?.role === 'admin';
+
   const navItems = selectedClient
     ? getClientNavItems(selectedClient.id)
-    : globalNavItems;
+    : globalNavItems.filter(item => item.href !== '/team' || isAdmin);
 
   function isActive(href: string) {
     if (href === '/dashboard') return pathname === '/dashboard';
@@ -202,7 +204,7 @@ export default function Sidebar() {
               )}
             >
               <LayoutDashboard size={13} className="flex-shrink-0" />
-              <span className="flex-1 text-left">All Clients</span>
+              <span className="flex-1 text-left">{isAdmin ? 'All Clients' : 'My Clients'}</span>
               {!selectedClient && <Check size={13} className="text-indigo-400" />}
             </button>
 

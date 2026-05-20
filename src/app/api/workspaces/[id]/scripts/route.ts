@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
+import { resolveWorkspaceRole } from '@/lib/workspace-auth';
 import { z } from 'zod';
 
 const createSchema = z.object({
@@ -20,6 +21,10 @@ export async function GET(
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
+  if (!await resolveWorkspaceRole(params.id, session.user.id, session.user.role)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+
   const { data, error } = await db
     .from('scripts')
     .select('*, pages(id, name)')
@@ -36,6 +41,11 @@ export async function POST(
 ) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const wsRole = await resolveWorkspaceRole(params.id, session.user.id, session.user.role);
+  if (!wsRole || wsRole !== 'manager') {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
 
   try {
     const body = await request.json();
@@ -59,10 +69,15 @@ export async function POST(
 
 export async function PATCH(
   request: NextRequest,
-  { params: _params }: { params: { id: string } }
+  { params }: { params: { id: string } }
 ) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const wsRole = await resolveWorkspaceRole(params.id, session.user.id, session.user.role);
+  if (!wsRole || wsRole !== 'manager') {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
 
   const { id, ...fields } = await request.json();
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
@@ -80,10 +95,15 @@ export async function PATCH(
 
 export async function DELETE(
   request: NextRequest,
-  { params: _params }: { params: { id: string } }
+  { params }: { params: { id: string } }
 ) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const wsRole = await resolveWorkspaceRole(params.id, session.user.id, session.user.role);
+  if (!wsRole || wsRole !== 'manager') {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
 
   const { id } = await request.json();
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });

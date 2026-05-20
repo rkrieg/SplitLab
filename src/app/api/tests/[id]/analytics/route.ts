@@ -4,6 +4,9 @@ import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { confidencePercent, findWinner } from '@/lib/stats';
 
+// TODO (post-trial): Add ownership check — verify the test belongs to the requesting
+// user's workspace before returning analytics data.
+
 export async function GET(
   request: NextRequest,
   { params }: { params: { id: string } }

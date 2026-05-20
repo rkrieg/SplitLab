@@ -5,26 +5,106 @@ import Header from '@/components/layout/Header';
 import Link from 'next/link';
 import { Building2, FlaskConical, FileCode2, Eye, TrendingUp } from 'lucide-react';
 
-async function getDashboardStats() {
+async function getDashboardStats(userId: string, userRole: string) {
+  if (userRole === 'admin') {
+    const [
+      { count: clientCount },
+      { count: activeTestCount },
+      { count: totalViews },
+      { data: recentTests },
+    ] = await Promise.all([
+      db.from('clients').select('*', { count: 'exact', head: true }).eq('status', 'active'),
+      db.from('tests').select('*', { count: 'exact', head: true }).eq('status', 'active'),
+      db.from('events').select('*', { count: 'exact', head: true }).eq('type', 'pageview'),
+      db
+        .from('tests')
+        .select('id, name, status, url_path, created_at, workspaces(name, clients(name))')
+        .eq('status', 'active')
+        .order('created_at', { ascending: false })
+        .limit(5),
+    ]);
+    return {
+      clientCount: clientCount ?? 0,
+      activeTestCount: activeTestCount ?? 0,
+      totalViews: totalViews ?? 0,
+      recentTests: recentTests ?? [],
+    };
+  }
+
+  // For managers: scope to owned clients.
+  // For viewers: scope to clients they have workspace membership in.
+  let clientIds: string[] = [];
+
+  if (userRole === 'manager') {
+    const { data: ownedClients } = await db
+      .from('clients')
+      .select('id')
+      .eq('owner_id', userId)
+      .eq('status', 'active');
+    clientIds = ownedClients?.map(c => c.id) ?? [];
+  } else {
+    // viewer — derive from workspace_members
+    const { data: memberships } = await db
+      .from('workspace_members')
+      .select('workspace_id')
+      .eq('user_id', userId);
+    const workspaceIds = memberships?.map(m => m.workspace_id) ?? [];
+    if (workspaceIds.length > 0) {
+      const { data: workspaces } = await db
+        .from('workspaces')
+        .select('client_id')
+        .in('id', workspaceIds);
+      clientIds = Array.from(new Set(workspaces?.map(w => w.client_id) ?? []));
+    }
+  }
+
+  if (clientIds.length === 0) {
+    return { clientCount: 0, activeTestCount: 0, totalViews: 0, recentTests: [] };
+  }
+
+  const { data: workspaces } = await db
+    .from('workspaces')
+    .select('id')
+    .in('client_id', clientIds);
+
+  const workspaceIds = workspaces?.map(w => w.id) ?? [];
+
+  if (workspaceIds.length === 0) {
+    return {
+      clientCount: clientIds.length,
+      activeTestCount: 0,
+      totalViews: 0,
+      recentTests: [],
+    };
+  }
+
+  const { data: tests } = await db
+    .from('tests')
+    .select('id')
+    .in('workspace_id', workspaceIds);
+
+  const testIds = tests?.map(t => t.id) ?? [];
+
   const [
-    { count: clientCount },
     { count: activeTestCount },
     { count: totalViews },
     { data: recentTests },
   ] = await Promise.all([
-    db.from('clients').select('*', { count: 'exact', head: true }).eq('status', 'active'),
-    db.from('tests').select('*', { count: 'exact', head: true }).eq('status', 'active'),
-    db.from('events').select('*', { count: 'exact', head: true }).eq('type', 'pageview'),
+    db.from('tests').select('*', { count: 'exact', head: true }).eq('status', 'active').in('workspace_id', workspaceIds),
+    testIds.length > 0
+      ? db.from('events').select('*', { count: 'exact', head: true }).eq('type', 'pageview').in('test_id', testIds)
+      : Promise.resolve({ count: 0 }),
     db
       .from('tests')
       .select('id, name, status, url_path, created_at, workspaces(name, clients(name))')
       .eq('status', 'active')
+      .in('workspace_id', workspaceIds)
       .order('created_at', { ascending: false })
       .limit(5),
   ]);
 
   return {
-    clientCount: clientCount ?? 0,
+    clientCount: clientIds.length,
     activeTestCount: activeTestCount ?? 0,
     totalViews: totalViews ?? 0,
     recentTests: recentTests ?? [],
@@ -34,7 +114,7 @@ async function getDashboardStats() {
 export default async function DashboardPage() {
   const session = await getServerSession(authOptions);
   const { clientCount, activeTestCount, totalViews, recentTests } =
-    await getDashboardStats();
+    await getDashboardStats(session!.user.id, session!.user.role);
 
   const stats = [
     {

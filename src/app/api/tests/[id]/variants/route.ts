@@ -13,6 +13,9 @@ const addVariantSchema = z.object({
   traffic_weight: z.number().int().min(1).max(100),
 });
 
+// TODO (post-trial): Replace global role check with workspace ownership check —
+// verify the test belongs to the requesting user before allowing variant creation.
+
 export async function POST(
   request: NextRequest,
   { params }: { params: { id: string } }
