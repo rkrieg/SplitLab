@@ -82,14 +82,15 @@ export async function GET(request: NextRequest) {
       // Proxy mode: serve iframe wrapper so URL stays on custom domain
       // The SPA runs in its original context inside the iframe
       if (selectedVariant.proxy_mode !== false) {
-        // Fetch workspace scripts + page-scoped scripts
-        const [{ data: proxyWorkspaceScripts }, { data: proxyPageScripts }] = await Promise.all([
-          db.from('scripts').select('*').eq('workspace_id', workspaceId).eq('is_active', true).is('page_id', null),
+        // Fetch workspace scripts + page-scoped scripts + test-scoped scripts
+        const [{ data: proxyWorkspaceScripts }, { data: proxyPageScripts }, { data: proxyTestScripts }] = await Promise.all([
+          db.from('scripts').select('*').eq('workspace_id', workspaceId).eq('is_active', true).is('page_id', null).is('test_id', null),
           selectedVariant.page_id
             ? db.from('scripts').select('*').eq('workspace_id', workspaceId).eq('is_active', true).eq('page_id', selectedVariant.page_id)
             : Promise.resolve({ data: [] }),
+          db.from('scripts').select('*').eq('workspace_id', workspaceId).eq('is_active', true).eq('test_id', test.id),
         ]);
-        const proxyScripts = [...(proxyWorkspaceScripts || []), ...(proxyPageScripts || [])];
+        const proxyScripts = [...(proxyWorkspaceScripts || []), ...(proxyPageScripts || []), ...(proxyTestScripts || [])];
 
         const testHeadScriptsProxy = (test as { head_scripts?: string }).head_scripts || '';
         const headScriptTags: string[] = testHeadScriptsProxy ? [testHeadScriptsProxy] : [];
@@ -201,14 +202,15 @@ ${proxyTrackingSnippet}
         if (fileData) {
           let hostedHtml = await fileData.text();
 
-          // Fetch workspace scripts + page-scoped scripts
-          const [{ data: hostedWorkspaceScripts }, { data: hostedPageScripts }] = await Promise.all([
-            db.from('scripts').select('*').eq('workspace_id', workspaceId).eq('is_active', true).is('page_id', null),
+          // Fetch workspace scripts + page-scoped scripts + test-scoped scripts
+          const [{ data: hostedWorkspaceScripts }, { data: hostedPageScripts }, { data: hostedTestScripts }] = await Promise.all([
+            db.from('scripts').select('*').eq('workspace_id', workspaceId).eq('is_active', true).is('page_id', null).is('test_id', null),
             selectedVariant.page_id
               ? db.from('scripts').select('*').eq('workspace_id', workspaceId).eq('is_active', true).eq('page_id', selectedVariant.page_id)
               : Promise.resolve({ data: [] }),
+            db.from('scripts').select('*').eq('workspace_id', workspaceId).eq('is_active', true).eq('test_id', test.id),
           ]);
-          const hostedScripts = [...(hostedWorkspaceScripts || []), ...(hostedPageScripts || [])];
+          const hostedScripts = [...(hostedWorkspaceScripts || []), ...(hostedPageScripts || []), ...(hostedTestScripts || [])];
 
           const testHeadScriptsHosted = (test as { head_scripts?: string }).head_scripts || '';
           const hostedHeadScripts: string[] = testHeadScriptsHosted ? [testHeadScriptsHosted] : [];
@@ -277,14 +279,15 @@ ${proxyTrackingSnippet}
       });
     }
 
-    // 7. Fetch workspace scripts + page-scoped scripts
-    const [{ data: workspaceScripts }, { data: pageScripts }] = await Promise.all([
-      db.from('scripts').select('*').eq('workspace_id', workspaceId).eq('is_active', true).is('page_id', null),
+    // 7. Fetch workspace scripts + page-scoped scripts + test-scoped scripts
+    const [{ data: workspaceScripts }, { data: pageScripts }, { data: testScripts }] = await Promise.all([
+      db.from('scripts').select('*').eq('workspace_id', workspaceId).eq('is_active', true).is('page_id', null).is('test_id', null),
       selectedVariant.page_id
         ? db.from('scripts').select('*').eq('workspace_id', workspaceId).eq('is_active', true).eq('page_id', selectedVariant.page_id)
         : Promise.resolve({ data: [] }),
+      db.from('scripts').select('*').eq('workspace_id', workspaceId).eq('is_active', true).eq('test_id', test.id),
     ]);
-    const scripts = [...(workspaceScripts || []), ...(pageScripts || [])];
+    const scripts = [...(workspaceScripts || []), ...(pageScripts || []), ...(testScripts || [])];
 
     const testHeadScriptsHtml = (test as { head_scripts?: string }).head_scripts || '';
     const headScripts: string[] = testHeadScriptsHtml ? [testHeadScriptsHtml] : [];

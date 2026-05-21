@@ -11,6 +11,7 @@ const createSchema = z.object({
   content: z.string().min(1),
   placement: z.enum(['head', 'body_end']),
   page_id: z.string().uuid().nullable().optional(),
+  test_id: z.string().uuid().nullable().optional(),
   is_active: z.boolean().optional(),
 });
 
@@ -27,7 +28,7 @@ export async function GET(
 
   const { data, error } = await db
     .from('scripts')
-    .select('*, pages(id, name)')
+    .select('*, pages(id, name), tests(id, name)')
     .eq('workspace_id', params.id)
     .order('created_at', { ascending: false });
 

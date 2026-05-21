@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import toast from 'react-hot-toast';
-import { Plus, Code2, ToggleLeft, ToggleRight, Trash2 } from 'lucide-react';
+import { Plus, Code2, ToggleLeft, ToggleRight, Trash2, Info } from 'lucide-react';
 import Spinner from '@/components/ui/Spinner';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
@@ -18,15 +18,22 @@ interface Script {
   placement: string;
   is_active: boolean;
   page_id: string | null;
+  test_id: string | null;
   created_at: string;
   pages?: { id: string; name: string } | null;
+  tests?: { id: string; name: string } | null;
 }
 
-interface Page { id: string; name: string }
+interface Test {
+  id: string;
+  name: string;
+  /** True if any variant on this test has a redirect_url (hosted URL / proxy mode) */
+  hasHostedUrl: boolean;
+}
 
 interface Props {
   initialScripts: Script[];
-  pages: Page[];
+  tests: Test[];
   workspaceId: string;
   canManage: boolean;
 }
@@ -38,7 +45,7 @@ const SCRIPT_TYPES = [
   { value: 'custom', label: 'Custom Script', placeholder: '<script>...</script>' },
 ];
 
-export default function ScriptsClient({ initialScripts, pages, workspaceId, canManage }: Props) {
+export default function ScriptsClient({ initialScripts, tests, workspaceId, canManage }: Props) {
   const [scripts, setScripts] = useState(initialScripts);
   const [modalOpen, setModalOpen] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
@@ -46,13 +53,20 @@ export default function ScriptsClient({ initialScripts, pages, workspaceId, canM
   const [saving, setSaving] = useState(false);
   const [togglingId, setTogglingId] = useState<string | null>(null);
 
+  // Form state
   const [sType, setSType] = useState('gtm');
   const [sName, setSName] = useState('');
   const [sContent, setSContent] = useState('');
   const [sPlacement, setSPlacement] = useState<'head' | 'body_end'>('head');
-  const [sPageId, setSPageId] = useState('');
+  // Empty string = workspace-level (all pages), UUID string = scoped to that test
+  const [sTestId, setSTestId] = useState('');
 
   const selectedType = SCRIPT_TYPES.find((t) => t.value === sType)!;
+
+  // The test currently selected in the dropdown (if any)
+  const selectedTest = tests.find((t) => t.id === sTestId) ?? null;
+  // Show the proxy warning note when the selected test has hosted URL variants
+  const showProxyWarning = selectedTest?.hasHostedUrl === true;
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -66,7 +80,8 @@ export default function ScriptsClient({ initialScripts, pages, workspaceId, canM
           type: sType,
           content: sContent,
           placement: sPlacement,
-          page_id: sPageId || null,
+          test_id: sTestId || null,
+          // page_id intentionally omitted — new scripts use test_id
         }),
       });
       if (!res.ok) {
@@ -120,7 +135,11 @@ export default function ScriptsClient({ initialScripts, pages, workspaceId, canM
   }
 
   function resetForm() {
-    setSType('gtm'); setSName(''); setSContent(''); setSPlacement('head'); setSPageId('');
+    setSType('gtm');
+    setSName('');
+    setSContent('');
+    setSPlacement('head');
+    setSTestId('');
   }
 
   const typeLabel: Record<string, string> = {
@@ -130,11 +149,36 @@ export default function ScriptsClient({ initialScripts, pages, workspaceId, canM
     custom: 'Custom',
   };
 
+  /** Derive the scope label shown on each script card in the list */
+  function getScopeLabel(script: Script): { label: string; isHosted: boolean } | null {
+    // New-style: test-scoped.
+    // script.tests comes from the DB join (populated on page load / GET).
+    // For a script just inserted via the form, the POST response has no join,
+    // so script.tests is null — fall back to looking up in the tests prop by test_id.
+    if (script.test_id) {
+      const joinedName = script.tests?.name;
+      const test = tests.find((t) => t.id === script.test_id);
+      const label = joinedName ?? test?.name ?? script.test_id;
+      return { label, isHosted: test?.hasHostedUrl ?? false };
+    }
+    // Legacy: page-scoped (page_id set, no test_id)
+    if (script.pages) {
+      return { label: script.pages.name, isHosted: false };
+    }
+    return null;
+  }
+
   return (
     <>
       <div className="flex items-center justify-between mb-6">
-        <p className="text-slate-500 dark:text-slate-400 text-sm">{scripts.length} script{scripts.length !== 1 ? 's' : ''}</p>
-        {canManage && <Button onClick={() => setModalOpen(true)}><Plus size={16} /> Add Script</Button>}
+        <p className="text-slate-500 dark:text-slate-400 text-sm">
+          {scripts.length} script{scripts.length !== 1 ? 's' : ''}
+        </p>
+        {canManage && (
+          <Button onClick={() => setModalOpen(true)}>
+            <Plus size={16} /> Add Script
+          </Button>
+        )}
       </div>
 
       {/* Info banner */}
@@ -154,55 +198,94 @@ export default function ScriptsClient({ initialScripts, pages, workspaceId, canM
 
       {scripts.length > 0 && (
         <div className="space-y-3">
-          {scripts.map((script) => (
-            <div key={script.id} className={`card p-5 flex items-center gap-4 ${!script.is_active ? 'opacity-50' : ''}`}>
-              <div className="w-9 h-9 rounded-lg bg-slate-100 dark:bg-slate-700 flex items-center justify-center flex-shrink-0">
-                <Code2 size={15} className="text-indigo-400" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-0.5">
-                  <span className="font-medium text-slate-800 dark:text-slate-200">{script.name}</span>
-                  <span className="badge bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 text-[10px]">{typeLabel[script.type] || script.type}</span>
-                  <span className="badge bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 text-[10px]">{script.placement === 'head' ? '<head>' : '</body>'}</span>
-                  {script.pages && (
-                    <span className="badge bg-blue-500/20 text-blue-400 border-blue-500/30 text-[10px]">{script.pages.name}</span>
-                  )}
+          {scripts.map((script) => {
+            const scope = getScopeLabel(script);
+            return (
+              <div
+                key={script.id}
+                className={`card p-5 flex items-center gap-4 ${!script.is_active ? 'opacity-50' : ''}`}
+              >
+                <div className="w-9 h-9 rounded-lg bg-slate-100 dark:bg-slate-700 flex items-center justify-center flex-shrink-0">
+                  <Code2 size={15} className="text-indigo-400" />
                 </div>
-                <p className="text-slate-400 dark:text-slate-500 text-xs font-mono truncate">{script.content.slice(0, 60)}{script.content.length > 60 ? '…' : ''}</p>
-                <p className="text-slate-400 dark:text-slate-600 text-xs mt-0.5">{formatDate(script.created_at)}</p>
-              </div>
-              {canManage && (
-                <div className="flex items-center gap-2">
-                  <button onClick={() => handleToggle(script.id, script.is_active)} disabled={togglingId === script.id} className="text-slate-400 hover:text-slate-200 transition-colors">
-                    {togglingId === script.id
-                      ? <Spinner size="md" />
-                      : script.is_active
-                        ? <ToggleRight size={22} className="text-green-400" />
-                        : <ToggleLeft size={22} />}
-                  </button>
-                  <button onClick={() => setDeleteId(script.id)} className="text-slate-500 hover:text-red-400 transition-colors">
-                    <Trash2 size={15} />
-                  </button>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+                    <span className="font-medium text-slate-800 dark:text-slate-200">{script.name}</span>
+                    <span className="badge bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 text-[10px]">
+                      {typeLabel[script.type] || script.type}
+                    </span>
+                    <span className="badge bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 text-[10px]">
+                      {script.placement === 'head' ? '<head>' : '</body>'}
+                    </span>
+                    {scope && (
+                      <span className={`badge text-[10px] ${scope.isHosted ? 'bg-amber-500/20 text-amber-400 border-amber-500/30' : 'bg-blue-500/20 text-blue-400 border-blue-500/30'}`}>
+                        {scope.label}
+                        {scope.isHosted && ' (proxy)'}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-slate-400 dark:text-slate-500 text-xs font-mono truncate">
+                    {script.content.slice(0, 60)}{script.content.length > 60 ? '…' : ''}
+                  </p>
+                  <p className="text-slate-400 dark:text-slate-600 text-xs mt-0.5">{formatDate(script.created_at)}</p>
                 </div>
-              )}
-            </div>
-          ))}
+                {canManage && (
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => handleToggle(script.id, script.is_active)}
+                      disabled={togglingId === script.id}
+                      className="text-slate-400 hover:text-slate-200 transition-colors"
+                    >
+                      {togglingId === script.id
+                        ? <Spinner size="md" />
+                        : script.is_active
+                          ? <ToggleRight size={22} className="text-green-400" />
+                          : <ToggleLeft size={22} />}
+                    </button>
+                    <button
+                      onClick={() => setDeleteId(script.id)}
+                      className="text-slate-500 hover:text-red-400 transition-colors"
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
 
       {/* Add script modal */}
-      <Modal open={modalOpen} onClose={() => { setModalOpen(false); resetForm(); }} title="Add Script" description="Scripts are injected into all pages served through SplitLab." size="md">
+      <Modal
+        open={modalOpen}
+        onClose={() => { setModalOpen(false); resetForm(); }}
+        title="Add Script"
+        description="Scripts are injected into pages served through SplitLab."
+        size="md"
+      >
         <form onSubmit={handleCreate} className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Script Type</label>
-              <select value={sType} onChange={(e) => { setSType(e.target.value); setSContent(''); }} className="input-base">
+              <select
+                value={sType}
+                onChange={(e) => { setSType(e.target.value); setSContent(''); }}
+                className="input-base"
+              >
                 {SCRIPT_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
               </select>
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Display Name</label>
-              <input type="text" value={sName} onChange={(e) => setSName(e.target.value)} className="input-base" placeholder={`${selectedType.label} — Production`} required />
+              <input
+                type="text"
+                value={sName}
+                onChange={(e) => setSName(e.target.value)}
+                className="input-base"
+                placeholder={`${selectedType.label} — Production`}
+                required
+              />
             </div>
           </div>
 
@@ -234,22 +317,47 @@ export default function ScriptsClient({ initialScripts, pages, workspaceId, canM
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Placement</label>
-              <select value={sPlacement} onChange={(e) => setSPlacement(e.target.value as 'head' | 'body_end')} className="input-base">
+              <select
+                value={sPlacement}
+                onChange={(e) => setSPlacement(e.target.value as 'head' | 'body_end')}
+                className="input-base"
+              >
                 <option value="head">In &lt;head&gt;</option>
                 <option value="body_end">Before &lt;/body&gt;</option>
               </select>
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Apply To</label>
-              <select value={sPageId} onChange={(e) => setSPageId(e.target.value)} className="input-base">
+              <select
+                value={sTestId}
+                onChange={(e) => setSTestId(e.target.value)}
+                className="input-base"
+              >
                 <option value="">All Pages (workspace)</option>
-                {pages.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                {tests.map((t) => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
               </select>
             </div>
           </div>
 
+          {/* Fix 2 — Proxy warning note */}
+          {showProxyWarning && (
+            <div className="flex items-start gap-2 rounded-lg bg-amber-500/10 border border-amber-500/30 px-3 py-2.5 text-xs text-amber-300">
+              <Info size={13} className="mt-0.5 flex-shrink-0" />
+              <span>
+                This page uses a hosted URL (proxy mode). Scripts run in the SplitLab proxy wrapper —{' '}
+                <strong>GA4 / Meta Pixel pageviews work.</strong>{' '}
+                GTM click &amp; form tracking won&apos;t work (cross-origin iframe).{' '}
+                SplitLab&apos;s own conversion tracking works separately via <code className="font-mono">tracker.js</code> on the destination site.
+              </span>
+            </div>
+          )}
+
           <div className="flex justify-end gap-3 pt-2">
-            <Button variant="secondary" type="button" onClick={() => { setModalOpen(false); resetForm(); }}>Cancel</Button>
+            <Button variant="secondary" type="button" onClick={() => { setModalOpen(false); resetForm(); }}>
+              Cancel
+            </Button>
             <Button type="submit" loading={saving}>Add Script</Button>
           </div>
         </form>

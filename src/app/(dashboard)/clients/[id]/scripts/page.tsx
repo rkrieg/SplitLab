@@ -21,15 +21,25 @@ export default async function ScriptsPage({ params }: { params: { id: string } }
 
   const { data: scripts } = await db
     .from('scripts')
-    .select('*, pages(id, name)')
+    .select('*, pages(id, name), tests(id, name)')
     .eq('workspace_id', workspace.id)
     .order('created_at', { ascending: false });
 
-  const { data: pages } = await db
-    .from('pages')
-    .select('id, name')
+  // Fetch all tests for the dropdown. Include variant redirect_url so the
+  // client can detect hosted-URL tests and show the proxy-warning note.
+  const { data: rawTests } = await db
+    .from('tests')
+    .select('id, name, test_variants(redirect_url)')
     .eq('workspace_id', workspace.id)
-    .eq('status', 'active');
+    .order('created_at', { ascending: false });
+
+  const tests = (rawTests ?? []).map((t) => ({
+    id: t.id,
+    name: t.name,
+    hasHostedUrl: (t.test_variants ?? []).some(
+      (v: { redirect_url: string | null }) => v.redirect_url != null
+    ),
+  }));
 
   const { data: client } = await db.from('clients').select('name').eq('id', params.id).single();
 
@@ -47,7 +57,7 @@ export default async function ScriptsPage({ params }: { params: { id: string } }
       <div className="p-6">
         <ScriptsClient
           initialScripts={scripts ?? []}
-          pages={pages ?? []}
+          tests={tests}
           workspaceId={workspace.id}
           canManage={session.user.role !== 'viewer'}
         />
