@@ -358,32 +358,32 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
                         {activeMenu === test.id && (
                           <div className="absolute right-0 top-full mt-1 w-44 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl z-10 overflow-hidden">
                             {test.status === 'draft' && (
-                              <button onClick={() => updateStatus(test.id, 'active')} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700">
+                              <button onClick={(e) => { e.stopPropagation(); updateStatus(test.id, 'active'); }} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700">
                                 <Play size={14} className="text-green-400" /> Activate
                               </button>
                             )}
                             {test.status === 'active' && (
-                              <button onClick={() => updateStatus(test.id, 'paused')} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700">
+                              <button onClick={(e) => { e.stopPropagation(); updateStatus(test.id, 'paused'); }} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700">
                                 <Pause size={14} className="text-amber-400" /> Pause
                               </button>
                             )}
                             {test.status === 'paused' && (
                               <>
-                                <button onClick={() => updateStatus(test.id, 'active')} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700">
+                                <button onClick={(e) => { e.stopPropagation(); updateStatus(test.id, 'active'); }} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700">
                                   <Play size={14} className="text-green-400" /> Resume
                                 </button>
-                                <button onClick={() => updateStatus(test.id, 'completed')} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700">
+                                <button onClick={(e) => { e.stopPropagation(); updateStatus(test.id, 'completed'); }} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700">
                                   <Check size={14} className="text-blue-400" /> Complete
                                 </button>
                               </>
                             )}
-                            <button onClick={() => openEditModal(test)} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700">
+                            <button onClick={(e) => { e.stopPropagation(); openEditModal(test); }} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700">
                               <Edit2 size={14} className="text-indigo-400" /> Edit
                             </button>
-                            <button onClick={() => openAddVariant(test)} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700">
+                            <button onClick={(e) => { e.stopPropagation(); openAddVariant(test); }} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700">
                               <Plus size={14} className="text-indigo-400" /> Add Variant
                             </button>
-                            <button onClick={() => { setDeleteId(test.id); setActiveMenu(null); }} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-400 hover:bg-slate-100 dark:hover:bg-slate-700 border-t border-slate-200 dark:border-slate-700">
+                            <button onClick={(e) => { e.stopPropagation(); setDeleteId(test.id); setActiveMenu(null); }} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-400 hover:bg-slate-100 dark:hover:bg-slate-700 border-t border-slate-200 dark:border-slate-700">
                               <Trash2 size={14} /> Delete
                             </button>
                           </div>
