@@ -185,16 +185,17 @@ export default function ClientSettingsClient({ client, initialDomains, workspace
       });
       if (!res.ok) { const err = await res.json(); toast.error(err.error || 'Verification check failed'); return; }
       const result = await res.json();
-      setVerifyStatus((prev) => ({ ...prev, [domainId]: result.status }));
+      const statusStr = result.status?.status ?? result.status;
+      setVerifyStatus((prev) => ({ ...prev, [domainId]: statusStr }));
       if (result.verified) {
         setDomains((prev) => prev.map((d) => d.id === domainId ? { ...d, verified: true, verified_at: new Date().toISOString() } : d));
         setVerifyMessage((prev) => ({ ...prev, [domainId]: '' }));
         setVerifyTxtRecords((prev) => { const n = { ...prev }; delete n[domainId]; return n; });
         toast.success('Domain verified successfully!');
-      } else if (result.status === 'needs_txt') {
-        setVerifyTxtRecords((prev) => ({ ...prev, [domainId]: result.vercel_verification || [] }));
-        setVerifyMessage((prev) => ({ ...prev, [domainId]: result.message || 'Add the TXT record below, then click Verify DNS again.' }));
-      } else if (result.status === 'misconfigured') {
+      } else if (statusStr === 'needs_txt') {
+        setVerifyTxtRecords((prev) => ({ ...prev, [domainId]: result.status?.vercel_verification || [] }));
+        setVerifyMessage((prev) => ({ ...prev, [domainId]: result.status?.message || 'Add the TXT record below, then click Verify DNS again.' }));
+      } else if (statusStr === 'misconfigured') {
         setVerifyMessage((prev) => ({ ...prev, [domainId]: 'DNS records not found. Make sure you\'ve added the CNAME record at your registrar and try again.' }));
       } else {
         setVerifyMessage((prev) => ({ ...prev, [domainId]: 'DNS not yet propagated — this can take up to 48 hours. Try again later.' }));

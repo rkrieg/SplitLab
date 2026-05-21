@@ -128,6 +128,22 @@ export async function getDomainStatus(domain: string): Promise<DomainStatus> {
     };
   }
 
+  // Vercel sometimes returns 200 with an error body for TXT record issues
+  const txtErrorCodes = ['incorrect_txt_record', 'missing_txt_record'];
+  if (verifyData?.error?.code && txtErrorCodes.includes(verifyData.error.code)) {
+    const domainRes = await fetch(
+      `${VERCEL_API_BASE}/v9/projects/${getProjectId()}/domains/${domain}`,
+      { method: 'GET', headers: headers() }
+    );
+    const domainData = await domainRes.json().catch(() => ({}));
+    return {
+      verified: false,
+      status: 'needs_txt',
+      message: verifyData.error.message || 'Incorrect or missing TXT record. Add the record below, then click Verify DNS again.',
+      vercel_verification: domainData.verification || [],
+    };
+  }
+
   if (verifyRes.ok && (verifyData.domain?.verified === true || verifyData.verified === true)) {
     return {
       verified: true,

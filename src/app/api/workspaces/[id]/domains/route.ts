@@ -72,7 +72,12 @@ export async function POST(
     if (status.verified) {
       await db
         .from('domains')
-        .update({ verified: true, verified_at: new Date().toISOString() })
+        .update({ verified: true, verified_at: new Date().toISOString(), vercel_verification: null })
+        .eq('id', domain_id);
+    } else if (status.vercel_verification?.length) {
+      await db
+        .from('domains')
+        .update({ vercel_verification: status.vercel_verification })
         .eq('id', domain_id);
     }
     return NextResponse.json({ verified: status.verified, status });
@@ -117,7 +122,7 @@ export async function POST(
   }
 
   const { domain } = addResult.data;
-  await addDomainToVercel(domain);
+  const vercelResult = await addDomainToVercel(domain);
 
   const { data: created, error } = await db
     .from('domains')
@@ -125,6 +130,7 @@ export async function POST(
       workspace_id: params.id,
       domain,
       cname_target: null,
+      vercel_verification: vercelResult.verification?.length ? vercelResult.verification : null,
     })
     .select()
     .single();
