@@ -181,7 +181,7 @@ export async function DELETE(
 
   const pageIds = Array.from(new Set((variants || []).map((v) => v.page_id).filter(Boolean)));
   if (pageIds.length > 0) {
-    await db.from('pages').update({ status: 'archived' }).in('id', pageIds);
+    await db.from('pages').update({ deleted_at: new Date().toISOString() }).in('id', pageIds);
   }
 
   const { error } = await db.from('tests').delete().eq('id', params.id);

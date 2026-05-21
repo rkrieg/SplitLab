@@ -12,7 +12,7 @@ const updateSchema = z.object({
   name: z.string().min(1).max(255).optional(),
   html_content: z.string().optional(),
   tags: z.array(z.string()).optional(),
-  status: z.enum(['active', 'archived']).optional(),
+  status: z.enum(['active']).optional(),
 });
 
 export async function GET(

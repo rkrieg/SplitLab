@@ -19,6 +19,7 @@ export async function GET(
     .from('pages')
     .select('*')
     .eq('workspace_id', params.id)
+    .is('deleted_at', null)
     .order('created_at', { ascending: false });
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
