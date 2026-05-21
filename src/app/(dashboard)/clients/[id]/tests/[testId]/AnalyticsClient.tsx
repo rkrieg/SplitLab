@@ -150,6 +150,12 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
   const snippet = `<script src="${appUrl}/tracker.js"></script>`;
   const fullUrl = domain ? `${domain}${test.url_path}` : null;
 
+  // True when every variant is a pure redirect (proxy_mode = false + redirect_url set).
+  // In this mode SplitLab never serves any HTML, so head_scripts are never injected.
+  const allPureRedirect =
+    variants.length > 0 &&
+    variants.every((v) => !!v.redirect_url && v.proxy_mode === false);
+
   // ─── Analytics ──────────────────────────────────────────────────────
 
   const fetchAnalytics = useCallback(async () => {
@@ -1051,23 +1057,37 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
               </div>
             </div>
 
-            {/* Head Scripts (for proxy mode) */}
-            <div className="card overflow-hidden">
+            {/* Head Scripts (for proxy / custom HTML mode) */}
+            <div className={`card overflow-hidden ${allPureRedirect ? 'opacity-60' : ''}`}>
               <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700">
                 <h3 className="font-medium text-slate-800 dark:text-slate-200">Head Scripts</h3>
                 <p className="text-slate-500 text-xs mt-1">
-                  Custom scripts injected in the parent frame for proxy mode. Use this for Meta Pixel, Google Analytics, etc.
+                  Custom scripts injected into the page &lt;head&gt;. Works for custom HTML pages and proxy-mode hosted URLs.
                 </p>
               </div>
               <div className="px-5 py-4 space-y-3">
+                {allPureRedirect && (
+                  <div className="flex items-start gap-2 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-3 py-2.5 text-xs text-slate-500 dark:text-slate-400">
+                    <span className="mt-0.5 flex-shrink-0">⚠️</span>
+                    <span>
+                      Head scripts are disabled in <strong className="text-slate-700 dark:text-slate-300">redirect mode</strong>.
+                      SplitLab redirects visitors directly to the destination URL (302) — no HTML is served, so scripts cannot be injected.
+                      Switch to <strong className="text-slate-700 dark:text-slate-300">proxy mode</strong> on your variants to enable this, or add{' '}
+                      <code className="font-mono bg-slate-200 dark:bg-slate-700 px-1 rounded">tracker.js</code> directly to your destination page.
+                    </span>
+                  </div>
+                )}
                 <textarea
                   value={headScriptsDraft}
                   onChange={e => setHeadScriptsDraft(e.target.value)}
-                  className="input-base font-mono text-xs w-full h-32 resize-y"
+                  disabled={allPureRedirect}
+                  className={`input-base font-mono text-xs w-full h-32 resize-y ${allPureRedirect ? 'cursor-not-allowed opacity-50' : ''}`}
                   placeholder={'<!-- Meta Pixel -->\n<script>...</script>\n\n<!-- Google Analytics -->\n<script>...</script>'}
                 />
                 <div className="flex justify-end">
-                  <Button onClick={saveHeadScripts} loading={savingScripts} size="sm">Save Scripts</Button>
+                  <Button onClick={saveHeadScripts} loading={savingScripts} size="sm" disabled={allPureRedirect}>
+                    Save Scripts
+                  </Button>
                 </div>
               </div>
             </div>
