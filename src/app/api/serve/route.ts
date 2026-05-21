@@ -113,6 +113,7 @@ export async function GET(request: NextRequest) {
 
         const iframeUrlObj = new URL(selectedVariant.redirect_url);
         iframeUrlObj.searchParams.set('sl_vid', selectedVariant.id);
+        iframeUrlObj.searchParams.set('sl_vh', visitorId);
         const iframeUrl = iframeUrlObj.toString();
         const iframeHtml = `<!DOCTYPE html>
 <html lang="en">
