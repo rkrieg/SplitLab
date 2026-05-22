@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { uploadHtml } from '@/lib/storage';
+import { PLAN_LIMITS } from '@/lib/plans';
 import { z } from 'zod';
 
 const addVariantSchema = z.object({
@@ -32,6 +33,32 @@ export async function POST(
 
     if (!data.redirect_url && !data.html_content) {
       return NextResponse.json({ error: 'Either redirect_url or html_content is required' }, { status: 400 });
+    }
+
+    // Enforce variant limit per plan (admins bypass)
+    if (session.user.role !== 'admin') {
+      const { data: userRow } = await db
+        .from('users')
+        .select('plan')
+        .eq('id', session.user.id)
+        .single();
+
+      const plan = userRow?.plan ?? 'free';
+      const limit = PLAN_LIMITS[plan]?.variants ?? 2;
+
+      if (isFinite(limit)) {
+        const { count } = await db
+          .from('test_variants')
+          .select('*', { count: 'exact', head: true })
+          .eq('test_id', params.id);
+
+        if ((count ?? 0) >= limit) {
+          return NextResponse.json(
+            { error: `Your plan allows a maximum of ${limit} variants per test. Please upgrade for unlimited variants.` },
+            { status: 403 }
+          );
+        }
+      }
     }
 
     // Fetch test with workspace_id

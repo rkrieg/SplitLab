@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { slugify } from '@/lib/utils';
+import { PLAN_LIMITS } from '@/lib/plans';
 import { z } from 'zod';
 
 const createSchema = z.object({
@@ -90,6 +91,32 @@ export async function POST(request: NextRequest) {
       .single();
     if (existing) {
       return NextResponse.json({ error: 'Slug already in use' }, { status: 409 });
+    }
+
+    // Enforce client limit per plan (admins bypass)
+    if (session.user.role !== 'admin') {
+      const { data: userRow } = await db
+        .from('users')
+        .select('plan')
+        .eq('id', session.user.id)
+        .single();
+
+      const plan = userRow?.plan ?? 'free';
+      const limit = PLAN_LIMITS[plan]?.clients ?? 1;
+
+      if (isFinite(limit)) {
+        const { count } = await db
+          .from('clients')
+          .select('*', { count: 'exact', head: true })
+          .eq('owner_id', session.user.id);
+
+        if ((count ?? 0) >= limit) {
+          return NextResponse.json(
+            { error: `You have reached the client limit for your plan (${limit}). Please upgrade to add more clients.` },
+            { status: 403 }
+          );
+        }
+      }
     }
 
     const { data: client, error } = await db

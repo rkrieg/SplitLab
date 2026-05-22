@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { resolveWorkspaceRole } from '@/lib/workspace-auth';
+import { PLAN_LIMITS } from '@/lib/plans';
 import { z } from 'zod';
 
 const variantSchema = z.object({
@@ -70,6 +71,25 @@ export async function POST(
   try {
     const body = await request.json();
     const data = createSchema.parse(body);
+
+    // Enforce variant limit per plan (admins bypass)
+    if (session.user.role !== 'admin') {
+      const { data: userRow } = await db
+        .from('users')
+        .select('plan')
+        .eq('id', session.user.id)
+        .single();
+
+      const plan = userRow?.plan ?? 'free';
+      const limit = PLAN_LIMITS[plan]?.variants ?? 2;
+
+      if (isFinite(limit) && data.variants.length > limit) {
+        return NextResponse.json(
+          { error: `Your plan allows a maximum of ${limit} variants per test. Please upgrade for unlimited variants.` },
+          { status: 403 }
+        );
+      }
+    }
 
     const totalWeight = data.variants.reduce((s, v) => s + v.traffic_weight, 0);
     if (totalWeight !== 100) {
