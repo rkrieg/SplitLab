@@ -1,3 +1,26 @@
+// TODO (post-trial): Move PLAN_LIMITS to a DB table (e.g. plan_configs) so limits
+// can be changed without a code deployment. Currently safe because limit checks
+// happen server-side — these values are never exposed to the client.
+
+/**
+ * Hard limits enforced by the backend per plan.
+ * Use Infinity for "unlimited" — `count >= Infinity` is always false so no special
+ * casing needed in enforcement logic.
+ *
+ * Free    → 0 domains, 1 test, 2 variants/test, 1 client
+ * Pro     → 1 domain, 10 tests, unlimited variants, 1 client
+ * Agency  → 10 domains, 50 tests, unlimited variants, 10 clients
+ * Scale   → unlimited everything
+ */
+// Domain limit is 1 per client/workspace (confirmed by client).
+// "Up to 10 custom domains" on Agency = 10 clients × 1 domain each, not 10 per workspace.
+export const PLAN_LIMITS: Record<string, { domains: number; tests: number; variants: number; clients: number }> = {
+  free:   { domains: 0,        tests: 1,        variants: 2,         clients: 1  },
+  pro:    { domains: 1,        tests: 10,       variants: Infinity,  clients: 1  },
+  agency: { domains: 1,        tests: 50,       variants: Infinity,  clients: 10 },
+  scale:  { domains: Infinity, tests: Infinity, variants: Infinity,  clients: Infinity },
+};
+
 export interface Plan {
   id: 'free' | 'pro' | 'agency' | 'scale';
   label: string;

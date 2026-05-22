@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { addDomainToVercel, removeDomainFromVercel, getDomainStatus } from '@/lib/vercel';
 import { resolveWorkspaceRole } from '@/lib/workspace-auth';
+import { PLAN_LIMITS } from '@/lib/plans';
 import { z } from 'zod';
 
 const addSchema = z.object({
@@ -119,6 +120,39 @@ export async function POST(
   const addResult = addSchema.safeParse(body);
   if (!addResult.success) {
     return NextResponse.json({ error: addResult.error.errors }, { status: 400 });
+  }
+
+  // Enforce domain limit per plan (admins bypass)
+  if (session.user.role !== 'admin') {
+    const { data: userRow } = await db
+      .from('users')
+      .select('plan')
+      .eq('id', session.user.id)
+      .single();
+
+    const plan = userRow?.plan ?? 'free';
+    const limit = PLAN_LIMITS[plan]?.domains ?? 0;
+
+    if (limit === 0) {
+      return NextResponse.json(
+        { error: 'Your plan does not include custom domains. Please upgrade to add a domain.' },
+        { status: 403 }
+      );
+    }
+
+    if (isFinite(limit)) {
+      const { count } = await db
+        .from('domains')
+        .select('*', { count: 'exact', head: true })
+        .eq('workspace_id', params.id);
+
+      if ((count ?? 0) >= limit) {
+        return NextResponse.json(
+          { error: `You have reached the domain limit for your plan (${limit}). Please upgrade to add more domains.` },
+          { status: 403 }
+        );
+      }
+    }
   }
 
   const { domain } = addResult.data;
