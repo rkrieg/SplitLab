@@ -155,6 +155,7 @@ ${proxyTrackingSnippet}
       // Standard 302 redirect mode
       const redirectUrl = new URL(selectedVariant.redirect_url);
       redirectUrl.searchParams.set('sl_vid', selectedVariant.id);
+      redirectUrl.searchParams.set('sl_vh', visitorId);
       const redirectResponse = NextResponse.redirect(redirectUrl.toString(), 302);
 
       const cookieOptions = {
