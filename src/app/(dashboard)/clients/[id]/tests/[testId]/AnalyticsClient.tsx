@@ -50,6 +50,7 @@ interface VariantStat {
   variant: Variant;
   views: number;
   conversions: number;
+  goalHits: number;
   cvr: number;
   confidence: number | null;
   isWinner: boolean;
@@ -184,9 +185,9 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
   const overallCvr = totalViews > 0 ? totalConversions / totalViews : 0;
 
   function exportCsv() {
-    const headers = ['Variant', 'Control', 'Views', 'Conversions', 'CVR', 'Confidence', 'Winner'];
+    const headers = ['Variant', 'Control', 'Views', 'Conversions', 'Goal Hits', 'CVR', 'Confidence', 'Winner'];
     const rows = stats.map(s => [
-      s.variant.name, s.variant.is_control ? 'Yes' : 'No', s.views, s.conversions,
+      s.variant.name, s.variant.is_control ? 'Yes' : 'No', s.views, s.conversions, s.goalHits,
       formatPercent(s.cvr * 100), s.confidence !== null ? formatPercent(s.confidence) : 'N/A',
       s.isWinner ? 'Yes' : 'No',
     ]);
@@ -419,6 +420,7 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           goals: editGoals.map(g => ({
+            ...(g.id ? { id: g.id } : {}),
             name: g.name, type: g.type,
             selector: g.selector || null, url_pattern: g.url_pattern || null,
             is_primary: g.is_primary,
@@ -680,6 +682,7 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
                     <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium w-24">Weight</th>
                     <th className="text-right px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">Views</th>
                     <th className="text-right px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">Conversions</th>
+                    <th className="text-right px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">Goal Hits</th>
                     <th className="text-right px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">CVR</th>
                     <th className="text-right px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">Confidence</th>
                     <th className="text-center px-5 py-3 text-slate-400 font-medium w-24"></th>
@@ -688,13 +691,13 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
                 <tbody>
                   {loading ? (
                     <tr>
-                      <td colSpan={7} className="px-5 py-10 text-center text-slate-400">
+                      <td colSpan={8} className="px-5 py-10 text-center text-slate-400">
                         <RefreshCw size={20} className="animate-spin mx-auto mb-2" />Loading...
                       </td>
                     </tr>
                   ) : stats.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="px-5 py-10 text-center text-slate-400">
+                      <td colSpan={8} className="px-5 py-10 text-center text-slate-400">
                         No data yet. Publish this page to start collecting events.
                       </td>
                     </tr>
@@ -764,6 +767,7 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
                           </td>
                           <td className={`px-5 py-3.5 text-right text-slate-700 dark:text-slate-300 ${rowBg}`}>{stat.views.toLocaleString()}</td>
                           <td className={`px-5 py-3.5 text-right text-slate-700 dark:text-slate-300 ${rowBg}`}>{stat.conversions.toLocaleString()}</td>
+                          <td className={`px-5 py-3.5 text-right text-slate-500 dark:text-slate-400 ${rowBg}`}>{stat.goalHits.toLocaleString()}</td>
                           <td className={`px-5 py-3.5 text-right font-semibold text-slate-900 dark:text-slate-100 ${rowBg}`}>{formatPercent(cvr)}</td>
                           <td className={`px-5 py-3.5 text-right ${rowBg}`}>
                             {stat.variant.is_control ? <span className="text-slate-500">—</span> :
@@ -794,7 +798,7 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
 
                         {isEditing && (
                           <tr>
-                            <td colSpan={7} className="border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 px-6 py-4">
+                            <td colSpan={8} className="border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 px-6 py-4">
                               <div className="grid grid-cols-2 gap-4 max-w-2xl">
                                 <div>
                                   <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Variant Name</label>
@@ -819,17 +823,24 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
 
                               <div className="flex items-center gap-4 mt-3">
                                 <div className="flex items-center gap-2">
-                                  <span className="text-xs text-slate-500 dark:text-slate-400">Mode:</span>
-                                  <button
-                                    onClick={() => setVariantDraft({ ...variantDraft, proxy_mode: !variantDraft.proxy_mode })}
-                                    className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-lg border transition-colors ${
-                                      variantDraft.proxy_mode
-                                        ? 'bg-indigo-500/20 text-indigo-400 border-indigo-500/30'
-                                        : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 border-slate-300 dark:border-slate-600'
-                                    }`}
+                                  <span
+                                    title={!variantDraft.redirect_url ? 'Mode only applies to destination URL variants, not HTML page variants' : undefined}
+                                    className={`text-xs text-slate-500 dark:text-slate-400 ${!variantDraft.redirect_url ? 'cursor-help' : ''}`}
                                   >
-                                    {variantDraft.proxy_mode ? <><Globe size={11} /> Proxy</> : <><ExternalLink size={11} /> Redirect</>}
-                                  </button>
+                                    Mode:
+                                  </span>
+                                  {variantDraft.redirect_url && (
+                                    <button
+                                      onClick={() => setVariantDraft({ ...variantDraft, proxy_mode: !variantDraft.proxy_mode })}
+                                      className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-lg border transition-colors ${
+                                        variantDraft.proxy_mode
+                                          ? 'bg-indigo-500/20 text-indigo-400 border-indigo-500/30'
+                                          : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 border-slate-300 dark:border-slate-600'
+                                      }`}
+                                    >
+                                      {variantDraft.proxy_mode ? <><Globe size={11} /> Proxy</> : <><ExternalLink size={11} /> Redirect</>}
+                                    </button>
+                                  )}
                                 </div>
 
                                 {variantDraft.redirect_url && (
@@ -1012,15 +1023,7 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
                         />
                       )}
                       {g.type === 'call_click' && <p className="text-slate-500 text-xs flex-1">Tracks tel: link clicks</p>}
-                      <label className="flex items-center gap-1.5 cursor-pointer flex-shrink-0">
-                        <input
-                          type="checkbox"
-                          checked={g.is_primary}
-                          onChange={e => { const c = [...editGoals]; c[i] = { ...c[i], is_primary: e.target.checked }; setEditGoals(c); }}
-                          className="rounded border-slate-300 dark:border-slate-600 bg-slate-100 dark:bg-slate-700 text-indigo-500 focus:ring-indigo-500 focus:ring-offset-0 w-3.5 h-3.5"
-                        />
-                        <span className="text-slate-500 dark:text-slate-400 text-xs">Primary</span>
-                      </label>
+                      {/* is_primary UI hidden — all goals count equally toward conversions */}
                     </div>
                   </div>
                 ))}

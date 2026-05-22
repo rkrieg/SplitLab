@@ -127,21 +127,34 @@ export async function PATCH(
       if (delErr) return NextResponse.json({ error: delErr.message }, { status: 500 });
     }
 
-    // Replace goals if provided
+    // Upsert goals — preserve existing UUIDs so historical events stay linked
     if (goals) {
-      await db.from('conversion_goals').delete().eq('test_id', params.id);
-      if (goals.length > 0) {
-        const { error: goalsError } = await db
-          .from('conversion_goals')
-          .insert(goals.map((g) => ({
-            test_id: params.id,
-            name: g.name,
-            type: g.type,
-            selector: g.selector || null,
-            url_pattern: g.url_pattern || null,
-            is_primary: g.is_primary,
-          })));
-        if (goalsError) return NextResponse.json({ error: goalsError.message }, { status: 500 });
+      const incomingIds = goals.filter((g) => g.id).map((g) => g.id as string);
+
+      // Delete goals removed by the user
+      if (incomingIds.length > 0) {
+        await db.from('conversion_goals')
+          .delete()
+          .eq('test_id', params.id)
+          .not('id', 'in', `(${incomingIds.map((id) => `"${id}"`).join(',')})`);
+      } else {
+        await db.from('conversion_goals').delete().eq('test_id', params.id);
+      }
+
+      for (const g of goals) {
+        if (g.id) {
+          // Existing goal — update in place, UUID preserved
+          const { error: uErr } = await db.from('conversion_goals')
+            .update({ name: g.name, type: g.type, selector: g.selector || null, url_pattern: g.url_pattern || null, is_primary: g.is_primary })
+            .eq('id', g.id)
+            .eq('test_id', params.id);
+          if (uErr) return NextResponse.json({ error: uErr.message }, { status: 500 });
+        } else {
+          // New goal — insert with fresh UUID
+          const { error: iErr } = await db.from('conversion_goals')
+            .insert({ test_id: params.id, name: g.name, type: g.type, selector: g.selector || null, url_pattern: g.url_pattern || null, is_primary: g.is_primary });
+          if (iErr) return NextResponse.json({ error: iErr.message }, { status: 500 });
+        }
       }
     }
 

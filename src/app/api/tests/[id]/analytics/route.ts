@@ -28,14 +28,19 @@ export async function GET(
   if (testError) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const variants = test.test_variants || [];
+
+  // primaryGoal kept for backwards compatibility but no longer used for counting
   const primaryGoal = (test.conversion_goals || []).find(
     (g: { is_primary: boolean }) => g.is_primary
   ) || (test.conversion_goals || [])[0] || null;
 
+  // All goal IDs for this test — any hit counts as a conversion
+  const goalIds = new Set((test.conversion_goals || []).map((g: { id: string }) => g.id));
+
   // Build date filter
   let dateFilter = db
     .from('events')
-    .select('variant_id, type, goal_id')
+    .select('variant_id, type, goal_id, visitor_hash')
     .eq('test_id', params.id);
 
   if (from) dateFilter = dateFilter.gte('created_at', `${from}T00:00:00Z`);
@@ -49,17 +54,27 @@ export async function GET(
       (e: { variant_id: string; type: string; goal_id: string | null }) => e.variant_id === variant.id
     );
     const views = varEvents.filter((e: { type: string }) => e.type === 'pageview').length;
-    const conversions = primaryGoal
-      ? varEvents.filter(
-          (e: { type: string; goal_id: string | null }) => e.type === 'conversion' && e.goal_id === primaryGoal.id
-        ).length
-      : varEvents.filter((e: { type: string }) => e.type === 'conversion').length;
+
+    const goalEvents = varEvents.filter(
+      (e: { type: string; goal_id: string | null }) =>
+        e.type === 'conversion' && e.goal_id !== null && (goalIds.size === 0 || goalIds.has(e.goal_id))
+    );
+
+    // Unique converting visitors (one visitor counts once regardless of goals hit)
+    const conversions = new Set(
+      goalEvents.map((e: { visitor_hash: string }) => e.visitor_hash)
+    ).size;
+
+    // Total raw goal events (for Goal Hits column)
+    const goalHits = goalEvents.length;
+
     const cvr = views > 0 ? conversions / views : 0;
 
     return {
       variant,
       views,
       conversions,
+      goalHits,
       cvr,
       confidence: null as number | null,
       isWinner: false,
