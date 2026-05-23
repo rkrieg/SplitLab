@@ -68,6 +68,7 @@ export async function PATCH(
 ) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (session.user.role === 'viewer') return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
   try {
     const body = await request.json();

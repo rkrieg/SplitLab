@@ -7,6 +7,7 @@ import { uploadHtml } from '@/lib/storage';
 export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (session.user.role === 'viewer') return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
   try {
     const { name, html_content, workspace_id, url_path } = await request.json();

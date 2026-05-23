@@ -25,6 +25,7 @@ const metaSchema = z.object({
 export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (session.user.role === 'viewer') return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
   try {
     const formData = await request.formData();
