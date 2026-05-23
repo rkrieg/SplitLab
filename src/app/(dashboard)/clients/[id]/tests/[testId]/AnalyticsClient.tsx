@@ -587,6 +587,7 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
       is_primary: editGoals.length === 0,
     };
 
+    const originalGoals = editGoals;
     const updatedGoals = [...editGoals, newGoal];
     setEditGoals(updatedGoals);
 
@@ -603,13 +604,47 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
           })),
         }),
       });
-      if (!res.ok) { toast.error('Failed to save goal'); return; }
+      if (!res.ok) { setEditGoals(originalGoals); toast.error('Failed to save goal'); return; }
       const updated = await res.json();
       setTest(updated);
       setEditGoals((updated.conversion_goals || []).map((g: Goal) => ({ ...g, selector: g.selector || '', url_pattern: g.url_pattern || '' })));
       toast.success(`Goal "${newGoal.name}" enabled`);
     } catch {
+      setEditGoals(originalGoals);
       toast.error('Failed to save goal');
+    }
+  }
+
+  async function removeGoalBySelector(el: { id: string | null; text: string | null }) {
+    const matchSelector = el.id ? `id:${el.id}` : el.text ? `text:${el.text}` : null;
+    if (!matchSelector) return;
+
+    const originalGoals = editGoals;
+    const updatedGoals = editGoals.filter(g => g.selector !== matchSelector);
+    if (updatedGoals.length === originalGoals.length) return; // nothing matched
+    setEditGoals(updatedGoals);
+
+    try {
+      const res = await fetch(`/api/tests/${test.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          goals: updatedGoals.map(g => ({
+            ...(g.id ? { id: g.id } : {}),
+            name: g.name, type: g.type,
+            selector: g.selector || null, url_pattern: g.url_pattern || null,
+            is_primary: g.is_primary,
+          })),
+        }),
+      });
+      if (!res.ok) { setEditGoals(originalGoals); toast.error('Failed to remove goal'); return; }
+      const updated = await res.json();
+      setTest(updated);
+      setEditGoals((updated.conversion_goals || []).map((g: Goal) => ({ ...g, selector: g.selector || '', url_pattern: g.url_pattern || '' })));
+      toast.success('Goal removed');
+    } catch {
+      setEditGoals(originalGoals);
+      toast.error('Failed to remove goal');
     }
   }
 
@@ -1197,18 +1232,23 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
                                     {el.id && <span className="text-slate-400 font-mono text-xs flex-shrink-0">#{el.id}</span>}
                                     <span className="text-slate-400 text-xs flex-shrink-0 capitalize">{el.type.replace('_', ' ')}</span>
                                   </div>
-                                  <button
-                                    type="button"
-                                    onClick={() => enableAsGoal(el)}
-                                    disabled={alreadyAdded}
-                                    className={`flex-shrink-0 text-xs px-2.5 py-1 rounded-lg border transition-colors ${
-                                      alreadyAdded
-                                        ? 'border-green-500/30 text-green-400 bg-green-500/10 cursor-default'
-                                        : 'border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/10'
-                                    }`}
-                                  >
-                                    {alreadyAdded ? <><Check size={11} /> Added</> : '+ Goal'}
-                                  </button>
+                                  {alreadyAdded ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => removeGoalBySelector(el)}
+                                      className="flex-shrink-0 flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-colors"
+                                    >
+                                      <X size={11} /> Remove
+                                    </button>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={() => enableAsGoal(el)}
+                                      className="flex-shrink-0 text-xs px-2.5 py-1 rounded-lg border border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/10 transition-colors"
+                                    >
+                                      + Goal
+                                    </button>
+                                  )}
                                 </div>
                               );
                             })}
@@ -1225,7 +1265,7 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
             <div className="card overflow-hidden">
               <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700">
                 <div className="flex items-center justify-between">
-                  <h3 className="font-medium text-slate-800 dark:text-slate-200">Conversion Goals</h3>
+                  <h3 className="font-medium text-slate-800 dark:text-slate-200">Manual Goals</h3>
                   <button
                     type="button"
                     onClick={() => setEditGoals([...editGoals, { id: '', name: '', type: 'form_submit', selector: '', url_pattern: '', is_primary: editGoals.length === 0 }])}
