@@ -60,6 +60,7 @@ export async function POST(request: NextRequest) {
         email: data.email.toLowerCase(),
         password_hash: passwordHash,
         role: data.role,
+        plan: 'free', // invited team members don't have their own plan
       })
       .select('id, name, email, role, status, created_at')
       .single();
