@@ -35,7 +35,7 @@ const globalNavItems = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/pages',     label: 'Pages',     icon: FileCode2 },
   { href: '/scripts',   label: 'Scripts',   icon: Code2 },
-  { href: '/team',      label: 'Team',      icon: Users },
+  // { href: '/team',      label: 'Team',      icon: Users },
   { href: '/billing',   label: 'Billing',   icon: CreditCard },
   { href: '/settings',  label: 'Settings',  icon: Settings },
 ];
@@ -43,7 +43,7 @@ const globalNavItems = [
 function getClientNavItems(clientId: string) {
   return [
     { href: `/clients/${clientId}/pages`, label: 'Pages', icon: FileCode2 },
-    { href: `/clients/${clientId}/tests/new/ai`, label: 'AI Generate', icon: Sparkles },
+    // { href: `/clients/${clientId}/tests/new/ai`, label: 'AI Generate', icon: Sparkles },
     { href: `/clients/${clientId}/scripts`, label: 'Scripts', icon: Code2 },
     { href: `/clients/${clientId}/settings`, label: 'Settings', icon: Settings },
   ];
