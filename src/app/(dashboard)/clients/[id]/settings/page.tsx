@@ -26,8 +26,7 @@ export default async function ClientSettingsPage({ params }: { params: { id: str
     .from('domains')
     .select('*')
     .eq('workspace_id', workspace.id)
-    .order('created_at', { ascending: false })
-    .limit(1);
+    .order('created_at', { ascending: false });
 
   const appHostname = CNAME_TARGET;
   const appARecord = VERCEL_A_RECORD;
