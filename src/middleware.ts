@@ -72,7 +72,8 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith('/dashboard') ||
     pathname.startsWith('/clients') ||
     pathname.startsWith('/team') ||
-    pathname.startsWith('/settings');
+    pathname.startsWith('/settings') ||
+    pathname.startsWith('/billing');
 
   if (isDashboardRoute) {
     const token = await getToken({

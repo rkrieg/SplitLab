@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, Suspense } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { signIn } from 'next-auth/react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Eye, EyeOff, Check, Loader2, ArrowRight, ArrowLeft } from 'lucide-react';
@@ -8,6 +8,26 @@ import Spinner from '@/components/ui/Spinner';
 import Link from 'next/link';
 import toast from 'react-hot-toast';
 import { PLANS } from '@/lib/plans';
+
+/** Fires a checkout request on mount and redirects to Stripe. */
+function AutoCheckout({ plan }: { plan: string }) {
+  const router = useRouter();
+  useEffect(() => {
+    fetch('/api/stripe/checkout', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ plan }),
+    })
+      .then(r => r.json())
+      .then(data => {
+        if (data.url) window.location.href = data.url;
+        else router.push('/signup'); // fallback if something went wrong
+      })
+      .catch(() => router.push('/signup'));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return null;
+}
 
 function SignupFlow() {
   const router = useRouter();
@@ -33,7 +53,22 @@ function SignupFlow() {
     if (selectedPlan === 'free') {
       setStep('account');
     } else {
-      toast('Paid plans coming soon — start with the free plan for now!', { icon: '🚀' });
+      // Redirect to Stripe Checkout for paid plans
+      setLoading(true);
+      try {
+        const res  = await fetch('/api/stripe/checkout', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ plan: selectedPlan }),
+        });
+        const data = await res.json();
+        if (!res.ok) { toast.error(data.error || 'Could not start checkout'); return; }
+        window.location.href = data.url;
+      } catch {
+        toast.error('An unexpected error occurred');
+      } finally {
+        setLoading(false);
+      }
     }
   }
 
@@ -68,7 +103,7 @@ function SignupFlow() {
 
   const planObj = PLANS.find(p => p.id === selectedPlan) || PLANS[0];
 
-  // Paid plan pre-selected from landing page — skip plan selector, show coming soon
+  // Paid plan pre-selected from landing page — go straight to Stripe Checkout
   if (hasPlanParam && initialPlan !== 'free') {
     return (
       <div className="w-full max-w-md mx-auto px-4">
@@ -80,24 +115,16 @@ function SignupFlow() {
         </div>
         <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-8 text-center">
           <div className="w-12 h-12 rounded-full bg-indigo-500/10 flex items-center justify-center mx-auto mb-4">
-            <ArrowRight size={22} className="text-indigo-500" />
+            <Loader2 size={22} className="text-indigo-500 animate-spin" />
           </div>
           <h1 className="text-xl font-semibold text-slate-900 dark:text-slate-100 mb-2">
-            {planObj.label} plan — coming soon
+            Setting up {planObj.label}…
           </h1>
-          <p className="text-slate-500 dark:text-slate-400 text-sm mb-6">
-            Paid plans are not yet available. Start with the free plan and we'll notify you when {planObj.label} launches.
+          <p className="text-slate-500 dark:text-slate-400 text-sm">
+            Redirecting you to checkout.
           </p>
-          <a
-            href="/signup?plan=free"
-            className="flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl bg-indigo-500 hover:bg-indigo-600 text-white font-semibold text-sm transition-colors w-full"
-          >
-            Start free instead <ArrowRight size={15} />
-          </a>
-          <p className="text-xs text-slate-400 mt-4">
-            Already have an account?{' '}
-            <Link href="/login" className="text-indigo-500 hover:text-indigo-400 font-medium">Sign in</Link>
-          </p>
+          {/* Auto-redirect to Stripe on mount */}
+          <AutoCheckout plan={initialPlan} />
         </div>
       </div>
     );

@@ -17,6 +17,7 @@ import {
   Sun,
   Moon,
   Sparkles,
+  CreditCard,
 } from 'lucide-react';
 import { cn, slugify } from '@/lib/utils';
 import { useState, useEffect, useRef } from 'react';
@@ -32,10 +33,11 @@ interface Client {
 
 const globalNavItems = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { href: '/pages', label: 'Pages', icon: FileCode2 },
-  { href: '/scripts', label: 'Scripts', icon: Code2 },
-  { href: '/team', label: 'Team', icon: Users },
-  { href: '/settings', label: 'Settings', icon: Settings },
+  { href: '/pages',     label: 'Pages',     icon: FileCode2 },
+  { href: '/scripts',   label: 'Scripts',   icon: Code2 },
+  { href: '/team',      label: 'Team',      icon: Users },
+  { href: '/billing',   label: 'Billing',   icon: CreditCard },
+  { href: '/settings',  label: 'Settings',  icon: Settings },
 ];
 
 function getClientNavItems(clientId: string) {
@@ -93,11 +95,16 @@ export default function Sidebar() {
     return () => document.removeEventListener('mousedown', handleClick);
   }, []);
 
-  const isAdmin = session?.user?.role === 'admin';
+  const isAdmin   = session?.user?.role === 'admin';
+  const isViewer  = session?.user?.role === 'viewer';
 
   const navItems = selectedClient
     ? getClientNavItems(selectedClient.id)
-    : globalNavItems.filter(item => item.href !== '/team' || isAdmin);
+    : globalNavItems.filter(item => {
+        if (item.href === '/team'    && !isAdmin)  return false; // admin only
+        if (item.href === '/billing' && isViewer)  return false; // not for viewers
+        return true;
+      });
 
   function isActive(href: string) {
     if (href === '/dashboard') return pathname === '/dashboard';

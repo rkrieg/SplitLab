@@ -36,9 +36,11 @@ interface Props {
   appARecord: string;
   appUrl: string;
   canManage: boolean;
+  /** null = unlimited (Scale/admin). Number = max domains per workspace. */
+  domainLimit: number | null;
 }
 
-export default function ClientSettingsClient({ client, initialDomains, workspaceId, appHostname, appARecord, appUrl, canManage }: Props) {
+export default function ClientSettingsClient({ client, initialDomains, workspaceId, appHostname, appARecord, appUrl, canManage, domainLimit }: Props) {
   const router = useRouter();
 
   // Client name editing
@@ -443,7 +445,7 @@ export default function ClientSettingsClient({ client, initialDomains, workspace
       <section>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Custom Domain</h2>
-          {canManage && domains.length === 0 && (
+          {canManage && (
             <Button onClick={() => { resetAddModal(); setModalOpen(true); }}>
               <Plus size={16} /> Add Domain
             </Button>

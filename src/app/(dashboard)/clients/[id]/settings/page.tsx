@@ -3,6 +3,7 @@ import { redirect, notFound } from 'next/navigation';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { CNAME_TARGET, VERCEL_A_RECORD } from '@/lib/constants';
+import { PLAN_LIMITS } from '@/lib/plans';
 import Header from '@/components/layout/Header';
 import ClientSettingsClient from './ClientSettingsClient';
 
@@ -32,6 +33,20 @@ export default async function ClientSettingsPage({ params }: { params: { id: str
   const appARecord = VERCEL_A_RECORD;
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.trysplitlab.com';
 
+  // Resolve domain limit for this user's plan.
+  // Admins bypass limits; Infinity is passed as null (can't serialize Infinity as a prop).
+  let domainLimit: number | null = null; // null = unlimited
+  if (session.user.role !== 'admin') {
+    const { data: userRow } = await db
+      .from('users')
+      .select('plan')
+      .eq('id', session.user.id)
+      .single();
+    const plan = (userRow as { plan?: string } | null)?.plan ?? 'free';
+    const limit = PLAN_LIMITS[plan]?.domains ?? 0;
+    domainLimit = isFinite(limit) ? limit : null; // null = unlimited (Scale)
+  }
+
   return (
     <div>
       <Header title="Settings" subtitle={client.name} />
@@ -44,6 +59,7 @@ export default async function ClientSettingsPage({ params }: { params: { id: str
           appARecord={appARecord}
           appUrl={appUrl}
           canManage={session.user.role !== 'viewer'}
+          domainLimit={domainLimit}
         />
       </div>
     </div>

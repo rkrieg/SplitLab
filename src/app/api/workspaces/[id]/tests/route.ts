@@ -72,7 +72,7 @@ export async function POST(
     const body = await request.json();
     const data = createSchema.parse(body);
 
-    // Enforce variant limit per plan (admins bypass)
+    // Enforce plan limits (admins bypass)
     if (session.user.role !== 'admin') {
       const { data: userRow } = await db
         .from('users')
@@ -81,11 +81,29 @@ export async function POST(
         .single();
 
       const plan = userRow?.plan ?? 'free';
-      const limit = PLAN_LIMITS[plan]?.variants ?? 2;
 
-      if (isFinite(limit) && data.variants.length > limit) {
+      // 1. Enforce test count limit (counted across all workspaces owned by this user)
+      const testLimit = PLAN_LIMITS[plan]?.tests ?? 1;
+      if (isFinite(testLimit)) {
+        const { count: testCount } = await db
+          .from('tests')
+          .select('id, workspaces!inner(client_id, clients!inner(owner_id))', { count: 'exact', head: true })
+          .eq('workspaces.clients.owner_id', session.user.id)
+          .not('status', 'eq', 'completed');
+
+        if ((testCount ?? 0) >= testLimit) {
+          return NextResponse.json(
+            { error: `You have reached the test limit for your plan (${testLimit}). Please upgrade to create more tests.` },
+            { status: 403 }
+          );
+        }
+      }
+
+      // 2. Enforce variant count limit for this test's initial variants
+      const variantLimit = PLAN_LIMITS[plan]?.variants ?? 2;
+      if (isFinite(variantLimit) && data.variants.length > variantLimit) {
         return NextResponse.json(
-          { error: `Your plan allows a maximum of ${limit} variants per test. Please upgrade for unlimited variants.` },
+          { error: `Your plan allows a maximum of ${variantLimit} variants per test. Please upgrade for unlimited variants.` },
           { status: 403 }
         );
       }

@@ -32,6 +32,78 @@ export interface Plan {
   signupHref: string;
 }
 
+// ─── Billing UI helpers ──────────────────────────────────────────────────────
+
+/** Canonical plan IDs used in the DB and Stripe metadata. */
+export type PlanId = 'free' | 'pro' | 'agency' | 'scale';
+
+/** Rich plan details used by the billing page. */
+export interface PlanDetails {
+  name: string;
+  /** null = free forever */
+  monthlyPrice: number | null;
+  maxActiveTests: number;
+  maxClients: number;
+  /** monthly visitor cap — Infinity = unlimited */
+  monthlyVisitors: number;
+  maxDomains: number;
+  features: string[];
+}
+
+export const PLAN_DETAILS: Record<PlanId, PlanDetails> = {
+  free: {
+    name: 'Free',
+    monthlyPrice: null,
+    maxActiveTests: 1,
+    maxClients: 1,
+    monthlyVisitors: 1_000,
+    maxDomains: 0,
+    features: ['1 active test', '2 variants per test', '1,000 visitors/mo', 'Basic analytics'],
+  },
+  pro: {
+    name: 'Pro',
+    monthlyPrice: 49,
+    maxActiveTests: 10,
+    maxClients: 1,
+    monthlyVisitors: 25_000,
+    maxDomains: 1,
+    features: ['10 active tests', 'Unlimited variants', '25,000 visitors/mo', '1 custom domain', 'CSV export', 'Priority email support'],
+  },
+  agency: {
+    name: 'Agency',
+    monthlyPrice: 149,
+    maxActiveTests: 50,
+    maxClients: 10,
+    monthlyVisitors: 100_000,
+    maxDomains: 10,
+    features: ['50 active tests', 'Up to 10 clients', '100,000 visitors/mo', 'Up to 10 custom domains', 'Team seats'],
+  },
+  scale: {
+    name: 'Scale',
+    monthlyPrice: 349,
+    maxActiveTests: Infinity,
+    maxClients: Infinity,
+    monthlyVisitors: Infinity,
+    maxDomains: Infinity,
+    features: ['Unlimited tests', 'Unlimited clients', 'Unlimited visitors/mo', 'Unlimited domains', 'Priority support'],
+  },
+};
+
+/** Safe lookup — falls back to 'free' for unknown plan strings. */
+export function getPlanDetails(planId: string): PlanDetails {
+  return PLAN_DETAILS[(planId as PlanId)] ?? PLAN_DETAILS.free;
+}
+
+/** Human-readable number for limit display (1000 → '1k', Infinity → 'Unlimited'). */
+export function formatLimit(value: number): string {
+  if (value === Infinity) return 'Unlimited';
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(0)}k`;
+  return String(value);
+}
+
+// ─── Landing page plan cards ─────────────────────────────────────────────────
+
 export const PLANS: Plan[] = [
   {
     id: 'free',
