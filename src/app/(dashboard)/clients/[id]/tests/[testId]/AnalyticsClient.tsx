@@ -1265,7 +1265,7 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
             <div className="card overflow-hidden">
               <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700">
                 <div className="flex items-center justify-between">
-                  <h3 className="font-medium text-slate-800 dark:text-slate-200">Manual Goals</h3>
+                  <h3 className="font-medium text-slate-800 dark:text-slate-200">Goals</h3>
                   <button
                     type="button"
                     onClick={() => setEditGoals([...editGoals, { id: '', name: '', type: 'form_submit', selector: '', url_pattern: '', is_primary: editGoals.length === 0 }])}
