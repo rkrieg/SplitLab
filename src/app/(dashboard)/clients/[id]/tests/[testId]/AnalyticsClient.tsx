@@ -549,7 +549,7 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
     setTimeout(poll, 3000); // give the page 3 s to load before first poll
   }
 
-  function enableAsGoal(el: { type: string; id: string | null; text: string | null }) {
+  async function enableAsGoal(el: { type: string; id: string | null; text: string | null }) {
     const goalTypeMap: Record<string, string> = {
       form: 'form_submit',
       button: 'button_click',
@@ -574,8 +574,31 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
       url_pattern: null,
       is_primary: editGoals.length === 0,
     };
-    setEditGoals(prev => [...prev, newGoal]);
-    toast.success(`Added "${newGoal.name}" — save goals to activate`);
+
+    const updatedGoals = [...editGoals, newGoal];
+    setEditGoals(updatedGoals);
+
+    try {
+      const res = await fetch(`/api/tests/${test.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          goals: updatedGoals.map(g => ({
+            ...(g.id ? { id: g.id } : {}),
+            name: g.name, type: g.type,
+            selector: g.selector || null, url_pattern: g.url_pattern || null,
+            is_primary: g.is_primary,
+          })),
+        }),
+      });
+      if (!res.ok) { toast.error('Failed to save goal'); return; }
+      const updated = await res.json();
+      setTest(updated);
+      setEditGoals((updated.conversion_goals || []).map((g: Goal) => ({ ...g, selector: g.selector || '', url_pattern: g.url_pattern || '' })));
+      toast.success(`Goal "${newGoal.name}" enabled`);
+    } catch {
+      toast.error('Failed to save goal');
+    }
   }
 
   // ─── Render ──────────────────────────────────────────────────────────
