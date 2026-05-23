@@ -495,6 +495,23 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
 
   // ─── Page Scanner ────────────────────────────────────────────────────
 
+  function buildVariantUrl(variantId: string, extraParams: Record<string, string> = {}): string | null {
+    if (!domain) return null;
+    const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    const rawDomain = domain.replace(/^https?:\/\//, '');
+    const params = new URLSearchParams({ sl_vid: variantId, ...extraParams });
+    if (isLocalhost) {
+      return `http://localhost:${window.location.port || 3000}/api/serve?domain=${encodeURIComponent(rawDomain)}&path=${encodeURIComponent(test.url_path)}&${params}`;
+    }
+    return `https://${domain}${test.url_path}?${params}`;
+  }
+
+  function openVariant(variantId: string) {
+    const url = buildVariantUrl(variantId);
+    if (!url) { toast.error('No domain configured for this test'); return; }
+    window.open(url, '_blank');
+  }
+
   async function scanPage(variantId: string) {
     const targetVariant = variants.find(v => v.id === variantId);
     if (!targetVariant) return;
@@ -504,12 +521,7 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
       return;
     }
 
-    const baseUrl = `https://${domain}${test.url_path}`;
-    const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-    const rawDomain = domain.replace(/^https?:\/\//, '');
-    const scanUrl = isLocalhost
-      ? `http://localhost:${window.location.port || 3000}/api/serve?domain=${encodeURIComponent(rawDomain)}&path=${encodeURIComponent(test.url_path)}&sl_vid=${targetVariant.id}&sl_scan=1`
-      : `${baseUrl}?sl_vid=${targetVariant.id}&sl_scan=1`;
+    const scanUrl = buildVariantUrl(variantId, { sl_scan: '1' })!;
     const scanStartedAt = Date.now();
     window.open(scanUrl, '_blank');
     setScanning(true);
@@ -916,15 +928,25 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
                                 </span>
                               )}
                               {domain && (
-                                <button
-                                  onClick={() => scanPage(stat.variant.id)}
-                                  disabled={scanning}
-                                  className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 hover:bg-indigo-500/20 transition-colors disabled:opacity-40"
-                                  title={`Scan ${stat.variant.name}`}
-                                >
-                                  <ScanLine size={11} />
-                                  Scan
-                                </button>
+                                <>
+                                  <button
+                                    onClick={() => openVariant(stat.variant.id)}
+                                    className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-slate-500/10 border border-slate-500/20 text-slate-400 hover:bg-slate-500/20 hover:text-slate-300 transition-colors"
+                                    title={`Open ${stat.variant.name}`}
+                                  >
+                                    <ExternalLink size={11} />
+                                    Open
+                                  </button>
+                                  <button
+                                    onClick={() => scanPage(stat.variant.id)}
+                                    disabled={scanning}
+                                    className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 hover:bg-indigo-500/20 transition-colors disabled:opacity-40"
+                                    title={`Scan ${stat.variant.name}`}
+                                  >
+                                    <ScanLine size={11} />
+                                    Scan
+                                  </button>
+                                </>
                               )}
                               <button
                                 onClick={() => startEditVariant(stat.variant)}
