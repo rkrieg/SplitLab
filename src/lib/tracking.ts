@@ -98,11 +98,11 @@ export function buildTrackingSnippet(
       }
       if (selector.indexOf('text:') === 0) {
         var needle = selector.slice(5).toLowerCase();
-        var candidates = document.querySelectorAll("button, [role='button'], input[type='submit'], input[type='button']");
+        var candidates = document.querySelectorAll("button, [role='button'], [role='switch'], input[type='submit'], input[type='button'], input[type='checkbox'], a[href]");
         var matches = [];
         for (var ci = 0; ci < candidates.length; ci++) {
           var c = candidates[ci];
-          var cText = (c.textContent || c.value || '').trim().toLowerCase();
+          var cText = (c.textContent || c.value || c.getAttribute('aria-label') || '').trim().toLowerCase();
           if (!c.id && cText === needle) matches.push(c);
         }
         return matches;
@@ -122,7 +122,8 @@ export function buildTrackingSnippet(
         });
       } else if (goal.type === 'button_click') {
         resolveElements(goal.selector, 'button_click').forEach(function(el) {
-          el.addEventListener('click', function() {
+          var evt = (el.tagName === 'INPUT' && el.type === 'checkbox') ? 'change' : 'click';
+          el.addEventListener(evt, function() {
             _SL.track('conversion', goal.id);
           });
         });
@@ -194,27 +195,23 @@ export function buildScanScript(variantId: string, appUrl: string): string {
     for (var i = 0; i < forms.length; i++) {
       elements.push({ type: 'form', id: forms[i].id || null, text: null });
     }
-    var buttons = document.querySelectorAll("button, [role='button'], input[type='submit'], input[type='button']");
+    var buttons = document.querySelectorAll("button, [role='button'], [role='switch'], input[type='submit'], input[type='button']");
     for (var j = 0; j < buttons.length; j++) {
       var btn = buttons[j];
-      if (!btn.closest('form')) {
-        elements.push({ type: 'button', id: btn.id || null, text: (btn.textContent || btn.value || '').trim().slice(0, 100) || null });
-      }
+      elements.push({ type: 'button', id: btn.id || null, text: (btn.textContent || btn.value || '').trim().slice(0, 100) || null });
     }
-    var telLinks = document.querySelectorAll("a[href^='tel:']");
-    for (var k = 0; k < telLinks.length; k++) {
-      var tel = telLinks[k];
-      elements.push({ type: 'call', id: tel.id || null, text: (tel.textContent || tel.getAttribute('href') || '').trim().slice(0, 100) || null });
+    var checkboxes = document.querySelectorAll("input[type='checkbox']");
+    for (var m = 0; m < checkboxes.length; m++) {
+      var cb = checkboxes[m];
+      elements.push({ type: 'toggle', id: cb.id || null, text: cb.getAttribute('aria-label') || cb.name || null });
     }
     var links = document.querySelectorAll('a');
-    for (var l = 0; l < links.length; l++) {
-      var link = links[l];
+    for (var k = 0; k < links.length; k++) {
+      var link = links[k];
       var href = link.getAttribute('href') || '';
       if (!href || href.charAt(0) === '#' || href.indexOf('javascript:') === 0) continue;
-      var cls = (link.className || '').toLowerCase();
-      if (cls.match(/btn|button|cta/) || link.getAttribute('role') === 'button') {
-        elements.push({ type: 'cta_link', id: link.id || null, text: (link.textContent || '').trim().slice(0, 100) || null });
-      }
+      var type = href.indexOf('tel:') === 0 ? 'call' : 'link';
+      elements.push({ type: type, id: link.id || null, text: (link.textContent || href).trim().slice(0, 100) || null });
     }
     try {
       var xhr = new XMLHttpRequest();

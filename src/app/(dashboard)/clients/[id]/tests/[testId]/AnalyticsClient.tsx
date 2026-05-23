@@ -8,7 +8,7 @@ import {
   ChevronRight, ShieldCheck, ShieldX, FileCode2,
   Globe, ExternalLink, Plus, Trash2, Check, X,
   Pencil, BarChart3, Users, Settings as SettingsIcon, Sparkles,
-  ScanLine, Phone, MousePointerClick, FormInput, Link2,
+  ScanLine, Phone, MousePointerClick, FormInput, Link2, ToggleLeft,
 } from 'lucide-react';
 import Spinner from '@/components/ui/Spinner';
 import Button from '@/components/ui/Button';
@@ -566,6 +566,8 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
       form: 'form_submit',
       button: 'button_click',
       cta_link: 'button_click',
+      link: 'button_click',
+      toggle: 'button_click',
       call: 'call_click',
     };
     const goalType = goalTypeMap[el.type] || 'button_click';
@@ -1213,7 +1215,8 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
                               const icon =
                                 el.type === 'form' ? <FormInput size={13} className="text-purple-400 flex-shrink-0" /> :
                                 el.type === 'call' ? <Phone size={13} className="text-green-400 flex-shrink-0" /> :
-                                el.type === 'cta_link' ? <Link2 size={13} className="text-blue-400 flex-shrink-0" /> :
+                                el.type === 'link' ? <ExternalLink size={13} className="text-blue-400 flex-shrink-0" /> :
+                                el.type === 'toggle' ? <ToggleLeft size={13} className="text-amber-400 flex-shrink-0" /> :
                                 <MousePointerClick size={13} className="text-indigo-400 flex-shrink-0" />;
 
                               const label = el.text ? `"${el.text}"` : el.id ? `#${el.id}` : el.type;

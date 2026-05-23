@@ -106,44 +106,40 @@ function buildTrackerScript(appUrl: string): string {
       elements.push({ type: "form", id: forms[i].id || null, text: null });
     }
 
-    // Buttons (outside forms) + submit inputs
-    var buttons = document.querySelectorAll("button, [role='button'], input[type='submit'], input[type='button']");
+    // All buttons + submit inputs + switches
+    var buttons = document.querySelectorAll("button, [role='button'], [role='switch'], input[type='submit'], input[type='button']");
     for (var j = 0; j < buttons.length; j++) {
       var btn = buttons[j];
-      if (!btn.closest("form")) {
-        elements.push({
-          type: "button",
-          id: btn.id || null,
-          text: (btn.textContent || btn.value || "").trim().slice(0, 100) || null
-        });
-      }
-    }
-
-    // Tel links
-    var telLinks = document.querySelectorAll("a[href^='tel:']");
-    for (var k = 0; k < telLinks.length; k++) {
-      var tel = telLinks[k];
       elements.push({
-        type: "call",
-        id: tel.id || null,
-        text: (tel.textContent || tel.getAttribute("href") || "").trim().slice(0, 100) || null
+        type: "button",
+        id: btn.id || null,
+        text: (btn.textContent || btn.value || "").trim().slice(0, 100) || null
       });
     }
 
-    // CTA links
+    // Checkboxes
+    var checkboxes = document.querySelectorAll("input[type='checkbox']");
+    for (var m = 0; m < checkboxes.length; m++) {
+      var cb = checkboxes[m];
+      elements.push({
+        type: "toggle",
+        id: cb.id || null,
+        text: cb.getAttribute("aria-label") || cb.name || null
+      });
+    }
+
+    // All links (tel: → call, everything else → link)
     var links = document.querySelectorAll("a");
-    for (var l = 0; l < links.length; l++) {
-      var link = links[l];
+    for (var k = 0; k < links.length; k++) {
+      var link = links[k];
       var href = link.getAttribute("href") || "";
       if (!href || href.charAt(0) === "#" || href.indexOf("javascript:") === 0) continue;
-      var cls = (link.className || "").toLowerCase();
-      if (cls.match(/btn|button|cta/) || link.getAttribute("role") === "button") {
-        elements.push({
-          type: "cta_link",
-          id: link.id || null,
-          text: (link.textContent || "").trim().slice(0, 100) || null
-        });
-      }
+      var type = href.indexOf("tel:") === 0 ? "call" : "link";
+      elements.push({
+        type: type,
+        id: link.id || null,
+        text: (link.textContent || href).trim().slice(0, 100) || null
+      });
     }
 
     try {
@@ -179,6 +175,13 @@ function buildTrackerScript(appUrl: string): string {
 
   function wireAutoConversions() {
     // Use event delegation so dynamically-rendered elements (React/SPA) are tracked
+    document.addEventListener("change", function(e) {
+      var el = e.target;
+      if (el && el.tagName === "INPUT" && el.type === "checkbox") {
+        track("conversion", null, { trigger: "button_click", id: el.id || null, text: el.getAttribute("aria-label") || el.name || null });
+      }
+    }, true);
+
     document.addEventListener("submit", function(e) {
       var form = e.target;
       track("conversion", null, { trigger: "form_submit", id: (form && form.id) || null });
@@ -195,22 +198,19 @@ function buildTrackerScript(appUrl: string): string {
         return;
       }
 
-      // Check for button clicks outside forms
-      var btn = el.closest("button, [role='button'], input[type='submit'], input[type='button']");
-      if (btn && !btn.closest("form")) {
-        track("conversion", null, { trigger: "button_click", text: (btn.textContent || "").trim().slice(0, 50), id: btn.id || null });
+      // Check for button / switch clicks
+      var btn = el.closest("button, [role='button'], [role='switch'], input[type='submit'], input[type='button']");
+      if (btn) {
+        track("conversion", null, { trigger: "button_click", text: (btn.textContent || btn.value || "").trim().slice(0, 50), id: btn.id || null });
         return;
       }
 
-      // Check for CTA-styled link clicks
+      // Check for link clicks
       var cta = el.closest("a");
       if (cta) {
         var href = cta.getAttribute("href") || "";
         if (!href || href.charAt(0) === "#" || href.indexOf("javascript:") === 0) return;
-        var cls = (cta.className || "").toLowerCase();
-        if (cls.match(/btn|button|cta/) || cta.getAttribute("role") === "button") {
-          track("conversion", null, { trigger: "button_click", text: (cta.textContent || "").trim().slice(0, 50), id: cta.id || null });
-        }
+        track("conversion", null, { trigger: "button_click", text: (cta.textContent || "").trim().slice(0, 50), id: cta.id || null });
       }
     }, true);
   }
