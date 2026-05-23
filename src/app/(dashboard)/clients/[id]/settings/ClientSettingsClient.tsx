@@ -215,7 +215,7 @@ export default function ClientSettingsClient({ client, initialDomains, workspace
         body: JSON.stringify({ domain_id: deleteId }),
       });
       if (!res.ok) { const err = await res.json(); toast.error(err.error || 'Failed to delete domain'); return; }
-      setDomains([]);
+      setDomains((prev) => prev.filter((d) => d.id !== deleteId));
       toast.success('Domain removed');
     } finally { setDeleting(false); setDeleteId(null); }
   }
@@ -444,7 +444,7 @@ export default function ClientSettingsClient({ client, initialDomains, workspace
       {/* Custom Domain Section */}
       <section>
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Custom Domain</h2>
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Custom Domain{domains.length > 1 ? 's' : ''}</h2>
           {canManage && (
             <Button onClick={() => { resetAddModal(); setModalOpen(true); }}>
               <Plus size={16} /> Add Domain
