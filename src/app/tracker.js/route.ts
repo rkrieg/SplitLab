@@ -39,6 +39,7 @@ function buildTrackerScript(appUrl: string): string {
   var API_BASE = ${JSON.stringify(appUrl)};
   var EVENT_URL = API_BASE + "/api/event";
   var RESOLVE_URL = API_BASE + "/api/resolve";
+  var SCAN_URL = API_BASE + "/api/scan";
   var STORAGE_KEY = "sl_tracking";
   var _sent = {};
   var _ctx = null;
@@ -94,6 +95,67 @@ function buildTrackerScript(appUrl: string): string {
     } catch(e) {}
   }
 
+  // ─── Scan mode ─────────────────────────────────────────────────────────────
+
+  function runScan(vid) {
+    var elements = [];
+
+    // Forms
+    var forms = document.querySelectorAll("form");
+    for (var i = 0; i < forms.length; i++) {
+      elements.push({ type: "form", id: forms[i].id || null, text: null });
+    }
+
+    // Buttons (outside forms) + submit inputs
+    var buttons = document.querySelectorAll("button, [role='button'], input[type='submit'], input[type='button']");
+    for (var j = 0; j < buttons.length; j++) {
+      var btn = buttons[j];
+      if (!btn.closest("form")) {
+        elements.push({
+          type: "button",
+          id: btn.id || null,
+          text: (btn.textContent || btn.value || "").trim().slice(0, 100) || null
+        });
+      }
+    }
+
+    // Tel links
+    var telLinks = document.querySelectorAll("a[href^='tel:']");
+    for (var k = 0; k < telLinks.length; k++) {
+      var tel = telLinks[k];
+      elements.push({
+        type: "call",
+        id: tel.id || null,
+        text: (tel.textContent || tel.getAttribute("href") || "").trim().slice(0, 100) || null
+      });
+    }
+
+    // CTA links
+    var links = document.querySelectorAll("a");
+    for (var l = 0; l < links.length; l++) {
+      var link = links[l];
+      var href = link.getAttribute("href") || "";
+      if (!href || href.charAt(0) === "#" || href.indexOf("javascript:") === 0) continue;
+      var cls = (link.className || "").toLowerCase();
+      if (cls.match(/btn|button|cta/) || link.getAttribute("role") === "button") {
+        elements.push({
+          type: "cta_link",
+          id: link.id || null,
+          text: (link.textContent || "").trim().slice(0, 100) || null
+        });
+      }
+    }
+
+    try {
+      var payload = JSON.stringify({ vid: vid, elements: elements });
+      var xhr = new XMLHttpRequest();
+      xhr.open("POST", SCAN_URL, true);
+      xhr.withCredentials = false;
+      xhr.setRequestHeader("Content-Type", "application/json");
+      xhr.send(payload);
+    } catch(e) {}
+  }
+
   // ─── Core tracking ─────────────────────────────────────────────────────────
 
   function track(type, goalId, meta) {
@@ -118,7 +180,8 @@ function buildTrackerScript(appUrl: string): string {
   function wireAutoConversions() {
     // Use event delegation so dynamically-rendered elements (React/SPA) are tracked
     document.addEventListener("submit", function(e) {
-      track("conversion", null, { trigger: "form_submit" });
+      var form = e.target;
+      track("conversion", null, { trigger: "form_submit", id: (form && form.id) || null });
     }, true);
 
     document.addEventListener("click", function(e) {
@@ -128,14 +191,14 @@ function buildTrackerScript(appUrl: string): string {
       // Check for tel: link clicks (call conversions)
       var link = el.closest("a[href^='tel:']");
       if (link) {
-        track("conversion", null, { trigger: "call_click" });
+        track("conversion", null, { trigger: "call_click", id: link.id || null, text: (link.textContent || "").trim().slice(0, 50) || null });
         return;
       }
 
       // Check for button clicks outside forms
       var btn = el.closest("button, [role='button'], input[type='submit'], input[type='button']");
       if (btn && !btn.closest("form")) {
-        track("conversion", null, { trigger: "button_click", text: (btn.textContent || "").trim().slice(0, 50) });
+        track("conversion", null, { trigger: "button_click", text: (btn.textContent || "").trim().slice(0, 50), id: btn.id || null });
         return;
       }
 
@@ -146,7 +209,7 @@ function buildTrackerScript(appUrl: string): string {
         if (!href || href.charAt(0) === "#" || href.indexOf("javascript:") === 0) return;
         var cls = (cta.className || "").toLowerCase();
         if (cls.match(/btn|button|cta/) || cta.getAttribute("role") === "button") {
-          track("conversion", null, { trigger: "button_click", text: (cta.textContent || "").trim().slice(0, 50) });
+          track("conversion", null, { trigger: "button_click", text: (cta.textContent || "").trim().slice(0, 50), id: cta.id || null });
         }
       }
     }, true);
@@ -185,19 +248,20 @@ function buildTrackerScript(appUrl: string): string {
 
   function detect(callback) {
     var params = new URLSearchParams(window.location.search);
+    var isScan = params.get("sl_scan") === "1";
 
     // Method 1: Full params from SplitLab redirect (?sl_tid, ?sl_vid, ?sl_vh)
     var tid = params.get("sl_tid");
     var vid = params.get("sl_vid");
     var vh  = params.get("sl_vh");
     if (tid && vid && vh) {
-      cleanUrl(["sl_tid", "sl_vid", "sl_vh"]);
+      cleanUrl(["sl_tid", "sl_vid", "sl_vh", "sl_scan"]);
       return callback({ tid: tid, vid: vid, vh: vh, goals: [] });
     }
 
     // Method 2: Variant ID only (?sl_vid=xxx) — resolve test ID + goals via API
     if (vid && !tid) {
-      cleanUrl(["sl_vid"]);
+      cleanUrl(["sl_vid", "sl_scan"]);
       var tempVh = vh || uuid();
       var xhr = new XMLHttpRequest();
       xhr.open("GET", RESOLVE_URL + "?vid=" + encodeURIComponent(vid), true);
@@ -208,6 +272,14 @@ function buildTrackerScript(appUrl: string): string {
           if (data.testId) {
             var ctx = { tid: data.testId, vid: data.variantId, vh: tempVh, goals: data.goals || [] };
             store(ctx);
+            if (isScan) {
+              // Run scan after DOM is ready
+              if (document.readyState === "loading") {
+                document.addEventListener("DOMContentLoaded", function() { runScan(vid); });
+              } else {
+                runScan(vid);
+              }
+            }
             callback(ctx);
           } else {
             callback(load());
@@ -222,7 +294,7 @@ function buildTrackerScript(appUrl: string): string {
     // Method 3: Shorthand (?sl_variant=xxx)
     var variantId = params.get("sl_variant");
     if (variantId) {
-      cleanUrl(["sl_variant"]);
+      cleanUrl(["sl_variant", "sl_scan"]);
       var xhr2 = new XMLHttpRequest();
       xhr2.open("GET", RESOLVE_URL + "?vid=" + encodeURIComponent(variantId), true);
       xhr2.withCredentials = false;

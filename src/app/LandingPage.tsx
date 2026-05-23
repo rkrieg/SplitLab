@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react';
 import { PLANS } from '@/lib/plans';
 
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://www.trysplitlab.com';
+
 export default function LandingPage() {
   const [navScrolled, setNavScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -16,7 +18,7 @@ export default function LandingPage() {
   }, []);
 
   function handleCopy() {
-    navigator.clipboard.writeText('<script src="https://www.trysplitlab.com/tracker.js"></script>');
+    navigator.clipboard.writeText(`<script src="${APP_URL}/tracker.js"></script>`);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   }
@@ -153,7 +155,7 @@ export default function LandingPage() {
           </div>
           <div className="snippet-code">
             <span className="comment">&lt;!-- Add before &lt;/body&gt; on every page you&apos;re testing --&gt;</span><br />
-            <span className="tag">&lt;script</span> <span className="attr">src</span>=<span className="str">&quot;https://www.trysplitlab.com/tracker.js&quot;</span><span className="tag">&gt;&lt;/script&gt;</span>
+            <span className="tag">&lt;script</span> <span className="attr">src</span>=<span className="str">&quot;{APP_URL}/tracker.js&quot;</span><span className="tag">&gt;&lt;/script&gt;</span>
           </div>
         </div>
         <p className="snippet-label">No API keys. No configuration. <strong>It just works.</strong></p>

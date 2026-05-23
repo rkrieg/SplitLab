@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/supabase-server';
 import { downloadHtml } from '@/lib/storage';
-import { buildTrackingSnippet, injectIntoHtml, buildScriptTag } from '@/lib/tracking';
+import { buildTrackingSnippet, buildScanScript, injectIntoHtml, buildScriptTag } from '@/lib/tracking';
 import { assignVariant } from '@/lib/utils';
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
@@ -11,6 +11,8 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const domain = searchParams.get('domain') || '';
   const urlPath = searchParams.get('path') || '/';
+  const isScan = searchParams.get('sl_scan') === '1';
+  const forcedVid = searchParams.get('sl_vid') || null;
 
   try {
     // 1. Resolve domain → workspace
@@ -71,7 +73,10 @@ export async function GET(request: NextRequest) {
     const stickyCookieName = `sl_test_${test.id}`;
     const stickyVariantId = request.cookies.get(stickyCookieName)?.value;
 
-    let selectedVariant = variants.find((v) => v.id === stickyVariantId);
+    // forcedVid: used by scan/preview to explicitly request a specific variant
+    let selectedVariant = forcedVid
+      ? (variants.find((v) => v.id === forcedVid) ?? variants.find((v) => v.id === stickyVariantId))
+      : variants.find((v) => v.id === stickyVariantId);
 
     if (!selectedVariant) {
       selectedVariant = await assignVariant(visitorId, test.id, variants as { id: string; traffic_weight: number }[]) as typeof variants[0];
@@ -114,6 +119,7 @@ export async function GET(request: NextRequest) {
         const iframeUrlObj = new URL(selectedVariant.redirect_url);
         iframeUrlObj.searchParams.set('sl_vid', selectedVariant.id);
         iframeUrlObj.searchParams.set('sl_vh', visitorId);
+        if (isScan) iframeUrlObj.searchParams.set('sl_scan', '1');
         const iframeUrl = iframeUrlObj.toString();
         const iframeHtml = `<!DOCTYPE html>
 <html lang="en">
@@ -156,6 +162,7 @@ ${proxyTrackingSnippet}
       const redirectUrl = new URL(selectedVariant.redirect_url);
       redirectUrl.searchParams.set('sl_vid', selectedVariant.id);
       redirectUrl.searchParams.set('sl_vh', visitorId);
+      if (isScan) redirectUrl.searchParams.set('sl_scan', '1');
       const redirectResponse = NextResponse.redirect(redirectUrl.toString(), 302);
 
       const cookieOptions = {
@@ -233,6 +240,7 @@ ${proxyTrackingSnippet}
             test.id, selectedVariant.id, visitorId, hostedGoals || [], APP_URL
           );
 
+          if (isScan) hostedBodyScripts.push(buildScanScript(selectedVariant.id, APP_URL));
           hostedHtml = injectIntoHtml(hostedHtml, hostedHeadScripts, hostedBodyScripts, hostedTracking);
 
           // Record pageview
@@ -321,6 +329,7 @@ ${proxyTrackingSnippet}
     );
 
     // 10. Inject everything into HTML
+    if (isScan) bodyEndScripts.push(buildScanScript(selectedVariant.id, APP_URL));
     const finalHtml = injectIntoHtml(html, headScripts, bodyEndScripts, trackingSnippet);
 
     // 11. Build response with sticky cookies

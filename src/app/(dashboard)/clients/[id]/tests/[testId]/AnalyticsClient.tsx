@@ -8,6 +8,7 @@ import {
   ChevronRight, ShieldCheck, ShieldX, FileCode2,
   Globe, ExternalLink, Plus, Trash2, Check, X,
   Pencil, BarChart3, Users, Settings as SettingsIcon, Sparkles,
+  ScanLine, Phone, MousePointerClick, FormInput, Link2,
 } from 'lucide-react';
 import Spinner from '@/components/ui/Spinner';
 import Button from '@/components/ui/Button';
@@ -145,6 +146,15 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
   const [leads, setLeads] = useState<Lead[]>([]);
   const [leadsLoading, setLeadsLoading] = useState(false);
   const [leadsLoaded, setLeadsLoaded] = useState(false);
+
+  // Page scanner
+  interface ScanElement { type: string; id: string | null; text: string | null; }
+  interface VariantScan { variant_id: string; variant_name: string; scanned_at: string; elements: ScanElement[]; }
+  interface ScanResults { variants: VariantScan[]; }
+  const [scanResults, setScanResults] = useState<ScanResults | null>(null);
+  const [scanning, setScanning] = useState(false);
+  const [scannedVariantName, setScannedVariantName] = useState<string | null>(null);
+  const [scanResultsLoaded, setScanResultsLoaded] = useState(false);
 
   // Computed
   const variants = test.test_variants || [];
@@ -471,6 +481,103 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
     if (tab === 'leads' && !leadsLoaded) fetchLeads();
   }, [tab, leadsLoaded, fetchLeads]);
 
+  useEffect(() => {
+    if (tab === 'settings' && !scanResultsLoaded && !scanning) {
+      setScanResultsLoaded(true);
+      fetch(`/api/tests/${test.id}/scan-results`)
+        .then(r => r.ok ? r.json() : null)
+        .then(data => {
+          if (data?.scan_results?.variants) setScanResults(data.scan_results);
+        })
+        .catch(() => {});
+    }
+  }, [tab, scanResultsLoaded, scanning, test.id]);
+
+  // ─── Page Scanner ────────────────────────────────────────────────────
+
+  async function scanPage(variantId: string) {
+    const targetVariant = variants.find(v => v.id === variantId);
+    if (!targetVariant) return;
+
+    if (!domain) {
+      toast.error('No domain configured for this test');
+      return;
+    }
+
+    const baseUrl = `https://${domain}${test.url_path}`;
+    const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    const rawDomain = domain.replace(/^https?:\/\//, '');
+    const scanUrl = isLocalhost
+      ? `http://localhost:${window.location.port || 3000}/api/serve?domain=${encodeURIComponent(rawDomain)}&path=${encodeURIComponent(test.url_path)}&sl_vid=${targetVariant.id}&sl_scan=1`
+      : `${baseUrl}?sl_vid=${targetVariant.id}&sl_scan=1`;
+    const scanStartedAt = Date.now();
+    window.open(scanUrl, '_blank');
+    setScanning(true);
+    setScanResults(null);
+    setScannedVariantName(targetVariant.name);
+    setTab('settings');
+
+    // Poll for results (up to 30 s, every 2 s)
+    // Only accept results with scanned_at AFTER we opened the tab
+    let attempts = 0;
+    const maxAttempts = 15;
+    const poll = async () => {
+      try {
+        const res = await fetch(`/api/tests/${test.id}/scan-results`);
+        if (!res.ok) throw new Error();
+        const data = await res.json();
+        const variantEntry = data.scan_results?.variants?.find(
+          (v: { variant_id: string; scanned_at: string }) => v.variant_id === variantId
+        );
+        if (variantEntry) {
+          const resultTime = new Date(variantEntry.scanned_at).getTime();
+          if (resultTime > scanStartedAt) {
+            setScanResults(data.scan_results);
+            setScanning(false);
+            return;
+          }
+        }
+      } catch { /* keep polling */ }
+      attempts++;
+      if (attempts < maxAttempts) {
+        setTimeout(poll, 2000);
+      } else {
+        setScanning(false);
+        toast.error('Scan timed out. Make sure tracker.js is installed and the page loaded.');
+      }
+    };
+    setTimeout(poll, 3000); // give the page 3 s to load before first poll
+  }
+
+  function enableAsGoal(el: { type: string; id: string | null; text: string | null }) {
+    const goalTypeMap: Record<string, string> = {
+      form: 'form_submit',
+      button: 'button_click',
+      cta_link: 'button_click',
+      call: 'call_click',
+    };
+    const goalType = goalTypeMap[el.type] || 'button_click';
+
+    let selector: string | null = null;
+    if (el.id) {
+      selector = `id:${el.id}`;
+    } else if (el.text) {
+      selector = `text:${el.text}`;
+    }
+
+    const label = el.text || el.id || el.type;
+    const newGoal: Goal = {
+      id: '',
+      name: label.slice(0, 60),
+      type: goalType,
+      selector,
+      url_pattern: null,
+      is_primary: editGoals.length === 0,
+    };
+    setEditGoals(prev => [...prev, newGoal]);
+    toast.success(`Added "${newGoal.name}" — save goals to activate`);
+  }
+
   // ─── Render ──────────────────────────────────────────────────────────
 
   const tabs: { key: Tab; label: string; icon: React.ReactNode }[] = [
@@ -778,12 +885,23 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
                             ) : <span className="text-slate-500">—</span>}
                           </td>
                           <td className={`px-5 py-3.5 text-center ${rowBg}`}>
-                            <div className="flex items-center justify-center gap-1">
+                            <div className="flex items-center justify-center gap-2">
                               {uplift !== null && (
                                 <span className={`flex items-center gap-0.5 text-xs font-medium ${uplift > 0 ? 'text-green-400' : 'text-red-400'}`}>
                                   <TrendingUp size={11} className={uplift < 0 ? 'rotate-180' : ''} />
                                   {uplift > 0 ? '+' : ''}{formatPercent(uplift)}
                                 </span>
+                              )}
+                              {domain && (
+                                <button
+                                  onClick={() => scanPage(stat.variant.id)}
+                                  disabled={scanning}
+                                  className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 hover:bg-indigo-500/20 transition-colors disabled:opacity-40"
+                                  title={`Scan ${stat.variant.name}`}
+                                >
+                                  <ScanLine size={11} />
+                                  Scan
+                                </button>
                               )}
                               <button
                                 onClick={() => startEditVariant(stat.variant)}
@@ -966,6 +1084,98 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
         {/* ─── SETTINGS TAB ─── */}
         {tab === 'settings' && (
           <>
+            {/* Page Scanner */}
+            <div className="card overflow-hidden">
+              <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-indigo-500/20 flex items-center justify-center">
+                    <ScanLine size={16} className="text-indigo-400" />
+                  </div>
+                  <div>
+                    <p className="font-medium text-slate-800 dark:text-slate-200 text-sm">Page Scanner</p>
+                    <p className="text-slate-500 text-xs">
+                      {scanning
+                        ? `Scanning ${scannedVariantName}…`
+                        : scannedVariantName
+                          ? `Last scanned: ${scannedVariantName}`
+                          : 'Click Scan on any variant in the Overview tab to detect elements'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="px-5 py-4">
+                {!scanning && !scanResults && (
+                  <p className="text-slate-500 text-xs">No scan results yet. Use the Scan button on a variant row in the Overview tab.</p>
+                )}
+
+                {scanning && (
+                  <div className="flex items-center gap-2 text-slate-500 text-sm">
+                    <RefreshCw size={14} className="animate-spin" />
+                    Page opened — waiting for scan results…
+                  </div>
+                )}
+
+                {scanResults && (
+                  <div className="space-y-4">
+                    {scanResults.variants.map(vs => (
+                      <div key={vs.variant_id}>
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">{vs.variant_name}</span>
+                          <span className="text-slate-400 text-xs">{vs.elements.length} element{vs.elements.length !== 1 ? 's' : ''}</span>
+                          <span className="text-slate-500 text-xs ml-auto">{new Date(vs.scanned_at).toLocaleString()}</span>
+                        </div>
+                        {vs.elements.length === 0 ? (
+                          <p className="text-slate-400 text-xs px-3 py-2">No trackable elements found.</p>
+                        ) : (
+                          <div className="space-y-1.5">
+                            {vs.elements.map((el, i) => {
+                              const icon =
+                                el.type === 'form' ? <FormInput size={13} className="text-purple-400 flex-shrink-0" /> :
+                                el.type === 'call' ? <Phone size={13} className="text-green-400 flex-shrink-0" /> :
+                                el.type === 'cta_link' ? <Link2 size={13} className="text-blue-400 flex-shrink-0" /> :
+                                <MousePointerClick size={13} className="text-indigo-400 flex-shrink-0" />;
+
+                              const label = el.text ? `"${el.text}"` : el.id ? `#${el.id}` : el.type;
+
+                              const alreadyAdded = editGoals.some(g => {
+                                if (el.id) return g.selector === `id:${el.id}`;
+                                if (el.text) return g.selector === `text:${el.text}`;
+                                return false;
+                              });
+
+                              return (
+                                <div key={i} className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
+                                  <div className="flex items-center gap-2 min-w-0">
+                                    {icon}
+                                    <span className="text-slate-700 dark:text-slate-300 text-sm truncate">{label}</span>
+                                    {el.id && <span className="text-slate-400 font-mono text-xs flex-shrink-0">#{el.id}</span>}
+                                    <span className="text-slate-400 text-xs flex-shrink-0 capitalize">{el.type.replace('_', ' ')}</span>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => enableAsGoal(el)}
+                                    disabled={alreadyAdded}
+                                    className={`flex-shrink-0 text-xs px-2.5 py-1 rounded-lg border transition-colors ${
+                                      alreadyAdded
+                                        ? 'border-green-500/30 text-green-400 bg-green-500/10 cursor-default'
+                                        : 'border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/10'
+                                    }`}
+                                  >
+                                    {alreadyAdded ? <><Check size={11} /> Added</> : '+ Goal'}
+                                  </button>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
             {/* Conversion Goals */}
             <div className="card overflow-hidden">
               <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700">

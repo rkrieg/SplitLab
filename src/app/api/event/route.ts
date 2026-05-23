@@ -46,17 +46,43 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Auto-match goal_id from metadata.trigger when not explicitly provided
+    // Auto-match goal_id from metadata.trigger + selector when not explicitly provided
     let goalId = data.goalId || null;
     if (data.type === 'conversion' && !goalId && data.metadata?.trigger) {
       const { data: goals } = await db
         .from('conversion_goals')
-        .select('id, type')
+        .select('id, type, selector')
         .eq('test_id', data.testId)
         .eq('type', data.metadata.trigger as string);
 
       if (goals && goals.length > 0) {
-        goalId = goals[0].id;
+        const metaId = (data.metadata?.id ?? null) as string | null;
+        const metaText = (data.metadata?.text ?? null) as string | null;
+
+        const matched = goals.find(g => {
+          if (!g.selector) return true; // no selector — match all of that type
+
+          if (g.selector.startsWith('id:')) {
+            // ID-based: only match when event carries the same id
+            return metaId === g.selector.slice(3);
+          }
+
+          if (g.selector.startsWith('text:')) {
+            // Text-based: only match elements that have NO id
+            if (metaId !== null) return false;
+            return metaText === g.selector.slice(5);
+          }
+
+          // Legacy CSS ID selector (#hero-cta) — extract and match by id
+          if (g.selector.startsWith('#')) {
+            return metaId === g.selector.slice(1);
+          }
+
+          // Other legacy CSS selectors — can't match via tracker.js metadata; skip
+          return false;
+        });
+
+        if (matched) goalId = matched.id;
       }
     }
 

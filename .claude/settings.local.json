@@ -14,7 +14,11 @@
       "Bash(git show *)",
       "PowerShell(cd \"d:\\\\Paid Projects\\\\SplitLab\"; git show main:src/app/\\(dashboard\\)/billing/page.tsx; echo \"---PAGE---\"; git show main:src/app/\\(dashboard\\)/billing/BillingClient.tsx)",
       "Bash(npm install *)",
-      "Bash(node -e \"const s = require\\('stripe'\\); console.log\\('stripe ok'\\)\")"
+      "Bash(node -e \"const s = require\\('stripe'\\); console.log\\('stripe ok'\\)\")",
+      "Bash(mkdir -p \"d:/Paid Projects/SplitLab/src/app/api/tests/[id]/scan-results\")"
+    ],
+    "additionalDirectories": [
+      "d:\\Paid Projects\\SplitLab\\src\\app\\api\\tests\\[id]"
     ]
   }
 }

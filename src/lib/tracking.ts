@@ -86,24 +86,46 @@ export function buildTrackingSnippet(
       window.addEventListener('hashchange', function() { checkUrlGoals(); });
     }
 
+    // Resolve an id:/text:/legacy-CSS selector to a list of DOM elements
+    function resolveElements(selector, type) {
+      if (!selector) {
+        if (type === 'form_submit') return Array.from(document.querySelectorAll('form'));
+        return [];
+      }
+      if (selector.indexOf('id:') === 0) {
+        var byId = document.getElementById(selector.slice(3));
+        return byId ? [byId] : [];
+      }
+      if (selector.indexOf('text:') === 0) {
+        var needle = selector.slice(5).toLowerCase();
+        var candidates = document.querySelectorAll("button, [role='button'], input[type='submit'], input[type='button']");
+        var matches = [];
+        for (var ci = 0; ci < candidates.length; ci++) {
+          var c = candidates[ci];
+          var cText = (c.textContent || c.value || '').trim().toLowerCase();
+          if (!c.id && cText === needle) matches.push(c);
+        }
+        return matches;
+      }
+      // Legacy CSS selector (e.g. #my-form, .cta-btn)
+      return Array.from(document.querySelectorAll(selector));
+    }
+
     _SL.goals.forEach(function(goal) {
       if (goal.type === 'url_reached') {
         // handled above
       } else if (goal.type === 'form_submit') {
-        var forms = goal.selector ? document.querySelectorAll(goal.selector) : document.querySelectorAll('form');
-        forms.forEach(function(form) {
+        resolveElements(goal.selector, 'form_submit').forEach(function(form) {
           form.addEventListener('submit', function() {
             _SL.track('conversion', goal.id);
           });
         });
       } else if (goal.type === 'button_click') {
-        if (goal.selector) {
-          document.querySelectorAll(goal.selector).forEach(function(el) {
-            el.addEventListener('click', function() {
-              _SL.track('conversion', goal.id);
-            });
+        resolveElements(goal.selector, 'button_click').forEach(function(el) {
+          el.addEventListener('click', function() {
+            _SL.track('conversion', goal.id);
           });
-        }
+        });
       } else if (goal.type === 'call_click') {
         document.querySelectorAll('a[href^="tel:"]').forEach(function(el) {
           el.addEventListener('click', function() {
@@ -155,6 +177,59 @@ export function injectIntoHtml(
   }
 
   return result;
+}
+
+/**
+ * Build a standalone scan script injected into custom HTML / proxy pages when
+ * sl_scan=1 is present. Scans the DOM and POSTs results to /api/scan.
+ */
+export function buildScanScript(variantId: string, appUrl: string): string {
+  return `<script>
+(function() {
+  var vid = ${JSON.stringify(variantId)};
+  var scanUrl = ${JSON.stringify(appUrl + '/api/scan')};
+  function runScan() {
+    var elements = [];
+    var forms = document.querySelectorAll('form');
+    for (var i = 0; i < forms.length; i++) {
+      elements.push({ type: 'form', id: forms[i].id || null, text: null });
+    }
+    var buttons = document.querySelectorAll("button, [role='button'], input[type='submit'], input[type='button']");
+    for (var j = 0; j < buttons.length; j++) {
+      var btn = buttons[j];
+      if (!btn.closest('form')) {
+        elements.push({ type: 'button', id: btn.id || null, text: (btn.textContent || btn.value || '').trim().slice(0, 100) || null });
+      }
+    }
+    var telLinks = document.querySelectorAll("a[href^='tel:']");
+    for (var k = 0; k < telLinks.length; k++) {
+      var tel = telLinks[k];
+      elements.push({ type: 'call', id: tel.id || null, text: (tel.textContent || tel.getAttribute('href') || '').trim().slice(0, 100) || null });
+    }
+    var links = document.querySelectorAll('a');
+    for (var l = 0; l < links.length; l++) {
+      var link = links[l];
+      var href = link.getAttribute('href') || '';
+      if (!href || href.charAt(0) === '#' || href.indexOf('javascript:') === 0) continue;
+      var cls = (link.className || '').toLowerCase();
+      if (cls.match(/btn|button|cta/) || link.getAttribute('role') === 'button') {
+        elements.push({ type: 'cta_link', id: link.id || null, text: (link.textContent || '').trim().slice(0, 100) || null });
+      }
+    }
+    try {
+      var xhr = new XMLHttpRequest();
+      xhr.open('POST', scanUrl, true);
+      xhr.setRequestHeader('Content-Type', 'application/json');
+      xhr.send(JSON.stringify({ vid: vid, elements: elements }));
+    } catch(e) {}
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', runScan);
+  } else {
+    runScan();
+  }
+})();
+</script>`;
 }
 
 /**
