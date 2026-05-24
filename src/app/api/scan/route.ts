@@ -13,7 +13,7 @@ function corsHeaders(request: NextRequest) {
 }
 
 const elementSchema = z.object({
-  type: z.enum(['form', 'button', 'call', 'cta_link']),
+  type: z.enum(['form', 'button', 'call', 'cta_link', 'link', 'toggle']),
   id: z.string().max(255).nullable(),
   text: z.string().max(200).nullable(),
 });
