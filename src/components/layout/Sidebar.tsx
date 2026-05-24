@@ -16,7 +16,7 @@ import {
   Check,
   Sun,
   Moon,
-  Sparkles,
+  Globe,
   CreditCard,
 } from 'lucide-react';
 import { cn, slugify } from '@/lib/utils';
@@ -36,6 +36,7 @@ const globalNavItems = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/pages',     label: 'Pages',     icon: FileCode2 },
   { href: '/scripts',   label: 'Scripts',   icon: Code2 },
+  { href: '/domains',   label: 'Domains',   icon: Globe },
   // { href: '/team',      label: 'Team',      icon: Users },
   { href: '/billing',   label: 'Billing',   icon: CreditCard },
   { href: '/settings',  label: 'Settings',  icon: Settings },
@@ -43,9 +44,9 @@ const globalNavItems = [
 
 function getClientNavItems(clientId: string) {
   return [
-    { href: `/clients/${clientId}/pages`, label: 'Pages', icon: FileCode2 },
-    // { href: `/clients/${clientId}/tests/new/ai`, label: 'AI Generate', icon: Sparkles },
+    { href: `/clients/${clientId}/pages`,   label: 'Pages',   icon: FileCode2 },
     { href: `/clients/${clientId}/scripts`, label: 'Scripts', icon: Code2 },
+    { href: `/clients/${clientId}/domains`, label: 'Domains', icon: Globe },
     { href: `/clients/${clientId}/settings`, label: 'Settings', icon: Settings },
   ];
 }
@@ -78,6 +79,8 @@ export default function Sidebar() {
   const userPlan  = session?.user?.plan ?? 'free';
   // Show multi-client dropdown only for admins or plans that allow > 1 client
   const multiClientEnabled = isAdmin || (PLAN_LIMITS[userPlan]?.clients ?? 1) > 1;
+  // Show Domains link only for plans that include at least 1 domain
+  const canUseDomains = isAdmin || (PLAN_LIMITS[userPlan]?.domains ?? 0) > 0;
 
   // Fetch clients on mount
   useEffect(() => {
@@ -110,10 +113,14 @@ export default function Sidebar() {
   }, []);
 
   const navItems = selectedClient
-    ? getClientNavItems(selectedClient.id)
+    ? getClientNavItems(selectedClient.id).filter(item => {
+        if (item.href.includes('/domains') && !canUseDomains) return false;
+        return true;
+      })
     : globalNavItems.filter(item => {
-        if (item.href === '/team'    && !isAdmin)  return false; // admin only
-        if (item.href === '/billing' && isViewer)  return false; // not for viewers
+        if (item.href === '/team'    && !isAdmin)      return false; // admin only
+        if (item.href === '/billing' && isViewer)      return false; // not for viewers
+        if (item.href === '/domains' && !canUseDomains) return false; // paid plans only
         return true;
       });
 
@@ -131,6 +138,8 @@ export default function Sidebar() {
         router.push(`/clients/${client.id}/pages`);
       } else if (pathname.includes('/scripts')) {
         router.push(`/clients/${client.id}/scripts`);
+      } else if (pathname.includes('/domains')) {
+        router.push(`/clients/${client.id}/domains`);
       } else if (pathname.includes('/settings')) {
         router.push(`/clients/${client.id}/settings`);
       } else {
@@ -142,6 +151,8 @@ export default function Sidebar() {
         router.push('/pages');
       } else if (pathname.includes('/scripts')) {
         router.push('/scripts');
+      } else if (pathname.includes('/domains')) {
+        router.push('/domains');
       } else if (pathname.includes('/settings')) {
         router.push('/settings');
       } else {
