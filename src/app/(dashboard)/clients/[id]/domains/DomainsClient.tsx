@@ -89,6 +89,8 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
     e.preventDefault();
     const domain = getAddPreview();
     if (!domain || domain.split('.').length < 2) { toast.error('Enter a valid domain'); return; }
+    const cleanBase = addBaseDomain.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/+$/, '');
+    if (!cleanBase.includes('.')) { toast.error('Enter the full domain including the TLD — e.g. example.com, not just example'); return; }
     setAdding(true);
     try {
       const res = await fetch(`/api/workspaces/${workspaceId}/domains`, {
@@ -110,6 +112,8 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
     if (!editDomain) return;
     const newDomain = getEditPreview();
     if (!newDomain || newDomain.split('.').length < 2) { toast.error('Enter a valid domain'); return; }
+    const cleanBase = editBaseDomain.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/+$/, '');
+    if (!cleanBase.includes('.')) { toast.error('Enter the full domain including the TLD — e.g. example.com, not just example'); return; }
     if (newDomain === editDomain.domain) { setEditModalOpen(false); return; }
     setSaving(true);
     try {
@@ -187,6 +191,9 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
         <div>
           <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Base Domain</label>
           <input type="text" value={baseDomain} onChange={e => setBaseDomainFn(e.target.value)} className="input-base font-mono" placeholder="example.com" required />
+          {baseDomain.trim() && !baseDomain.replace(/^https?:\/\//, '').includes('.') && (
+            <p className="text-amber-400 text-xs mt-1.5">Include the TLD — e.g. <span className="font-mono">example.com</span>, not just <span className="font-mono">example</span></p>
+          )}
         </div>
         <div>
           <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Type</label>
