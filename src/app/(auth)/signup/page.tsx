@@ -91,7 +91,10 @@ function SignupFlow() {
         router.push('/login');
       } else {
         toast.success('Welcome to SplitLab!');
-        router.push('/dashboard');
+        const destination = data.defaultClientId
+          ? `/clients/${data.defaultClientId}/pages`
+          : '/dashboard';
+        router.push(destination);
         router.refresh();
       }
     } catch {

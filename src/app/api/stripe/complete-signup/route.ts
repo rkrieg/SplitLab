@@ -3,6 +3,7 @@ import { getStripeClient } from '@/lib/stripeClient';
 import { db } from '@/lib/supabase-server';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
+import { slugify } from '@/lib/utils';
 
 export const dynamic = 'force-dynamic';
 
@@ -84,7 +85,41 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to create account' }, { status: 500 });
     }
 
-    return NextResponse.json({ email, existed: false });
+    // Fetch the newly created user's id
+    const { data: newUser } = await db.from('users').select('id').eq('email', email).single();
+
+    // Auto-create default client ("[FirstName]'s Account")
+    let defaultClientId: string | null = null;
+    if (newUser) {
+      const firstName = name.trim().split(' ')[0];
+      const clientName = `${firstName}'s Account`;
+      const clientSlug = slugify(clientName) + '-' + newUser.id.slice(0, 8);
+
+      const { data: client } = await db.from('clients').insert({
+        name: clientName,
+        slug: clientSlug,
+        owner_id: newUser.id,
+      }).select('id').single();
+
+      if (client) {
+        defaultClientId = client.id;
+        const { data: workspace } = await db.from('workspaces').insert({
+          client_id: client.id,
+          name: clientName,
+          slug: 'default',
+        }).select('id').single();
+
+        if (workspace) {
+          await db.from('workspace_members').insert({
+            workspace_id: workspace.id,
+            user_id: newUser.id,
+            role: 'manager',
+          });
+        }
+      }
+    }
+
+    return NextResponse.json({ email, existed: false, defaultClientId });
   } catch (err: unknown) {
     console.error('[complete-signup] error:', err);
 

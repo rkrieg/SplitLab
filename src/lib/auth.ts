@@ -44,6 +44,7 @@ export const authOptions: NextAuthOptions = {
           email: user.email,
           name: user.name,
           role: user.role as UserRole,
+          plan: (user.plan as string) ?? 'free',
         };
       },
     }),
@@ -53,6 +54,7 @@ export const authOptions: NextAuthOptions = {
       if (user) {
         token.id = user.id;
         token.role = user.role as UserRole;
+        token.plan = user.plan ?? 'free';
       }
       return token;
     },
@@ -60,6 +62,7 @@ export const authOptions: NextAuthOptions = {
       if (token && session.user) {
         session.user.id = token.id as string;
         session.user.role = token.role as UserRole;
+        session.user.plan = (token.plan as string) ?? 'free';
       }
       return session;
     },

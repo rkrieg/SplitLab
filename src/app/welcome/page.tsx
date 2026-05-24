@@ -76,7 +76,10 @@ function WelcomeForm() {
         setError('Account created but sign-in failed. Please go to /login.');
         setSubmitting(false);
       } else {
-        router.push('/dashboard');
+        const destination = data.defaultClientId
+          ? `/clients/${data.defaultClientId}/pages`
+          : '/dashboard';
+        router.push(destination);
         router.refresh();
       }
     } catch {

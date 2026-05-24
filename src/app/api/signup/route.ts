@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/supabase-server';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
+import { slugify } from '@/lib/utils';
 
 export const dynamic = 'force-dynamic';
 
@@ -48,7 +49,34 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    return NextResponse.json(user, { status: 201 });
+    // Auto-create default client for new user ("[FirstName]'s Account")
+    const firstName = data.name.trim().split(' ')[0];
+    const clientName = `${firstName}'s Account`;
+    const clientSlug = slugify(clientName) + '-' + user!.id.slice(0, 8);
+
+    const { data: client } = await db.from('clients').insert({
+      name: clientName,
+      slug: clientSlug,
+      owner_id: user!.id,
+    }).select('id').single();
+
+    if (client) {
+      const { data: workspace } = await db.from('workspaces').insert({
+        client_id: client.id,
+        name: clientName,
+        slug: 'default',
+      }).select('id').single();
+
+      if (workspace) {
+        await db.from('workspace_members').insert({
+          workspace_id: workspace.id,
+          user_id: user!.id,
+          role: 'manager',
+        });
+      }
+    }
+
+    return NextResponse.json({ ...user, defaultClientId: client?.id ?? null }, { status: 201 });
   } catch (err) {
     if (err instanceof z.ZodError) {
       return NextResponse.json(
