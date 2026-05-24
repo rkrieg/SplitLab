@@ -1,14 +1,21 @@
-'use client';
+"use client";
 
-import { useState } from 'react';
-import toast from 'react-hot-toast';
-import { Plus, Code2, ToggleLeft, ToggleRight, Trash2, Info } from 'lucide-react';
-import Spinner from '@/components/ui/Spinner';
-import Modal from '@/components/ui/Modal';
-import Button from '@/components/ui/Button';
-import EmptyState from '@/components/ui/EmptyState';
-import ConfirmDialog from '@/components/ui/ConfirmDialog';
-import { formatDate } from '@/lib/utils';
+import { useState } from "react";
+import toast from "react-hot-toast";
+import {
+  Plus,
+  Code2,
+  ToggleLeft,
+  ToggleRight,
+  Trash2,
+  Info,
+} from "lucide-react";
+import Spinner from "@/components/ui/Spinner";
+import Modal from "@/components/ui/Modal";
+import Button from "@/components/ui/Button";
+import EmptyState from "@/components/ui/EmptyState";
+import ConfirmDialog from "@/components/ui/ConfirmDialog";
+import { formatDate } from "@/lib/utils";
 
 interface Script {
   id: string;
@@ -39,13 +46,22 @@ interface Props {
 }
 
 const SCRIPT_TYPES = [
-  { value: 'gtm', label: 'Google Tag Manager', placeholder: 'GTM-XXXXXXX' },
-  { value: 'meta_pixel', label: 'Meta Pixel', placeholder: '1234567890' },
-  { value: 'ga4', label: 'GA4', placeholder: 'G-XXXXXXXXXX' },
-  { value: 'custom', label: 'Custom Script', placeholder: '<script>...</script>' },
+  { value: "gtm", label: "Google Tag Manager", placeholder: "GTM-XXXXXXX" },
+  { value: "meta_pixel", label: "Meta Pixel", placeholder: "1234567890" },
+  { value: "ga4", label: "GA4", placeholder: "G-XXXXXXXXXX" },
+  {
+    value: "custom",
+    label: "Custom Script",
+    placeholder: "<script>...</script>",
+  },
 ];
 
-export default function ScriptsClient({ initialScripts, tests, workspaceId, canManage }: Props) {
+export default function ScriptsClient({
+  initialScripts,
+  tests,
+  workspaceId,
+  canManage,
+}: Props) {
   const [scripts, setScripts] = useState(initialScripts);
   const [modalOpen, setModalOpen] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
@@ -54,12 +70,12 @@ export default function ScriptsClient({ initialScripts, tests, workspaceId, canM
   const [togglingId, setTogglingId] = useState<string | null>(null);
 
   // Form state
-  const [sType, setSType] = useState('gtm');
-  const [sName, setSName] = useState('');
-  const [sContent, setSContent] = useState('');
-  const [sPlacement, setSPlacement] = useState<'head' | 'body_end'>('head');
+  const [sType, setSType] = useState("gtm");
+  const [sName, setSName] = useState("");
+  const [sContent, setSContent] = useState("");
+  const [sPlacement, setSPlacement] = useState<"head" | "body_end">("head");
   // Empty string = workspace-level (all pages), UUID string = scoped to that test
-  const [sTestId, setSTestId] = useState('');
+  const [sTestId, setSTestId] = useState("");
 
   const selectedType = SCRIPT_TYPES.find((t) => t.value === sType)!;
 
@@ -73,8 +89,8 @@ export default function ScriptsClient({ initialScripts, tests, workspaceId, canM
     setSaving(true);
     try {
       const res = await fetch(`/api/workspaces/${workspaceId}/scripts`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: sName,
           type: sType,
@@ -86,14 +102,14 @@ export default function ScriptsClient({ initialScripts, tests, workspaceId, canM
       });
       if (!res.ok) {
         const err = await res.json();
-        toast.error(err.error || 'Failed to add script');
+        toast.error(err.error || "Failed to add script");
         return;
       }
       const script = await res.json();
       setScripts((prev) => [script, ...prev]);
       setModalOpen(false);
       resetForm();
-      toast.success('Script added');
+      toast.success("Script added");
     } finally {
       setSaving(false);
     }
@@ -103,13 +119,16 @@ export default function ScriptsClient({ initialScripts, tests, workspaceId, canM
     setTogglingId(id);
     try {
       const res = await fetch(`/api/workspaces/${workspaceId}/scripts`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id, is_active: !is_active }),
       });
-      if (!res.ok) { toast.error('Failed to update script'); return; }
+      if (!res.ok) {
+        toast.error("Failed to update script");
+        return;
+      }
       setScripts((prev) =>
-        prev.map((s) => (s.id === id ? { ...s, is_active: !is_active } : s))
+        prev.map((s) => (s.id === id ? { ...s, is_active: !is_active } : s)),
       );
     } finally {
       setTogglingId(null);
@@ -121,13 +140,16 @@ export default function ScriptsClient({ initialScripts, tests, workspaceId, canM
     setDeleting(true);
     try {
       const res = await fetch(`/api/workspaces/${workspaceId}/scripts`, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: deleteId }),
       });
-      if (!res.ok) { toast.error('Delete failed'); return; }
+      if (!res.ok) {
+        toast.error("Delete failed");
+        return;
+      }
       setScripts((prev) => prev.filter((s) => s.id !== deleteId));
-      toast.success('Script deleted');
+      toast.success("Script deleted");
     } finally {
       setDeleting(false);
       setDeleteId(null);
@@ -135,22 +157,24 @@ export default function ScriptsClient({ initialScripts, tests, workspaceId, canM
   }
 
   function resetForm() {
-    setSType('gtm');
-    setSName('');
-    setSContent('');
-    setSPlacement('head');
-    setSTestId('');
+    setSType("gtm");
+    setSName("");
+    setSContent("");
+    setSPlacement("head");
+    setSTestId("");
   }
 
   const typeLabel: Record<string, string> = {
-    gtm: 'GTM',
-    meta_pixel: 'Meta Pixel',
-    ga4: 'GA4',
-    custom: 'Custom',
+    gtm: "GTM",
+    meta_pixel: "Meta Pixel",
+    ga4: "GA4",
+    custom: "Custom",
   };
 
   /** Derive the scope label shown on each script card in the list */
-  function getScopeLabel(script: Script): { label: string; isHosted: boolean } | null {
+  function getScopeLabel(
+    script: Script,
+  ): { label: string; isHosted: boolean } | null {
     // New-style: test-scoped.
     // script.tests comes from the DB join (populated on page load / GET).
     // For a script just inserted via the form, the POST response has no join,
@@ -172,7 +196,7 @@ export default function ScriptsClient({ initialScripts, tests, workspaceId, canM
     <>
       <div className="flex items-center justify-between mb-6">
         <p className="text-slate-500 dark:text-slate-400 text-sm">
-          {scripts.length} script{scripts.length !== 1 ? 's' : ''}
+          {scripts.length} script{scripts.length !== 1 ? "s" : ""}
         </p>
         {canManage && (
           <Button onClick={() => setModalOpen(true)}>
@@ -183,8 +207,12 @@ export default function ScriptsClient({ initialScripts, tests, workspaceId, canM
 
       {/* Info banner */}
       <div className="card p-4 mb-6 border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-800/50 text-sm text-slate-500 dark:text-slate-400">
-        Scripts marked as <strong className="text-slate-700 dark:text-slate-300">workspace-level</strong> will be injected into every page served for this client.
-        You can also assign a script to a specific page only.
+        Scripts marked as{" "}
+        <strong className="text-slate-700 dark:text-slate-300">
+          workspace-level
+        </strong>{" "}
+        will be injected into every page served for this client. You can also
+        assign a script to a specific page only.
       </div>
 
       {scripts.length === 0 && (
@@ -192,7 +220,13 @@ export default function ScriptsClient({ initialScripts, tests, workspaceId, canM
           icon={Code2}
           title="No scripts yet"
           description="Add GTM, Meta Pixel, GA4, or any custom script to inject into your pages."
-          action={canManage ? <Button onClick={() => setModalOpen(true)}><Plus size={16} /> Add Script</Button> : undefined}
+          action={
+            canManage ? (
+              <Button onClick={() => setModalOpen(true)}>
+                <Plus size={16} /> Add Script
+              </Button>
+            ) : undefined
+          }
         />
       )}
 
@@ -203,31 +237,38 @@ export default function ScriptsClient({ initialScripts, tests, workspaceId, canM
             return (
               <div
                 key={script.id}
-                className={`card p-5 flex items-center gap-4 ${!script.is_active ? 'opacity-50' : ''}`}
+                className={`card p-5 flex items-center gap-4 ${!script.is_active ? "opacity-50" : ""}`}
               >
                 <div className="w-9 h-9 rounded-lg bg-slate-100 dark:bg-slate-700 flex items-center justify-center flex-shrink-0">
                   <Code2 size={15} className="text-indigo-400" />
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-0.5 flex-wrap">
-                    <span className="font-medium text-slate-800 dark:text-slate-200">{script.name}</span>
+                    <span className="font-medium text-slate-800 dark:text-slate-200">
+                      {script.name}
+                    </span>
                     <span className="badge bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 text-[10px]">
                       {typeLabel[script.type] || script.type}
                     </span>
                     <span className="badge bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 text-[10px]">
-                      {script.placement === 'head' ? '<head>' : '</body>'}
+                      {script.placement === "head" ? "<head>" : "</body>"}
                     </span>
                     {scope && (
-                      <span className={`badge text-[10px] ${scope.isHosted ? 'bg-amber-500/20 text-amber-400 border-amber-500/30' : 'bg-blue-500/20 text-blue-400 border-blue-500/30'}`}>
+                      <span
+                        className={`badge text-[10px] ${scope.isHosted ? "bg-amber-500/20 text-amber-400 border-amber-500/30" : "bg-blue-500/20 text-blue-400 border-blue-500/30"}`}
+                      >
                         {scope.label}
-                        {scope.isHosted && ' (proxy)'}
+                        {scope.isHosted && " (proxy)"}
                       </span>
                     )}
                   </div>
                   <p className="text-slate-400 dark:text-slate-500 text-xs font-mono truncate">
-                    {script.content.slice(0, 60)}{script.content.length > 60 ? '…' : ''}
+                    {script.content.slice(0, 60)}
+                    {script.content.length > 60 ? "…" : ""}
                   </p>
-                  <p className="text-slate-400 dark:text-slate-600 text-xs mt-0.5">{formatDate(script.created_at)}</p>
+                  <p className="text-slate-400 dark:text-slate-600 text-xs mt-0.5">
+                    {formatDate(script.created_at)}
+                  </p>
                 </div>
                 {canManage && (
                   <div className="flex items-center gap-2">
@@ -236,11 +277,13 @@ export default function ScriptsClient({ initialScripts, tests, workspaceId, canM
                       disabled={togglingId === script.id}
                       className="text-slate-400 hover:text-slate-200 transition-colors"
                     >
-                      {togglingId === script.id
-                        ? <Spinner size="md" />
-                        : script.is_active
-                          ? <ToggleRight size={22} className="text-green-400" />
-                          : <ToggleLeft size={22} />}
+                      {togglingId === script.id ? (
+                        <Spinner size="md" />
+                      ) : script.is_active ? (
+                        <ToggleRight size={22} className="text-green-400" />
+                      ) : (
+                        <ToggleLeft size={22} />
+                      )}
                     </button>
                     <button
                       onClick={() => setDeleteId(script.id)}
@@ -259,7 +302,10 @@ export default function ScriptsClient({ initialScripts, tests, workspaceId, canM
       {/* Add script modal */}
       <Modal
         open={modalOpen}
-        onClose={() => { setModalOpen(false); resetForm(); }}
+        onClose={() => {
+          setModalOpen(false);
+          resetForm();
+        }}
         title="Add Script"
         description="Scripts are injected into pages served through SplitLab."
         size="md"
@@ -267,17 +313,28 @@ export default function ScriptsClient({ initialScripts, tests, workspaceId, canM
         <form onSubmit={handleCreate} className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Script Type</label>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+                Script Type
+              </label>
               <select
                 value={sType}
-                onChange={(e) => { setSType(e.target.value); setSContent(''); }}
+                onChange={(e) => {
+                  setSType(e.target.value);
+                  setSContent("");
+                }}
                 className="input-base"
               >
-                {SCRIPT_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+                {SCRIPT_TYPES.map((t) => (
+                  <option key={t.value} value={t.value}>
+                    {t.label}
+                  </option>
+                ))}
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Display Name</label>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+                Display Name
+              </label>
               <input
                 type="text"
                 value={sName}
@@ -291,9 +348,9 @@ export default function ScriptsClient({ initialScripts, tests, workspaceId, canM
 
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
-              {sType === 'custom' ? 'Script Content' : 'ID / Tracking Code'}
+              {sType === "custom" ? "Script Content" : "ID / Tracking Code"}
             </label>
-            {sType === 'custom' ? (
+            {sType === "custom" ? (
               <textarea
                 value={sContent}
                 onChange={(e) => setSContent(e.target.value)}
@@ -316,10 +373,14 @@ export default function ScriptsClient({ initialScripts, tests, workspaceId, canM
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Placement</label>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+                Placement
+              </label>
               <select
                 value={sPlacement}
-                onChange={(e) => setSPlacement(e.target.value as 'head' | 'body_end')}
+                onChange={(e) =>
+                  setSPlacement(e.target.value as "head" | "body_end")
+                }
                 className="input-base"
               >
                 <option value="head">In &lt;head&gt;</option>
@@ -327,7 +388,9 @@ export default function ScriptsClient({ initialScripts, tests, workspaceId, canM
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Apply To</label>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+                Apply To
+              </label>
               <select
                 value={sTestId}
                 onChange={(e) => setSTestId(e.target.value)}
@@ -335,7 +398,9 @@ export default function ScriptsClient({ initialScripts, tests, workspaceId, canM
               >
                 <option value="">All Pages (workspace)</option>
                 {tests.map((t) => (
-                  <option key={t.id} value={t.id}>{t.name}</option>
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
                 ))}
               </select>
             </div>
@@ -346,19 +411,32 @@ export default function ScriptsClient({ initialScripts, tests, workspaceId, canM
             <div className="flex items-start gap-2 rounded-lg bg-amber-500/10 border border-amber-500/30 px-3 py-2.5 text-xs text-amber-300">
               <Info size={13} className="mt-0.5 flex-shrink-0" />
               <span>
-                This page uses a hosted URL (proxy mode). Scripts run in the SplitLab proxy wrapper —{' '}
-                <strong>GA4 / Meta Pixel pageviews work.</strong>{' '}
-                GTM click &amp; form tracking won&apos;t work (cross-origin iframe).{' '}
-                SplitLab&apos;s own conversion tracking works separately via <code className="font-mono">tracker.js</code> on the destination site.
+                This page uses a hosted URL, so SplitLab can't add scripts to
+                it. We don't own the page, so we can't change what's on it. To
+                add this script (GTM, Pixel, etc.), put it directly on your site
+                where the page lives (Lovable, Replit, your site builder, etc.).
+                <br />
+                Good news: SplitLab's own conversion tracking still works on
+                hosted URLs through tracker.js. This only affects third-party
+                scripts.
               </span>
             </div>
           )}
 
           <div className="flex justify-end gap-3 pt-2">
-            <Button variant="secondary" type="button" onClick={() => { setModalOpen(false); resetForm(); }}>
+            <Button
+              variant="secondary"
+              type="button"
+              onClick={() => {
+                setModalOpen(false);
+                resetForm();
+              }}
+            >
               Cancel
             </Button>
-            <Button type="submit" loading={saving}>Add Script</Button>
+            <Button type="submit" loading={saving}>
+              Add Script
+            </Button>
           </div>
         </form>
       </Modal>
