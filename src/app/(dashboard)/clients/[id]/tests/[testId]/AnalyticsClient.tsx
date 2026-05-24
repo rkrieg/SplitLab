@@ -1200,7 +1200,7 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
                 )}
 
                 {scanResults && (
-                  <div className="space-y-4">
+                  <div className="space-y-4 max-h-96 overflow-y-auto pr-1">
                     {scanResults.variants.map(vs => (
                       <div key={vs.variant_id}>
                         <div className="flex items-center gap-2 mb-2">
