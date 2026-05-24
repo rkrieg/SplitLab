@@ -507,7 +507,8 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
   }
 
   function openVariant(variantId: string) {
-    const url = buildVariantUrl(variantId);
+    const freshHash = crypto.randomUUID();
+    const url = buildVariantUrl(variantId, { sl_vh: freshHash });
     if (!url) { toast.error('No domain configured for this test'); return; }
     window.open(url, '_blank');
   }

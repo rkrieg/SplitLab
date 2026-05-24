@@ -13,6 +13,7 @@ export async function GET(request: NextRequest) {
   const urlPath = searchParams.get('path') || '/';
   const isScan = searchParams.get('sl_scan') === '1';
   const forcedVid = searchParams.get('sl_vid') || null;
+  const forcedVh = searchParams.get('sl_vh') || null;
 
   try {
     // 1. Resolve domain → workspace
@@ -66,8 +67,9 @@ export async function GET(request: NextRequest) {
     }
 
     // 4. Get or create session/visitor ID
+    // forcedVh: passed by the dashboard Open button to simulate a fresh visitor each time
     const existingCookie = request.cookies.get(COOKIE_NAME)?.value;
-    const visitorId = existingCookie || crypto.randomUUID();
+    const visitorId = forcedVh || existingCookie || crypto.randomUUID();
 
     // 5. Check for sticky assignment cookie for this specific test
     const stickyCookieName = `sl_test_${test.id}`;
