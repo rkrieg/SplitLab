@@ -36,6 +36,7 @@ import {
   ToggleLeft,
   Info,
   Loader2,
+  AlertTriangle,
 } from "lucide-react";
 import Spinner from "@/components/ui/Spinner";
 import Button from "@/components/ui/Button";
@@ -1261,6 +1262,15 @@ export default function AnalyticsClient({
                     </button>
                   </div>
                 </div>
+              </div>
+            )}
+
+            {test.status !== "active" && (
+              <div className="flex items-center gap-2 w-full rounded-lg bg-red-500/10 border border-red-500/30 px-4 py-2.5">
+                <AlertTriangle size={14} className="text-red-400 flex-shrink-0" />
+                <p className="text-xs text-red-400 font-medium">
+                  Please publish the test in order to see live pages.
+                </p>
               </div>
             )}
 
