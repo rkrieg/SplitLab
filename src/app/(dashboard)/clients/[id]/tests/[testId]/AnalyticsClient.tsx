@@ -32,6 +32,7 @@ import {
   Link2,
   ToggleLeft,
   Info,
+  Loader2,
 } from "lucide-react";
 import Spinner from "@/components/ui/Spinner";
 import Button from "@/components/ui/Button";
@@ -146,6 +147,7 @@ export default function AnalyticsClient({
   // Weight editing
   const [editingWeightId, setEditingWeightId] = useState<string | null>(null);
   const [weightDraft, setWeightDraft] = useState("");
+  const [savingWeightId, setSavingWeightId] = useState<string | null>(null);
 
   // Delete variant
   const [deleteVariantId, setDeleteVariantId] = useState<string | null>(null);
@@ -389,6 +391,7 @@ export default function AnalyticsClient({
       }
     }
 
+    setSavingWeightId(variantId);
     try {
       const res = await fetch(`/api/tests/${test.id}`, {
         method: "PATCH",
@@ -401,9 +404,18 @@ export default function AnalyticsClient({
       }
       const updated = await res.json();
       setTest(updated);
+      const updatedVariants: Variant[] = updated.test_variants ?? [];
+      setStats((prev) =>
+        prev.map((s) => {
+          const v = updatedVariants.find((u) => u.id === s.variant.id);
+          return v ? { ...s, variant: { ...s.variant, traffic_weight: v.traffic_weight } } : s;
+        }),
+      );
       toast.success("Weights updated");
     } catch {
       toast.error("Failed to save weights");
+    } finally {
+      setSavingWeightId(null);
     }
   }
 
@@ -1285,7 +1297,9 @@ export default function AnalyticsClient({
                                 )}
                             </td>
                             <td className={`px-5 py-3.5 ${rowBg}`}>
-                              {editingWeightId === stat.variant.id ? (
+                              {savingWeightId === stat.variant.id ? (
+                                <Loader2 size={14} className="animate-spin text-slate-400" />
+                              ) : editingWeightId === stat.variant.id ? (
                                 <input
                                   type="number"
                                   value={weightDraft}
