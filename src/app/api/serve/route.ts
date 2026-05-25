@@ -16,36 +16,62 @@ export async function GET(request: NextRequest) {
   const forcedVh = searchParams.get('sl_vh') || null;
 
   try {
-    // 1. Resolve domain → workspace
-    const { data: domainRow, error: domainError } = await db
-      .from('domains')
-      .select('workspace_id')
-      .eq('domain', domain)
-      .single();
+    const previewTestId = searchParams.get('preview_test_id') || null;
 
-    if (domainError || !domainRow) {
-      return new NextResponse(notFoundHtml(domain), {
-        status: 404,
-        headers: { 'Content-Type': 'text/html' },
-      });
-    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let test: any;
+    let workspaceId: string;
 
-    const workspaceId = domainRow.workspace_id;
+    if (previewTestId) {
+      // Preview mode: dashboard "Open" with no custom domain configured.
+      // Look up the test directly by ID — skip domain resolution and status filter.
+      const { data: testRow, error: testErr } = await db
+        .from('tests')
+        .select('*')
+        .eq('id', previewTestId)
+        .single();
 
-    // 2. Find active test matching this URL path
-    const { data: test, error: testError } = await db
-      .from('tests')
-      .select('*')
-      .eq('workspace_id', workspaceId)
-      .eq('status', 'active')
-      .eq('url_path', urlPath)
-      .single();
+      if (testErr || !testRow) {
+        return new NextResponse(notFoundHtml('preview'), {
+          status: 404,
+          headers: { 'Content-Type': 'text/html' },
+        });
+      }
+      test = testRow;
+      workspaceId = testRow.workspace_id;
+    } else {
+      // 1. Resolve domain → workspace
+      const { data: domainRow, error: domainError } = await db
+        .from('domains')
+        .select('workspace_id')
+        .eq('domain', domain)
+        .single();
 
-    if (testError || !test) {
-      return new NextResponse(notFoundHtml(domain), {
-        status: 404,
-        headers: { 'Content-Type': 'text/html' },
-      });
+      if (domainError || !domainRow) {
+        return new NextResponse(notFoundHtml(domain), {
+          status: 404,
+          headers: { 'Content-Type': 'text/html' },
+        });
+      }
+
+      workspaceId = domainRow.workspace_id;
+
+      // 2. Find active test matching this URL path
+      const { data: testRow, error: testError } = await db
+        .from('tests')
+        .select('*')
+        .eq('workspace_id', workspaceId)
+        .eq('status', 'active')
+        .eq('url_path', urlPath)
+        .single();
+
+      if (testError || !testRow) {
+        return new NextResponse(notFoundHtml(domain), {
+          status: 404,
+          headers: { 'Content-Type': 'text/html' },
+        });
+      }
+      test = testRow;
     }
 
     // 3. Fetch variants

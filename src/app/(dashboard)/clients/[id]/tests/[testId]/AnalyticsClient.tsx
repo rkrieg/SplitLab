@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, Fragment } from "react";
+import { useState, useEffect, useCallback, useRef, Fragment } from "react";
 import Link from "next/link";
 import toast from "react-hot-toast";
 import {
@@ -166,6 +166,9 @@ export default function AnalyticsClient({
   const [variantOverrides, setVariantOverrides] = useState<
     Record<string, boolean>
   >({});
+  // Variants currently being auto-checked on load (silent, no toast)
+  const [autoCheckingIds, setAutoCheckingIds] = useState<string[]>([]);
+  const autoCheckedRef = useRef<Set<string>>(new Set());
 
   // Goals (settings tab)
   const [editGoals, setEditGoals] = useState<Goal[]>(() =>
@@ -248,6 +251,40 @@ export default function AnalyticsClient({
   useEffect(() => {
     fetchAnalytics();
   }, [fetchAnalytics]);
+
+  // Auto-check tracker on load for redirect variants that have never been verified.
+  // Uses `variants` (from SSR props) not `stats` — analytics response may omit tracking_verified.
+  useEffect(() => {
+    if (variants.length === 0) return;
+    const toCheck = variants.filter(
+      (v) =>
+        v.redirect_url &&
+        v.tracking_verified == null && // null OR undefined = never checked
+        !autoCheckedRef.current.has(v.id),
+    );
+    if (toCheck.length === 0) return;
+
+    setAutoCheckingIds((prev) => [...prev, ...toCheck.map((v) => v.id)]);
+
+    for (const v of toCheck) {
+      autoCheckedRef.current.add(v.id);
+      fetch("/api/check-tracking", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: v.redirect_url, variant_id: v.id }),
+      })
+        .then((r) => r.json())
+        .then((data) => {
+          setVariantOverrides((prev) => ({ ...prev, [v.id]: data.verified }));
+          setAutoCheckingIds((prev) => prev.filter((id) => id !== v.id));
+        })
+        .catch(() => {
+          setAutoCheckingIds((prev) => prev.filter((id) => id !== v.id));
+          autoCheckedRef.current.delete(v.id); // allow retry on next render
+        });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // intentionally runs once on mount — autoCheckedRef prevents duplicates
 
   const winner = stats.find((s) => s.isWinner);
   const overallCvr = totalViews > 0 ? totalConversions / totalViews : 0;
@@ -687,39 +724,54 @@ export default function AnalyticsClient({
   function buildVariantUrl(
     variantId: string,
     extraParams: Record<string, string> = {},
-  ): string | null {
-    if (!domain) return null;
+  ): string {
     const isLocalhost =
       window.location.hostname === "localhost" ||
       window.location.hostname === "127.0.0.1";
-    const rawDomain = domain.replace(/^https?:\/\//, "");
     const params = new URLSearchParams({ sl_vid: variantId, ...extraParams });
+    if (!domain) {
+      // No custom domain — use preview mode via test ID so free users can still open variants
+      const base = isLocalhost
+        ? `http://localhost:${window.location.port || 3000}`
+        : appUrl;
+      return `${base}/api/serve?preview_test_id=${test.id}&${params}`;
+    }
+    const rawDomain = domain.replace(/^https?:\/\//, "");
     if (isLocalhost) {
       return `http://localhost:${window.location.port || 3000}/api/serve?domain=${encodeURIComponent(rawDomain)}&path=${encodeURIComponent(test.url_path)}&${params}`;
     }
     return `https://${domain}${test.url_path}?${params}`;
   }
 
+  /** Open the full test as a fresh visitor — variant is assigned by SplitLab (no forced variant) */
+  function buildTestPreviewUrl(): string {
+    const freshHash = crypto.randomUUID();
+    const isLocalhost =
+      window.location.hostname === "localhost" ||
+      window.location.hostname === "127.0.0.1";
+    if (!domain) {
+      const base = isLocalhost
+        ? `http://localhost:${window.location.port || 3000}`
+        : appUrl;
+      return `${base}/api/serve?preview_test_id=${test.id}&sl_vh=${freshHash}`;
+    }
+    const rawDomain = domain.replace(/^https?:\/\//, "");
+    if (isLocalhost) {
+      return `http://localhost:${window.location.port || 3000}/api/serve?domain=${encodeURIComponent(rawDomain)}&path=${encodeURIComponent(test.url_path)}&sl_vh=${freshHash}`;
+    }
+    return `https://${domain}${test.url_path}?sl_vh=${freshHash}`;
+  }
+
   function openVariant(variantId: string) {
     const freshHash = crypto.randomUUID();
-    const url = buildVariantUrl(variantId, { sl_vh: freshHash });
-    if (!url) {
-      toast.error("No domain configured for this test");
-      return;
-    }
-    window.open(url, "_blank");
+    window.open(buildVariantUrl(variantId, { sl_vh: freshHash }), "_blank");
   }
 
   async function scanPage(variantId: string) {
     const targetVariant = variants.find((v) => v.id === variantId);
     if (!targetVariant) return;
 
-    if (!domain) {
-      toast.error("No domain configured for this test");
-      return;
-    }
-
-    const scanUrl = buildVariantUrl(variantId, { sl_scan: "1" })!;
+    const scanUrl = buildVariantUrl(variantId, { sl_scan: "1" });
     const scanStartedAt = Date.now();
     window.open(scanUrl, "_blank");
     setScanning(true);
@@ -1012,13 +1064,34 @@ export default function AnalyticsClient({
                   </button>
                 </div>
               ) : (
-                <button
-                  onClick={() => setEditingPath(true)}
-                  className="text-sm font-mono text-slate-500 dark:text-slate-400 hover:text-indigo-400 transition-colors"
-                  title="Click to edit path"
-                >
-                  {test.url_path}
-                </button>
+                <div className="flex flex-col gap-1">
+                  <button
+                    onClick={() => setEditingPath(true)}
+                    className="text-sm font-mono text-slate-500 dark:text-slate-400 hover:text-indigo-400 transition-colors text-left"
+                    title="Click to edit path"
+                  >
+                    {test.url_path}
+                  </button>
+                  {/* No domain configured — show the preview URL so it can be shared/tested */}
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] text-slate-500">Preview URL:</span>
+                    <code className="text-[11px] text-indigo-400 font-mono truncate max-w-[320px]">
+                      {appUrl}/api/serve?preview_test_id={test.id}
+                    </code>
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(
+                          `${appUrl}/api/serve?preview_test_id=${test.id}`,
+                        );
+                        toast.success("Preview URL copied");
+                      }}
+                      className="text-slate-500 hover:text-slate-300 transition-colors flex-shrink-0"
+                      title="Copy preview URL"
+                    >
+                      <Copy size={11} />
+                    </button>
+                  </div>
+                </div>
               )}
             </div>
           </div>
@@ -1044,6 +1117,14 @@ export default function AnalyticsClient({
                 <p className="text-slate-500 text-[10px]">CVR</p>
               </div>
             </div>
+
+            <button
+              onClick={() => window.open(buildTestPreviewUrl(), "_blank")}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-slate-500/10 border border-slate-500/20 text-slate-400 hover:bg-slate-500/20 hover:text-slate-300"
+              title="Open the test as a fresh visitor — SplitLab assigns the variant"
+            >
+              <ExternalLink size={14} /> Preview Test
+            </button>
 
             <button
               onClick={toggleStatus}
@@ -1268,18 +1349,6 @@ export default function AnalyticsClient({
                                     className="text-green-400"
                                   />
                                 )}
-                                {stat.variant.redirect_url &&
-                                  (verified === true ? (
-                                    <ShieldCheck
-                                      size={11}
-                                      className="text-green-400"
-                                    />
-                                  ) : verified === false ? (
-                                    <ShieldX
-                                      size={11}
-                                      className="text-red-400"
-                                    />
-                                  ) : null)}
                               </div>
                               {stat.variant.variant_type === "hosted" &&
                                 stat.variant.hosted_url &&
@@ -1295,6 +1364,70 @@ export default function AnalyticsClient({
                                     {stat.variant.redirect_url}
                                   </p>
                                 )}
+                              {/* HTML/hosted variants: tracker.js is always injected by SplitLab */}
+                              {!stat.variant.redirect_url && !isEditing && (
+                                <div className="flex items-center gap-1.5 mt-1">
+                                  <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-green-500/10 border border-green-500/20 text-green-400">
+                                    <ShieldCheck size={10} /> Tracker injected
+                                  </span>
+                                </div>
+                              )}
+                              {stat.variant.redirect_url && !isEditing && (
+                                <div className="flex items-center gap-1.5 mt-1">
+                                  {checkingTracking === stat.variant.id ||
+                                  autoCheckingIds.includes(stat.variant.id) ? (
+                                    <span className="inline-flex items-center gap-1 text-[10px] text-slate-500">
+                                      <Spinner size="sm" /> Checking…
+                                    </span>
+                                  ) : verified === true ? (
+                                    <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-green-500/10 border border-green-500/20 text-green-400">
+                                      <ShieldCheck size={10} /> Tracker detected
+                                      <button
+                                        onClick={() =>
+                                          checkTracking(
+                                            stat.variant.id,
+                                            stat.variant.redirect_url!,
+                                          )
+                                        }
+                                        className="ml-0.5 opacity-60 hover:opacity-100 transition-opacity"
+                                        title="Re-check"
+                                      >
+                                        <RefreshCw size={9} />
+                                      </button>
+                                    </span>
+                                  ) : verified === false ? (
+                                    <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-red-500/10 border border-red-500/20 text-red-400">
+                                      <ShieldX size={10} /> Tracker not found
+                                      <button
+                                        onClick={() =>
+                                          checkTracking(
+                                            stat.variant.id,
+                                            stat.variant.redirect_url!,
+                                          )
+                                        }
+                                        className="ml-0.5 opacity-60 hover:opacity-100 transition-opacity"
+                                        title="Re-check"
+                                      >
+                                        <RefreshCw size={9} />
+                                      </button>
+                                    </span>
+                                  ) : (
+                                    // Auto-check failed or hasn't fired yet — allow manual trigger
+                                    <button
+                                      onClick={() =>
+                                        checkTracking(
+                                          stat.variant.id,
+                                          stat.variant.redirect_url!,
+                                        )
+                                      }
+                                      className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-slate-500/10 border border-slate-500/20 text-slate-400 hover:text-slate-300 transition-colors"
+                                    >
+                                      <ShieldCheck size={10} className="opacity-50" />{" "}
+                                      Check tracker
+                                    </button>
+                                  )}
+                                </div>
+                              )}
                             </td>
                             <td className={`px-5 py-3.5 ${rowBg}`}>
                               {savingWeightId === stat.variant.id ? (
@@ -1385,29 +1518,25 @@ export default function AnalyticsClient({
                                     {formatPercent(uplift)}
                                   </span>
                                 )}
-                                {domain && (
-                                  <>
-                                    <button
-                                      onClick={() =>
-                                        openVariant(stat.variant.id)
-                                      }
-                                      className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-slate-500/10 border border-slate-500/20 text-slate-400 hover:bg-slate-500/20 hover:text-slate-300 transition-colors"
-                                      title={`Open ${stat.variant.name}`}
-                                    >
-                                      <ExternalLink size={11} />
-                                      Open
-                                    </button>
-                                    <button
-                                      onClick={() => scanPage(stat.variant.id)}
-                                      disabled={scanning}
-                                      className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 hover:bg-indigo-500/20 transition-colors disabled:opacity-40"
-                                      title={`Scan ${stat.variant.name}`}
-                                    >
-                                      <ScanLine size={11} />
-                                      Scan
-                                    </button>
-                                  </>
-                                )}
+                                <button
+                                  onClick={() =>
+                                    openVariant(stat.variant.id)
+                                  }
+                                  className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-slate-500/10 border border-slate-500/20 text-slate-400 hover:bg-slate-500/20 hover:text-slate-300 transition-colors"
+                                  title={`Open ${stat.variant.name}`}
+                                >
+                                  <ExternalLink size={11} />
+                                  Open
+                                </button>
+                                <button
+                                  onClick={() => scanPage(stat.variant.id)}
+                                  disabled={scanning}
+                                  className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 hover:bg-indigo-500/20 transition-colors disabled:opacity-40"
+                                  title={`Scan ${stat.variant.name}`}
+                                >
+                                  <ScanLine size={11} />
+                                  Scan
+                                </button>
                                 <button
                                   onClick={() => startEditVariant(stat.variant)}
                                   className={`p-1 rounded transition-colors ${isEditing ? "bg-indigo-500/20 text-indigo-400" : "text-slate-400 dark:text-slate-600 hover:text-slate-700 dark:hover:text-slate-300"}`}
@@ -1832,7 +1961,8 @@ export default function AnalyticsClient({
               </div>
             </div>
 
-            {/* Conversion Goals */}
+            {/* Conversion Goals — hidden for now; uncomment to re-enable */}
+            {false && (
             <div className="card overflow-hidden">
               <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700">
                 <div className="flex items-center justify-between">
@@ -1946,7 +2076,6 @@ export default function AnalyticsClient({
                           Tracks tel: link clicks
                         </p>
                       )}
-                      {/* is_primary UI hidden — all goals count equally toward conversions */}
                     </div>
                   </div>
                 ))}
@@ -1962,6 +2091,7 @@ export default function AnalyticsClient({
                 </div>
               </form>
             </div>
+            )}
 
             {/* Tracking Setup */}
             <div className="card overflow-hidden">
