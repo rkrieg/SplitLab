@@ -179,6 +179,7 @@ export default function AnalyticsClient({
   const [addVariantOpen, setAddVariantOpen] = useState(false);
   const [newVariantName, setNewVariantName] = useState("");
   const [newVariantUrl, setNewVariantUrl] = useState("");
+  const [newVariantUrlError, setNewVariantUrlError] = useState("");
   const [newVariantMode, setNewVariantMode] = useState<"url" | "html">("url");
   const [newVariantHtml, setNewVariantHtml] = useState("");
   const [addingVariant, setAddingVariant] = useState(false);
@@ -604,6 +605,18 @@ export default function AnalyticsClient({
 
   async function handleAddVariant(e: React.FormEvent) {
     e.preventDefault();
+    if (newVariantMode === "url") {
+      const trimmed = newVariantUrl.trim();
+      if (!trimmed) {
+        setNewVariantUrlError("Please enter a destination URL.");
+        return;
+      }
+      try { new URL(trimmed); } catch {
+        setNewVariantUrlError("Please enter a valid URL (e.g. https://example.com).");
+        return;
+      }
+      setNewVariantUrlError("");
+    }
     setAddingVariant(true);
     try {
       const count = variants.length + 1;
@@ -2343,13 +2356,17 @@ export default function AnalyticsClient({
                 Destination URL
               </label>
               <input
-                type="url"
+                type="text"
                 value={newVariantUrl}
-                onChange={(e) => setNewVariantUrl(e.target.value)}
-                className="input-base font-mono text-sm"
+                onChange={(e) => { setNewVariantUrl(e.target.value); if (newVariantUrlError) setNewVariantUrlError(""); }}
+                className={`input-base font-mono text-sm ${newVariantUrlError ? "border-red-500 focus:ring-red-500" : ""}`}
                 placeholder="https://..."
-                required
               />
+              {newVariantUrlError && (
+                <p className="mt-1.5 text-xs text-red-500 flex items-center gap-1">
+                  <AlertTriangle size={11} className="flex-shrink-0" /> {newVariantUrlError}
+                </p>
+              )}
             </div>
           ) : (
             <div>
