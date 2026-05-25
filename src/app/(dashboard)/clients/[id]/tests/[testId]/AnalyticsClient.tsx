@@ -31,6 +31,7 @@ import {
   FormInput,
   Link2,
   ToggleLeft,
+  Info,
 } from "lucide-react";
 import Spinner from "@/components/ui/Spinner";
 import Button from "@/components/ui/Button";
@@ -1676,13 +1677,16 @@ export default function AnalyticsClient({
                     <p className="font-medium text-slate-800 dark:text-slate-200 text-sm">
                       Page Scanner
                     </p>
-                    <p className="text-slate-500 text-xs">
-                      {scanning
-                        ? `Scanning ${scannedVariantName}…`
-                        : scannedVariantName
-                          ? `Last scanned: ${scannedVariantName}`
-                          : "Click Scan on any variant in the Overview tab to detect elements"}
-                    </p>
+                    {scanning || scannedVariantName ? (
+                      <p className="text-slate-500 text-xs">
+                        {scanning ? `Scanning ${scannedVariantName}…` : `Last scanned: ${scannedVariantName}`}
+                      </p>
+                    ) : (
+                      <div className="flex items-center gap-1.5 rounded-lg bg-amber-500/10 border border-amber-500/30 px-2.5 py-1.5 text-xs text-amber-600 dark:text-amber-300 mt-1">
+                        <Info size={12} className="flex-shrink-0" />
+                        <span>Click Scan on any variant in the Overview tab to detect elements</span>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1956,10 +1960,10 @@ export default function AnalyticsClient({
                     <p className="font-medium text-slate-800 dark:text-slate-200 text-sm">
                       Tracking Snippet
                     </p>
-                    <p className="text-slate-500 text-xs">
-                      Paste before &lt;/body&gt; on your external landing page
-                      (redirect mode only)
-                    </p>
+                    <div className="flex items-center gap-1.5 rounded-lg bg-amber-500/10 border border-amber-500/30 px-2.5 py-1.5 text-xs text-amber-600 dark:text-amber-300 mt-1">
+                      <Info size={12} className="flex-shrink-0" />
+                      <span>Paste before <code className="font-mono">&lt;/body&gt;</code> on your external landing page (redirect mode only)</span>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1992,15 +1996,12 @@ export default function AnalyticsClient({
                 <h3 className="font-medium text-slate-800 dark:text-slate-200">
                   Head Scripts
                 </h3>
-                <p className="text-slate-500 text-xs mt-1">
-                  Custom scripts injected into the page{" "}
-                  <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded">
-                    &lt;head&gt;
-                  </code>
-                  . Only works for custom HTML pages, not hosted URLs (Lovable,
-                  Replit, site builders, etc.). For third-party scripts (GTM,
-                  Pixel, etc.), add them directly to your HTML site.
-                </p>
+                <div className="flex items-start gap-2 rounded-lg bg-amber-500/10 border border-amber-500/30 px-3 py-2.5 text-xs text-amber-600 dark:text-amber-300 mt-2">
+                  <Info size={13} className="mt-0.5 flex-shrink-0" />
+                  <span>
+                    Only works for custom HTML pages — not hosted URLs (Lovable, Replit, site builders, etc.). For third-party scripts (GTM, Pixel, etc.), add them directly to your site.
+                  </span>
+                </div>
               </div>
               <div className="px-5 py-4 space-y-3">
                 {allPureRedirect && (
