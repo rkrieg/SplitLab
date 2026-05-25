@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useSession } from 'next-auth/react';
+import { useSearchParams } from 'next/navigation';
 import {
   CreditCard, CheckCircle, AlertTriangle, ExternalLink,
   Loader2, FlaskConical, Building2, ArrowRight, Zap,
@@ -45,6 +47,8 @@ export default function BillingClient({
   initialStatus:    string;
   hasStripeCustomer: boolean;
 }) {
+  const { update } = useSession();
+  const searchParams = useSearchParams();
   const [usage,           setUsage]           = useState<UsageData | null>(null);
   const [portalLoading,   setPortalLoading]   = useState(false);
   const [checkoutLoading, setCheckoutLoading] = useState<string | null>(null);
@@ -54,6 +58,13 @@ export default function BillingClient({
   const isFree      = plan === 'free';
   const isPastDue   = initialStatus === 'past_due';
   const isCanceled  = initialStatus === 'canceled';
+
+  // After Stripe redirect, refresh JWT so sidebar plan badge updates without re-login
+  useEffect(() => {
+    if (searchParams.get('upgraded') === '1') {
+      update();
+    }
+  }, [searchParams, update]);
 
   useEffect(() => {
     fetch('/api/usage')

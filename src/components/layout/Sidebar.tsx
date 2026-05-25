@@ -42,13 +42,15 @@ const globalNavItems = [
   { href: '/settings',  label: 'Settings',  icon: Settings },
 ];
 
-function getClientNavItems(clientId: string) {
-  return [
-    { href: `/clients/${clientId}/pages`,   label: 'Pages',   icon: FileCode2 },
-    { href: `/clients/${clientId}/scripts`, label: 'Scripts', icon: Code2 },
-    { href: `/clients/${clientId}/domains`, label: 'Domains', icon: Globe },
+function getClientNavItems(clientId: string, isViewer: boolean) {
+  const items = [
+    { href: `/clients/${clientId}/pages`,    label: 'Pages',    icon: FileCode2 },
+    { href: `/clients/${clientId}/scripts`,  label: 'Scripts',  icon: Code2 },
+    { href: `/clients/${clientId}/domains`,  label: 'Domains',  icon: Globe },
+    { href: '/billing',                      label: 'Billing',  icon: CreditCard },
     { href: `/clients/${clientId}/settings`, label: 'Settings', icon: Settings },
   ];
+  return isViewer ? items.filter(i => i.href !== '/billing') : items;
 }
 
 export default function Sidebar() {
@@ -59,6 +61,7 @@ export default function Sidebar() {
   const [mounted, setMounted] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [clients, setClients] = useState<Client[]>([]);
+  const [clientsLoaded, setClientsLoaded] = useState(false);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [newClientName, setNewClientName] = useState('');
@@ -79,9 +82,6 @@ export default function Sidebar() {
   const userPlan  = session?.user?.plan ?? 'free';
   // Show multi-client dropdown only for admins or plans that allow > 1 client
   const multiClientEnabled = isAdmin || (PLAN_LIMITS[userPlan]?.clients ?? 1) > 1;
-  // Show Domains link only for plans that include at least 1 domain
-  const canUseDomains = isAdmin || (PLAN_LIMITS[userPlan]?.domains ?? 0) > 0;
-
   // Fetch clients on mount
   useEffect(() => {
     fetch('/api/clients')
@@ -91,13 +91,19 @@ export default function Sidebar() {
           setClients(data.map((c: Record<string, unknown>) => ({ id: c.id as string, name: c.name as string, slug: c.slug as string })));
         }
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setClientsLoaded(true));
   }, []);
 
-  // Single-client users: auto-navigate into their account from /dashboard
+  // Single-client users: auto-navigate into their client workspace from global routes
   useEffect(() => {
-    if (!multiClientEnabled && clients.length > 0 && pathname === '/dashboard') {
-      router.replace(`/clients/${clients[0].id}/pages`);
+    if (!multiClientEnabled && clients.length > 0) {
+      const clientId = clients[0].id;
+      if (pathname === '/dashboard') router.replace(`/clients/${clientId}/pages`);
+      else if (pathname === '/domains') router.replace(`/clients/${clientId}/domains`);
+      else if (pathname === '/pages') router.replace(`/clients/${clientId}/pages`);
+      else if (pathname === '/scripts') router.replace(`/clients/${clientId}/scripts`);
+      else if (pathname === '/settings') router.replace(`/clients/${clientId}/settings`);
     }
   }, [multiClientEnabled, clients, pathname, router]);
 
@@ -112,15 +118,13 @@ export default function Sidebar() {
     return () => document.removeEventListener('mousedown', handleClick);
   }, []);
 
-  const navItems = selectedClient
-    ? getClientNavItems(selectedClient.id).filter(item => {
-        if (item.href.includes('/domains') && !canUseDomains) return false;
-        return true;
-      })
+  const effectiveClient = selectedClient ?? (!multiClientEnabled && clients.length > 0 ? clients[0] : null);
+
+  const navItems = effectiveClient
+    ? getClientNavItems(effectiveClient.id, isViewer)
     : globalNavItems.filter(item => {
-        if (item.href === '/team'    && !isAdmin)      return false; // admin only
-        if (item.href === '/billing' && isViewer)      return false; // not for viewers
-        if (item.href === '/domains' && !canUseDomains) return false; // paid plans only
+        if (item.href === '/team'    && !isAdmin)  return false; // admin only
+        if (item.href === '/billing' && isViewer)  return false; // not for viewers
         return true;
       });
 
@@ -275,6 +279,12 @@ export default function Sidebar() {
               </div>
             )}
           </>
+        ) : !clientsLoaded ? (
+          /* Skeleton while clients load */
+          <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+            <div className="w-4 h-4 rounded bg-slate-200 dark:bg-slate-700 animate-pulse flex-shrink-0" />
+            <div className="h-3 rounded bg-slate-200 dark:bg-slate-700 animate-pulse flex-1" />
+          </div>
         ) : (
           /* Static account label for single-client plans (free / pro) */
           <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm">
@@ -289,21 +299,31 @@ export default function Sidebar() {
 
       {/* Navigation */}
       <nav className="flex-1 px-3 py-2 space-y-0.5">
-        {navItems.map(({ href, label, icon: Icon }) => (
-          <Link
-            key={href}
-            href={href}
-            className={cn(
-              'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
-              isActive(href)
-                ? 'bg-indigo-600/20 text-indigo-400 border border-indigo-600/30'
-                : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
-            )}
-          >
-            <Icon size={16} className="flex-shrink-0" />
-            {label}
-          </Link>
-        ))}
+        {!clientsLoaded && !multiClientEnabled ? (
+          // Show skeleton while clients load to prevent Dashboard flash
+          Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} className="flex items-center gap-3 px-3 py-2 rounded-lg">
+              <div className="w-4 h-4 rounded bg-slate-200 dark:bg-slate-700 animate-pulse flex-shrink-0" />
+              <div className="h-3 rounded bg-slate-200 dark:bg-slate-700 animate-pulse" style={{ width: `${55 + (i % 3) * 15}%` }} />
+            </div>
+          ))
+        ) : (
+          navItems.map(({ href, label, icon: Icon }) => (
+            <Link
+              key={href}
+              href={href}
+              className={cn(
+                'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
+                isActive(href)
+                  ? 'bg-indigo-600/20 text-indigo-400 border border-indigo-600/30'
+                  : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
+              )}
+            >
+              <Icon size={16} className="flex-shrink-0" />
+              {label}
+            </Link>
+          ))
+        )}
       </nav>
 
       {/* User menu */}
@@ -328,6 +348,21 @@ export default function Sidebar() {
 
         {userMenuOpen && (
           <div className="mt-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
+            {/* Current plan + upgrade */}
+            <div className="px-3 py-2 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between gap-2">
+              <span className="text-xs text-slate-500 dark:text-slate-400 capitalize">
+                {userPlan} plan
+              </span>
+              {!isAdmin && (
+                <Link
+                  href="/billing"
+                  onClick={() => setUserMenuOpen(false)}
+                  className="text-xs font-medium text-indigo-400 hover:text-indigo-300 transition-colors"
+                >
+                  {userPlan === 'free' ? 'Upgrade' : 'Manage plan'}
+                </Link>
+              )}
+            </div>
             {mounted && (
               <button
                 onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}

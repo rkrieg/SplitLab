@@ -3,6 +3,7 @@ import { redirect, notFound } from 'next/navigation';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { CNAME_TARGET, VERCEL_A_RECORD } from '@/lib/constants';
+import { PLAN_LIMITS } from '@/lib/plans';
 import Header from '@/components/layout/Header';
 import DomainsClient from './DomainsClient';
 
@@ -22,6 +23,9 @@ export default async function ClientDomainsPage({ params }: { params: { id: stri
     .eq('workspace_id', workspace.id)
     .order('created_at', { ascending: false });
 
+  const userPlan = session.user.plan ?? 'free';
+  const canAddDomain = session.user.role === 'admin' || (PLAN_LIMITS[userPlan]?.domains ?? 0) > 0;
+
   return (
     <div>
       <Header title="Domains" subtitle={client.name} />
@@ -32,6 +36,7 @@ export default async function ClientDomainsPage({ params }: { params: { id: stri
           appHostname={CNAME_TARGET}
           appARecord={VERCEL_A_RECORD}
           canManage={session.user.role !== 'viewer'}
+          canAddDomain={canAddDomain}
         />
       </div>
     </div>

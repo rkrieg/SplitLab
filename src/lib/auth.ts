@@ -50,11 +50,20 @@ export const authOptions: NextAuthOptions = {
     }),
   ],
   callbacks: {
-    async jwt({ token, user }) {
+    async jwt({ token, user, trigger }) {
       if (user) {
         token.id = user.id;
         token.role = user.role as UserRole;
         token.plan = user.plan ?? 'free';
+      }
+      // Re-read plan from DB when session is explicitly refreshed (e.g. after Stripe upgrade)
+      if (trigger === 'update' && token.id) {
+        const { data } = await db
+          .from('users')
+          .select('plan')
+          .eq('id', token.id as string)
+          .single();
+        if (data?.plan) token.plan = data.plan;
       }
       return token;
     },

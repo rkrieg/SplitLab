@@ -5,7 +5,7 @@ import { db } from '@/lib/supabase-server';
 import Header from '@/components/layout/Header';
 import Link from 'next/link';
 import { Globe, CheckCircle, Clock } from 'lucide-react';
-import EmptyState from '@/components/ui/EmptyState';
+import AddDomainButton from './AddDomainButton';
 
 interface DomainRow {
   id: string;
@@ -88,11 +88,14 @@ export default async function AllDomainsPage() {
       />
       <div className="p-6">
         {domains.length === 0 ? (
-          <EmptyState
-            icon={Globe}
-            title="No domains configured"
-            description="Add a custom domain inside a client workspace to route A/B test traffic through your own URL."
-          />
+          <div className="card p-10 text-center max-w-md mx-auto">
+            <Globe className="mx-auto text-slate-600 mb-3" size={32} />
+            <p className="text-slate-700 dark:text-slate-300 font-medium mb-1">No domains configured</p>
+            <p className="text-slate-400 dark:text-slate-500 text-sm mb-4">
+              Add a custom domain to route A/B test traffic through your client&apos;s own URL.
+            </p>
+            <AddDomainButton />
+          </div>
         ) : (
           <>
             {/* Stats */}

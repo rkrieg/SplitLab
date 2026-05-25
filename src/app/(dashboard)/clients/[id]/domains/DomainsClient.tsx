@@ -33,11 +33,13 @@ interface Props {
   appHostname: string;
   appARecord: string;
   canManage: boolean;
+  canAddDomain: boolean;
 }
 
-export default function DomainsClient({ initialDomains, workspaceId, appHostname, appARecord, canManage }: Props) {
+export default function DomainsClient({ initialDomains, workspaceId, appHostname, appARecord, canManage, canAddDomain }: Props) {
   const [domains, setDomains] = useState(initialDomains);
   const [modalOpen, setModalOpen] = useState(false);
+  const [upgradeAlertOpen, setUpgradeAlertOpen] = useState(false);
   const [addBaseDomain, setAddBaseDomain] = useState('');
   const [addMode, setAddMode] = useState<'root' | 'subdomain'>('root');
   const [addSubdomain, setAddSubdomain] = useState('');
@@ -402,7 +404,7 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
           </p>
         </div>
         {canManage && (
-          <Button onClick={() => { resetAddModal(); setModalOpen(true); }}>
+          <Button onClick={() => { if (!canAddDomain) { setUpgradeAlertOpen(true); return; } resetAddModal(); setModalOpen(true); }}>
             <Plus size={16} /> Add Domain
           </Button>
         )}
@@ -416,7 +418,7 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
             Add a custom domain to serve A/B tests on your client&apos;s own URL.
           </p>
           {canManage && (
-            <button onClick={() => { resetAddModal(); setModalOpen(true); }} className="btn-primary mt-4 text-sm">
+            <button onClick={() => { if (!canAddDomain) { setUpgradeAlertOpen(true); return; } resetAddModal(); setModalOpen(true); }} className="btn-primary mt-4 text-sm">
               <Plus size={14} /> Add Domain
             </button>
           )}
@@ -461,6 +463,32 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
           </div>
         </form>
       </Modal>
+
+      {/* Upgrade required alert */}
+      {upgradeAlertOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl p-6 w-full max-w-sm mx-4 shadow-2xl">
+            <div className="flex items-start justify-between gap-3 mb-3">
+              <div className="w-9 h-9 rounded-lg bg-indigo-500/20 flex items-center justify-center flex-shrink-0">
+                <Globe size={18} className="text-indigo-400" />
+              </div>
+              <button onClick={() => setUpgradeAlertOpen(false)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors">
+                <XCircle size={18} />
+              </button>
+            </div>
+            <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100 mb-1">Custom Domains require a paid plan</h3>
+            <p className="text-sm text-slate-500 dark:text-slate-400 mb-5">
+              Please update your plan to add a domain.{' '}
+            </p>
+            <a
+              href="/billing"
+              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold transition-colors"
+            >
+              Upgrade Plan
+            </a>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
