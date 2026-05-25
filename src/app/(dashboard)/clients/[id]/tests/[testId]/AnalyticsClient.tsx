@@ -1,7 +1,10 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef, Fragment } from "react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
+
+const CodeEditor = dynamic(() => import("@/components/pages/CodeEditor"), { ssr: false });
 import toast from "react-hot-toast";
 import {
   Download,
@@ -143,6 +146,12 @@ export default function AnalyticsClient({
     proxy_mode: true,
   });
   const [savingVariant, setSavingVariant] = useState(false);
+
+  // HTML editor modal
+  const [htmlEditVariant, setHtmlEditVariant] = useState<Variant | null>(null);
+  const [htmlDraft, setHtmlDraft] = useState("");
+  const [loadingHtml, setLoadingHtml] = useState(false);
+  const [savingHtml, setSavingHtml] = useState(false);
 
   // Weight editing
   const [editingWeightId, setEditingWeightId] = useState<string | null>(null);
@@ -501,6 +510,46 @@ export default function AnalyticsClient({
       toast.error("Failed to save");
     } finally {
       setSavingVariant(false);
+    }
+  }
+
+  async function openHtmlEditor(variant: Variant) {
+    setHtmlEditVariant(variant);
+    setHtmlDraft("");
+    const pageId = variant.pages?.id;
+    if (!pageId) return;
+    setLoadingHtml(true);
+    try {
+      const res = await fetch(`/api/pages/${pageId}`);
+      const data = await res.json();
+      setHtmlDraft(data.html_content || "");
+    } catch {
+      toast.error("Failed to load HTML");
+    } finally {
+      setLoadingHtml(false);
+    }
+  }
+
+  async function saveHtml() {
+    const pageId = htmlEditVariant?.pages?.id;
+    if (!pageId) return;
+    setSavingHtml(true);
+    try {
+      const res = await fetch(`/api/pages/${pageId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ html_content: htmlDraft }),
+      });
+      if (!res.ok) {
+        toast.error("Failed to save HTML");
+        return;
+      }
+      toast.success("HTML updated — live variant will reflect the changes");
+      setHtmlEditVariant(null);
+    } catch {
+      toast.error("Failed to save HTML");
+    } finally {
+      setSavingHtml(false);
     }
   }
 
@@ -1571,23 +1620,35 @@ export default function AnalyticsClient({
                                       className="input-base text-sm"
                                     />
                                   </div>
-                                  <div>
-                                    <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">
-                                      Destination URL
-                                    </label>
-                                    <input
-                                      type="url"
-                                      value={variantDraft.redirect_url}
-                                      onChange={(e) =>
-                                        setVariantDraft({
-                                          ...variantDraft,
-                                          redirect_url: e.target.value,
-                                        })
-                                      }
-                                      className="input-base text-sm font-mono"
-                                      placeholder="https://..."
-                                    />
-                                  </div>
+                                  {stat.variant.pages?.id ? (
+                                    <div className="flex items-end">
+                                      <button
+                                        onClick={() => openHtmlEditor(stat.variant)}
+                                        className="btn-secondary text-sm flex items-center gap-2"
+                                      >
+                                        <FileCode2 size={14} />
+                                        Edit HTML
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <div>
+                                      <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">
+                                        Destination URL
+                                      </label>
+                                      <input
+                                        type="url"
+                                        value={variantDraft.redirect_url}
+                                        onChange={(e) =>
+                                          setVariantDraft({
+                                            ...variantDraft,
+                                            redirect_url: e.target.value,
+                                          })
+                                        }
+                                        className="input-base text-sm font-mono"
+                                        placeholder="https://..."
+                                      />
+                                    </div>
+                                  )}
                                 </div>
 
                                 <div className="flex items-center gap-4 mt-3">
@@ -2310,6 +2371,60 @@ export default function AnalyticsClient({
         description="This will permanently delete the variant and its event data. Traffic weights will need to be adjusted."
         loading={deletingVariant}
       />
+
+      {/* HTML Editor Modal */}
+      {htmlEditVariant && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          onClick={() => !savingHtml && setHtmlEditVariant(null)}
+        >
+          <div
+            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl w-full max-w-4xl flex flex-col max-h-[90vh]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-slate-700 flex-shrink-0">
+              <div>
+                <h3 className="font-semibold text-slate-900 dark:text-slate-100">
+                  Edit HTML — {htmlEditVariant.name}
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Changes go live immediately after saving.
+                </p>
+              </div>
+              <button
+                onClick={() => setHtmlEditVariant(null)}
+                disabled={savingHtml}
+                className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 transition-colors"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-auto min-h-0">
+              {loadingHtml ? (
+                <div className="flex items-center justify-center h-64">
+                  <Loader2 size={20} className="animate-spin text-slate-400" />
+                </div>
+              ) : (
+                <CodeEditor value={htmlDraft} onChange={setHtmlDraft} height="60vh" />
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-3 px-5 py-4 border-t border-slate-200 dark:border-slate-700 flex-shrink-0">
+              <button
+                onClick={() => setHtmlEditVariant(null)}
+                disabled={savingHtml}
+                className="btn-secondary text-sm"
+              >
+                Cancel
+              </button>
+              <Button size="sm" onClick={saveHtml} loading={savingHtml}>
+                <Check size={13} /> Save HTML
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
