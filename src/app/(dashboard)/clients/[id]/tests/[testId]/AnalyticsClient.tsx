@@ -154,6 +154,18 @@ export default function AnalyticsClient({
   const [loadingHtml, setLoadingHtml] = useState(false);
   const [savingHtml, setSavingHtml] = useState(false);
 
+  // Tracker card dismissal (persisted per test in localStorage)
+  const trackerDismissKey = `sl_tracker_dismissed_${test.id}`;
+  const [trackerCardDismissed, setTrackerCardDismissed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return localStorage.getItem(`sl_tracker_dismissed_${initialTest.id}`) === "1";
+  });
+
+  function dismissTrackerCard() {
+    localStorage.setItem(trackerDismissKey, "1");
+    setTrackerCardDismissed(true);
+  }
+
   // Weight editing
   const [editingWeightId, setEditingWeightId] = useState<string | null>(null);
   const [weightDraft, setWeightDraft] = useState("");
@@ -1231,7 +1243,7 @@ export default function AnalyticsClient({
         {/* ─── OVERVIEW TAB ─── */}
         {tab === "overview" && (
           <>
-            {variants.some((v) => v.redirect_url) && (
+            {variants.some((v) => v.redirect_url) && (anyTrackerMissing || !trackerCardDismissed) && (
               <div className={`flex items-start gap-3 rounded-xl p-4 border ${anyTrackerMissing ? "bg-red-500/10 border-red-500/40" : "bg-indigo-500/10 border-indigo-500/30"}`}>
                 <Code2
                   size={16}
@@ -1262,6 +1274,15 @@ export default function AnalyticsClient({
                     </button>
                   </div>
                 </div>
+                {!anyTrackerMissing && (
+                  <button
+                    onClick={dismissTrackerCard}
+                    className="p-1 rounded hover:bg-indigo-500/20 text-indigo-400/60 hover:text-indigo-400 transition-colors flex-shrink-0"
+                    title="Dismiss"
+                  >
+                    <X size={14} />
+                  </button>
+                )}
               </div>
             )}
 
