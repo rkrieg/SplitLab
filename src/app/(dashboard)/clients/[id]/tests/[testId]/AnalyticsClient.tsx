@@ -235,6 +235,14 @@ export default function AnalyticsClient({
     variants.length > 0 &&
     variants.every((v) => !!v.redirect_url && v.proxy_mode === false);
 
+  const anyTrackerMissing = variants.some(
+    (v) =>
+      !!v.redirect_url &&
+      (variantOverrides[v.id] !== undefined
+        ? variantOverrides[v.id]
+        : v.tracking_verified) === false,
+  );
+
   // ─── Analytics ──────────────────────────────────────────────────────
 
   const fetchAnalytics = useCallback(async () => {
@@ -1223,14 +1231,16 @@ export default function AnalyticsClient({
         {tab === "overview" && (
           <>
             {variants.some((v) => v.redirect_url) && (
-              <div className="flex items-start gap-3 bg-indigo-500/10 border border-indigo-500/30 rounded-xl p-4">
+              <div className={`flex items-start gap-3 rounded-xl p-4 border ${anyTrackerMissing ? "bg-red-500/10 border-red-500/40" : "bg-indigo-500/10 border-indigo-500/30"}`}>
                 <Code2
                   size={16}
-                  className="text-indigo-400 flex-shrink-0 mt-0.5"
+                  className={`flex-shrink-0 mt-0.5 ${anyTrackerMissing ? "text-red-400" : "text-indigo-400"}`}
                 />
                 <div className="flex-1 min-w-0">
-                  <p className="text-indigo-400 font-medium text-sm">
-                    Add tracker.js to your destination page to track conversions
+                  <p className={`font-medium text-sm ${anyTrackerMissing ? "text-red-400" : "text-indigo-400"}`}>
+                    {anyTrackerMissing
+                      ? "Tracker not detected — paste the snippet on your destination page"
+                      : "Add tracker.js to your destination page to track conversions"}
                   </p>
                   <p className="text-slate-500 text-xs mt-0.5">
                     Paste this before &lt;/body&gt; on your external landing
