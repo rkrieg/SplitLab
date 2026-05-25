@@ -189,6 +189,22 @@ export function buildScanScript(variantId: string, appUrl: string): string {
 (function() {
   var vid = ${JSON.stringify(variantId)};
   var scanUrl = ${JSON.stringify(appUrl + '/api/scan')};
+  var scanBanner = null;
+  function showScanBanner() {
+    scanBanner = document.createElement('div');
+    scanBanner.setAttribute('style', [
+      'position:fixed','bottom:20px','right:20px','z-index:2147483647',
+      'background:#16a34a','color:#fff',
+      'padding:10px 16px','border-radius:10px',
+      'font-family:-apple-system,BlinkMacSystemFont,sans-serif',
+      'font-size:13px','font-weight:600','letter-spacing:0.01em',
+      'box-shadow:0 4px 16px rgba(0,0,0,0.25)',
+      'display:flex','align-items:center','gap:8px',
+      'max-width:320px','transition:background 0.3s'
+    ].join(';'));
+    scanBanner.innerHTML = '<span style="font-size:15px">✦</span><span>Detecting events within your page that you can track</span>';
+    document.body.appendChild(scanBanner);
+  }
   function runScan() {
     var elements = [];
     var forms = document.querySelectorAll('form');
@@ -217,13 +233,22 @@ export function buildScanScript(variantId: string, appUrl: string): string {
       var xhr = new XMLHttpRequest();
       xhr.open('POST', scanUrl, true);
       xhr.setRequestHeader('Content-Type', 'application/json');
+      xhr.onload = function() {
+        if (xhr.status >= 200 && xhr.status < 300 && scanBanner) {
+          scanBanner.innerHTML = '<span style="font-size:15px">✓</span><span>Scan completed</span>';
+        }
+      };
       xhr.send(JSON.stringify({ vid: vid, elements: elements }));
     } catch(e) {}
   }
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', runScan);
-  } else {
+  function init() {
+    showScanBanner();
     runScan();
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
   }
 })();
 </script>`;
