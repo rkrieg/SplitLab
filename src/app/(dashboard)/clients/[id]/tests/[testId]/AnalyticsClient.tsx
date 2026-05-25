@@ -1,27 +1,49 @@
-'use client';
+"use client";
 
-import { useState, useEffect, useCallback, Fragment } from 'react';
-import Link from 'next/link';
-import toast from 'react-hot-toast';
+import { useState, useEffect, useCallback, Fragment } from "react";
+import Link from "next/link";
+import toast from "react-hot-toast";
 import {
-  Download, RefreshCw, Trophy, TrendingUp, Code2, Copy,
-  ChevronRight, ShieldCheck, ShieldX, FileCode2,
-  Globe, ExternalLink, Plus, Trash2, Check, X,
-  Pencil, BarChart3, Users, Settings as SettingsIcon, Sparkles,
-  ScanLine, Phone, MousePointerClick, FormInput, Link2, ToggleLeft,
-} from 'lucide-react';
-import Spinner from '@/components/ui/Spinner';
-import Button from '@/components/ui/Button';
-import Modal from '@/components/ui/Modal';
-import ConfirmDialog from '@/components/ui/ConfirmDialog';
-import { TestStatusBadge } from '@/components/ui/Badge';
-import { formatPercent } from '@/lib/utils';
+  Download,
+  RefreshCw,
+  Trophy,
+  TrendingUp,
+  Code2,
+  Copy,
+  ChevronRight,
+  ShieldCheck,
+  ShieldX,
+  FileCode2,
+  Globe,
+  ExternalLink,
+  Plus,
+  Trash2,
+  Check,
+  X,
+  Pencil,
+  BarChart3,
+  Users,
+  Settings as SettingsIcon,
+  Sparkles,
+  ScanLine,
+  Phone,
+  MousePointerClick,
+  FormInput,
+  Link2,
+  ToggleLeft,
+} from "lucide-react";
+import Spinner from "@/components/ui/Spinner";
+import Button from "@/components/ui/Button";
+import Modal from "@/components/ui/Modal";
+import ConfirmDialog from "@/components/ui/ConfirmDialog";
+import { TestStatusBadge } from "@/components/ui/Badge";
+import { formatPercent } from "@/lib/utils";
 
 const GOAL_TYPES = [
-  { value: 'form_submit', label: 'Form Submit' },
-  { value: 'button_click', label: 'Button Click' },
-  { value: 'url_reached', label: 'URL Reached' },
-  { value: 'call_click', label: 'Call Click' },
+  { value: "form_submit", label: "Form Submit" },
+  { value: "button_click", label: "Button Click" },
+  { value: "url_reached", label: "URL Reached" },
+  { value: "call_click", label: "Call Click" },
 ];
 
 interface Variant {
@@ -84,19 +106,25 @@ interface Props {
   domain?: string;
 }
 
-type Tab = 'overview' | 'leads' | 'settings';
+type Tab = "overview" | "leads" | "settings";
 
-export default function AnalyticsClient({ test: initialTest, appUrl, clientId, clientName, domain }: Props) {
+export default function AnalyticsClient({
+  test: initialTest,
+  appUrl,
+  clientId,
+  clientName,
+  domain,
+}: Props) {
   const [test, setTest] = useState(initialTest);
-  const [tab, setTab] = useState<Tab>('overview');
+  const [tab, setTab] = useState<Tab>("overview");
 
   // Analytics
   const [stats, setStats] = useState<VariantStat[]>([]);
   const [totalViews, setTotalViews] = useState(0);
   const [totalConversions, setTotalConversions] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [from, setFrom] = useState('');
-  const [to, setTo] = useState('');
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
 
   // Inline editing
   const [editingName, setEditingName] = useState(false);
@@ -107,12 +135,16 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
 
   // Variant editing
   const [editingVariantId, setEditingVariantId] = useState<string | null>(null);
-  const [variantDraft, setVariantDraft] = useState({ name: '', redirect_url: '', proxy_mode: true });
+  const [variantDraft, setVariantDraft] = useState({
+    name: "",
+    redirect_url: "",
+    proxy_mode: true,
+  });
   const [savingVariant, setSavingVariant] = useState(false);
 
   // Weight editing
   const [editingWeightId, setEditingWeightId] = useState<string | null>(null);
-  const [weightDraft, setWeightDraft] = useState('');
+  const [weightDraft, setWeightDraft] = useState("");
 
   // Delete variant
   const [deleteVariantId, setDeleteVariantId] = useState<string | null>(null);
@@ -120,24 +152,32 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
 
   // Add variant
   const [addVariantOpen, setAddVariantOpen] = useState(false);
-  const [newVariantName, setNewVariantName] = useState('');
-  const [newVariantUrl, setNewVariantUrl] = useState('');
-  const [newVariantMode, setNewVariantMode] = useState<'url' | 'html'>('url');
-  const [newVariantHtml, setNewVariantHtml] = useState('');
+  const [newVariantName, setNewVariantName] = useState("");
+  const [newVariantUrl, setNewVariantUrl] = useState("");
+  const [newVariantMode, setNewVariantMode] = useState<"url" | "html">("url");
+  const [newVariantHtml, setNewVariantHtml] = useState("");
   const [addingVariant, setAddingVariant] = useState(false);
 
   // Tracking verification
   const [checkingTracking, setCheckingTracking] = useState<string | null>(null);
-  const [variantOverrides, setVariantOverrides] = useState<Record<string, boolean>>({});
+  const [variantOverrides, setVariantOverrides] = useState<
+    Record<string, boolean>
+  >({});
 
   // Goals (settings tab)
   const [editGoals, setEditGoals] = useState<Goal[]>(() =>
-    (initialTest.conversion_goals || []).map(g => ({ ...g, selector: g.selector || '', url_pattern: g.url_pattern || '' }))
+    (initialTest.conversion_goals || []).map((g) => ({
+      ...g,
+      selector: g.selector || "",
+      url_pattern: g.url_pattern || "",
+    })),
   );
   const [savingGoals, setSavingGoals] = useState(false);
 
   // Head scripts (settings tab)
-  const [headScriptsDraft, setHeadScriptsDraft] = useState(initialTest.head_scripts || '');
+  const [headScriptsDraft, setHeadScriptsDraft] = useState(
+    initialTest.head_scripts || "",
+  );
   const [savingScripts, setSavingScripts] = useState(false);
 
   const [togglingStatus, setTogglingStatus] = useState(false);
@@ -148,12 +188,25 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
   const [leadsLoaded, setLeadsLoaded] = useState(false);
 
   // Page scanner
-  interface ScanElement { type: string; id: string | null; text: string | null; }
-  interface VariantScan { variant_id: string; variant_name: string; scanned_at: string; elements: ScanElement[]; }
-  interface ScanResults { variants: VariantScan[]; }
+  interface ScanElement {
+    type: string;
+    id: string | null;
+    text: string | null;
+  }
+  interface VariantScan {
+    variant_id: string;
+    variant_name: string;
+    scanned_at: string;
+    elements: ScanElement[];
+  }
+  interface ScanResults {
+    variants: VariantScan[];
+  }
   const [scanResults, setScanResults] = useState<ScanResults | null>(null);
   const [scanning, setScanning] = useState(false);
-  const [scannedVariantName, setScannedVariantName] = useState<string | null>(null);
+  const [scannedVariantName, setScannedVariantName] = useState<string | null>(
+    null,
+  );
   const [scanResultsLoaded, setScanResultsLoaded] = useState(false);
 
   // Computed
@@ -173,8 +226,8 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
     setLoading(true);
     try {
       const params = new URLSearchParams();
-      if (from) params.set('from', from);
-      if (to) params.set('to', to);
+      if (from) params.set("from", from);
+      if (to) params.set("to", to);
       const res = await fetch(`/api/tests/${test.id}/analytics?${params}`);
       if (!res.ok) throw new Error();
       const data = await res.json();
@@ -183,65 +236,94 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
       setTotalViews(data.totalViews ?? 0);
       setTotalConversions(data.totalConversions ?? 0);
     } catch {
-      toast.error('Failed to load analytics');
+      toast.error("Failed to load analytics");
     } finally {
       setLoading(false);
     }
   }, [test.id, from, to]);
 
-  useEffect(() => { fetchAnalytics(); }, [fetchAnalytics]);
+  useEffect(() => {
+    fetchAnalytics();
+  }, [fetchAnalytics]);
 
-  const winner = stats.find(s => s.isWinner);
+  const winner = stats.find((s) => s.isWinner);
   const overallCvr = totalViews > 0 ? totalConversions / totalViews : 0;
 
   function exportCsv() {
-    const headers = ['Variant', 'Control', 'Views', 'Conversions', 'Goal Hits', 'CVR', 'Confidence', 'Winner'];
-    const rows = stats.map(s => [
-      s.variant.name, s.variant.is_control ? 'Yes' : 'No', s.views, s.conversions, s.goalHits,
-      formatPercent(s.cvr * 100), s.confidence !== null ? formatPercent(s.confidence) : 'N/A',
-      s.isWinner ? 'Yes' : 'No',
+    const headers = [
+      "Variant",
+      "Control",
+      "Views",
+      "Conversions",
+      "Goal Hits",
+      "CVR",
+      "Confidence",
+      "Winner",
+    ];
+    const rows = stats.map((s) => [
+      s.variant.name,
+      s.variant.is_control ? "Yes" : "No",
+      s.views,
+      s.conversions,
+      s.goalHits,
+      formatPercent(s.cvr * 100),
+      s.confidence !== null ? formatPercent(s.confidence) : "N/A",
+      s.isWinner ? "Yes" : "No",
     ]);
-    const csv = [headers, ...rows].map(r => r.join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
+    const csv = [headers, ...rows].map((r) => r.join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = `${test.name.replace(/\s+/g, '_')}_analytics.csv`; a.click();
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${test.name.replace(/\s+/g, "_")}_analytics.csv`;
+    a.click();
     URL.revokeObjectURL(url);
   }
 
   // ─── Inline field saves ─────────────────────────────────────────────
 
-  async function saveField(field: 'name' | 'url_path', value: string) {
+  async function saveField(field: "name" | "url_path", value: string) {
     setSavingField(true);
     try {
       const res = await fetch(`/api/tests/${test.id}`, {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ [field]: value }),
       });
-      if (!res.ok) { toast.error('Failed to save'); return; }
+      if (!res.ok) {
+        toast.error("Failed to save");
+        return;
+      }
       const updated = await res.json();
       setTest(updated);
-      toast.success('Saved');
-      if (field === 'name') setEditingName(false);
-      if (field === 'url_path') setEditingPath(false);
-    } catch { toast.error('Failed to save'); }
-    finally { setSavingField(false); }
+      toast.success("Saved");
+      if (field === "name") setEditingName(false);
+      if (field === "url_path") setEditingPath(false);
+    } catch {
+      toast.error("Failed to save");
+    } finally {
+      setSavingField(false);
+    }
   }
 
   // ─── Status toggle ──────────────────────────────────────────────────
 
   async function toggleStatus() {
     setTogglingStatus(true);
-    const newStatus = test.status === 'active' ? 'paused' : 'active';
+    const newStatus = test.status === "active" ? "paused" : "active";
     try {
       const res = await fetch(`/api/tests/${test.id}`, {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: newStatus }),
       });
-      if (!res.ok) { toast.error('Failed to update status'); return; }
+      if (!res.ok) {
+        toast.error("Failed to update status");
+        return;
+      }
       const updated = await res.json();
       setTest(updated);
-      toast.success(newStatus === 'active' ? 'Published' : 'Unpublished');
+      toast.success(newStatus === "active" ? "Published" : "Unpublished");
     } finally {
       setTogglingStatus(false);
     }
@@ -257,11 +339,17 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
   async function saveWeight() {
     const variantId = editingWeightId;
     if (!variantId) return;
-    const newWeight = Math.max(0, Math.min(100, Math.round(Number(weightDraft))));
-    if (isNaN(newWeight)) { setEditingWeightId(null); return; }
+    const newWeight = Math.max(
+      0,
+      Math.min(100, Math.round(Number(weightDraft))),
+    );
+    if (isNaN(newWeight)) {
+      setEditingWeightId(null);
+      return;
+    }
     setEditingWeightId(null);
 
-    const otherVariants = variants.filter(v => v.id !== variantId);
+    const otherVariants = variants.filter((v) => v.id !== variantId);
     const remaining = 100 - newWeight;
     const weights: { id: string; traffic_weight: number }[] = [
       { id: variantId, traffic_weight: newWeight },
@@ -270,12 +358,18 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
     if (otherVariants.length === 0) {
       weights[0].traffic_weight = 100;
     } else {
-      const currentOtherTotal = otherVariants.reduce((s, v) => s + v.traffic_weight, 0);
+      const currentOtherTotal = otherVariants.reduce(
+        (s, v) => s + v.traffic_weight,
+        0,
+      );
       if (currentOtherTotal === 0) {
         const each = Math.floor(remaining / otherVariants.length);
         let leftover = remaining - each * otherVariants.length;
         for (const v of otherVariants) {
-          weights.push({ id: v.id, traffic_weight: each + (leftover-- > 0 ? 1 : 0) });
+          weights.push({
+            id: v.id,
+            traffic_weight: each + (leftover-- > 0 ? 1 : 0),
+          });
         }
       } else {
         let allocated = 0;
@@ -284,7 +378,9 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
           if (i === otherVariants.length - 1) {
             weights.push({ id: v.id, traffic_weight: remaining - allocated });
           } else {
-            const w = Math.round((v.traffic_weight / currentOtherTotal) * remaining);
+            const w = Math.round(
+              (v.traffic_weight / currentOtherTotal) * remaining,
+            );
             weights.push({ id: v.id, traffic_weight: w });
             allocated += w;
           }
@@ -294,24 +390,33 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
 
     try {
       const res = await fetch(`/api/tests/${test.id}`, {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ weights }),
       });
-      if (!res.ok) { toast.error('Weights must sum to 100'); return; }
+      if (!res.ok) {
+        toast.error("Weights must sum to 100");
+        return;
+      }
       const updated = await res.json();
       setTest(updated);
-      toast.success('Weights updated');
-    } catch { toast.error('Failed to save weights'); }
+      toast.success("Weights updated");
+    } catch {
+      toast.error("Failed to save weights");
+    }
   }
 
   // ─── Variant editing ────────────────────────────────────────────────
 
   function startEditVariant(v: Variant) {
-    if (editingVariantId === v.id) { setEditingVariantId(null); return; }
+    if (editingVariantId === v.id) {
+      setEditingVariantId(null);
+      return;
+    }
     setEditingVariantId(v.id);
     setVariantDraft({
       name: v.name,
-      redirect_url: v.redirect_url || '',
+      redirect_url: v.redirect_url || "",
       proxy_mode: v.proxy_mode !== false,
     });
   }
@@ -320,24 +425,33 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
     setSavingVariant(true);
     try {
       const res = await fetch(`/api/tests/${test.id}`, {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          variant_updates: [{
-            id: variantId,
-            name: variantDraft.name,
-            redirect_url: variantDraft.redirect_url || null,
-            proxy_mode: variantDraft.proxy_mode,
-          }],
+          variant_updates: [
+            {
+              id: variantId,
+              name: variantDraft.name,
+              redirect_url: variantDraft.redirect_url || null,
+              proxy_mode: variantDraft.proxy_mode,
+            },
+          ],
         }),
       });
-      if (!res.ok) { toast.error('Failed to save variant'); return; }
+      if (!res.ok) {
+        toast.error("Failed to save variant");
+        return;
+      }
       const updated = await res.json();
       setTest(updated);
       setEditingVariantId(null);
-      toast.success('Variant updated');
+      toast.success("Variant updated");
       fetchAnalytics();
-    } catch { toast.error('Failed to save'); }
-    finally { setSavingVariant(false); }
+    } catch {
+      toast.error("Failed to save");
+    } finally {
+      setSavingVariant(false);
+    }
   }
 
   async function deleteVariant() {
@@ -345,17 +459,25 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
     setDeletingVariant(true);
     try {
       const res = await fetch(`/api/tests/${test.id}`, {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ delete_variant_id: deleteVariantId }),
       });
-      if (!res.ok) { toast.error('Failed to delete variant'); return; }
+      if (!res.ok) {
+        toast.error("Failed to delete variant");
+        return;
+      }
       const updated = await res.json();
       setTest(updated);
       setEditingVariantId(null);
-      toast.success('Variant deleted');
+      toast.success("Variant deleted");
       fetchAnalytics();
-    } catch { toast.error('Failed to delete'); }
-    finally { setDeletingVariant(false); setDeleteVariantId(null); }
+    } catch {
+      toast.error("Failed to delete");
+    } finally {
+      setDeletingVariant(false);
+      setDeleteVariantId(null);
+    }
   }
 
   // ─── Add variant ────────────────────────────────────────────────────
@@ -368,14 +490,29 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
       const weight = Math.floor(100 / count);
       const remainder = 100 - weight * count;
 
-      const payload = newVariantMode === 'html'
-        ? { name: newVariantName, html_content: newVariantHtml, traffic_weight: weight + remainder }
-        : { name: newVariantName, redirect_url: newVariantUrl, proxy_mode: true, traffic_weight: weight + remainder };
+      const payload =
+        newVariantMode === "html"
+          ? {
+              name: newVariantName,
+              html_content: newVariantHtml,
+              traffic_weight: weight + remainder,
+            }
+          : {
+              name: newVariantName,
+              redirect_url: newVariantUrl,
+              proxy_mode: true,
+              traffic_weight: weight + remainder,
+            };
       const res = await fetch(`/api/tests/${test.id}/variants`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      if (!res.ok) { const err = await res.json(); toast.error(err.error || 'Failed to add variant'); return; }
+      if (!res.ok) {
+        const err = await res.json();
+        toast.error(err.error || "Failed to add variant");
+        return;
+      }
       const updated = await res.json();
 
       // Equalize weights
@@ -383,20 +520,28 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
       const equalWeight = Math.floor(100 / allVariants.length);
       const rem = 100 - equalWeight * allVariants.length;
       const weights = allVariants.map((v: Variant, i: number) => ({
-        id: v.id, traffic_weight: equalWeight + (i === 0 ? rem : 0),
+        id: v.id,
+        traffic_weight: equalWeight + (i === 0 ? rem : 0),
       }));
 
       const wRes = await fetch(`/api/tests/${test.id}`, {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ weights }),
       });
       setTest(wRes.ok ? await wRes.json() : updated);
       setAddVariantOpen(false);
-      setNewVariantName(''); setNewVariantUrl(''); setNewVariantHtml(''); setNewVariantMode('url');
-      toast.success('Variant added');
+      setNewVariantName("");
+      setNewVariantUrl("");
+      setNewVariantHtml("");
+      setNewVariantMode("url");
+      toast.success("Variant added");
       fetchAnalytics();
-    } catch { toast.error('Failed to add variant'); }
-    finally { setAddingVariant(false); }
+    } catch {
+      toast.error("Failed to add variant");
+    } finally {
+      setAddingVariant(false);
+    }
   }
 
   // ─── Tracking check ─────────────────────────────────────────────────
@@ -409,15 +554,21 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
   async function checkTracking(variantId: string, url: string) {
     setCheckingTracking(variantId);
     try {
-      const res = await fetch('/api/check-tracking', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+      const res = await fetch("/api/check-tracking", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url, variant_id: variantId }),
       });
       const data = await res.json();
-      setVariantOverrides(prev => ({ ...prev, [variantId]: data.verified }));
-      toast[data.verified ? 'success' : 'error'](data.verified ? 'Tracker verified' : 'Tracker not found');
-    } catch { toast.error('Check failed'); }
-    finally { setCheckingTracking(null); }
+      setVariantOverrides((prev) => ({ ...prev, [variantId]: data.verified }));
+      toast[data.verified ? "success" : "error"](
+        data.verified ? "Tracker verified" : "Tracker not found",
+      );
+    } catch {
+      toast.error("Check failed");
+    } finally {
+      setCheckingTracking(null);
+    }
   }
 
   // ─── Goals ───────────────────────────────────────────────────────────
@@ -427,23 +578,38 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
     setSavingGoals(true);
     try {
       const res = await fetch(`/api/tests/${test.id}`, {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          goals: editGoals.map(g => ({
+          goals: editGoals.map((g) => ({
             ...(g.id ? { id: g.id } : {}),
-            name: g.name, type: g.type,
-            selector: g.selector || null, url_pattern: g.url_pattern || null,
+            name: g.name,
+            type: g.type,
+            selector: g.selector || null,
+            url_pattern: g.url_pattern || null,
             is_primary: g.is_primary,
           })),
         }),
       });
-      if (!res.ok) { toast.error('Failed to save goals'); return; }
+      if (!res.ok) {
+        toast.error("Failed to save goals");
+        return;
+      }
       const updated = await res.json();
       setTest(updated);
-      setEditGoals((updated.conversion_goals || []).map((g: Goal) => ({ ...g, selector: g.selector || '', url_pattern: g.url_pattern || '' })));
-      toast.success('Goals saved');
-    } catch { toast.error('Failed to save'); }
-    finally { setSavingGoals(false); }
+      setEditGoals(
+        (updated.conversion_goals || []).map((g: Goal) => ({
+          ...g,
+          selector: g.selector || "",
+          url_pattern: g.url_pattern || "",
+        })),
+      );
+      toast.success("Goals saved");
+    } catch {
+      toast.error("Failed to save");
+    } finally {
+      setSavingGoals(false);
+    }
   }
 
   // ─── Head Scripts ────────────────────────────────────────────────────
@@ -452,15 +618,22 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
     setSavingScripts(true);
     try {
       const res = await fetch(`/api/tests/${test.id}`, {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ head_scripts: headScriptsDraft || null }),
       });
-      if (!res.ok) { toast.error('Failed to save'); return; }
+      if (!res.ok) {
+        toast.error("Failed to save");
+        return;
+      }
       const updated = await res.json();
       setTest(updated);
-      toast.success('Scripts saved');
-    } catch { toast.error('Failed to save'); }
-    finally { setSavingScripts(false); }
+      toast.success("Scripts saved");
+    } catch {
+      toast.error("Failed to save");
+    } finally {
+      setSavingScripts(false);
+    }
   }
 
   // ─── Leads ───────────────────────────────────────────────────────────
@@ -473,20 +646,23 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
       const data = await res.json();
       setLeads(data.leads || []);
       setLeadsLoaded(true);
-    } catch { toast.error('Failed to load leads'); }
-    finally { setLeadsLoading(false); }
+    } catch {
+      toast.error("Failed to load leads");
+    } finally {
+      setLeadsLoading(false);
+    }
   }, [test.id]);
 
   useEffect(() => {
-    if (tab === 'leads' && !leadsLoaded) fetchLeads();
+    if (tab === "leads" && !leadsLoaded) fetchLeads();
   }, [tab, leadsLoaded, fetchLeads]);
 
   useEffect(() => {
-    if (tab === 'settings' && !scanResultsLoaded && !scanning) {
+    if (tab === "settings" && !scanResultsLoaded && !scanning) {
       setScanResultsLoaded(true);
       fetch(`/api/tests/${test.id}/scan-results`)
-        .then(r => r.ok ? r.json() : null)
-        .then(data => {
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
           if (data?.scan_results?.variants) setScanResults(data.scan_results);
         })
         .catch(() => {});
@@ -495,10 +671,15 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
 
   // ─── Page Scanner ────────────────────────────────────────────────────
 
-  function buildVariantUrl(variantId: string, extraParams: Record<string, string> = {}): string | null {
+  function buildVariantUrl(
+    variantId: string,
+    extraParams: Record<string, string> = {},
+  ): string | null {
     if (!domain) return null;
-    const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-    const rawDomain = domain.replace(/^https?:\/\//, '');
+    const isLocalhost =
+      window.location.hostname === "localhost" ||
+      window.location.hostname === "127.0.0.1";
+    const rawDomain = domain.replace(/^https?:\/\//, "");
     const params = new URLSearchParams({ sl_vid: variantId, ...extraParams });
     if (isLocalhost) {
       return `http://localhost:${window.location.port || 3000}/api/serve?domain=${encodeURIComponent(rawDomain)}&path=${encodeURIComponent(test.url_path)}&${params}`;
@@ -509,26 +690,29 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
   function openVariant(variantId: string) {
     const freshHash = crypto.randomUUID();
     const url = buildVariantUrl(variantId, { sl_vh: freshHash });
-    if (!url) { toast.error('No domain configured for this test'); return; }
-    window.open(url, '_blank');
+    if (!url) {
+      toast.error("No domain configured for this test");
+      return;
+    }
+    window.open(url, "_blank");
   }
 
   async function scanPage(variantId: string) {
-    const targetVariant = variants.find(v => v.id === variantId);
+    const targetVariant = variants.find((v) => v.id === variantId);
     if (!targetVariant) return;
 
     if (!domain) {
-      toast.error('No domain configured for this test');
+      toast.error("No domain configured for this test");
       return;
     }
 
-    const scanUrl = buildVariantUrl(variantId, { sl_scan: '1' })!;
+    const scanUrl = buildVariantUrl(variantId, { sl_scan: "1" })!;
     const scanStartedAt = Date.now();
-    window.open(scanUrl, '_blank');
+    window.open(scanUrl, "_blank");
     setScanning(true);
     setScanResults(null);
     setScannedVariantName(targetVariant.name);
-    setTab('settings');
+    setTab("settings");
 
     // Poll for results (up to 30 s, every 2 s)
     // Only accept results with scanned_at AFTER we opened the tab
@@ -540,7 +724,8 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
         if (!res.ok) throw new Error();
         const data = await res.json();
         const variantEntry = data.scan_results?.variants?.find(
-          (v: { variant_id: string; scanned_at: string }) => v.variant_id === variantId
+          (v: { variant_id: string; scanned_at: string }) =>
+            v.variant_id === variantId,
         );
         if (variantEntry) {
           const resultTime = new Date(variantEntry.scanned_at).getTime();
@@ -550,28 +735,36 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
             return;
           }
         }
-      } catch { /* keep polling */ }
+      } catch {
+        /* keep polling */
+      }
       attempts++;
       if (attempts < maxAttempts) {
         setTimeout(poll, 2000);
       } else {
         setScanning(false);
-        toast.error('Scan timed out. Make sure tracker.js is installed and the page loaded.');
+        toast.error(
+          "Scan timed out. Make sure tracker.js is installed and the page loaded.",
+        );
       }
     };
     setTimeout(poll, 3000); // give the page 3 s to load before first poll
   }
 
-  async function enableAsGoal(el: { type: string; id: string | null; text: string | null }) {
+  async function enableAsGoal(el: {
+    type: string;
+    id: string | null;
+    text: string | null;
+  }) {
     const goalTypeMap: Record<string, string> = {
-      form: 'form_submit',
-      button: 'button_click',
-      cta_link: 'button_click',
-      link: 'button_click',
-      toggle: 'button_click',
-      call: 'call_click',
+      form: "form_submit",
+      button: "button_click",
+      cta_link: "button_click",
+      link: "button_click",
+      toggle: "button_click",
+      call: "call_click",
     };
-    const goalType = goalTypeMap[el.type] || 'button_click';
+    const goalType = goalTypeMap[el.type] || "button_click";
 
     let selector: string | null = null;
     if (el.id) {
@@ -582,7 +775,7 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
 
     const label = el.text || el.id || el.type;
     const newGoal: Goal = {
-      id: '',
+      id: "",
       name: label.slice(0, 60),
       type: goalType,
       selector,
@@ -596,67 +789,98 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
 
     try {
       const res = await fetch(`/api/tests/${test.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          goals: updatedGoals.map(g => ({
+          goals: updatedGoals.map((g) => ({
             ...(g.id ? { id: g.id } : {}),
-            name: g.name, type: g.type,
-            selector: g.selector || null, url_pattern: g.url_pattern || null,
+            name: g.name,
+            type: g.type,
+            selector: g.selector || null,
+            url_pattern: g.url_pattern || null,
             is_primary: g.is_primary,
           })),
         }),
       });
-      if (!res.ok) { setEditGoals(originalGoals); toast.error('Failed to save goal'); return; }
+      if (!res.ok) {
+        setEditGoals(originalGoals);
+        toast.error("Failed to save goal");
+        return;
+      }
       const updated = await res.json();
       setTest(updated);
-      setEditGoals((updated.conversion_goals || []).map((g: Goal) => ({ ...g, selector: g.selector || '', url_pattern: g.url_pattern || '' })));
+      setEditGoals(
+        (updated.conversion_goals || []).map((g: Goal) => ({
+          ...g,
+          selector: g.selector || "",
+          url_pattern: g.url_pattern || "",
+        })),
+      );
       toast.success(`Goal "${newGoal.name}" enabled`);
     } catch {
       setEditGoals(originalGoals);
-      toast.error('Failed to save goal');
+      toast.error("Failed to save goal");
     }
   }
 
-  async function removeGoalBySelector(el: { id: string | null; text: string | null }) {
-    const matchSelector = el.id ? `id:${el.id}` : el.text ? `text:${el.text}` : null;
+  async function removeGoalBySelector(el: {
+    id: string | null;
+    text: string | null;
+  }) {
+    const matchSelector = el.id
+      ? `id:${el.id}`
+      : el.text
+        ? `text:${el.text}`
+        : null;
     if (!matchSelector) return;
 
     const originalGoals = editGoals;
-    const updatedGoals = editGoals.filter(g => g.selector !== matchSelector);
+    const updatedGoals = editGoals.filter((g) => g.selector !== matchSelector);
     if (updatedGoals.length === originalGoals.length) return; // nothing matched
     setEditGoals(updatedGoals);
 
     try {
       const res = await fetch(`/api/tests/${test.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          goals: updatedGoals.map(g => ({
+          goals: updatedGoals.map((g) => ({
             ...(g.id ? { id: g.id } : {}),
-            name: g.name, type: g.type,
-            selector: g.selector || null, url_pattern: g.url_pattern || null,
+            name: g.name,
+            type: g.type,
+            selector: g.selector || null,
+            url_pattern: g.url_pattern || null,
             is_primary: g.is_primary,
           })),
         }),
       });
-      if (!res.ok) { setEditGoals(originalGoals); toast.error('Failed to remove goal'); return; }
+      if (!res.ok) {
+        setEditGoals(originalGoals);
+        toast.error("Failed to remove goal");
+        return;
+      }
       const updated = await res.json();
       setTest(updated);
-      setEditGoals((updated.conversion_goals || []).map((g: Goal) => ({ ...g, selector: g.selector || '', url_pattern: g.url_pattern || '' })));
-      toast.success('Goal removed');
+      setEditGoals(
+        (updated.conversion_goals || []).map((g: Goal) => ({
+          ...g,
+          selector: g.selector || "",
+          url_pattern: g.url_pattern || "",
+        })),
+      );
+      toast.success("Goal removed");
     } catch {
       setEditGoals(originalGoals);
-      toast.error('Failed to remove goal');
+      toast.error("Failed to remove goal");
     }
   }
 
   // ─── Render ──────────────────────────────────────────────────────────
 
   const tabs: { key: Tab; label: string; icon: React.ReactNode }[] = [
-    { key: 'overview', label: 'Overview', icon: <BarChart3 size={14} /> },
-    { key: 'leads', label: 'Leads', icon: <Users size={14} /> },
-    { key: 'settings', label: 'Settings', icon: <SettingsIcon size={14} /> },
+    { key: "overview", label: "Overview", icon: <BarChart3 size={14} /> },
+    { key: "leads", label: "Leads", icon: <Users size={14} /> },
+    { key: "settings", label: "Settings", icon: <SettingsIcon size={14} /> },
   ];
 
   return (
@@ -664,15 +888,23 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
       {/* ═══ HEADER ═══ */}
       <div className="border-b border-slate-200 dark:border-slate-800 px-6 py-4 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm sticky top-0 z-10">
         <div className="flex items-center gap-1.5 text-xs text-slate-500 mb-3">
-          <Link href={`/clients/${clientId}/pages`} className="hover:text-slate-700 dark:hover:text-slate-300 transition-colors">
+          <Link
+            href={`/clients/${clientId}/pages`}
+            className="hover:text-slate-700 dark:hover:text-slate-300 transition-colors"
+          >
             {clientName}
           </Link>
           <ChevronRight size={12} />
-          <Link href={`/clients/${clientId}/pages`} className="hover:text-slate-700 dark:hover:text-slate-300 transition-colors">
+          <Link
+            href={`/clients/${clientId}/pages`}
+            className="hover:text-slate-700 dark:hover:text-slate-300 transition-colors"
+          >
             Pages
           </Link>
           <ChevronRight size={12} />
-          <span className="text-slate-500 dark:text-slate-400">{test.name}</span>
+          <span className="text-slate-500 dark:text-slate-400">
+            {test.name}
+          </span>
         </div>
 
         <div className="flex items-start justify-between gap-4">
@@ -681,17 +913,24 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
               <input
                 type="text"
                 value={nameDraft}
-                onChange={e => setNameDraft(e.target.value)}
+                onChange={(e) => setNameDraft(e.target.value)}
                 className="input-base text-lg font-semibold py-1 px-2 w-full max-w-md"
                 autoFocus
                 disabled={savingField}
-                onKeyDown={e => {
-                  if (e.key === 'Enter') saveField('name', nameDraft);
-                  if (e.key === 'Escape') { setEditingName(false); setNameDraft(test.name); }
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") saveField("name", nameDraft);
+                  if (e.key === "Escape") {
+                    setEditingName(false);
+                    setNameDraft(test.name);
+                  }
                 }}
                 onBlur={() => {
-                  if (nameDraft.trim() && nameDraft !== test.name) saveField('name', nameDraft);
-                  else { setEditingName(false); setNameDraft(test.name); }
+                  if (nameDraft.trim() && nameDraft !== test.name)
+                    saveField("name", nameDraft);
+                  else {
+                    setEditingName(false);
+                    setNameDraft(test.name);
+                  }
                 }}
               />
             ) : (
@@ -710,21 +949,32 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
             <div className="flex items-center gap-2 mt-1">
               {editingPath ? (
                 <div className="flex items-center gap-1">
-                  {domain && <span className="text-slate-500 text-sm font-mono">{domain}</span>}
+                  {domain && (
+                    <span className="text-slate-500 text-sm font-mono">
+                      {domain}
+                    </span>
+                  )}
                   <input
                     type="text"
                     value={pathDraft}
-                    onChange={e => setPathDraft(e.target.value)}
+                    onChange={(e) => setPathDraft(e.target.value)}
                     className="input-base font-mono text-sm py-0.5 px-1.5 w-48"
                     autoFocus
                     disabled={savingField}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter') saveField('url_path', pathDraft);
-                      if (e.key === 'Escape') { setEditingPath(false); setPathDraft(test.url_path); }
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") saveField("url_path", pathDraft);
+                      if (e.key === "Escape") {
+                        setEditingPath(false);
+                        setPathDraft(test.url_path);
+                      }
                     }}
                     onBlur={() => {
-                      if (pathDraft.trim() && pathDraft !== test.url_path) saveField('url_path', pathDraft);
-                      else { setEditingPath(false); setPathDraft(test.url_path); }
+                      if (pathDraft.trim() && pathDraft !== test.url_path)
+                        saveField("url_path", pathDraft);
+                      else {
+                        setEditingPath(false);
+                        setPathDraft(test.url_path);
+                      }
                     }}
                   />
                 </div>
@@ -740,7 +990,11 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
                     {fullUrl}
                     <ExternalLink size={10} />
                   </a>
-                  <button onClick={() => setEditingPath(true)} className="text-slate-400 dark:text-slate-600 hover:text-slate-700 dark:hover:text-slate-300 transition-colors p-0.5" title="Edit path">
+                  <button
+                    onClick={() => setEditingPath(true)}
+                    className="text-slate-400 dark:text-slate-600 hover:text-slate-700 dark:hover:text-slate-300 transition-colors p-0.5"
+                    title="Edit path"
+                  >
                     <Pencil size={11} />
                   </button>
                 </div>
@@ -759,15 +1013,21 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
           <div className="flex items-center gap-4 flex-shrink-0">
             <div className="flex items-center gap-4 text-sm border-r border-slate-200 dark:border-slate-700 pr-4">
               <div className="text-center">
-                <p className="text-slate-900 dark:text-slate-100 font-semibold">{totalViews.toLocaleString()}</p>
+                <p className="text-slate-900 dark:text-slate-100 font-semibold">
+                  {totalViews.toLocaleString()}
+                </p>
                 <p className="text-slate-500 text-[10px]">Views</p>
               </div>
               <div className="text-center">
-                <p className="text-slate-900 dark:text-slate-100 font-semibold">{totalConversions.toLocaleString()}</p>
+                <p className="text-slate-900 dark:text-slate-100 font-semibold">
+                  {totalConversions.toLocaleString()}
+                </p>
                 <p className="text-slate-500 text-[10px]">Conversions</p>
               </div>
               <div className="text-center">
-                <p className="text-slate-900 dark:text-slate-100 font-semibold">{formatPercent(overallCvr * 100)}</p>
+                <p className="text-slate-900 dark:text-slate-100 font-semibold">
+                  {formatPercent(overallCvr * 100)}
+                </p>
                 <p className="text-slate-500 text-[10px]">CVR</p>
               </div>
             </div>
@@ -776,12 +1036,21 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
               onClick={toggleStatus}
               disabled={togglingStatus}
               className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-60 ${
-                test.status === 'active'
-                  ? 'bg-red-500/15 border border-red-500/30 text-red-400 hover:bg-red-500/25'
-                  : 'bg-green-500/15 border border-green-500/30 text-green-400 hover:bg-green-500/25'
+                test.status === "active"
+                  ? "bg-red-500/15 border border-red-500/30 text-red-400 hover:bg-red-500/25"
+                  : "bg-green-500/15 border border-green-500/30 text-green-400 hover:bg-green-500/25"
               }`}
             >
-              {togglingStatus ? <><Spinner size="sm" />{test.status === 'active' ? 'Unpublishing…' : 'Publishing…'}</> : test.status === 'active' ? 'Unpublish' : 'Publish'}
+              {togglingStatus ? (
+                <>
+                  <Spinner size="sm" />
+                  {test.status === "active" ? "Unpublishing…" : "Publishing…"}
+                </>
+              ) : test.status === "active" ? (
+                "Unpublish"
+              ) : (
+                "Publish"
+              )}
             </button>
           </div>
         </div>
@@ -789,14 +1058,14 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
 
       {/* ═══ TABS ═══ */}
       <div className="border-b border-slate-200 dark:border-slate-800 px-6 flex">
-        {tabs.map(t => (
+        {tabs.map((t) => (
           <button
             key={t.key}
             onClick={() => setTab(t.key)}
             className={`flex items-center gap-1.5 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
               tab === t.key
-                ? 'border-indigo-500 text-indigo-400'
-                : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+                ? "border-indigo-500 text-indigo-400"
+                : "border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
             }`}
           >
             {t.icon}
@@ -807,19 +1076,34 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
 
       {/* ═══ TAB CONTENT ═══ */}
       <div className="p-6 space-y-6">
-
         {/* ─── OVERVIEW TAB ─── */}
-        {tab === 'overview' && (
+        {tab === "overview" && (
           <>
-            {variants.some(v => v.redirect_url) && (
+            {variants.some((v) => v.redirect_url) && (
               <div className="flex items-start gap-3 bg-indigo-500/10 border border-indigo-500/30 rounded-xl p-4">
-                <Code2 size={16} className="text-indigo-400 flex-shrink-0 mt-0.5" />
+                <Code2
+                  size={16}
+                  className="text-indigo-400 flex-shrink-0 mt-0.5"
+                />
                 <div className="flex-1 min-w-0">
-                  <p className="text-indigo-400 font-medium text-sm">Add tracker.js to your destination page to track conversions</p>
-                  <p className="text-slate-500 text-xs mt-0.5">Paste this before &lt;/body&gt; on your external landing page</p>
+                  <p className="text-indigo-400 font-medium text-sm">
+                    Add tracker.js to your destination page to track conversions
+                  </p>
+                  <p className="text-slate-500 text-xs mt-0.5">
+                    Paste this before &lt;/body&gt; on your external landing
+                    page
+                  </p>
                   <div className="flex items-center gap-2 mt-2">
-                    <code className="flex-1 bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-xs text-slate-300 font-mono truncate">{snippet}</code>
-                    <button onClick={() => { navigator.clipboard.writeText(snippet); toast.success('Copied'); }} className="btn-secondary text-xs flex-shrink-0">
+                    <code className="flex-1 bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-xs text-slate-300 font-mono truncate">
+                      {snippet}
+                    </code>
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(snippet);
+                        toast.success("Copied");
+                      }}
+                      className="btn-secondary text-xs flex-shrink-0"
+                    >
                       <Copy size={12} /> Copy
                     </button>
                   </div>
@@ -827,27 +1111,55 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
               </div>
             )}
 
-            {winner && winner.confidence !== null && winner.confidence >= 95 && (
-              <div className="flex items-center gap-3 bg-green-500/10 border border-green-500/30 rounded-xl p-4">
-                <Trophy size={20} className="text-green-400 flex-shrink-0" />
-                <div>
-                  <p className="text-green-400 font-semibold text-sm">Winner: {winner.variant.name}</p>
-                  <p className="text-slate-500 dark:text-slate-400 text-xs mt-0.5">{formatPercent(winner.confidence)}% confidence</p>
+            {winner &&
+              winner.confidence !== null &&
+              winner.confidence >= 95 && (
+                <div className="flex items-center gap-3 bg-green-500/10 border border-green-500/30 rounded-xl p-4">
+                  <Trophy size={20} className="text-green-400 flex-shrink-0" />
+                  <div>
+                    <p className="text-green-400 font-semibold text-sm">
+                      Winner: {winner.variant.name}
+                    </p>
+                    <p className="text-slate-500 dark:text-slate-400 text-xs mt-0.5">
+                      {formatPercent(winner.confidence)}% confidence
+                    </p>
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
 
             <div className="flex flex-wrap items-center gap-3">
               <div className="flex items-center gap-2">
-                <span className="text-slate-500 dark:text-slate-400 text-sm">From</span>
-                <input type="date" value={from} onChange={e => setFrom(e.target.value)} className="input-base w-36 text-sm" />
+                <span className="text-slate-500 dark:text-slate-400 text-sm">
+                  From
+                </span>
+                <input
+                  type="date"
+                  value={from}
+                  onChange={(e) => setFrom(e.target.value)}
+                  className="input-base w-36 text-sm"
+                />
               </div>
               <div className="flex items-center gap-2">
-                <span className="text-slate-500 dark:text-slate-400 text-sm">To</span>
-                <input type="date" value={to} onChange={e => setTo(e.target.value)} className="input-base w-36 text-sm" />
+                <span className="text-slate-500 dark:text-slate-400 text-sm">
+                  To
+                </span>
+                <input
+                  type="date"
+                  value={to}
+                  onChange={(e) => setTo(e.target.value)}
+                  className="input-base w-36 text-sm"
+                />
               </div>
-              <button onClick={fetchAnalytics} disabled={loading} className="btn-secondary">
-                <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> Refresh
+              <button
+                onClick={fetchAnalytics}
+                disabled={loading}
+                className="btn-secondary"
+              >
+                <RefreshCw
+                  size={14}
+                  className={loading ? "animate-spin" : ""}
+                />{" "}
+                Refresh
               </button>
               <button onClick={exportCsv} className="btn-secondary ml-auto">
                 <Download size={14} /> Export
@@ -858,237 +1170,396 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-slate-200 dark:border-slate-700">
-                    <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">Variant</th>
-                    <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium w-24">Weight</th>
-                    <th className="text-right px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">Views</th>
-                    <th className="text-right px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">Conversions</th>
-                    <th className="text-right px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">Goal Hits</th>
-                    <th className="text-right px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">CVR</th>
-                    <th className="text-right px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">Confidence</th>
+                    <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">
+                      Variant
+                    </th>
+                    <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium w-24">
+                      Weight
+                    </th>
+                    <th className="text-right px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">
+                      Views
+                    </th>
+                    <th className="text-right px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">
+                      Conversions
+                    </th>
+                    <th className="text-right px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">
+                      Goal Hits
+                    </th>
+                    <th className="text-right px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">
+                      CVR
+                    </th>
+                    <th className="text-right px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">
+                      Confidence
+                    </th>
                     <th className="text-center px-5 py-3 text-slate-400 font-medium w-24"></th>
                   </tr>
                 </thead>
                 <tbody>
                   {loading ? (
                     <tr>
-                      <td colSpan={8} className="px-5 py-10 text-center text-slate-400">
-                        <RefreshCw size={20} className="animate-spin mx-auto mb-2" />Loading...
+                      <td
+                        colSpan={8}
+                        className="px-5 py-10 text-center text-slate-400"
+                      >
+                        <RefreshCw
+                          size={20}
+                          className="animate-spin mx-auto mb-2"
+                        />
+                        Loading...
                       </td>
                     </tr>
                   ) : stats.length === 0 ? (
                     <tr>
-                      <td colSpan={8} className="px-5 py-10 text-center text-slate-400">
-                        No data yet. Publish this page to start collecting events.
+                      <td
+                        colSpan={8}
+                        className="px-5 py-10 text-center text-slate-400"
+                      >
+                        No data yet. Publish this page to start collecting
+                        events.
                       </td>
                     </tr>
-                  ) : stats.map(stat => {
-                    const cvr = stat.cvr * 100;
-                    const control = stats.find(s => s.variant.is_control);
-                    const controlCvr = (control?.cvr ?? 0) * 100;
-                    const uplift = !stat.variant.is_control && controlCvr > 0
-                      ? ((cvr - controlCvr) / controlCvr) * 100 : null;
-                    const isEditing = editingVariantId === stat.variant.id;
-                    const verified = getVerifiedStatus(stat.variant);
-                    const rowBg = stat.isWinner ? 'bg-green-500/5' : '';
+                  ) : (
+                    stats.map((stat) => {
+                      const cvr = stat.cvr * 100;
+                      const control = stats.find((s) => s.variant.is_control);
+                      const controlCvr = (control?.cvr ?? 0) * 100;
+                      const uplift =
+                        !stat.variant.is_control && controlCvr > 0
+                          ? ((cvr - controlCvr) / controlCvr) * 100
+                          : null;
+                      const isEditing = editingVariantId === stat.variant.id;
+                      const verified = getVerifiedStatus(stat.variant);
+                      const rowBg = stat.isWinner ? "bg-green-500/5" : "";
 
-                    return (
-                      <Fragment key={stat.variant.id}>
-                        <tr className={`group ${rowBg}`}>
-                          <td className="px-5 py-3.5">
-                            <div className="flex items-center gap-2">
-                              <span className="font-medium text-slate-800 dark:text-slate-200">{stat.variant.name}</span>
-                              {stat.variant.is_control && <span className="badge bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 text-[10px]">control</span>}
-                              {stat.variant.is_ai_generated && (
-                                <span className="inline-flex items-center gap-1 badge bg-[#3D8BDA]/10 text-[#3D8BDA] border border-[#3D8BDA]/20 text-[10px]">
-                                  <Sparkles size={9} /> AI Generated
+                      return (
+                        <Fragment key={stat.variant.id}>
+                          <tr className={`group ${rowBg}`}>
+                            <td className="px-5 py-3.5">
+                              <div className="flex items-center gap-2">
+                                <span className="font-medium text-slate-800 dark:text-slate-200">
+                                  {stat.variant.name}
                                 </span>
-                              )}
-                              {stat.isWinner && <Trophy size={13} className="text-green-400" />}
-                              {stat.variant.redirect_url && (
-                                verified === true ? <ShieldCheck size={11} className="text-green-400" /> :
-                                verified === false ? <ShieldX size={11} className="text-red-400" /> : null
-                              )}
-                            </div>
-                            {stat.variant.variant_type === 'hosted' && stat.variant.hosted_url && !isEditing && (
-                              <p className="text-slate-500 text-xs font-mono truncate max-w-[250px] mt-0.5">
-                                {stat.variant.hosted_url}
-                              </p>
-                            )}
-                            {stat.variant.variant_type !== 'hosted' && stat.variant.redirect_url && !isEditing && (
-                              <p className="text-slate-500 text-xs font-mono truncate max-w-[250px] mt-0.5">
-                                {stat.variant.redirect_url}
-                              </p>
-                            )}
-                          </td>
-                          <td className={`px-5 py-3.5 ${rowBg}`}>
-                            {editingWeightId === stat.variant.id ? (
-                              <input
-                                type="number"
-                                value={weightDraft}
-                                onChange={e => setWeightDraft(e.target.value)}
-                                className="input-base w-16 text-sm text-center py-0.5"
-                                min={0} max={100}
-                                autoFocus
-                                onKeyDown={e => {
-                                  if (e.key === 'Enter') saveWeight();
-                                  if (e.key === 'Escape') setEditingWeightId(null);
-                                }}
-                                onBlur={saveWeight}
-                              />
-                            ) : (
-                              <button
-                                onClick={() => startEditWeight(stat.variant.id, stat.variant.traffic_weight)}
-                                className="text-slate-400 hover:text-indigo-400 transition-colors cursor-pointer"
-                                title="Click to edit weight"
-                              >
-                                {stat.variant.traffic_weight}%
-                              </button>
-                            )}
-                          </td>
-                          <td className={`px-5 py-3.5 text-right text-slate-700 dark:text-slate-300 ${rowBg}`}>{stat.views.toLocaleString()}</td>
-                          <td className={`px-5 py-3.5 text-right text-slate-700 dark:text-slate-300 ${rowBg}`}>{stat.conversions.toLocaleString()}</td>
-                          <td className={`px-5 py-3.5 text-right text-slate-500 dark:text-slate-400 ${rowBg}`}>{stat.goalHits.toLocaleString()}</td>
-                          <td className={`px-5 py-3.5 text-right font-semibold text-slate-900 dark:text-slate-100 ${rowBg}`}>{formatPercent(cvr)}</td>
-                          <td className={`px-5 py-3.5 text-right ${rowBg}`}>
-                            {stat.variant.is_control ? <span className="text-slate-500">—</span> :
-                             stat.confidence !== null ? (
-                              <span className={stat.confidence >= 95 ? 'text-green-400 font-semibold' : stat.confidence >= 80 ? 'text-amber-400' : 'text-slate-400'}>
-                                {formatPercent(stat.confidence)}
-                              </span>
-                            ) : <span className="text-slate-500">—</span>}
-                          </td>
-                          <td className={`px-5 py-3.5 text-center ${rowBg}`}>
-                            <div className="flex items-center justify-center gap-2">
-                              {uplift !== null && (
-                                <span className={`flex items-center gap-0.5 text-xs font-medium ${uplift > 0 ? 'text-green-400' : 'text-red-400'}`}>
-                                  <TrendingUp size={11} className={uplift < 0 ? 'rotate-180' : ''} />
-                                  {uplift > 0 ? '+' : ''}{formatPercent(uplift)}
-                                </span>
-                              )}
-                              {domain && (
-                                <>
-                                  <button
-                                    onClick={() => openVariant(stat.variant.id)}
-                                    className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-slate-500/10 border border-slate-500/20 text-slate-400 hover:bg-slate-500/20 hover:text-slate-300 transition-colors"
-                                    title={`Open ${stat.variant.name}`}
-                                  >
-                                    <ExternalLink size={11} />
-                                    Open
-                                  </button>
-                                  <button
-                                    onClick={() => scanPage(stat.variant.id)}
-                                    disabled={scanning}
-                                    className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 hover:bg-indigo-500/20 transition-colors disabled:opacity-40"
-                                    title={`Scan ${stat.variant.name}`}
-                                  >
-                                    <ScanLine size={11} />
-                                    Scan
-                                  </button>
-                                </>
-                              )}
-                              <button
-                                onClick={() => startEditVariant(stat.variant)}
-                                className={`p-1 rounded transition-colors ${isEditing ? 'bg-indigo-500/20 text-indigo-400' : 'text-slate-400 dark:text-slate-600 hover:text-slate-700 dark:hover:text-slate-300'}`}
-                                title="Edit variant"
-                              >
-                                <Pencil size={13} />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-
-                        {isEditing && (
-                          <tr>
-                            <td colSpan={8} className="border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 px-6 py-4">
-                              <div className="grid grid-cols-2 gap-4 max-w-2xl">
-                                <div>
-                                  <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Variant Name</label>
-                                  <input
-                                    type="text"
-                                    value={variantDraft.name}
-                                    onChange={e => setVariantDraft({ ...variantDraft, name: e.target.value })}
-                                    className="input-base text-sm"
-                                  />
-                                </div>
-                                <div>
-                                  <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Destination URL</label>
-                                  <input
-                                    type="url"
-                                    value={variantDraft.redirect_url}
-                                    onChange={e => setVariantDraft({ ...variantDraft, redirect_url: e.target.value })}
-                                    className="input-base text-sm font-mono"
-                                    placeholder="https://..."
-                                  />
-                                </div>
-                              </div>
-
-                              <div className="flex items-center gap-4 mt-3">
-                                <div className="flex items-center gap-2">
-                                  <span
-                                    title={!variantDraft.redirect_url ? 'Mode only applies to destination URL variants, not HTML page variants' : undefined}
-                                    className={`text-xs text-slate-500 dark:text-slate-400 ${!variantDraft.redirect_url ? 'cursor-help' : ''}`}
-                                  >
-                                    Mode:
+                                {stat.variant.is_control && (
+                                  <span className="badge bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 text-[10px]">
+                                    control
                                   </span>
-                                  {variantDraft.redirect_url && (
-                                    <button
-                                      onClick={() => setVariantDraft({ ...variantDraft, proxy_mode: !variantDraft.proxy_mode })}
-                                      className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-lg border transition-colors ${
-                                        variantDraft.proxy_mode
-                                          ? 'bg-indigo-500/20 text-indigo-400 border-indigo-500/30'
-                                          : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 border-slate-300 dark:border-slate-600'
-                                      }`}
-                                    >
-                                      {variantDraft.proxy_mode ? <><Globe size={11} /> Proxy</> : <><ExternalLink size={11} /> Redirect</>}
-                                    </button>
-                                  )}
-                                </div>
-
-                                {variantDraft.redirect_url && (
-                                  <a href={variantDraft.redirect_url} target="_blank" rel="noopener noreferrer" className="btn-secondary text-xs">
-                                    <ExternalLink size={12} /> Preview
-                                  </a>
                                 )}
-
-                                {variantDraft.redirect_url && (
-                                  <button
-                                    onClick={() => checkTracking(stat.variant.id, variantDraft.redirect_url)}
-                                    disabled={checkingTracking === stat.variant.id}
-                                    className="btn-secondary text-xs"
+                                {stat.variant.is_ai_generated && (
+                                  <span className="inline-flex items-center gap-1 badge bg-[#3D8BDA]/10 text-[#3D8BDA] border border-[#3D8BDA]/20 text-[10px]">
+                                    <Sparkles size={9} /> AI Generated
+                                  </span>
+                                )}
+                                {stat.isWinner && (
+                                  <Trophy
+                                    size={13}
+                                    className="text-green-400"
+                                  />
+                                )}
+                                {stat.variant.redirect_url &&
+                                  (verified === true ? (
+                                    <ShieldCheck
+                                      size={11}
+                                      className="text-green-400"
+                                    />
+                                  ) : verified === false ? (
+                                    <ShieldX
+                                      size={11}
+                                      className="text-red-400"
+                                    />
+                                  ) : null)}
+                              </div>
+                              {stat.variant.variant_type === "hosted" &&
+                                stat.variant.hosted_url &&
+                                !isEditing && (
+                                  <p className="text-slate-500 text-xs font-mono truncate max-w-[250px] mt-0.5">
+                                    {stat.variant.hosted_url}
+                                  </p>
+                                )}
+                              {stat.variant.variant_type !== "hosted" &&
+                                stat.variant.redirect_url &&
+                                !isEditing && (
+                                  <p className="text-slate-500 text-xs font-mono truncate max-w-[250px] mt-0.5">
+                                    {stat.variant.redirect_url}
+                                  </p>
+                                )}
+                            </td>
+                            <td className={`px-5 py-3.5 ${rowBg}`}>
+                              {editingWeightId === stat.variant.id ? (
+                                <input
+                                  type="number"
+                                  value={weightDraft}
+                                  onChange={(e) =>
+                                    setWeightDraft(e.target.value)
+                                  }
+                                  className="input-base w-16 text-sm text-center py-0.5"
+                                  min={0}
+                                  max={100}
+                                  autoFocus
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") saveWeight();
+                                    if (e.key === "Escape")
+                                      setEditingWeightId(null);
+                                  }}
+                                  onBlur={saveWeight}
+                                />
+                              ) : (
+                                <button
+                                  onClick={() =>
+                                    startEditWeight(
+                                      stat.variant.id,
+                                      stat.variant.traffic_weight,
+                                    )
+                                  }
+                                  className="text-slate-400 hover:text-indigo-400 transition-colors cursor-pointer"
+                                  title="Click to edit weight"
+                                >
+                                  {stat.variant.traffic_weight}%
+                                </button>
+                              )}
+                            </td>
+                            <td
+                              className={`px-5 py-3.5 text-right text-slate-700 dark:text-slate-300 ${rowBg}`}
+                            >
+                              {stat.views.toLocaleString()}
+                            </td>
+                            <td
+                              className={`px-5 py-3.5 text-right text-slate-700 dark:text-slate-300 ${rowBg}`}
+                            >
+                              {stat.conversions.toLocaleString()}
+                            </td>
+                            <td
+                              className={`px-5 py-3.5 text-right text-slate-500 dark:text-slate-400 ${rowBg}`}
+                            >
+                              {stat.goalHits.toLocaleString()}
+                            </td>
+                            <td
+                              className={`px-5 py-3.5 text-right font-semibold text-slate-900 dark:text-slate-100 ${rowBg}`}
+                            >
+                              {formatPercent(cvr)}
+                            </td>
+                            <td className={`px-5 py-3.5 text-right ${rowBg}`}>
+                              {stat.variant.is_control ? (
+                                <span className="text-slate-500">—</span>
+                              ) : stat.confidence !== null ? (
+                                <span
+                                  className={
+                                    stat.confidence >= 95
+                                      ? "text-green-400 font-semibold"
+                                      : stat.confidence >= 80
+                                        ? "text-amber-400"
+                                        : "text-slate-400"
+                                  }
+                                >
+                                  {formatPercent(stat.confidence)}
+                                </span>
+                              ) : (
+                                <span className="text-slate-500">—</span>
+                              )}
+                            </td>
+                            <td className={`px-5 py-3.5 text-center ${rowBg}`}>
+                              <div className="flex items-center justify-center gap-2">
+                                {uplift !== null && (
+                                  <span
+                                    className={`flex items-center gap-0.5 text-xs font-medium ${uplift > 0 ? "text-green-400" : "text-red-400"}`}
                                   >
-                                    {checkingTracking === stat.variant.id ? <Spinner size="sm" /> : <ShieldCheck size={12} />}
-                                    Check Tracker
-                                  </button>
+                                    <TrendingUp
+                                      size={11}
+                                      className={uplift < 0 ? "rotate-180" : ""}
+                                    />
+                                    {uplift > 0 ? "+" : ""}
+                                    {formatPercent(uplift)}
+                                  </span>
                                 )}
-
-                                <div className="ml-auto flex items-center gap-2">
-                                  {variants.length > 1 && (
+                                {domain && (
+                                  <>
                                     <button
-                                      onClick={() => setDeleteVariantId(stat.variant.id)}
-                                      className="btn-secondary text-xs text-red-400 hover:text-red-300"
+                                      onClick={() =>
+                                        openVariant(stat.variant.id)
+                                      }
+                                      className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-slate-500/10 border border-slate-500/20 text-slate-400 hover:bg-slate-500/20 hover:text-slate-300 transition-colors"
+                                      title={`Open ${stat.variant.name}`}
                                     >
-                                      <Trash2 size={12} /> Delete
+                                      <ExternalLink size={11} />
+                                      Open
                                     </button>
-                                  )}
-                                  <Button size="sm" onClick={() => saveVariant(stat.variant.id)} loading={savingVariant}>
-                                    <Check size={12} /> Save
-                                  </Button>
-                                </div>
+                                    <button
+                                      onClick={() => scanPage(stat.variant.id)}
+                                      disabled={scanning}
+                                      className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 hover:bg-indigo-500/20 transition-colors disabled:opacity-40"
+                                      title={`Scan ${stat.variant.name}`}
+                                    >
+                                      <ScanLine size={11} />
+                                      Scan
+                                    </button>
+                                  </>
+                                )}
+                                <button
+                                  onClick={() => startEditVariant(stat.variant)}
+                                  className={`p-1 rounded transition-colors ${isEditing ? "bg-indigo-500/20 text-indigo-400" : "text-slate-400 dark:text-slate-600 hover:text-slate-700 dark:hover:text-slate-300"}`}
+                                  title="Edit variant"
+                                >
+                                  <Pencil size={13} />
+                                </button>
                               </div>
                             </td>
                           </tr>
-                        )}
-                      </Fragment>
-                    );
-                  })}
+
+                          {isEditing && (
+                            <tr>
+                              <td
+                                colSpan={8}
+                                className="border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 px-6 py-4"
+                              >
+                                <div className="grid grid-cols-2 gap-4 max-w-2xl">
+                                  <div>
+                                    <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">
+                                      Variant Name
+                                    </label>
+                                    <input
+                                      type="text"
+                                      value={variantDraft.name}
+                                      onChange={(e) =>
+                                        setVariantDraft({
+                                          ...variantDraft,
+                                          name: e.target.value,
+                                        })
+                                      }
+                                      className="input-base text-sm"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">
+                                      Destination URL
+                                    </label>
+                                    <input
+                                      type="url"
+                                      value={variantDraft.redirect_url}
+                                      onChange={(e) =>
+                                        setVariantDraft({
+                                          ...variantDraft,
+                                          redirect_url: e.target.value,
+                                        })
+                                      }
+                                      className="input-base text-sm font-mono"
+                                      placeholder="https://..."
+                                    />
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center gap-4 mt-3">
+                                  <div className="flex items-center gap-2">
+                                    <span
+                                      title={
+                                        !variantDraft.redirect_url
+                                          ? "Mode only applies to destination URL variants, not HTML page variants"
+                                          : undefined
+                                      }
+                                      className={`text-xs text-slate-500 dark:text-slate-400 ${!variantDraft.redirect_url ? "cursor-help" : ""}`}
+                                    >
+                                      Mode:
+                                    </span>
+                                    {variantDraft.redirect_url && (
+                                      <button
+                                        onClick={() =>
+                                          setVariantDraft({
+                                            ...variantDraft,
+                                            proxy_mode:
+                                              !variantDraft.proxy_mode,
+                                          })
+                                        }
+                                        className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-lg border transition-colors ${
+                                          variantDraft.proxy_mode
+                                            ? "bg-indigo-500/20 text-indigo-400 border-indigo-500/30"
+                                            : "bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 border-slate-300 dark:border-slate-600"
+                                        }`}
+                                      >
+                                        {variantDraft.proxy_mode ? (
+                                          <>
+                                            <Globe size={11} /> Proxy
+                                          </>
+                                        ) : (
+                                          <>
+                                            <ExternalLink size={11} /> Redirect
+                                          </>
+                                        )}
+                                      </button>
+                                    )}
+                                  </div>
+
+                                  {variantDraft.redirect_url && (
+                                    <a
+                                      href={variantDraft.redirect_url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="btn-secondary text-xs"
+                                    >
+                                      <ExternalLink size={12} /> Preview
+                                    </a>
+                                  )}
+
+                                  {variantDraft.redirect_url && (
+                                    <button
+                                      onClick={() =>
+                                        checkTracking(
+                                          stat.variant.id,
+                                          variantDraft.redirect_url,
+                                        )
+                                      }
+                                      disabled={
+                                        checkingTracking === stat.variant.id
+                                      }
+                                      className="btn-secondary text-xs"
+                                    >
+                                      {checkingTracking === stat.variant.id ? (
+                                        <Spinner size="sm" />
+                                      ) : (
+                                        <ShieldCheck size={12} />
+                                      )}
+                                      Check Tracker
+                                    </button>
+                                  )}
+
+                                  <div className="ml-auto flex items-center gap-2">
+                                    {variants.length > 1 && (
+                                      <button
+                                        onClick={() =>
+                                          setDeleteVariantId(stat.variant.id)
+                                        }
+                                        className="btn-secondary text-xs text-red-400 hover:text-red-300"
+                                      >
+                                        <Trash2 size={12} /> Delete
+                                      </button>
+                                    )}
+                                    <Button
+                                      size="sm"
+                                      onClick={() =>
+                                        saveVariant(stat.variant.id)
+                                      }
+                                      loading={savingVariant}
+                                    >
+                                      <Check size={12} /> Save
+                                    </Button>
+                                  </div>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      );
+                    })
+                  )}
                 </tbody>
               </table>
 
               <div className="border-t border-slate-200 dark:border-slate-700 px-5 py-3">
                 <button
                   onClick={() => {
-                    setNewVariantName(`Variant ${String.fromCharCode(65 + variants.length)}`);
-                    setNewVariantUrl(''); setNewVariantHtml(''); setNewVariantMode('url');
+                    setNewVariantName(
+                      `Variant ${String.fromCharCode(65 + variants.length)}`,
+                    );
+                    setNewVariantUrl("");
+                    setNewVariantHtml("");
+                    setNewVariantMode("url");
                     setAddVariantOpen(true);
                   }}
                   className="text-indigo-400 hover:text-indigo-300 text-sm font-medium flex items-center gap-1.5 transition-colors"
@@ -1100,46 +1571,72 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
 
             {stats.length > 0 && (
               <p className="text-xs text-slate-500">
-                Confidence is calculated using a chi-square test. 95%+ is considered statistically significant.
+                Confidence is calculated using a chi-square test. 95%+ is
+                considered statistically significant.
               </p>
             )}
           </>
         )}
 
         {/* ─── LEADS TAB ─── */}
-        {tab === 'leads' && (
+        {tab === "leads" && (
           <>
             {leadsLoading ? (
               <div className="flex items-center justify-center py-12">
-                <RefreshCw size={20} className="animate-spin text-slate-500 dark:text-slate-400" />
+                <RefreshCw
+                  size={20}
+                  className="animate-spin text-slate-500 dark:text-slate-400"
+                />
               </div>
             ) : leads.length === 0 ? (
               <div className="text-center py-12">
                 <Users size={32} className="mx-auto text-slate-600 mb-3" />
-                <p className="text-slate-500 dark:text-slate-400 text-sm">No conversions recorded yet.</p>
-                <p className="text-slate-500 text-xs mt-1">Conversions will appear here once visitors trigger your goals.</p>
+                <p className="text-slate-500 dark:text-slate-400 text-sm">
+                  No conversions recorded yet.
+                </p>
+                <p className="text-slate-500 text-xs mt-1">
+                  Conversions will appear here once visitors trigger your goals.
+                </p>
               </div>
             ) : (
               <div className="card overflow-hidden">
                 <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200 dark:border-slate-700">
-                  <p className="text-sm text-slate-500 dark:text-slate-400">{leads.length} conversion{leads.length !== 1 ? 's' : ''}</p>
-                  <button onClick={fetchLeads} className="btn-secondary text-xs">
+                  <p className="text-sm text-slate-500 dark:text-slate-400">
+                    {leads.length} conversion{leads.length !== 1 ? "s" : ""}
+                  </p>
+                  <button
+                    onClick={fetchLeads}
+                    className="btn-secondary text-xs"
+                  >
                     <RefreshCw size={12} /> Refresh
                   </button>
                 </div>
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-slate-200 dark:border-slate-700">
-                      <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">Date</th>
-                      <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">Visitor</th>
-                      <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">Variant</th>
-                      <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">Goal</th>
-                      <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">Details</th>
+                      <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">
+                        Date
+                      </th>
+                      <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">
+                        Visitor
+                      </th>
+                      <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">
+                        Variant
+                      </th>
+                      <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">
+                        Goal
+                      </th>
+                      <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">
+                        Details
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
-                    {leads.map(lead => (
-                      <tr key={lead.id} className="border-b border-slate-200 dark:border-slate-800 last:border-0">
+                    {leads.map((lead) => (
+                      <tr
+                        key={lead.id}
+                        className="border-b border-slate-200 dark:border-slate-800 last:border-0"
+                      >
                         <td className="px-5 py-3 text-slate-700 dark:text-slate-300 text-xs">
                           {new Date(lead.created_at).toLocaleString()}
                         </td>
@@ -1147,13 +1644,14 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
                           {lead.visitor_hash.slice(0, 8)}...
                         </td>
                         <td className="px-5 py-3 text-slate-700 dark:text-slate-300">
-                          {lead.test_variants?.name || '—'}
+                          {lead.test_variants?.name || "—"}
                         </td>
                         <td className="px-5 py-3 text-slate-700 dark:text-slate-300">
-                          {lead.conversion_goals?.name || '—'}
+                          {lead.conversion_goals?.name || "—"}
                         </td>
                         <td className="px-5 py-3 text-slate-500 text-xs font-mono">
-                          {(lead.metadata as Record<string, string>)?.trigger || '—'}
+                          {(lead.metadata as Record<string, string>)?.trigger ||
+                            "—"}
                         </td>
                       </tr>
                     ))}
@@ -1165,7 +1663,7 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
         )}
 
         {/* ─── SETTINGS TAB ─── */}
-        {tab === 'settings' && (
+        {tab === "settings" && (
           <>
             {/* Page Scanner */}
             <div className="card overflow-hidden">
@@ -1175,13 +1673,15 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
                     <ScanLine size={16} className="text-indigo-400" />
                   </div>
                   <div>
-                    <p className="font-medium text-slate-800 dark:text-slate-200 text-sm">Page Scanner</p>
+                    <p className="font-medium text-slate-800 dark:text-slate-200 text-sm">
+                      Page Scanner
+                    </p>
                     <p className="text-slate-500 text-xs">
                       {scanning
                         ? `Scanning ${scannedVariantName}…`
                         : scannedVariantName
                           ? `Last scanned: ${scannedVariantName}`
-                          : 'Click Scan on any variant in the Overview tab to detect elements'}
+                          : "Click Scan on any variant in the Overview tab to detect elements"}
                     </p>
                   </div>
                 </div>
@@ -1189,7 +1689,10 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
 
               <div className="px-5 py-4">
                 {!scanning && !scanResults && (
-                  <p className="text-slate-500 text-xs">No scan results yet. Use the Scan button on a variant row in the Overview tab.</p>
+                  <p className="text-slate-500 text-xs">
+                    No scan results yet. Use the Scan button on a variant row in
+                    the Overview tab.
+                  </p>
                 )}
 
                 {scanning && (
@@ -1201,40 +1704,86 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
 
                 {scanResults && (
                   <div className="space-y-4 max-h-96 overflow-y-auto pr-1">
-                    {scanResults.variants.map(vs => (
+                    {scanResults.variants.map((vs) => (
                       <div key={vs.variant_id}>
                         <div className="flex items-center gap-2 mb-2">
-                          <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">{vs.variant_name}</span>
-                          <span className="text-slate-400 text-xs">{vs.elements.length} element{vs.elements.length !== 1 ? 's' : ''}</span>
-                          <span className="text-slate-500 text-xs ml-auto">{new Date(vs.scanned_at).toLocaleString()}</span>
+                          <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+                            {vs.variant_name}
+                          </span>
+                          <span className="text-slate-400 text-xs">
+                            {vs.elements.length} element
+                            {vs.elements.length !== 1 ? "s" : ""}
+                          </span>
+                          <span className="text-slate-500 text-xs ml-auto">
+                            {new Date(vs.scanned_at).toLocaleString()}
+                          </span>
                         </div>
                         {vs.elements.length === 0 ? (
-                          <p className="text-slate-400 text-xs px-3 py-2">No trackable elements found.</p>
+                          <p className="text-slate-400 text-xs px-3 py-2">
+                            No trackable elements found.
+                          </p>
                         ) : (
                           <div className="space-y-1.5">
                             {vs.elements.map((el, i) => {
                               const icon =
-                                el.type === 'form' ? <FormInput size={13} className="text-purple-400 flex-shrink-0" /> :
-                                el.type === 'call' ? <Phone size={13} className="text-green-400 flex-shrink-0" /> :
-                                el.type === 'link' ? <ExternalLink size={13} className="text-blue-400 flex-shrink-0" /> :
-                                el.type === 'toggle' ? <ToggleLeft size={13} className="text-amber-400 flex-shrink-0" /> :
-                                <MousePointerClick size={13} className="text-indigo-400 flex-shrink-0" />;
+                                el.type === "form" ? (
+                                  <FormInput
+                                    size={13}
+                                    className="text-purple-400 flex-shrink-0"
+                                  />
+                                ) : el.type === "call" ? (
+                                  <Phone
+                                    size={13}
+                                    className="text-green-400 flex-shrink-0"
+                                  />
+                                ) : el.type === "link" ? (
+                                  <ExternalLink
+                                    size={13}
+                                    className="text-blue-400 flex-shrink-0"
+                                  />
+                                ) : el.type === "toggle" ? (
+                                  <ToggleLeft
+                                    size={13}
+                                    className="text-amber-400 flex-shrink-0"
+                                  />
+                                ) : (
+                                  <MousePointerClick
+                                    size={13}
+                                    className="text-indigo-400 flex-shrink-0"
+                                  />
+                                );
 
-                              const label = el.text ? `"${el.text}"` : el.id ? `#${el.id}` : el.type;
+                              const label = el.text
+                                ? `"${el.text}"`
+                                : el.id
+                                  ? `#${el.id}`
+                                  : el.type;
 
-                              const alreadyAdded = editGoals.some(g => {
+                              const alreadyAdded = editGoals.some((g) => {
                                 if (el.id) return g.selector === `id:${el.id}`;
-                                if (el.text) return g.selector === `text:${el.text}`;
+                                if (el.text)
+                                  return g.selector === `text:${el.text}`;
                                 return false;
                               });
 
                               return (
-                                <div key={i} className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
+                                <div
+                                  key={i}
+                                  className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700"
+                                >
                                   <div className="flex items-center gap-2 min-w-0">
                                     {icon}
-                                    <span className="text-slate-700 dark:text-slate-300 text-sm truncate">{label}</span>
-                                    {el.id && <span className="text-slate-400 font-mono text-xs flex-shrink-0">#{el.id}</span>}
-                                    <span className="text-slate-400 text-xs flex-shrink-0 capitalize">{el.type.replace('_', ' ')}</span>
+                                    <span className="text-slate-700 dark:text-slate-300 text-sm truncate">
+                                      {label}
+                                    </span>
+                                    {el.id && (
+                                      <span className="text-slate-400 font-mono text-xs flex-shrink-0">
+                                        #{el.id}
+                                      </span>
+                                    )}
+                                    <span className="text-slate-400 text-xs flex-shrink-0 capitalize">
+                                      {el.type.replace("_", " ")}
+                                    </span>
                                   </div>
                                   {alreadyAdded ? (
                                     <button
@@ -1269,10 +1818,24 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
             <div className="card overflow-hidden">
               <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700">
                 <div className="flex items-center justify-between">
-                  <h3 className="font-medium text-slate-800 dark:text-slate-200">Goals</h3>
+                  <h3 className="font-medium text-slate-800 dark:text-slate-200">
+                    Goals
+                  </h3>
                   <button
                     type="button"
-                    onClick={() => setEditGoals([...editGoals, { id: '', name: '', type: 'form_submit', selector: '', url_pattern: '', is_primary: editGoals.length === 0 }])}
+                    onClick={() =>
+                      setEditGoals([
+                        ...editGoals,
+                        {
+                          id: "",
+                          name: "",
+                          type: "form_submit",
+                          selector: "",
+                          url_pattern: "",
+                          is_primary: editGoals.length === 0,
+                        },
+                      ])
+                    }
                     className="text-indigo-400 hover:text-indigo-300 text-sm"
                   >
                     + Add Goal
@@ -1281,54 +1844,103 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
               </div>
               <form onSubmit={handleSaveGoals} className="px-5 py-4 space-y-3">
                 {editGoals.map((g, i) => (
-                  <div key={i} className="rounded-lg border border-slate-200 dark:border-slate-700 p-3 space-y-2">
+                  <div
+                    key={i}
+                    className="rounded-lg border border-slate-200 dark:border-slate-700 p-3 space-y-2"
+                  >
                     <div className="flex items-center gap-2">
                       <input
                         type="text"
                         value={g.name}
-                        onChange={e => { const c = [...editGoals]; c[i] = { ...c[i], name: e.target.value }; setEditGoals(c); }}
+                        onChange={(e) => {
+                          const c = [...editGoals];
+                          c[i] = { ...c[i], name: e.target.value };
+                          setEditGoals(c);
+                        }}
                         className="input-base flex-1"
                         placeholder="Goal name"
                         required
                       />
                       <select
                         value={g.type}
-                        onChange={e => { const c = [...editGoals]; c[i] = { ...c[i], type: e.target.value, selector: '', url_pattern: '' }; setEditGoals(c); }}
+                        onChange={(e) => {
+                          const c = [...editGoals];
+                          c[i] = {
+                            ...c[i],
+                            type: e.target.value,
+                            selector: "",
+                            url_pattern: "",
+                          };
+                          setEditGoals(c);
+                        }}
                         className="input-base w-36"
                       >
-                        {GOAL_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                        {GOAL_TYPES.map((t) => (
+                          <option key={t.value} value={t.value}>
+                            {t.label}
+                          </option>
+                        ))}
                       </select>
-                      <button type="button" onClick={() => setEditGoals(editGoals.filter((_, gi) => gi !== i))} className="text-slate-500 hover:text-red-400 transition-colors">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setEditGoals(editGoals.filter((_, gi) => gi !== i))
+                        }
+                        className="text-slate-500 hover:text-red-400 transition-colors"
+                      >
                         <X size={14} />
                       </button>
                     </div>
                     <div className="flex items-center gap-2">
-                      {(g.type === 'form_submit' || g.type === 'button_click') && (
+                      {(g.type === "form_submit" ||
+                        g.type === "button_click") && (
                         <input
                           type="text"
-                          value={g.selector || ''}
-                          onChange={e => { const c = [...editGoals]; c[i] = { ...c[i], selector: e.target.value }; setEditGoals(c); }}
+                          value={g.selector || ""}
+                          onChange={(e) => {
+                            const c = [...editGoals];
+                            c[i] = { ...c[i], selector: e.target.value };
+                            setEditGoals(c);
+                          }}
                           className="input-base flex-1 font-mono text-xs"
-                          placeholder={g.type === 'form_submit' ? '#my-form' : '#cta-button'}
+                          placeholder={
+                            g.type === "form_submit"
+                              ? "#my-form"
+                              : "#cta-button"
+                          }
                         />
                       )}
-                      {g.type === 'url_reached' && (
+                      {g.type === "url_reached" && (
                         <input
                           type="text"
-                          value={g.url_pattern || ''}
-                          onChange={e => { const c = [...editGoals]; c[i] = { ...c[i], url_pattern: e.target.value }; setEditGoals(c); }}
+                          value={g.url_pattern || ""}
+                          onChange={(e) => {
+                            const c = [...editGoals];
+                            c[i] = { ...c[i], url_pattern: e.target.value };
+                            setEditGoals(c);
+                          }}
                           className="input-base flex-1 font-mono text-xs"
                           placeholder="/thank-you"
                         />
                       )}
-                      {g.type === 'call_click' && <p className="text-slate-500 text-xs flex-1">Tracks tel: link clicks</p>}
+                      {g.type === "call_click" && (
+                        <p className="text-slate-500 text-xs flex-1">
+                          Tracks tel: link clicks
+                        </p>
+                      )}
                       {/* is_primary UI hidden — all goals count equally toward conversions */}
                     </div>
                   </div>
                 ))}
-                {editGoals.length === 0 && <p className="text-slate-500 text-xs">No goals. Add one to track conversions.</p>}
+                {editGoals.length === 0 && (
+                  <p className="text-slate-500 text-xs">
+                    No goals. Add one to track conversions.
+                  </p>
+                )}
                 <div className="flex justify-end pt-2">
-                  <Button type="submit" loading={savingGoals} size="sm">Save Goals</Button>
+                  <Button type="submit" loading={savingGoals} size="sm">
+                    Save Goals
+                  </Button>
                 </div>
               </form>
             </div>
@@ -1341,15 +1953,28 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
                     <Code2 size={16} className="text-indigo-400" />
                   </div>
                   <div>
-                    <p className="font-medium text-slate-800 dark:text-slate-200 text-sm">Tracking Snippet</p>
-                    <p className="text-slate-500 text-xs">Paste before &lt;/body&gt; on your external landing page (redirect mode only)</p>
+                    <p className="font-medium text-slate-800 dark:text-slate-200 text-sm">
+                      Tracking Snippet
+                    </p>
+                    <p className="text-slate-500 text-xs">
+                      Paste before &lt;/body&gt; on your external landing page
+                      (redirect mode only)
+                    </p>
                   </div>
                 </div>
               </div>
               <div className="px-5 py-4">
                 <div className="flex items-center justify-between mb-3">
-                  <p className="text-slate-500 dark:text-slate-400 text-xs">Tracking context is passed via URL parameters.</p>
-                  <button onClick={() => { navigator.clipboard.writeText(snippet); toast.success('Copied'); }} className="btn-secondary text-xs">
+                  <p className="text-slate-500 dark:text-slate-400 text-xs">
+                    Tracking context is passed via URL parameters.
+                  </p>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(snippet);
+                      toast.success("Copied");
+                    }}
+                    className="btn-secondary text-xs"
+                  >
                     <Copy size={12} /> Copy
                   </button>
                 </div>
@@ -1360,11 +1985,21 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
             </div>
 
             {/* Head Scripts (for proxy / custom HTML mode) */}
-            <div className={`card overflow-hidden ${allPureRedirect ? 'opacity-60' : ''}`}>
+            <div
+              className={`card overflow-hidden ${allPureRedirect ? "opacity-60" : ""}`}
+            >
               <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700">
-                <h3 className="font-medium text-slate-800 dark:text-slate-200">Head Scripts</h3>
+                <h3 className="font-medium text-slate-800 dark:text-slate-200">
+                  Head Scripts
+                </h3>
                 <p className="text-slate-500 text-xs mt-1">
-                  Custom scripts injected into the page &lt;head&gt;. Works for custom HTML pages and proxy-mode hosted URLs.
+                  Custom scripts injected into the page{" "}
+                  <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded">
+                    &lt;head&gt;
+                  </code>
+                  . Only works for custom HTML pages, not hosted URLs (Lovable,
+                  Replit, site builders, etc.). For third-party scripts (GTM,
+                  Pixel, etc.), add them directly to your HTML site.
                 </p>
               </div>
               <div className="px-5 py-4 space-y-3">
@@ -1372,22 +2007,40 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
                   <div className="flex items-start gap-2 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-3 py-2.5 text-xs text-slate-500 dark:text-slate-400">
                     <span className="mt-0.5 flex-shrink-0">⚠️</span>
                     <span>
-                      Head scripts are disabled in <strong className="text-slate-700 dark:text-slate-300">redirect mode</strong>.
-                      SplitLab redirects visitors directly to the destination URL (302) — no HTML is served, so scripts cannot be injected.
-                      Switch to <strong className="text-slate-700 dark:text-slate-300">proxy mode</strong> on your variants to enable this, or add{' '}
-                      <code className="font-mono bg-slate-200 dark:bg-slate-700 px-1 rounded">tracker.js</code> directly to your destination page.
+                      Head scripts are disabled in{" "}
+                      <strong className="text-slate-700 dark:text-slate-300">
+                        redirect mode
+                      </strong>
+                      . SplitLab redirects visitors directly to the destination
+                      URL (302) — no HTML is served, so scripts cannot be
+                      injected. Switch to{" "}
+                      <strong className="text-slate-700 dark:text-slate-300">
+                        proxy mode
+                      </strong>{" "}
+                      on your variants to enable this, or add{" "}
+                      <code className="font-mono bg-slate-200 dark:bg-slate-700 px-1 rounded">
+                        tracker.js
+                      </code>{" "}
+                      directly to your destination page.
                     </span>
                   </div>
                 )}
                 <textarea
                   value={headScriptsDraft}
-                  onChange={e => setHeadScriptsDraft(e.target.value)}
+                  onChange={(e) => setHeadScriptsDraft(e.target.value)}
                   disabled={allPureRedirect}
-                  className={`input-base font-mono text-xs w-full h-32 resize-y ${allPureRedirect ? 'cursor-not-allowed opacity-50' : ''}`}
-                  placeholder={'<!-- Meta Pixel -->\n<script>...</script>\n\n<!-- Google Analytics -->\n<script>...</script>'}
+                  className={`input-base font-mono text-xs w-full h-32 resize-y ${allPureRedirect ? "cursor-not-allowed opacity-50" : ""}`}
+                  placeholder={
+                    "<!-- Meta Pixel -->\n<script>...</script>\n\n<!-- Google Analytics -->\n<script>...</script>"
+                  }
                 />
                 <div className="flex justify-end">
-                  <Button onClick={saveHeadScripts} loading={savingScripts} size="sm" disabled={allPureRedirect}>
+                  <Button
+                    onClick={saveHeadScripts}
+                    loading={savingScripts}
+                    size="sm"
+                    disabled={allPureRedirect}
+                  >
                     Save Scripts
                   </Button>
                 </div>
@@ -1398,42 +2051,67 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
       </div>
 
       {/* ═══ MODALS ═══ */}
-      <Modal open={addVariantOpen} onClose={() => setAddVariantOpen(false)} title="Add Variant" size="sm">
+      <Modal
+        open={addVariantOpen}
+        onClose={() => setAddVariantOpen(false)}
+        title="Add Variant"
+        size="sm"
+      >
         <form onSubmit={handleAddVariant} className="space-y-4">
           {/* Mode toggle */}
           <div className="flex border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
             <button
               type="button"
-              onClick={() => setNewVariantMode('url')}
-              className={`flex-1 py-2 text-sm font-medium transition-colors ${newVariantMode === 'url' ? 'bg-indigo-500/20 text-indigo-400' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700/50'}`}
+              onClick={() => setNewVariantMode("url")}
+              className={`flex-1 py-2 text-sm font-medium transition-colors ${newVariantMode === "url" ? "bg-indigo-500/20 text-indigo-400" : "text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700/50"}`}
             >
               External URL
             </button>
             <button
               type="button"
-              onClick={() => setNewVariantMode('html')}
-              className={`flex-1 py-2 text-sm font-medium transition-colors border-l border-slate-200 dark:border-slate-700 ${newVariantMode === 'html' ? 'bg-indigo-500/20 text-indigo-400' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700/50'}`}
+              onClick={() => setNewVariantMode("html")}
+              className={`flex-1 py-2 text-sm font-medium transition-colors border-l border-slate-200 dark:border-slate-700 ${newVariantMode === "html" ? "bg-indigo-500/20 text-indigo-400" : "text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700/50"}`}
             >
               Upload HTML
             </button>
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Variant Name</label>
-            <input type="text" value={newVariantName} onChange={e => setNewVariantName(e.target.value)} className="input-base" required autoFocus />
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+              Variant Name
+            </label>
+            <input
+              type="text"
+              value={newVariantName}
+              onChange={(e) => setNewVariantName(e.target.value)}
+              className="input-base"
+              required
+              autoFocus
+            />
           </div>
 
-          {newVariantMode === 'url' ? (
+          {newVariantMode === "url" ? (
             <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Destination URL</label>
-              <input type="url" value={newVariantUrl} onChange={e => setNewVariantUrl(e.target.value)} className="input-base font-mono text-sm" placeholder="https://..." required />
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+                Destination URL
+              </label>
+              <input
+                type="url"
+                value={newVariantUrl}
+                onChange={(e) => setNewVariantUrl(e.target.value)}
+                className="input-base font-mono text-sm"
+                placeholder="https://..."
+                required
+              />
             </div>
           ) : (
             <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">HTML Content</label>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+                HTML Content
+              </label>
               <textarea
                 value={newVariantHtml}
-                onChange={e => setNewVariantHtml(e.target.value)}
+                onChange={(e) => setNewVariantHtml(e.target.value)}
                 className="input-base font-mono text-xs w-full h-40 resize-y"
                 placeholder="<!DOCTYPE html>\n<html>\n<head>...</head>\n<body>...</body>\n</html>"
                 required
@@ -1445,13 +2123,14 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
                     type="file"
                     accept=".html,.htm"
                     className="hidden"
-                    onChange={e => {
+                    onChange={(e) => {
                       const file = e.target.files?.[0];
                       if (!file) return;
                       const reader = new FileReader();
-                      reader.onload = () => setNewVariantHtml(reader.result as string);
+                      reader.onload = () =>
+                        setNewVariantHtml(reader.result as string);
                       reader.readAsText(file);
-                      e.target.value = '';
+                      e.target.value = "";
                     }}
                   />
                 </label>
@@ -1459,10 +2138,21 @@ export default function AnalyticsClient({ test: initialTest, appUrl, clientId, c
             </div>
           )}
 
-          <p className="text-slate-500 text-xs">Traffic weights will be automatically split equally across all variants.</p>
+          <p className="text-slate-500 text-xs">
+            Traffic weights will be automatically split equally across all
+            variants.
+          </p>
           <div className="flex justify-end gap-3 pt-2">
-            <Button variant="secondary" type="button" onClick={() => setAddVariantOpen(false)}>Cancel</Button>
-            <Button type="submit" loading={addingVariant}>Add Variant</Button>
+            <Button
+              variant="secondary"
+              type="button"
+              onClick={() => setAddVariantOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" loading={addingVariant}>
+              Add Variant
+            </Button>
           </div>
         </form>
       </Modal>
