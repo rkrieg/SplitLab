@@ -73,7 +73,7 @@ export async function POST(
     if (status.verified) {
       await db
         .from('domains')
-        .update({ verified: true, verified_at: new Date().toISOString(), vercel_verification: null })
+        .update({ verified: true, verified_at: new Date().toISOString() })
         .eq('id', domain_id);
     } else if (status.vercel_verification?.length) {
       await db
@@ -107,6 +107,7 @@ export async function POST(
         cname_target: null,
         verified: false,
         verified_at: null,
+        vercel_verification: null,
       })
       .eq('id', domain_id)
       .select()

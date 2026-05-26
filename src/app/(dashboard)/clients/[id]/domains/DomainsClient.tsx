@@ -4,7 +4,7 @@ import { useState } from 'react';
 import toast from 'react-hot-toast';
 import {
   Plus, Globe, CheckCircle, XCircle, Copy, AlertCircle,
-  Trash2, Clock, Pencil,
+  Trash2, Clock, Pencil, ChevronDown,
 } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
@@ -56,6 +56,7 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
   const [verifyStatus, setVerifyStatus] = useState<Record<string, string>>({});
   const [verifyMessage, setVerifyMessage] = useState<Record<string, string>>({});
   const [verifyTxtRecords, setVerifyTxtRecords] = useState<Record<string, VercelVerification[]>>({});
+  const [showDnsId, setShowDnsId] = useState<string | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
 
@@ -237,6 +238,8 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
     const activeTxtRecords = verifyTxtRecords[d.id] ?? d.vercel_verification ?? [];
 
     if (d.verified) {
+      const dnsExpanded = showDnsId === d.id;
+      const txtRecords: VercelVerification[] = d.vercel_verification ?? [];
       return (
         <div key={d.id} className="card overflow-hidden">
           <div className="p-5 flex items-center gap-4">
@@ -252,16 +255,26 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
                 Verified {d.verified_at ? formatDate(d.verified_at) : ''} • Added {formatDate(d.created_at)}
               </p>
             </div>
-            {canManage && (
-              <div className="flex items-center gap-1">
-                <button onClick={() => openEditModal(d)} className="p-2 text-slate-500 hover:text-slate-200 transition-colors rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700" title="Edit domain">
-                  <Pencil size={14} />
-                </button>
-                <button onClick={() => setDeleteId(d.id)} className="p-2 text-slate-500 hover:text-red-400 transition-colors rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700" title="Delete domain">
-                  <Trash2 size={14} />
-                </button>
-              </div>
-            )}
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setShowDnsId(dnsExpanded ? null : d.id)}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-700/50 transition-colors"
+                title="View DNS records"
+              >
+                DNS Records
+                <ChevronDown size={12} className={`transition-transform ${dnsExpanded ? 'rotate-180' : ''}`} />
+              </button>
+              {canManage && (
+                <>
+                  <button onClick={() => openEditModal(d)} className="p-2 text-slate-500 hover:text-slate-200 transition-colors rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700" title="Edit domain">
+                    <Pencil size={14} />
+                  </button>
+                  <button onClick={() => setDeleteId(d.id)} className="p-2 text-slate-500 hover:text-red-400 transition-colors rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700" title="Delete domain">
+                    <Trash2 size={14} />
+                  </button>
+                </>
+              )}
+            </div>
           </div>
           <div className="border-t border-slate-200 dark:border-slate-800 px-5 py-3 bg-green-500/5">
             <div className="flex items-center gap-6 text-xs">
@@ -270,6 +283,66 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
               <span className="flex items-center gap-1.5 text-green-400"><CheckCircle size={13} /> Verified</span>
             </div>
           </div>
+          {dnsExpanded && (
+            <div className="border-t border-slate-200 dark:border-slate-800 px-5 py-4">
+              <p className="text-xs text-slate-500 mb-3 font-medium">DNS Configuration (reference only — already configured)</p>
+              <div className="rounded-lg border border-slate-700 overflow-hidden text-xs">
+                <div className="grid grid-cols-3 bg-slate-50 dark:bg-slate-800/60">
+                  <div className="px-3 py-2 text-slate-500 font-medium border-r border-slate-200 dark:border-slate-700">Type</div>
+                  <div className="px-3 py-2 text-slate-500 font-medium border-r border-slate-200 dark:border-slate-700">Name</div>
+                  <div className="px-3 py-2 text-slate-500 font-medium">Value</div>
+                </div>
+                <div className="grid grid-cols-3 bg-white dark:bg-slate-900/50">
+                  <div className="px-3 py-2.5 text-slate-800 dark:text-slate-200 font-mono border-r border-slate-200 dark:border-slate-700">CNAME</div>
+                  <div className="px-3 py-2.5 text-slate-800 dark:text-slate-200 font-mono border-r border-slate-200 dark:border-slate-700">{dnsName}</div>
+                  <div className="px-3 py-2.5 font-mono flex items-center justify-between gap-2">
+                    <span className="text-[#3D8BDA]">{d.cname_target || appHostname}</span>
+                    <button onClick={() => copyToClipboard(d.cname_target || appHostname)} className="text-slate-500 hover:text-slate-300 flex-shrink-0"><Copy size={12} /></button>
+                  </div>
+                </div>
+              </div>
+              {isRoot && (
+                <div className="mt-3 rounded-lg border border-slate-200 dark:border-slate-700/50 bg-slate-50 dark:bg-slate-800/30 px-3 py-2.5">
+                  <p className="text-slate-400 text-xs leading-relaxed">
+                    <strong className="text-slate-700 dark:text-slate-300">Root domain?</strong> If you used an <strong className="text-slate-700 dark:text-slate-300">A record</strong> instead of CNAME:
+                  </p>
+                  <div className="grid grid-cols-3 mt-2 text-xs font-mono">
+                    <span className="text-slate-700 dark:text-slate-300">A</span>
+                    <span className="text-slate-700 dark:text-slate-300">@</span>
+                    <span className="text-[#3D8BDA] flex items-center gap-2">
+                      {appARecord}
+                      <button onClick={() => copyToClipboard(appARecord)} className="text-slate-500 hover:text-slate-300"><Copy size={12} /></button>
+                    </span>
+                  </div>
+                </div>
+              )}
+              {txtRecords.length > 0 && (
+                <div className="mt-4">
+                  <h4 className="text-xs font-medium text-slate-700 dark:text-slate-300 mb-2">TXT record (domain ownership verification):</h4>
+                  <div className="rounded-lg border border-slate-700 overflow-hidden text-xs">
+                    <div className="grid grid-cols-3 bg-slate-50 dark:bg-slate-800/60">
+                      <div className="px-3 py-2 text-slate-500 font-medium border-r border-slate-200 dark:border-slate-700">Type</div>
+                      <div className="px-3 py-2 text-slate-500 font-medium border-r border-slate-200 dark:border-slate-700">Name</div>
+                      <div className="px-3 py-2 text-slate-500 font-medium">Value</div>
+                    </div>
+                    {txtRecords.map((rec, i) => (
+                      <div key={i} className="grid grid-cols-3 bg-white dark:bg-slate-900/50">
+                        <div className="px-3 py-2.5 text-slate-800 dark:text-slate-200 font-mono border-r border-slate-200 dark:border-slate-700">{rec.type}</div>
+                        <div className="px-3 py-2.5 text-slate-800 dark:text-slate-200 font-mono border-r border-slate-200 dark:border-slate-700 break-all">
+                          {rec.domain}
+                          <button onClick={() => copyToClipboard(rec.domain)} className="ml-2 text-slate-500 hover:text-slate-300 inline-flex"><Copy size={11} /></button>
+                        </div>
+                        <div className="px-3 py-2.5 font-mono flex items-start justify-between gap-2">
+                          <span className="text-slate-300 break-all">{rec.value}</span>
+                          <button onClick={() => copyToClipboard(rec.value)} className="text-slate-500 hover:text-slate-300 flex-shrink-0 mt-0.5"><Copy size={11} /></button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       );
     }
