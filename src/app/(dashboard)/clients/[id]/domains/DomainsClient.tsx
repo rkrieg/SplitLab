@@ -52,6 +52,7 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
   const [editSubdomain, setEditSubdomain] = useState('');
   const [saving, setSaving] = useState(false);
 
+  const [addDomainError, setAddDomainError] = useState<{ message: string; isLimit: boolean } | null>(null);
   const [verifying, setVerifying] = useState<string | null>(null);
   const [verifyStatus, setVerifyStatus] = useState<Record<string, string>>({});
   const [verifyMessage, setVerifyMessage] = useState<Record<string, string>>({});
@@ -76,7 +77,7 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
   function getSubdomainPart(domain: string) { const p = domain.split('.'); return p.length <= 2 ? '' : p.slice(0, -2).join('.'); }
 
   function copyToClipboard(text: string) { navigator.clipboard.writeText(text); toast.success('Copied to clipboard'); }
-  function resetAddModal() { setAddBaseDomain(''); setAddMode('root'); setAddSubdomain(''); }
+  function resetAddModal() { setAddBaseDomain(''); setAddMode('root'); setAddSubdomain(''); setAddDomainError(null); }
 
   function openEditModal(d: Domain) {
     setEditDomain(d);
@@ -101,7 +102,13 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ domain }),
       });
-      if (!res.ok) { const err = await res.json(); toast.error(err.error || 'Failed to add domain'); return; }
+      if (!res.ok) {
+        const err = await res.json();
+        const msg = err.error || 'Failed to add domain';
+        toast.error(msg);
+        setAddDomainError({ message: msg, isLimit: !!err.limitError });
+        return;
+      }
       const d = await res.json();
       setDomains([d]);
       setModalOpen(false);
@@ -513,11 +520,19 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
       />
 
       {/* Add domain modal */}
-      <Modal open={modalOpen} onClose={() => setModalOpen(false)} title="Add Custom Domain" size="sm">
+      <Modal open={modalOpen} onClose={() => { setModalOpen(false); setAddDomainError(null); }} title="Add Custom Domain" size="sm">
         <form onSubmit={handleAdd} className="space-y-4">
           {renderModeSelector(addMode, setAddMode, addBaseDomain, setAddBaseDomain, addSubdomain, setAddSubdomain, getAddPreview())}
+          {addDomainError && (
+            <div className="rounded-lg bg-red-500/10 border border-red-500/30 px-3 py-2.5 text-sm text-red-400">
+              {addDomainError.message}
+              {addDomainError.isLimit && (
+                <> · <a href="/billing" className="underline font-medium hover:text-red-300">Upgrade Plan</a></>
+              )}
+            </div>
+          )}
           <div className="flex justify-end gap-3 pt-2">
-            <Button variant="secondary" type="button" onClick={() => setModalOpen(false)}>Cancel</Button>
+            <Button variant="secondary" type="button" onClick={() => { setModalOpen(false); setAddDomainError(null); }}>Cancel</Button>
             <Button type="submit" loading={adding} disabled={!addBaseDomain.trim()}>Add Domain</Button>
           </div>
         </form>

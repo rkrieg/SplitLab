@@ -112,7 +112,7 @@ export async function POST(request: NextRequest) {
 
         if ((count ?? 0) >= limit) {
           return NextResponse.json(
-            { error: `You have reached the client limit for your plan (${limit}). Please upgrade to add more clients.` },
+            { error: `You have reached the client limit for your plan (${limit}). Please upgrade to add more clients.`, limitError: true },
             { status: 403 }
           );
         }

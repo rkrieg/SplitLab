@@ -68,6 +68,7 @@ export default function ScriptsClient({
   const [deleting, setDeleting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [createScriptError, setCreateScriptError] = useState<string | null>(null);
 
   // Form state
   const [sType, setSType] = useState("gtm");
@@ -102,7 +103,9 @@ export default function ScriptsClient({
       });
       if (!res.ok) {
         const err = await res.json();
-        toast.error(err.error || "Failed to add script");
+        const msg = err.error || "Failed to add script";
+        toast.error(msg);
+        setCreateScriptError(msg);
         return;
       }
       const script = await res.json();
@@ -162,6 +165,7 @@ export default function ScriptsClient({
     setSContent("");
     setSPlacement("head");
     setSTestId("");
+    setCreateScriptError(null);
   }
 
   const typeLabel: Record<string, string> = {
@@ -305,6 +309,7 @@ export default function ScriptsClient({
         onClose={() => {
           setModalOpen(false);
           resetForm();
+          setCreateScriptError(null);
         }}
         title="Add Script"
         description="Scripts are injected into pages served through SplitLab."
@@ -423,6 +428,11 @@ export default function ScriptsClient({
             </div>
           )}
 
+          {createScriptError && (
+            <div className="rounded-lg bg-red-500/10 border border-red-500/30 px-3 py-2.5 text-sm text-red-400">
+              {createScriptError}
+            </div>
+          )}
           <div className="flex justify-end gap-3 pt-2">
             <Button
               variant="secondary"
@@ -430,6 +440,7 @@ export default function ScriptsClient({
               onClick={() => {
                 setModalOpen(false);
                 resetForm();
+                setCreateScriptError(null);
               }}
             >
               Cancel

@@ -54,7 +54,7 @@ export async function POST(
 
         if ((count ?? 0) >= limit) {
           return NextResponse.json(
-            { error: `Your plan allows a maximum of ${limit} variants per test. Please upgrade for unlimited variants.` },
+            { error: `Your plan allows a maximum of ${limit} variants per test. Please upgrade for unlimited variants.`, limitError: true },
             { status: 403 }
           );
         }

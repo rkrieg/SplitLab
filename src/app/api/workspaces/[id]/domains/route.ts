@@ -136,7 +136,7 @@ export async function POST(
 
     if (limit === 0) {
       return NextResponse.json(
-        { error: 'Your plan does not include custom domains. Please upgrade to add a domain.' },
+        { error: 'Your plan does not include custom domains. Please upgrade to add a domain.', limitError: true },
         { status: 403 }
       );
     }
@@ -149,7 +149,7 @@ export async function POST(
 
       if ((count ?? 0) >= limit) {
         return NextResponse.json(
-          { error: `You have reached the domain limit for your plan (${limit}). Please upgrade to add more domains.` },
+          { error: `You have reached the domain limit for your plan (${limit}). Please upgrade to add more domains.`, limitError: true },
           { status: 403 }
         );
       }

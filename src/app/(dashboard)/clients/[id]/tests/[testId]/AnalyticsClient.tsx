@@ -191,6 +191,7 @@ export default function AnalyticsClient({
   const [newVariantMode, setNewVariantMode] = useState<"url" | "html">("url");
   const [newVariantHtml, setNewVariantHtml] = useState("");
   const [addingVariant, setAddingVariant] = useState(false);
+  const [addVariantError, setAddVariantError] = useState<{ message: string; isLimit: boolean } | null>(null);
 
   // Tracking verification
   const [checkingTracking, setCheckingTracking] = useState<string | null>(null);
@@ -665,7 +666,9 @@ export default function AnalyticsClient({
       });
       if (!res.ok) {
         const err = await res.json();
-        toast.error(err.error || "Failed to add variant");
+        const msg = err.error || "Failed to add variant";
+        toast.error(msg);
+        setAddVariantError({ message: msg, isLimit: !!err.limitError });
         return;
       }
       const updated = await res.json();
@@ -698,6 +701,7 @@ export default function AnalyticsClient({
       setNewVariantUrl("");
       setNewVariantHtml("");
       setNewVariantMode("url");
+      setAddVariantError(null);
       toast.success("Variant added");
       fetchAnalytics();
     } catch {
@@ -2414,7 +2418,7 @@ export default function AnalyticsClient({
       {/* ═══ MODALS ═══ */}
       <Modal
         open={addVariantOpen}
-        onClose={() => setAddVariantOpen(false)}
+        onClose={() => { setAddVariantOpen(false); setAddVariantError(null); }}
         title="Add Variant"
         size="sm"
       >
@@ -2511,11 +2515,19 @@ export default function AnalyticsClient({
             Traffic weights will be automatically split equally across all
             variants.
           </p>
+          {addVariantError && (
+            <div className="rounded-lg bg-red-500/10 border border-red-500/30 px-3 py-2.5 text-sm text-red-400">
+              {addVariantError.message}
+              {addVariantError.isLimit && (
+                <> · <a href="/billing" className="underline font-medium hover:text-red-300">Upgrade Plan</a></>
+              )}
+            </div>
+          )}
           <div className="flex justify-end gap-3 pt-2">
             <Button
               variant="secondary"
               type="button"
-              onClick={() => setAddVariantOpen(false)}
+              onClick={() => { setAddVariantOpen(false); setAddVariantError(null); }}
             >
               Cancel
             </Button>

@@ -93,7 +93,7 @@ export async function POST(
 
         if ((testCount ?? 0) >= testLimit) {
           return NextResponse.json(
-            { error: `You have reached the test limit for your plan (${testLimit}). Please upgrade to create more tests.` },
+            { error: `You have reached the test limit for your plan (${testLimit}). Please upgrade to create more tests.`, limitError: true },
             { status: 403 }
           );
         }
@@ -103,7 +103,7 @@ export async function POST(
       const variantLimit = PLAN_LIMITS[plan]?.variants ?? 2;
       if (isFinite(variantLimit) && data.variants.length > variantLimit) {
         return NextResponse.json(
-          { error: `Your plan allows a maximum of ${variantLimit} variants per test. Please upgrade for unlimited variants.` },
+          { error: `Your plan allows a maximum of ${variantLimit} variants per test. Please upgrade for unlimited variants.`, limitError: true },
           { status: 403 }
         );
       }

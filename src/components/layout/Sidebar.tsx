@@ -66,6 +66,7 @@ export default function Sidebar() {
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [newClientName, setNewClientName] = useState('');
   const [creating, setCreating] = useState(false);
+  const [createClientError, setCreateClientError] = useState<{ message: string; isLimit: boolean } | null>(null);
   const [navigating, setNavigating] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -169,6 +170,7 @@ export default function Sidebar() {
     e.preventDefault();
     if (!newClientName.trim()) return;
     setCreating(true);
+    setCreateClientError(null);
     try {
       const res = await fetch('/api/clients', {
         method: 'POST',
@@ -177,18 +179,23 @@ export default function Sidebar() {
       });
       if (!res.ok) {
         const err = await res.json();
-        toast.error(err.error || 'Failed to create client');
+        const msg = err.error || 'Failed to create client';
+        toast.error(msg);
+        setCreateClientError({ message: msg, isLimit: !!err.limitError });
         return;
       }
       const client = await res.json();
       setClients((prev) => [{ id: client.id, name: client.name, slug: client.slug }, ...prev]);
       setCreateModalOpen(false);
       setNewClientName('');
+      setCreateClientError(null);
       setDropdownOpen(false);
       toast.success(`Client "${client.name}" created`);
       router.push(`/clients/${client.id}/pages`);
     } catch {
-      toast.error('An unexpected error occurred');
+      const msg = 'An unexpected error occurred';
+      toast.error(msg);
+      setCreateClientError({ message: msg, isLimit: false });
     } finally {
       setCreating(false);
     }
@@ -385,7 +392,7 @@ export default function Sidebar() {
 
       {/* Create Client Modal */}
       {createModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setCreateModalOpen(false)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => { setCreateModalOpen(false); setCreateClientError(null); }}>
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl p-6 w-full max-w-sm mx-4 shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100 mb-4">New Client</h3>
             <form onSubmit={handleCreateClient} className="space-y-4">
@@ -401,8 +408,16 @@ export default function Sidebar() {
                   required
                 />
               </div>
+              {createClientError && (
+                <div className="rounded-lg bg-red-500/10 border border-red-500/20 px-3 py-2.5 text-sm text-red-400">
+                  {createClientError.message}
+                  {createClientError.isLimit && (
+                    <a href="/billing" className="block mt-1 text-indigo-400 underline underline-offset-2 text-xs font-medium">Upgrade Plan</a>
+                  )}
+                </div>
+              )}
               <div className="flex justify-end gap-3 pt-2">
-                <button type="button" onClick={() => setCreateModalOpen(false)} className="btn-secondary text-sm">Cancel</button>
+                <button type="button" onClick={() => { setCreateModalOpen(false); setCreateClientError(null); }} className="btn-secondary text-sm">Cancel</button>
                 <button type="submit" disabled={creating} className="btn-primary text-sm">
                   {creating ? <><Spinner />Creating…</> : 'Create Client'}
                 </button>

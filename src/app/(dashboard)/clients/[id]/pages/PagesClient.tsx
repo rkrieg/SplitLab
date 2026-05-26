@@ -76,6 +76,10 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
   const [variantMode, setVariantMode] = useState<'url' | 'html'>('url');
   const [variantHtml, setVariantHtml] = useState('');
 
+  // Modal errors
+  const [createPageError, setCreatePageError] = useState<{ message: string; isLimit: boolean } | null>(null);
+  const [addVariantError, setAddVariantError] = useState<{ message: string; isLimit: boolean } | null>(null);
+
   // ─── Create Page ────────────────────────────────────────────────────────
 
   async function handleCreate(e: React.FormEvent) {
@@ -114,7 +118,9 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
       }
       if (!res.ok) {
         const err = await res.json();
-        toast.error(err.error || 'Failed to create page');
+        const msg = err.error || 'Failed to create page';
+        toast.error(msg);
+        setCreatePageError({ message: msg, isLimit: !!err.limitError });
         return;
       }
       const newTest = await res.json();
@@ -136,6 +142,7 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
     setDestinationUrl('');
     setCreateMode('url');
     setCreateHtml('');
+    setCreatePageError(null);
   }
 
   // ─── Actions ────────────────────────────────────────────────────────────
@@ -222,10 +229,17 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      if (!res.ok) { const err = await res.json(); toast.error(err.error || 'Failed to add variant'); return; }
+      if (!res.ok) {
+        const err = await res.json();
+        const msg = err.error || 'Failed to add variant';
+        toast.error(msg);
+        setAddVariantError({ message: msg, isLimit: !!err.limitError });
+        return;
+      }
       const updated = await res.json();
       setTests((prev) => prev.map((t) => (t.id === addVariantTestId ? updated : t)));
       setAddVariantTestId(null);
+      setAddVariantError(null);
       toast.success('Variant added');
     } catch { toast.error('Unexpected error'); } finally { setAddingVariant(false); }
   }
@@ -455,6 +469,14 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
             </p>
           </div>
 
+          {createPageError && (
+            <div className="rounded-lg bg-red-500/10 border border-red-500/30 px-3 py-2.5 text-sm text-red-400">
+              {createPageError.message}
+              {createPageError.isLimit && (
+                <> · <a href="/billing" className="underline font-medium hover:text-red-300">Upgrade Plan</a></>
+              )}
+            </div>
+          )}
           <div className="flex justify-end gap-3 pt-2">
             <Button variant="secondary" type="button" onClick={() => { setCreateOpen(false); resetCreateForm(); }}>Cancel</Button>
             <Button type="submit" loading={saving}>Create Page</Button>
@@ -481,7 +503,7 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
       </Modal>
 
       {/* Add Variant Modal */}
-      <Modal open={!!addVariantTestId} onClose={() => setAddVariantTestId(null)} title="Add Variant" size="sm">
+      <Modal open={!!addVariantTestId} onClose={() => { setAddVariantTestId(null); setAddVariantError(null); }} title="Add Variant" size="sm">
         <form onSubmit={handleAddVariant} className="space-y-4">
           {/* Mode toggle */}
           <div className="flex border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
@@ -547,8 +569,16 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
             <input type="number" value={variantWeight} onChange={(e) => setVariantWeight(Number(e.target.value))} className="input-base w-24" min={1} max={100} required />
           </div>
 
+          {addVariantError && (
+            <div className="rounded-lg bg-red-500/10 border border-red-500/30 px-3 py-2.5 text-sm text-red-400">
+              {addVariantError.message}
+              {addVariantError.isLimit && (
+                <> · <a href="/billing" className="underline font-medium hover:text-red-300">Upgrade Plan</a></>
+              )}
+            </div>
+          )}
           <div className="flex justify-end gap-3 pt-2">
-            <Button variant="secondary" type="button" onClick={() => setAddVariantTestId(null)}>Cancel</Button>
+            <Button variant="secondary" type="button" onClick={() => { setAddVariantTestId(null); setAddVariantError(null); }}>Cancel</Button>
             <Button type="submit" loading={addingVariant}>Add Variant</Button>
           </div>
         </form>
