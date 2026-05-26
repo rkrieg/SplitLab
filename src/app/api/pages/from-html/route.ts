@@ -39,7 +39,7 @@ export async function POST(request: NextRequest) {
 
     const { data: test, error: testErr } = await db
       .from('tests')
-      .insert({ workspace_id, name, url_path })
+      .insert({ workspace_id, name, url_path, status: 'active' })
       .select()
       .single();
 

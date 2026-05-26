@@ -119,7 +119,7 @@ export async function POST(
 
     const { data: test, error: testError } = await db
       .from('tests')
-      .insert({ workspace_id: params.id, name: data.name, url_path: data.url_path, ...(data.status ? { status: data.status } : {}) })
+      .insert({ workspace_id: params.id, name: data.name, url_path: data.url_path, status: data.status ?? 'active' })
       .select()
       .single();
 
