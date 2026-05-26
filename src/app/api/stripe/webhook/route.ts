@@ -94,12 +94,12 @@ export async function POST(request: NextRequest) {
 
       // ── Subscription changed (upgrade, downgrade, renewal) ───────────────
       case 'customer.subscription.updated': {
-        const sub = event.data.object as {
+        const sub = event.data.object as unknown as {
           id: string;
           customer: unknown;
           status: string;
           metadata: Record<string, string>;
-          items: { data: Array<{ price: { id: string } }> };
+          items: { data: Array<{ price: { id: string }; current_period_end: number }> };
         };
 
         const custId = extractId(sub.customer);
@@ -113,10 +113,12 @@ export async function POST(request: NextRequest) {
         }
 
         const status = mapStatus(sub.status);
+        const periodEnd = sub.items?.data?.[0]?.current_period_end;
 
         const updates: Record<string, unknown> = {
           subscription_status:    status,
           stripe_subscription_id: sub.id,
+          ...(periodEnd ? { subscription_current_period_end: new Date(periodEnd * 1000).toISOString() } : {}),
         };
         if (plan) updates.plan = plan;
 
