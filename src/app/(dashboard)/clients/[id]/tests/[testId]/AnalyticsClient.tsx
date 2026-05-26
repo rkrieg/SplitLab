@@ -4,7 +4,9 @@ import { useState, useEffect, useCallback, useRef, Fragment } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 
-const CodeEditor = dynamic(() => import("@/components/pages/CodeEditor"), { ssr: false });
+const CodeEditor = dynamic(() => import("@/components/pages/CodeEditor"), {
+  ssr: false,
+});
 import toast from "react-hot-toast";
 import {
   Download,
@@ -110,6 +112,8 @@ interface Props {
   clientId: string;
   clientName: string;
   domain?: string;
+  userRole: string;
+  userPlan: string;
 }
 
 type Tab = "overview" | "leads" | "settings";
@@ -120,6 +124,8 @@ export default function AnalyticsClient({
   clientId,
   clientName,
   domain,
+  userRole,
+  userPlan,
 }: Props) {
   const [test, setTest] = useState(initialTest);
   const [tab, setTab] = useState<Tab>("overview");
@@ -158,7 +164,9 @@ export default function AnalyticsClient({
   const trackerDismissKey = `sl_tracker_dismissed_${test.id}`;
   const [trackerCardDismissed, setTrackerCardDismissed] = useState(() => {
     if (typeof window === "undefined") return false;
-    return localStorage.getItem(`sl_tracker_dismissed_${initialTest.id}`) === "1";
+    return (
+      localStorage.getItem(`sl_tracker_dismissed_${initialTest.id}`) === "1"
+    );
   });
 
   function dismissTrackerCard() {
@@ -314,7 +322,7 @@ export default function AnalyticsClient({
           autoCheckedRef.current.delete(v.id); // allow retry on next render
         });
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // intentionally runs once on mount — autoCheckedRef prevents duplicates
 
   const winner = stats.find((s) => s.isWinner);
@@ -476,7 +484,12 @@ export default function AnalyticsClient({
       setStats((prev) =>
         prev.map((s) => {
           const v = updatedVariants.find((u) => u.id === s.variant.id);
-          return v ? { ...s, variant: { ...s.variant, traffic_weight: v.traffic_weight } } : s;
+          return v
+            ? {
+                ...s,
+                variant: { ...s.variant, traffic_weight: v.traffic_weight },
+              }
+            : s;
         }),
       );
       toast.success("Weights updated");
@@ -527,7 +540,8 @@ export default function AnalyticsClient({
       setTest(updated);
       setEditingVariantId(null);
       // Re-check tracker if this is a redirect variant (URL may have changed)
-      if (variantDraft.redirect_url) autoCheckVariant(variantId, variantDraft.redirect_url);
+      if (variantDraft.redirect_url)
+        autoCheckVariant(variantId, variantDraft.redirect_url);
       toast.success("Variant updated");
       fetchAnalytics();
     } catch {
@@ -615,8 +629,12 @@ export default function AnalyticsClient({
         setNewVariantUrlError("Please enter a destination URL.");
         return;
       }
-      try { new URL(trimmed); } catch {
-        setNewVariantUrlError("Please enter a valid URL (e.g. https://example.com).");
+      try {
+        new URL(trimmed);
+      } catch {
+        setNewVariantUrlError(
+          "Please enter a valid URL (e.g. https://example.com).",
+        );
         return;
       }
       setNewVariantUrlError("");
@@ -670,8 +688,11 @@ export default function AnalyticsClient({
       setTest(finalTest);
       // Auto-check tracker for the newly added redirect variant
       const previousIds = new Set(variants.map((v) => v.id));
-      const newVariant = (finalTest.test_variants || []).find((v: Variant) => !previousIds.has(v.id));
-      if (newVariant?.redirect_url) autoCheckVariant(newVariant.id, newVariant.redirect_url);
+      const newVariant = (finalTest.test_variants || []).find(
+        (v: Variant) => !previousIds.has(v.id),
+      );
+      if (newVariant?.redirect_url)
+        autoCheckVariant(newVariant.id, newVariant.redirect_url);
       setAddVariantOpen(false);
       setNewVariantName("");
       setNewVariantUrl("");
@@ -699,7 +720,10 @@ export default function AnalyticsClient({
     })
       .then((r) => r.json())
       .then((data) => {
-        setVariantOverrides((prev) => ({ ...prev, [variantId]: data.verified }));
+        setVariantOverrides((prev) => ({
+          ...prev,
+          [variantId]: data.verified,
+        }));
         setAutoCheckingIds((prev) => prev.filter((id) => id !== variantId));
       })
       .catch(() => {
@@ -1186,7 +1210,9 @@ export default function AnalyticsClient({
                   </button>
                   {/* No domain configured — show the preview URL so it can be shared/tested */}
                   <div className="flex items-center gap-2">
-                    <span className="text-[11px] text-slate-500">Preview URL:</span>
+                    <span className="text-[11px] text-slate-500">
+                      Preview URL:
+                    </span>
                     <code className="text-[11px] text-indigo-400 font-mono truncate max-w-[320px]">
                       {appUrl}/api/serve?preview_test_id={test.id}
                     </code>
@@ -1238,6 +1264,17 @@ export default function AnalyticsClient({
               <ExternalLink size={14} /> Preview Test
             </button>
 
+            {!domain &&
+              userRole !== "viewer" &&
+              (userRole === "admin" || userPlan !== "free") && (
+                <Link
+                  href={`/clients/${clientId}/domains`}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-indigo-500/20 border border-indigo-500/40 text-indigo-300 hover:bg-indigo-500/30 hover:text-indigo-200 ring-1 ring-indigo-500/30"
+                >
+                  <Globe size={14} /> Add Domain
+                </Link>
+              )}
+
             <button
               onClick={toggleStatus}
               disabled={togglingStatus}
@@ -1285,52 +1322,60 @@ export default function AnalyticsClient({
         {/* ─── OVERVIEW TAB ─── */}
         {tab === "overview" && (
           <>
-            {variants.some((v) => v.redirect_url) && (anyTrackerMissing || !trackerCardDismissed) && (
-              <div className={`flex items-start gap-3 rounded-xl p-4 border ${anyTrackerMissing ? "bg-red-500/10 border-red-500/40" : "bg-indigo-500/10 border-indigo-500/30"}`}>
-                <Code2
-                  size={16}
-                  className={`flex-shrink-0 mt-0.5 ${anyTrackerMissing ? "text-red-400" : "text-indigo-400"}`}
-                />
-                <div className="flex-1 min-w-0">
-                  <p className={`font-medium text-sm ${anyTrackerMissing ? "text-red-400" : "text-indigo-400"}`}>
-                    {anyTrackerMissing
-                      ? "Tracker not detected — paste the snippet on your destination page"
-                      : "Add tracker.js to your destination page to track conversions"}
-                  </p>
-                  <p className="text-slate-500 text-xs mt-0.5">
-                    Paste this before &lt;/body&gt; on your external landing
-                    page
-                  </p>
-                  <div className="flex items-center gap-2 mt-2">
-                    <code className="flex-1 bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-xs text-slate-300 font-mono truncate">
-                      {snippet}
-                    </code>
-                    <button
-                      onClick={() => {
-                        navigator.clipboard.writeText(snippet);
-                        toast.success("Copied");
-                      }}
-                      className="btn-secondary text-xs flex-shrink-0"
+            {variants.some((v) => v.redirect_url) &&
+              (anyTrackerMissing || !trackerCardDismissed) && (
+                <div
+                  className={`flex items-start gap-3 rounded-xl p-4 border ${anyTrackerMissing ? "bg-red-500/10 border-red-500/40" : "bg-indigo-500/10 border-indigo-500/30"}`}
+                >
+                  <Code2
+                    size={16}
+                    className={`flex-shrink-0 mt-0.5 ${anyTrackerMissing ? "text-red-400" : "text-indigo-400"}`}
+                  />
+                  <div className="flex-1 min-w-0">
+                    <p
+                      className={`font-medium text-sm ${anyTrackerMissing ? "text-red-400" : "text-indigo-400"}`}
                     >
-                      <Copy size={12} /> Copy
-                    </button>
+                      {anyTrackerMissing
+                        ? "Tracker not detected — paste the snippet on your destination page"
+                        : "Add tracker.js to your destination page to track conversions"}
+                    </p>
+                    <p className="text-slate-500 text-xs mt-0.5">
+                      Paste this before &lt;/body&gt; on your external landing
+                      page
+                    </p>
+                    <div className="flex items-center gap-2 mt-2">
+                      <code className="flex-1 bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-xs text-slate-300 font-mono truncate">
+                        {snippet}
+                      </code>
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(snippet);
+                          toast.success("Copied");
+                        }}
+                        className="btn-secondary text-xs flex-shrink-0"
+                      >
+                        <Copy size={12} /> Copy
+                      </button>
+                    </div>
                   </div>
+                  {!anyTrackerMissing && (
+                    <button
+                      onClick={dismissTrackerCard}
+                      className="p-1 rounded hover:bg-indigo-500/20 text-indigo-400/60 hover:text-indigo-400 transition-colors flex-shrink-0"
+                      title="Dismiss"
+                    >
+                      <X size={14} />
+                    </button>
+                  )}
                 </div>
-                {!anyTrackerMissing && (
-                  <button
-                    onClick={dismissTrackerCard}
-                    className="p-1 rounded hover:bg-indigo-500/20 text-indigo-400/60 hover:text-indigo-400 transition-colors flex-shrink-0"
-                    title="Dismiss"
-                  >
-                    <X size={14} />
-                  </button>
-                )}
-              </div>
-            )}
+              )}
 
             {test.status !== "active" && (
               <div className="flex items-center gap-2 w-full rounded-lg bg-red-500/10 border border-red-500/30 px-4 py-2.5">
-                <AlertTriangle size={14} className="text-red-400 flex-shrink-0" />
+                <AlertTriangle
+                  size={14}
+                  className="text-red-400 flex-shrink-0"
+                />
                 <p className="text-xs text-red-400 font-medium">
                   Please publish the test in order to see live pages.
                 </p>
@@ -1554,7 +1599,10 @@ export default function AnalyticsClient({
                                       }
                                       className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-slate-500/10 border border-slate-500/20 text-slate-400 hover:text-slate-300 transition-colors"
                                     >
-                                      <ShieldCheck size={10} className="opacity-50" />{" "}
+                                      <ShieldCheck
+                                        size={10}
+                                        className="opacity-50"
+                                      />{" "}
                                       Check tracker
                                     </button>
                                   )}
@@ -1563,7 +1611,10 @@ export default function AnalyticsClient({
                             </td>
                             <td className={`px-5 py-3.5 ${rowBg}`}>
                               {savingWeightId === stat.variant.id ? (
-                                <Loader2 size={14} className="animate-spin text-slate-400" />
+                                <Loader2
+                                  size={14}
+                                  className="animate-spin text-slate-400"
+                                />
                               ) : editingWeightId === stat.variant.id ? (
                                 <input
                                   type="number"
@@ -1651,9 +1702,7 @@ export default function AnalyticsClient({
                                   </span>
                                 )}
                                 <button
-                                  onClick={() =>
-                                    openVariant(stat.variant.id)
-                                  }
+                                  onClick={() => openVariant(stat.variant.id)}
                                   className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-slate-500/10 border border-slate-500/20 text-slate-400 hover:bg-slate-500/20 hover:text-slate-300 transition-colors"
                                   title={`Open ${stat.variant.name}`}
                                 >
@@ -1662,12 +1711,19 @@ export default function AnalyticsClient({
                                 </button>
                                 <button
                                   onClick={() => scanPage(stat.variant.id)}
-                                  disabled={scanning || getVerifiedStatus(stat.variant) === false}
-                                  className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 hover:bg-indigo-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                                  title={getVerifiedStatus(stat.variant) === false ? "Tracker not found — install the tracker script first" : `Scan ${stat.variant.name}`}
+                                  disabled={
+                                    scanning ||
+                                    getVerifiedStatus(stat.variant) === false
+                                  }
+                                  className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 hover:bg-indigo-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
+                                  title={
+                                    getVerifiedStatus(stat.variant) === false
+                                      ? "Tracker not found — install the tracker script first"
+                                      : `Scan ${stat.variant.name}`
+                                  }
                                 >
                                   <ScanLine size={11} />
-                                  Scan
+                                  Setup Conversion
                                 </button>
                                 <button
                                   onClick={() => startEditVariant(stat.variant)}
@@ -1706,7 +1762,9 @@ export default function AnalyticsClient({
                                   {stat.variant.pages?.id ? (
                                     <div className="flex items-end">
                                       <button
-                                        onClick={() => openHtmlEditor(stat.variant)}
+                                        onClick={() =>
+                                          openHtmlEditor(stat.variant)
+                                        }
                                         className="btn-secondary text-sm flex items-center gap-2"
                                       >
                                         <FileCode2 size={14} />
@@ -1966,12 +2024,17 @@ export default function AnalyticsClient({
                     </p>
                     {scanning || scannedVariantName ? (
                       <p className="text-slate-500 text-xs">
-                        {scanning ? `Scanning ${scannedVariantName}…` : `Last scanned: ${scannedVariantName}`}
+                        {scanning
+                          ? `Scanning ${scannedVariantName}…`
+                          : `Last scanned: ${scannedVariantName}`}
                       </p>
                     ) : (
                       <div className="flex items-center gap-1.5 rounded-lg bg-amber-500/10 border border-amber-500/30 px-2.5 py-1.5 text-xs text-amber-600 dark:text-amber-300 mt-1">
                         <Info size={12} className="flex-shrink-0" />
-                        <span>Click Scan on any variant in the Overview tab to detect elements</span>
+                        <span>
+                          Click Scan on any variant in the Overview tab to
+                          detect elements
+                        </span>
                       </div>
                     )}
                   </div>
@@ -2107,134 +2170,137 @@ export default function AnalyticsClient({
 
             {/* Conversion Goals — hidden for now; uncomment to re-enable */}
             {false && (
-            <div className="card overflow-hidden">
-              <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700">
-                <div className="flex items-center justify-between">
-                  <h3 className="font-medium text-slate-800 dark:text-slate-200">
-                    Goals
-                  </h3>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setEditGoals([
-                        ...editGoals,
-                        {
-                          id: "",
-                          name: "",
-                          type: "form_submit",
-                          selector: "",
-                          url_pattern: "",
-                          is_primary: editGoals.length === 0,
-                        },
-                      ])
-                    }
-                    className="text-indigo-400 hover:text-indigo-300 text-sm"
-                  >
-                    + Add Goal
-                  </button>
-                </div>
-              </div>
-              <form onSubmit={handleSaveGoals} className="px-5 py-4 space-y-3">
-                {editGoals.map((g, i) => (
-                  <div
-                    key={i}
-                    className="rounded-lg border border-slate-200 dark:border-slate-700 p-3 space-y-2"
-                  >
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="text"
-                        value={g.name}
-                        onChange={(e) => {
-                          const c = [...editGoals];
-                          c[i] = { ...c[i], name: e.target.value };
-                          setEditGoals(c);
-                        }}
-                        className="input-base flex-1"
-                        placeholder="Goal name"
-                        required
-                      />
-                      <select
-                        value={g.type}
-                        onChange={(e) => {
-                          const c = [...editGoals];
-                          c[i] = {
-                            ...c[i],
-                            type: e.target.value,
+              <div className="card overflow-hidden">
+                <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700">
+                  <div className="flex items-center justify-between">
+                    <h3 className="font-medium text-slate-800 dark:text-slate-200">
+                      Goals
+                    </h3>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setEditGoals([
+                          ...editGoals,
+                          {
+                            id: "",
+                            name: "",
+                            type: "form_submit",
                             selector: "",
                             url_pattern: "",
-                          };
-                          setEditGoals(c);
-                        }}
-                        className="input-base w-36"
-                      >
-                        {GOAL_TYPES.map((t) => (
-                          <option key={t.value} value={t.value}>
-                            {t.label}
-                          </option>
-                        ))}
-                      </select>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setEditGoals(editGoals.filter((_, gi) => gi !== i))
-                        }
-                        className="text-slate-500 hover:text-red-400 transition-colors"
-                      >
-                        <X size={14} />
-                      </button>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {(g.type === "form_submit" ||
-                        g.type === "button_click") && (
-                        <input
-                          type="text"
-                          value={g.selector || ""}
-                          onChange={(e) => {
-                            const c = [...editGoals];
-                            c[i] = { ...c[i], selector: e.target.value };
-                            setEditGoals(c);
-                          }}
-                          className="input-base flex-1 font-mono text-xs"
-                          placeholder={
-                            g.type === "form_submit"
-                              ? "#my-form"
-                              : "#cta-button"
-                          }
-                        />
-                      )}
-                      {g.type === "url_reached" && (
-                        <input
-                          type="text"
-                          value={g.url_pattern || ""}
-                          onChange={(e) => {
-                            const c = [...editGoals];
-                            c[i] = { ...c[i], url_pattern: e.target.value };
-                            setEditGoals(c);
-                          }}
-                          className="input-base flex-1 font-mono text-xs"
-                          placeholder="/thank-you"
-                        />
-                      )}
-                      {g.type === "call_click" && (
-                        <p className="text-slate-500 text-xs flex-1">
-                          Tracks tel: link clicks
-                        </p>
-                      )}
-                    </div>
+                            is_primary: editGoals.length === 0,
+                          },
+                        ])
+                      }
+                      className="text-indigo-400 hover:text-indigo-300 text-sm"
+                    >
+                      + Add Goal
+                    </button>
                   </div>
-                ))}
-                {editGoals.length === 0 && (
-                  <p className="text-slate-500 text-xs">
-                    No goals. Add one to track conversions.
-                  </p>
-                )}
-                <div className="flex justify-end pt-2">
-                  <Button type="submit" loading={savingGoals} size="sm">
-                    Save Goals
-                  </Button>
                 </div>
-              </form>
-            </div>
+                <form
+                  onSubmit={handleSaveGoals}
+                  className="px-5 py-4 space-y-3"
+                >
+                  {editGoals.map((g, i) => (
+                    <div
+                      key={i}
+                      className="rounded-lg border border-slate-200 dark:border-slate-700 p-3 space-y-2"
+                    >
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={g.name}
+                          onChange={(e) => {
+                            const c = [...editGoals];
+                            c[i] = { ...c[i], name: e.target.value };
+                            setEditGoals(c);
+                          }}
+                          className="input-base flex-1"
+                          placeholder="Goal name"
+                          required
+                        />
+                        <select
+                          value={g.type}
+                          onChange={(e) => {
+                            const c = [...editGoals];
+                            c[i] = {
+                              ...c[i],
+                              type: e.target.value,
+                              selector: "",
+                              url_pattern: "",
+                            };
+                            setEditGoals(c);
+                          }}
+                          className="input-base w-36"
+                        >
+                          {GOAL_TYPES.map((t) => (
+                            <option key={t.value} value={t.value}>
+                              {t.label}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setEditGoals(editGoals.filter((_, gi) => gi !== i))
+                          }
+                          className="text-slate-500 hover:text-red-400 transition-colors"
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {(g.type === "form_submit" ||
+                          g.type === "button_click") && (
+                          <input
+                            type="text"
+                            value={g.selector || ""}
+                            onChange={(e) => {
+                              const c = [...editGoals];
+                              c[i] = { ...c[i], selector: e.target.value };
+                              setEditGoals(c);
+                            }}
+                            className="input-base flex-1 font-mono text-xs"
+                            placeholder={
+                              g.type === "form_submit"
+                                ? "#my-form"
+                                : "#cta-button"
+                            }
+                          />
+                        )}
+                        {g.type === "url_reached" && (
+                          <input
+                            type="text"
+                            value={g.url_pattern || ""}
+                            onChange={(e) => {
+                              const c = [...editGoals];
+                              c[i] = { ...c[i], url_pattern: e.target.value };
+                              setEditGoals(c);
+                            }}
+                            className="input-base flex-1 font-mono text-xs"
+                            placeholder="/thank-you"
+                          />
+                        )}
+                        {g.type === "call_click" && (
+                          <p className="text-slate-500 text-xs flex-1">
+                            Tracks tel: link clicks
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                  {editGoals.length === 0 && (
+                    <p className="text-slate-500 text-xs">
+                      No goals. Add one to track conversions.
+                    </p>
+                  )}
+                  <div className="flex justify-end pt-2">
+                    <Button type="submit" loading={savingGoals} size="sm">
+                      Save Goals
+                    </Button>
+                  </div>
+                </form>
+              </div>
             )}
 
             {/* Tracking Setup */}
@@ -2250,7 +2316,11 @@ export default function AnalyticsClient({
                     </p>
                     <div className="flex items-center gap-1.5 rounded-lg bg-amber-500/10 border border-amber-500/30 px-2.5 py-1.5 text-xs text-amber-600 dark:text-amber-300 mt-1">
                       <Info size={12} className="flex-shrink-0" />
-                      <span>Paste before <code className="font-mono">&lt;/body&gt;</code> on your external landing page (redirect mode only)</span>
+                      <span>
+                        Paste before{" "}
+                        <code className="font-mono">&lt;/body&gt;</code> on your
+                        external landing page (redirect mode only)
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -2287,7 +2357,9 @@ export default function AnalyticsClient({
                 <div className="flex items-start gap-2 rounded-lg bg-amber-500/10 border border-amber-500/30 px-3 py-2.5 text-xs text-amber-600 dark:text-amber-300 mt-2">
                   <Info size={13} className="mt-0.5 flex-shrink-0" />
                   <span>
-                    Only works for custom HTML pages — not hosted URLs (Lovable, Replit, site builders, etc.). For third-party scripts (GTM, Pixel, etc.), add them directly to your site.
+                    Only works for custom HTML pages — not hosted URLs (Lovable,
+                    Replit, site builders, etc.). For third-party scripts (GTM,
+                    Pixel, etc.), add them directly to your site.
                   </span>
                 </div>
               </div>
@@ -2387,13 +2459,17 @@ export default function AnalyticsClient({
               <input
                 type="text"
                 value={newVariantUrl}
-                onChange={(e) => { setNewVariantUrl(e.target.value); if (newVariantUrlError) setNewVariantUrlError(""); }}
+                onChange={(e) => {
+                  setNewVariantUrl(e.target.value);
+                  if (newVariantUrlError) setNewVariantUrlError("");
+                }}
                 className={`input-base font-mono text-sm ${newVariantUrlError ? "border-red-500 focus:ring-red-500" : ""}`}
                 placeholder="https://..."
               />
               {newVariantUrlError && (
                 <p className="mt-1.5 text-xs text-red-500 flex items-center gap-1">
-                  <AlertTriangle size={11} className="flex-shrink-0" /> {newVariantUrlError}
+                  <AlertTriangle size={11} className="flex-shrink-0" />{" "}
+                  {newVariantUrlError}
                 </p>
               )}
             </div>
@@ -2493,7 +2569,11 @@ export default function AnalyticsClient({
                   <Loader2 size={20} className="animate-spin text-slate-400" />
                 </div>
               ) : (
-                <CodeEditor value={htmlDraft} onChange={setHtmlDraft} height="60vh" />
+                <CodeEditor
+                  value={htmlDraft}
+                  onChange={setHtmlDraft}
+                  height="60vh"
+                />
               )}
             </div>
 

@@ -50,6 +50,8 @@ export default async function TestAnalyticsPage({
       clientId={params.id}
       clientName={client?.name || 'Client'}
       domain={domain}
+      userRole={session.user.role}
+      userPlan={session.user.plan ?? 'free'}
     />
   );
 }
