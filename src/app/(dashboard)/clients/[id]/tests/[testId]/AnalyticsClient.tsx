@@ -591,6 +591,8 @@ export default function AnalyticsClient({
       const updated = await res.json();
       setTest(updated);
       setEditingVariantId(null);
+      setScanResults(null);
+      setScanResultsLoaded(false);
       toast.success("Variant deleted");
       fetchAnalytics();
     } catch {

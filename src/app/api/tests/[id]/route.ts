@@ -133,9 +133,9 @@ export async function PATCH(
         .select('scan_results')
         .eq('id', params.id)
         .single();
-      if (testRow?.scan_results && delete_variant_id in (testRow.scan_results as Record<string, unknown>)) {
-        const pruned = { ...(testRow.scan_results as Record<string, unknown>) };
-        delete pruned[delete_variant_id];
+      const existingScans = (testRow?.scan_results as { variants?: { variant_id: string }[] } | null);
+      if (existingScans?.variants?.some(v => v.variant_id === delete_variant_id)) {
+        const pruned = { variants: existingScans.variants.filter(v => v.variant_id !== delete_variant_id) };
         await db.from('tests').update({ scan_results: pruned }).eq('id', params.id);
       }
     }

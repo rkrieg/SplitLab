@@ -144,8 +144,6 @@ export async function GET(request: NextRequest) {
           test.id, selectedVariant.id, visitorId, proxyGoals || [], APP_URL
         );
 
-        if (isScan) bodyEndScriptTags.push(buildScanScript(selectedVariant.id, APP_URL));
-
         const iframeUrlObj = new URL(selectedVariant.redirect_url);
         iframeUrlObj.searchParams.set('sl_vid', selectedVariant.id);
         iframeUrlObj.searchParams.set('sl_vh', visitorId);
