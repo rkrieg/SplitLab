@@ -126,6 +126,18 @@ export async function PATCH(
         .eq('id', delete_variant_id)
         .eq('test_id', params.id);
       if (delErr) return NextResponse.json({ error: delErr.message }, { status: 500 });
+
+      // Remove deleted variant's entry from scan_results JSONB
+      const { data: testRow } = await db
+        .from('tests')
+        .select('scan_results')
+        .eq('id', params.id)
+        .single();
+      if (testRow?.scan_results && delete_variant_id in (testRow.scan_results as Record<string, unknown>)) {
+        const pruned = { ...(testRow.scan_results as Record<string, unknown>) };
+        delete pruned[delete_variant_id];
+        await db.from('tests').update({ scan_results: pruned }).eq('id', params.id);
+      }
     }
 
     // Upsert goals — preserve existing UUIDs so historical events stay linked

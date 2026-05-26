@@ -97,6 +97,42 @@ function buildTrackerScript(appUrl: string): string {
 
   // ─── Scan mode ─────────────────────────────────────────────────────────────
 
+  var _scanBanner = null;
+  function showScanBanner() {
+    if (_scanBanner) return;
+    _scanBanner = document.createElement('div');
+    _scanBanner.setAttribute('style', [
+      'position:fixed','bottom:20px','right:20px','z-index:2147483647',
+      'background:#16a34a','color:#fff',
+      'padding:10px 16px','border-radius:10px',
+      'font-family:-apple-system,BlinkMacSystemFont,sans-serif',
+      'font-size:13px','font-weight:600','letter-spacing:0.01em',
+      'box-shadow:0 4px 16px rgba(0,0,0,0.25)',
+      'display:flex','align-items:center','gap:8px','max-width:320px'
+    ].join(';'));
+    _scanBanner.innerHTML = '<span style="font-size:15px">✦</span><span>Detecting events within your page that you can track</span>';
+    document.body.appendChild(_scanBanner);
+  }
+  function completeScanBanner() {
+    if (_scanBanner) {
+      _scanBanner.innerHTML = '<span style="font-size:15px">✓</span><span>Scan completed</span>';
+    }
+  }
+  function failScanBanner() {
+    if (_scanBanner) {
+      _scanBanner.setAttribute('style', [
+        'position:fixed','bottom:20px','right:20px','z-index:2147483647',
+        'background:#dc2626','color:#fff',
+        'padding:10px 16px','border-radius:10px',
+        'font-family:-apple-system,BlinkMacSystemFont,sans-serif',
+        'font-size:13px','font-weight:600','letter-spacing:0.01em',
+        'box-shadow:0 4px 16px rgba(0,0,0,0.25)',
+        'display:flex','align-items:center','gap:8px','max-width:320px'
+      ].join(';'));
+      _scanBanner.innerHTML = '<span style="font-size:15px">✕</span><span>Could not detect events on this page</span>';
+    }
+  }
+
   function runScan(vid) {
     var elements = [];
 
@@ -143,13 +179,19 @@ function buildTrackerScript(appUrl: string): string {
     }
 
     try {
+      showScanBanner();
       var payload = JSON.stringify({ vid: vid, elements: elements });
       var xhr = new XMLHttpRequest();
       xhr.open("POST", SCAN_URL, true);
       xhr.withCredentials = false;
       xhr.setRequestHeader("Content-Type", "application/json");
+      xhr.onload = function() {
+        if (xhr.status >= 200 && xhr.status < 300) completeScanBanner();
+        else failScanBanner();
+      };
+      xhr.onerror = function() { failScanBanner(); };
       xhr.send(payload);
-    } catch(e) {}
+    } catch(e) { failScanBanner(); }
   }
 
   // ─── Core tracking ─────────────────────────────────────────────────────────
