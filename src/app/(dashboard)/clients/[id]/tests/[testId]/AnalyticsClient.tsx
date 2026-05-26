@@ -526,6 +526,8 @@ export default function AnalyticsClient({
       const updated = await res.json();
       setTest(updated);
       setEditingVariantId(null);
+      // Re-check tracker if this is a redirect variant (URL may have changed)
+      if (variantDraft.redirect_url) autoCheckVariant(variantId, variantDraft.redirect_url);
       toast.success("Variant updated");
       fetchAnalytics();
     } catch {
@@ -664,7 +666,12 @@ export default function AnalyticsClient({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ weights }),
       });
-      setTest(wRes.ok ? await wRes.json() : updated);
+      const finalTest = wRes.ok ? await wRes.json() : updated;
+      setTest(finalTest);
+      // Auto-check tracker for the newly added redirect variant
+      const previousIds = new Set(variants.map((v) => v.id));
+      const newVariant = (finalTest.test_variants || []).find((v: Variant) => !previousIds.has(v.id));
+      if (newVariant?.redirect_url) autoCheckVariant(newVariant.id, newVariant.redirect_url);
       setAddVariantOpen(false);
       setNewVariantName("");
       setNewVariantUrl("");
@@ -680,6 +687,26 @@ export default function AnalyticsClient({
   }
 
   // ─── Tracking check ─────────────────────────────────────────────────
+
+  function autoCheckVariant(variantId: string, url: string) {
+    autoCheckedRef.current.delete(variantId); // allow re-check (URL may have changed)
+    setAutoCheckingIds((prev) => [...prev, variantId]);
+    autoCheckedRef.current.add(variantId);
+    fetch("/api/check-tracking", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url, variant_id: variantId }),
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        setVariantOverrides((prev) => ({ ...prev, [variantId]: data.verified }));
+        setAutoCheckingIds((prev) => prev.filter((id) => id !== variantId));
+      })
+      .catch(() => {
+        setAutoCheckingIds((prev) => prev.filter((id) => id !== variantId));
+        autoCheckedRef.current.delete(variantId);
+      });
+  }
 
   function getVerifiedStatus(v: Variant) {
     if (variantOverrides[v.id] !== undefined) return variantOverrides[v.id];
