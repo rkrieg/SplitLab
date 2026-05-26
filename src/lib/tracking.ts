@@ -190,6 +190,17 @@ export function buildScanScript(variantId: string, appUrl: string): string {
   var vid = ${JSON.stringify(variantId)};
   var scanUrl = ${JSON.stringify(appUrl + '/api/scan')};
   var scanBanner = null;
+  var closePending = false;
+  function scheduleClose(fallbackHtml) {
+    if (closePending) return;
+    closePending = true;
+    setTimeout(function() {
+      window.close();
+      setTimeout(function() {
+        if (scanBanner) scanBanner.innerHTML = fallbackHtml;
+      }, 100);
+    }, 5000);
+  }
   function showScanBanner() {
     scanBanner = document.createElement('div');
     scanBanner.setAttribute('style', [
@@ -241,6 +252,7 @@ export function buildScanScript(variantId: string, appUrl: string): string {
         'display:flex','align-items:center','gap:8px','max-width:320px'
       ].join(';'));
       scanBanner.innerHTML = '<span style="font-size:15px">✕</span><span>Could not detect events on this page</span>';
+      scheduleClose('<span style="font-size:15px">✕</span><span>Could not detect events — you can close this tab</span>');
     }
     try {
       var xhr = new XMLHttpRequest();
@@ -249,6 +261,7 @@ export function buildScanScript(variantId: string, appUrl: string): string {
       xhr.onload = function() {
         if (xhr.status >= 200 && xhr.status < 300 && scanBanner) {
           scanBanner.innerHTML = '<span style="font-size:15px">✓</span><span>Scan completed</span>';
+          scheduleClose('<span style="font-size:15px">✓</span><span>Scan complete — you can close this tab</span>');
         } else {
           failBanner();
         }

@@ -98,6 +98,17 @@ function buildTrackerScript(appUrl: string): string {
   // ─── Scan mode ─────────────────────────────────────────────────────────────
 
   var _scanBanner = null;
+  var _closePending = false;
+  function scheduleClose(fallbackHtml) {
+    if (_closePending) return;
+    _closePending = true;
+    setTimeout(function() {
+      window.close();
+      setTimeout(function() {
+        if (_scanBanner) _scanBanner.innerHTML = fallbackHtml;
+      }, 100);
+    }, 5000);
+  }
   function showScanBanner() {
     if (_scanBanner) return;
     _scanBanner = document.createElement('div');
@@ -116,6 +127,7 @@ function buildTrackerScript(appUrl: string): string {
   function completeScanBanner() {
     if (_scanBanner) {
       _scanBanner.innerHTML = '<span style="font-size:15px">✓</span><span>Scan completed</span>';
+      scheduleClose('<span style="font-size:15px">✓</span><span>Scan complete — you can close this tab</span>');
     }
   }
   function failScanBanner() {
@@ -130,6 +142,7 @@ function buildTrackerScript(appUrl: string): string {
         'display:flex','align-items:center','gap:8px','max-width:320px'
       ].join(';'));
       _scanBanner.innerHTML = '<span style="font-size:15px">✕</span><span>Could not detect events on this page</span>';
+      scheduleClose('<span style="font-size:15px">✕</span><span>Could not detect events — you can close this tab</span>');
     }
   }
 
