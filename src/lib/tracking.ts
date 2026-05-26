@@ -229,6 +229,19 @@ export function buildScanScript(variantId: string, appUrl: string): string {
       var type = href.indexOf('tel:') === 0 ? 'call' : 'link';
       elements.push({ type: type, id: link.id || null, text: (link.textContent || href).trim().slice(0, 100) || null });
     }
+    function failBanner() {
+      if (!scanBanner) return;
+      scanBanner.setAttribute('style', [
+        'position:fixed','bottom:20px','right:20px','z-index:2147483647',
+        'background:#dc2626','color:#fff',
+        'padding:10px 16px','border-radius:10px',
+        'font-family:-apple-system,BlinkMacSystemFont,sans-serif',
+        'font-size:13px','font-weight:600','letter-spacing:0.01em',
+        'box-shadow:0 4px 16px rgba(0,0,0,0.25)',
+        'display:flex','align-items:center','gap:8px','max-width:320px'
+      ].join(';'));
+      scanBanner.innerHTML = '<span style="font-size:15px">✕</span><span>Could not detect events on this page</span>';
+    }
     try {
       var xhr = new XMLHttpRequest();
       xhr.open('POST', scanUrl, true);
@@ -236,10 +249,13 @@ export function buildScanScript(variantId: string, appUrl: string): string {
       xhr.onload = function() {
         if (xhr.status >= 200 && xhr.status < 300 && scanBanner) {
           scanBanner.innerHTML = '<span style="font-size:15px">✓</span><span>Scan completed</span>';
+        } else {
+          failBanner();
         }
       };
+      xhr.onerror = function() { failBanner(); };
       xhr.send(JSON.stringify({ vid: vid, elements: elements }));
-    } catch(e) {}
+    } catch(e) { failBanner(); }
   }
   function init() {
     showScanBanner();

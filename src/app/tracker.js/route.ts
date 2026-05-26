@@ -304,6 +304,7 @@ function buildTrackerScript(appUrl: string): string {
     // Method 2: Variant ID only (?sl_vid=xxx) — resolve test ID + goals via API
     if (vid && !tid) {
       cleanUrl(["sl_vid", "sl_scan"]);
+      if (isScan) showScanBanner();
       var tempVh = vh || uuid();
       var xhr = new XMLHttpRequest();
       xhr.open("GET", RESOLVE_URL + "?vid=" + encodeURIComponent(vid), true);
@@ -315,7 +316,6 @@ function buildTrackerScript(appUrl: string): string {
             var ctx = { tid: data.testId, vid: data.variantId, vh: tempVh, goals: data.goals || [] };
             store(ctx);
             if (isScan) {
-              // Run scan after DOM is ready
               if (document.readyState === "loading") {
                 document.addEventListener("DOMContentLoaded", function() { runScan(vid); });
               } else {
@@ -324,11 +324,18 @@ function buildTrackerScript(appUrl: string): string {
             }
             callback(ctx);
           } else {
+            if (isScan) failScanBanner();
             callback(load());
           }
-        } catch(e) { callback(load()); }
+        } catch(e) {
+          if (isScan) failScanBanner();
+          callback(load());
+        }
       };
-      xhr.onerror = function() { callback(load()); };
+      xhr.onerror = function() {
+        if (isScan) failScanBanner();
+        callback(load());
+      };
       xhr.send();
       return;
     }
