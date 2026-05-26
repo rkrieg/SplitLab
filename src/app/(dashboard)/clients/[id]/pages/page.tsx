@@ -2,6 +2,7 @@ import { getServerSession } from 'next-auth';
 import { redirect, notFound } from 'next/navigation';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
+import { resolveWorkspaceRole } from '@/lib/workspace-auth';
 import Header from '@/components/layout/Header';
 import PagesClient from './PagesClient';
 
@@ -40,6 +41,9 @@ export default async function PagesPage({ params }: { params: { id: string } }) 
   const workspace = await getWorkspaceForClient(params.id);
   if (!workspace) notFound();
 
+  const wsRole = await resolveWorkspaceRole(workspace.id, session.user.id, session.user.role);
+  if (!wsRole) notFound();
+
   const { data: client } = await db.from('clients').select('name').eq('id', params.id).single();
   const [tests, domain] = await Promise.all([
     getTests(workspace.id),
@@ -54,7 +58,7 @@ export default async function PagesPage({ params }: { params: { id: string } }) 
           tests={tests}
           workspaceId={workspace.id}
           clientId={params.id}
-          canManage={session.user.role !== 'viewer'}
+          canManage={wsRole === 'manager'}
           domain={domain?.verified ? domain.domain : undefined}
         />
       </div>

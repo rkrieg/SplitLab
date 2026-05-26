@@ -14,11 +14,11 @@
  */
 // Domain limit is 1 per client/workspace (confirmed by client).
 // "Up to 10 custom domains" on Agency = 10 clients × 1 domain each, not 10 per workspace.
-export const PLAN_LIMITS: Record<string, { domains: number; tests: number; variants: number; clients: number }> = {
-  free:   { domains: 0,        tests: 1,        variants: 2,         clients: 1  },
-  pro:    { domains: 1,        tests: 10,       variants: Infinity,  clients: 1  },
-  agency: { domains: 1,        tests: 50,       variants: Infinity,  clients: 10 },
-  scale:  { domains: Infinity, tests: Infinity, variants: Infinity,  clients: Infinity },
+export const PLAN_LIMITS: Record<string, { domains: number; tests: number; variants: number; clients: number; teamSeats: number }> = {
+  free:   { domains: 0,        tests: 1,        variants: 2,         clients: 1,         teamSeats: 0        },
+  pro:    { domains: 1,        tests: 10,       variants: Infinity,  clients: 1,         teamSeats: 1        },
+  agency: { domains: 1,        tests: 50,       variants: Infinity,  clients: 10,        teamSeats: 10       },
+  scale:  { domains: Infinity, tests: Infinity, variants: Infinity,  clients: Infinity,  teamSeats: Infinity },
 };
 
 export interface Plan {
@@ -47,6 +47,7 @@ export interface PlanDetails {
   /** monthly visitor cap — Infinity = unlimited */
   monthlyVisitors: number;
   maxDomains: number;
+  maxTeamSeats: number;
   features: string[];
 }
 
@@ -58,6 +59,7 @@ export const PLAN_DETAILS: Record<PlanId, PlanDetails> = {
     maxClients: 1,
     monthlyVisitors: 1_000,
     maxDomains: 0,
+    maxTeamSeats: 0,
     features: ['1 active test', '2 variants per test', '1,000 visitors/mo', 'Basic analytics'],
   },
   pro: {
@@ -67,6 +69,7 @@ export const PLAN_DETAILS: Record<PlanId, PlanDetails> = {
     maxClients: 1,
     monthlyVisitors: 25_000,
     maxDomains: 1,
+    maxTeamSeats: 1,
     features: ['10 active tests', 'Unlimited variants', '25,000 visitors/mo', '1 custom domain', 'CSV export', 'Priority email support'],
   },
   agency: {
@@ -76,6 +79,7 @@ export const PLAN_DETAILS: Record<PlanId, PlanDetails> = {
     maxClients: 10,
     monthlyVisitors: 100_000,
     maxDomains: 10,
+    maxTeamSeats: 10,
     features: ['50 active tests', 'Up to 10 clients', '100,000 visitors/mo', 'Up to 10 custom domains', 'Team seats'],
   },
   scale: {
@@ -85,7 +89,8 @@ export const PLAN_DETAILS: Record<PlanId, PlanDetails> = {
     maxClients: Infinity,
     monthlyVisitors: Infinity,
     maxDomains: Infinity,
-    features: ['Unlimited tests', 'Unlimited clients', 'Unlimited visitors/mo', 'Unlimited domains', 'Priority support'],
+    maxTeamSeats: Infinity,
+    features: ['Unlimited tests', 'Unlimited clients', 'Unlimited visitors/mo', 'Unlimited domains', 'Team seats', 'Priority support'],
   },
 };
 

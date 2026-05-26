@@ -1,21 +1,14 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { useSession } from "next-auth/react";
-import { useRouter, useSearchParams } from "next/navigation";
+import React, { useEffect, useRef, useState } from 'react';
+import { useSession } from 'next-auth/react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import {
-  CreditCard,
-  CheckCircle,
-  AlertTriangle,
-  ExternalLink,
-  Loader2,
-  FlaskConical,
-  Building2,
-  ArrowRight,
-  Zap,
-  ShieldCheck,
+  CreditCard, CheckCircle, AlertTriangle, ExternalLink,
+  Loader2, FlaskConical, Building2, ArrowRight, Zap, Users,
   CalendarClock,
-} from "lucide-react";
+  ShieldCheck,
+} from 'lucide-react';
 import {
   PLAN_DETAILS,
   getPlanDetails,
@@ -24,18 +17,8 @@ import {
 } from "@/lib/plans";
 import toast from "react-hot-toast";
 
-interface UsageStat {
-  used: number;
-  limit: number | null;
-  pct: number;
-  limitLabel: string;
-}
-interface UsageData {
-  plan: string;
-  planName: string;
-  tests: UsageStat;
-  clients: UsageStat;
-}
+interface UsageStat { used: number; limit: number | null; pct: number; limitLabel: string; }
+interface UsageData  { plan: string; planName: string; tests: UsageStat; clients: UsageStat; teamMembers?: UsageStat; }
 
 /** Horizontal progress bar — colour shifts red as it fills up. */
 function MeterBar({ pct, limit }: { pct: number; limit: number | null }) {
@@ -321,16 +304,11 @@ export default function BillingClient({
             Current Usage
           </h3>
           <div className="space-y-4">
-            {(
-              [
-                {
-                  icon: FlaskConical,
-                  label: "Active Tests",
-                  stat: usage.tests,
-                },
-                { icon: Building2, label: "Clients", stat: usage.clients },
-              ] as const
-            ).map(({ icon: Icon, label, stat }) => {
+            {([
+              { icon: FlaskConical, label: 'Active Tests',   stat: usage.tests },
+              { icon: Building2,    label: 'Clients',        stat: usage.clients },
+              ...(usage.teamMembers ? [{ icon: Users, label: 'Team Members', stat: usage.teamMembers }] : []),
+            ] as { icon: React.ElementType; label: string; stat: UsageStat }[]).map(({ icon: Icon, label, stat }) => {
               const isUnlimited = stat.limit === null;
               return (
                 <div key={label} className="flex items-center gap-3">

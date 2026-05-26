@@ -1,8 +1,9 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import toast from 'react-hot-toast';
-import { Plus, Users, Trash2, Shield, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, Users, Trash2, Shield, Lock, ChevronLeft, ChevronRight } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
 import EmptyState from '@/components/ui/EmptyState';
@@ -12,28 +13,28 @@ import { formatDate } from '@/lib/utils';
 
 const PAGE_SIZE = 10;
 
-interface User {
+interface Member {
   id: string;
   name: string;
   email: string;
-  role: string;
   status: string;
   created_at: string;
+  workspaceRole: 'manager' | 'viewer';
 }
 
 interface Props {
-  initialUsers: User[];
+  initialMembers: Member[];
+  seatLimit: number;
   currentUserId: string;
 }
 
-const ROLE_BADGE: Record<string, 'purple' | 'info' | 'default'> = {
-  admin: 'purple',
+const ROLE_BADGE: Record<string, 'info' | 'default'> = {
   manager: 'info',
   viewer: 'default',
 };
 
-export default function TeamClient({ initialUsers, currentUserId }: Props) {
-  const [users, setUsers] = useState(initialUsers);
+export default function ManagerTeamClient({ initialMembers, seatLimit, currentUserId }: Props) {
+  const [members, setMembers] = useState(initialMembers);
   const [page, setPage] = useState(1);
   const [modalOpen, setModalOpen] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
@@ -43,55 +44,56 @@ export default function TeamClient({ initialUsers, currentUserId }: Props) {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [role] = useState<'admin'>('admin');
+  const [role, setRole] = useState<'manager' | 'viewer'>('viewer');
 
-  const totalPages = Math.max(1, Math.ceil(users.length / PAGE_SIZE));
-  const safePage   = Math.min(page, totalPages);
-  const pageUsers  = users.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+  const totalPages  = Math.max(1, Math.ceil(members.length / PAGE_SIZE));
+  const safePage    = Math.min(page, totalPages);
+  const pageMembers = members.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
-  async function handleCreate(e: React.FormEvent) {
+  const atLimit = isFinite(seatLimit) && members.length >= seatLimit;
+  const noSeats = seatLimit === 0;
+
+  async function handleInvite(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
     try {
-      const res = await fetch('/api/users', {
+      const res = await fetch('/api/team', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, email, password, role }),
       });
+      const json = await res.json();
       if (!res.ok) {
-        const err = await res.json();
-        toast.error(err.error || 'Failed to create user');
+        toast.error(json.error || 'Failed to invite member');
         return;
       }
-      const user = await res.json();
-      setUsers((prev) => [user, ...prev]);
+      setMembers((prev) => [json, ...prev]);
       setPage(1); // jump to first page so new entry is visible
       setModalOpen(false);
       resetForm();
-      if (user.emailError) {
-        toast.error(`User created but invite email failed: ${user.emailError}`);
+      if (json.emailError) {
+        toast.error(`Member added but invite email failed: ${json.emailError}`);
       } else {
-        toast.success('User created and invite email sent');
+        toast.success('Invite sent successfully');
       }
     } finally {
       setSaving(false);
     }
   }
 
-  async function handleDelete() {
+  async function handleRemove() {
     if (!deleteId) return;
     setDeleting(true);
     try {
-      const res = await fetch(`/api/users/${deleteId}`, { method: 'DELETE' });
-      if (!res.ok) { toast.error('Delete failed'); return; }
-      setUsers((prev) => {
-        const next = prev.filter((u) => u.id !== deleteId);
-        // If deleting last item on a page beyond page 1, step back
+      const res = await fetch(`/api/team/${deleteId}`, { method: 'DELETE' });
+      if (!res.ok) { toast.error('Failed to remove member'); return; }
+      setMembers((prev) => {
+        const next = prev.filter((m) => m.id !== deleteId);
         const newTotal = Math.max(1, Math.ceil(next.length / PAGE_SIZE));
         if (safePage > newTotal) setPage(newTotal);
         return next;
       });
-      toast.success('User removed');
+      toast.success('Member removed');
     } finally {
       setDeleting(false);
       setDeleteId(null);
@@ -99,28 +101,55 @@ export default function TeamClient({ initialUsers, currentUserId }: Props) {
   }
 
   function resetForm() {
-    setName(''); setEmail(''); setPassword('');
+    setName(''); setEmail(''); setPassword(''); setRole('viewer');
+  }
+
+  // ── Free plan — no seats available ──────────────────────────────────────────
+  if (noSeats) {
+    return (
+      <div className="card p-8 text-center">
+        <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center mx-auto mb-4">
+          <Lock size={22} className="text-slate-400" />
+        </div>
+        <h3 className="text-base font-semibold text-slate-800 dark:text-slate-200 mb-2">Team seats not included</h3>
+        <p className="text-sm text-slate-500 dark:text-slate-400 mb-5 max-w-sm mx-auto">
+          Your current plan does not include team seats. Upgrade to Pro or higher to invite collaborators.
+        </p>
+        <Link href="/billing">
+          <Button>Upgrade plan</Button>
+        </Link>
+      </div>
+    );
   }
 
   return (
     <>
       <div className="flex items-center justify-between mb-6">
-        <p className="text-slate-500 dark:text-slate-400 text-sm">{users.length} team member{users.length !== 1 ? 's' : ''}</p>
-        <Button onClick={() => setModalOpen(true)}>
-          <Plus size={16} /> Invite User
-        </Button>
+        <p className="text-slate-500 dark:text-slate-400 text-sm">
+          {members.length} of {isFinite(seatLimit) ? seatLimit : '∞'} seat{seatLimit !== 1 ? 's' : ''} used
+        </p>
+        <div className="flex items-center gap-3">
+          {atLimit && (
+            <Link href="/billing" className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors">
+              Upgrade for more seats
+            </Link>
+          )}
+          <Button onClick={() => setModalOpen(true)} disabled={atLimit}>
+            <Plus size={16} /> Invite Member
+          </Button>
+        </div>
       </div>
 
-      {users.length === 0 && (
+      {members.length === 0 && (
         <EmptyState
           icon={Users}
-          title="No team members"
-          description="Invite team members to manage client workspaces."
-          action={<Button onClick={() => setModalOpen(true)}><Plus size={16} /> Invite User</Button>}
+          title="No team members yet"
+          description="Invite a colleague to collaborate on your tests and pages."
+          action={<Button onClick={() => setModalOpen(true)}><Plus size={16} /> Invite Member</Button>}
         />
       )}
 
-      {users.length > 0 && (
+      {members.length > 0 && (
         <div className="card overflow-hidden">
           <table className="w-full text-sm">
             <thead>
@@ -134,36 +163,33 @@ export default function TeamClient({ initialUsers, currentUserId }: Props) {
               </tr>
             </thead>
             <tbody>
-              {pageUsers.map((user) => (
-                <tr key={user.id} className="border-b border-slate-100 dark:border-slate-700/50 hover:bg-slate-50 dark:hover:bg-slate-700/20">
+              {pageMembers.map((member) => (
+                <tr key={member.id} className="border-b border-slate-100 dark:border-slate-700/50 hover:bg-slate-50 dark:hover:bg-slate-700/20">
                   <td className="px-5 py-3.5">
                     <div className="flex items-center gap-2.5">
                       <div className="w-7 h-7 rounded-full bg-indigo-600/80 flex items-center justify-center text-xs font-bold text-white flex-shrink-0">
-                        {user.name[0].toUpperCase()}
+                        {member.name[0].toUpperCase()}
                       </div>
-                      <span className="font-medium text-slate-800 dark:text-slate-200">{user.name}</span>
-                      {user.id === currentUserId && (
-                        <span className="badge bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 text-[10px]">You</span>
-                      )}
+                      <span className="font-medium text-slate-800 dark:text-slate-200">{member.name}</span>
                     </div>
                   </td>
-                  <td className="px-5 py-3.5 text-slate-500 dark:text-slate-400">{user.email}</td>
+                  <td className="px-5 py-3.5 text-slate-500 dark:text-slate-400">{member.email}</td>
                   <td className="px-5 py-3.5">
-                    <Badge variant={ROLE_BADGE[user.role] || 'default'} className="capitalize">
+                    <Badge variant={ROLE_BADGE[member.workspaceRole] || 'default'} className="capitalize">
                       <Shield size={10} className="mr-1" />
-                      {user.role}
+                      {member.workspaceRole === 'manager' ? 'Manager' : 'Viewer'}
                     </Badge>
                   </td>
                   <td className="px-5 py-3.5">
-                    <Badge variant={user.status === 'active' ? 'success' : 'default'}>
-                      {user.status}
+                    <Badge variant={member.status === 'active' ? 'success' : 'default'}>
+                      {member.status}
                     </Badge>
                   </td>
-                  <td className="px-5 py-3.5 text-slate-500 dark:text-slate-400">{formatDate(user.created_at)}</td>
+                  <td className="px-5 py-3.5 text-slate-500 dark:text-slate-400">{formatDate(member.created_at)}</td>
                   <td className="px-5 py-3.5 text-center">
-                    {user.id !== currentUserId && (
+                    {member.id !== currentUserId && (
                       <button
-                        onClick={() => setDeleteId(user.id)}
+                        onClick={() => setDeleteId(member.id)}
                         className="text-slate-500 hover:text-red-400 transition-colors"
                       >
                         <Trash2 size={14} />
@@ -179,7 +205,7 @@ export default function TeamClient({ initialUsers, currentUserId }: Props) {
           {totalPages > 1 && (
             <div className="flex items-center justify-between px-5 py-3 border-t border-slate-200 dark:border-slate-700">
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                {(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, users.length)} of {users.length}
+                {(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, members.length)} of {members.length}
               </p>
               <div className="flex items-center gap-1">
                 <button
@@ -205,27 +231,34 @@ export default function TeamClient({ initialUsers, currentUserId }: Props) {
         </div>
       )}
 
-      {/* Create modal */}
-      <Modal open={modalOpen} onClose={() => { setModalOpen(false); resetForm(); }} title="Add Staff Member" size="sm">
-        <form onSubmit={handleCreate} className="space-y-4">
-          <p className="text-xs text-slate-500 dark:text-slate-400 -mt-1">
-            Creates an internal admin account with full platform access. For inviting customer collaborators, use their own Team page.
-          </p>
+      {/* Invite modal */}
+      <Modal open={modalOpen} onClose={() => { setModalOpen(false); resetForm(); }} title="Invite Team Member" size="sm">
+        <form onSubmit={handleInvite} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Full Name</label>
             <input type="text" value={name} onChange={(e) => setName(e.target.value)} className="input-base" placeholder="Jane Smith" required />
           </div>
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Email</label>
-            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="input-base" placeholder="jane@agency.com" required />
+            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="input-base" placeholder="jane@company.com" required />
           </div>
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Temporary Password</label>
             <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="input-base" placeholder="Min. 8 characters" required minLength={8} />
           </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Role</label>
+            <select value={role} onChange={(e) => setRole(e.target.value as 'manager' | 'viewer')} className="input-base">
+              <option value="viewer">Viewer — read-only access</option>
+              <option value="manager">Manager — can manage tests & pages</option>
+            </select>
+          </div>
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            They will receive an email with these credentials to log in.
+          </p>
           <div className="flex justify-end gap-3 pt-2">
             <Button variant="secondary" type="button" onClick={() => { setModalOpen(false); resetForm(); }}>Cancel</Button>
-            <Button type="submit" loading={saving}>Add Staff Member</Button>
+            <Button type="submit" loading={saving}>Send Invite</Button>
           </div>
         </form>
       </Modal>
@@ -233,9 +266,9 @@ export default function TeamClient({ initialUsers, currentUserId }: Props) {
       <ConfirmDialog
         open={!!deleteId}
         onClose={() => setDeleteId(null)}
-        onConfirm={handleDelete}
+        onConfirm={handleRemove}
         title="Remove Team Member"
-        description="This user will no longer be able to access the platform."
+        description="This person will lose access to all your workspaces. Their account will be deleted."
         confirmLabel="Remove"
         loading={deleting}
       />

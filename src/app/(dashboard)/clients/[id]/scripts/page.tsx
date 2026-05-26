@@ -2,6 +2,7 @@ import { getServerSession } from 'next-auth';
 import { redirect, notFound } from 'next/navigation';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
+import { resolveWorkspaceRole } from '@/lib/workspace-auth';
 import Header from '@/components/layout/Header';
 import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
@@ -18,6 +19,9 @@ export default async function ScriptsPage({ params }: { params: { id: string } }
 
   const workspace = await getWorkspaceForClient(params.id);
   if (!workspace) notFound();
+
+  const wsRole = await resolveWorkspaceRole(workspace.id, session.user.id, session.user.role);
+  if (!wsRole) notFound();
 
   const { data: scripts } = await db
     .from('scripts')
@@ -59,7 +63,7 @@ export default async function ScriptsPage({ params }: { params: { id: string } }
           initialScripts={scripts ?? []}
           tests={tests}
           workspaceId={workspace.id}
-          canManage={session.user.role !== 'viewer'}
+          canManage={wsRole === 'manager'}
         />
       </div>
     </div>

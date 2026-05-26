@@ -37,7 +37,7 @@ const globalNavItems = [
   { href: '/pages',     label: 'Pages',     icon: FileCode2 },
   { href: '/scripts',   label: 'Scripts',   icon: Code2 },
   { href: '/domains',   label: 'Domains',   icon: Globe },
-  // { href: '/team',      label: 'Team',      icon: Users },
+  { href: '/team',      label: 'Team',      icon: Users },
   { href: '/billing',   label: 'Billing',   icon: CreditCard },
   { href: '/settings',  label: 'Settings',  icon: Settings },
 ];
@@ -47,10 +47,11 @@ function getClientNavItems(clientId: string, isViewer: boolean) {
     { href: `/clients/${clientId}/pages`,    label: 'Pages',    icon: FileCode2 },
     { href: `/clients/${clientId}/scripts`,  label: 'Scripts',  icon: Code2 },
     { href: `/clients/${clientId}/domains`,  label: 'Domains',  icon: Globe },
+    { href: '/team',                         label: 'Team',     icon: Users },
     { href: '/billing',                      label: 'Billing',  icon: CreditCard },
     { href: `/clients/${clientId}/settings`, label: 'Settings', icon: Settings },
   ];
-  return isViewer ? items.filter(i => i.href !== '/billing') : items;
+  return isViewer ? items.filter(i => i.href !== '/billing' && i.href !== '/team') : items;
 }
 
 export default function Sidebar() {
@@ -124,7 +125,7 @@ export default function Sidebar() {
   const navItems = effectiveClient
     ? getClientNavItems(effectiveClient.id, isViewer)
     : globalNavItems.filter(item => {
-        if (item.href === '/team'    && !isAdmin)  return false; // admin only
+        if (item.href === '/team'    && isViewer)  return false; // not for viewers
         if (item.href === '/billing' && isViewer)  return false; // not for viewers
         return true;
       });
@@ -347,7 +348,7 @@ export default function Sidebar() {
               {session?.user?.name || 'User'}
             </p>
             <p className="text-xs text-slate-400 dark:text-slate-500 capitalize truncate">
-              {session?.user?.role || 'viewer'}
+              {session?.user?.role === 'viewer' ? 'Member' : (session?.user?.role || 'member')}
             </p>
           </div>
           <ChevronDown size={14} className="text-slate-400 dark:text-slate-500 flex-shrink-0" />
@@ -355,21 +356,23 @@ export default function Sidebar() {
 
         {userMenuOpen && (
           <div className="mt-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
-            {/* Current plan + upgrade */}
-            <div className="px-3 py-2 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between gap-2">
-              <span className="text-xs text-slate-500 dark:text-slate-400 capitalize">
-                {userPlan} plan
-              </span>
-              {!isAdmin && (
-                <Link
-                  href="/billing"
-                  onClick={() => setUserMenuOpen(false)}
-                  className="text-xs font-medium text-indigo-400 hover:text-indigo-300 transition-colors"
-                >
-                  {userPlan === 'free' ? 'Upgrade' : 'Manage plan'}
-                </Link>
-              )}
-            </div>
+            {/* Current plan + upgrade — hidden for invited members (viewers) */}
+            {!isViewer && (
+              <div className="px-3 py-2 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between gap-2">
+                <span className="text-xs text-slate-500 dark:text-slate-400 capitalize">
+                  {userPlan} plan
+                </span>
+                {!isAdmin && (
+                  <Link
+                    href="/billing"
+                    onClick={() => setUserMenuOpen(false)}
+                    className="text-xs font-medium text-indigo-400 hover:text-indigo-300 transition-colors"
+                  >
+                    {userPlan === 'free' ? 'Upgrade' : 'Manage plan'}
+                  </Link>
+                )}
+              </div>
+            )}
             {mounted && (
               <button
                 onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}

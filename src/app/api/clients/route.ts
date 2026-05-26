@@ -138,13 +138,58 @@ export async function POST(request: NextRequest) {
       slug: 'default',
     }).select('id').single();
 
-    // Add the creator as a manager in workspace_members so they appear in the members list
     if (workspace) {
+      // Add the creator as a manager
       await db.from('workspace_members').insert({
         workspace_id: workspace.id,
         user_id: session.user.id,
         role: 'manager',
       });
+
+      // Auto-add any existing invited team members to the new workspace
+      // so they don't miss access — Unbounce-style: invite once, see all.
+      if (session.user.role === 'manager') {
+        const { data: otherClients } = await db
+          .from('clients')
+          .select('id')
+          .eq('owner_id', session.user.id)
+          .neq('id', client.id);
+
+        if (otherClients?.length) {
+          const { data: otherWorkspaces } = await db
+            .from('workspaces')
+            .select('id')
+            .in('client_id', otherClients.map((c) => c.id));
+
+          const otherWsIds = otherWorkspaces?.map((w) => w.id) ?? [];
+
+          if (otherWsIds.length) {
+            const { data: existingMembers } = await db
+              .from('workspace_members')
+              .select('user_id, role')
+              .in('workspace_id', otherWsIds)
+              .neq('user_id', session.user.id);
+
+            // Deduplicate by user_id, keep their existing role
+            const seen = new Set<string>();
+            const uniqueMembers = (existingMembers ?? []).filter((m) => {
+              if (seen.has(m.user_id)) return false;
+              seen.add(m.user_id);
+              return true;
+            });
+
+            if (uniqueMembers.length) {
+              await db.from('workspace_members').insert(
+                uniqueMembers.map((m) => ({
+                  workspace_id: workspace.id,
+                  user_id: m.user_id,
+                  role: m.role,
+                }))
+              );
+            }
+          }
+        }
+      }
     }
 
     return NextResponse.json(client, { status: 201 });

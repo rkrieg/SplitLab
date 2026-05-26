@@ -11,7 +11,7 @@ const createSchema = z.object({
   name: z.string().min(1).max(255),
   email: z.string().email(),
   password: z.string().min(8),
-  role: z.enum(['admin', 'manager', 'viewer']),
+  role: z.enum(['admin']), // admin panel only creates internal staff — customers use /api/team
 });
 
 export async function GET() {
