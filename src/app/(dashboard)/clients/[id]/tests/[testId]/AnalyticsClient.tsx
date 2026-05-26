@@ -1727,7 +1727,7 @@ export default function AnalyticsClient({
                                   }
                                 >
                                   <ScanLine size={11} />
-                                  Setup Conversion
+                                  Setup Tracking
                                 </button>
                                 <button
                                   onClick={() => startEditVariant(stat.variant)}
