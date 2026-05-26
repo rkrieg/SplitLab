@@ -1662,9 +1662,9 @@ export default function AnalyticsClient({
                                 </button>
                                 <button
                                   onClick={() => scanPage(stat.variant.id)}
-                                  disabled={scanning}
-                                  className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 hover:bg-indigo-500/20 transition-colors disabled:opacity-40"
-                                  title={`Scan ${stat.variant.name}`}
+                                  disabled={scanning || getVerifiedStatus(stat.variant) === false}
+                                  className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 hover:bg-indigo-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                                  title={getVerifiedStatus(stat.variant) === false ? "Tracker not found — install the tracker script first" : `Scan ${stat.variant.name}`}
                                 >
                                   <ScanLine size={11} />
                                   Scan
