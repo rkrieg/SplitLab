@@ -27,16 +27,8 @@ export async function POST(request: NextRequest) {
 
     const html = await res.text();
 
-    // Check if tracker.js is present in the page HTML
-    const trackerPatterns = [
-      '/tracker.js',
-      'tracker.js',
-      APP_URL + '/tracker.js',
-      'SplitLab',
-      'sl_tracking',
-    ];
-
-    const verified = trackerPatterns.some((pattern) => html.includes(pattern));
+    // Check if THIS environment's tracker is present in the page HTML
+    const verified = html.includes(APP_URL + '/tracker.js');
 
     // Update the variant record
     await db
