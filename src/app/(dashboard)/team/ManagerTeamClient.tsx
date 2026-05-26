@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import toast from 'react-hot-toast';
-import { Plus, Users, Trash2, Shield, Lock, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, Users, Trash2, Shield, Lock, ChevronLeft, ChevronRight, AlertCircle } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
 import EmptyState from '@/components/ui/EmptyState';
@@ -40,6 +40,7 @@ export default function ManagerTeamClient({ initialMembers, seatLimit, currentUs
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [inviteError, setInviteError] = useState<{ message: string; isLimit: boolean } | null>(null);
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -64,7 +65,8 @@ export default function ManagerTeamClient({ initialMembers, seatLimit, currentUs
       });
       const json = await res.json();
       if (!res.ok) {
-        toast.error(json.error || 'Failed to invite member');
+        const msg = json.error || 'Failed to invite member';
+        setInviteError({ message: msg, isLimit: res.status === 403 });
         return;
       }
       setMembers((prev) => [json, ...prev]);
@@ -101,7 +103,7 @@ export default function ManagerTeamClient({ initialMembers, seatLimit, currentUs
   }
 
   function resetForm() {
-    setName(''); setEmail(''); setPassword(''); setRole('viewer');
+    setName(''); setEmail(''); setPassword(''); setRole('viewer'); setInviteError(null);
   }
 
   // ── Free plan — no seats available ──────────────────────────────────────────
@@ -256,6 +258,17 @@ export default function ManagerTeamClient({ initialMembers, seatLimit, currentUs
           <p className="text-xs text-slate-500 dark:text-slate-400">
             They will receive an email with these credentials to log in.
           </p>
+          {inviteError && (
+            <div className="flex items-start gap-2 rounded-lg bg-red-500/10 border border-red-500/30 px-3 py-2.5 text-sm text-red-400">
+              <AlertCircle size={15} className="flex-shrink-0 mt-0.5" />
+              <span>
+                {inviteError.message}
+                {inviteError.isLimit && (
+                  <> · <a href="/billing" className="underline font-medium hover:text-red-300">Upgrade Plan</a></>
+                )}
+              </span>
+            </div>
+          )}
           <div className="flex justify-end gap-3 pt-2">
             <Button variant="secondary" type="button" onClick={() => { setModalOpen(false); resetForm(); }}>Cancel</Button>
             <Button type="submit" loading={saving}>Send Invite</Button>
