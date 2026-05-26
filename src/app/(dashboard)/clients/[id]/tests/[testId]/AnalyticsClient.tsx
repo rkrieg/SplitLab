@@ -2054,8 +2054,8 @@ export default function AnalyticsClient({
                 )}
 
                 {scanning && (
-                  <div className="flex items-center gap-2 text-slate-500 text-sm">
-                    <RefreshCw size={14} className="animate-spin" />
+                  <div className="flex items-center gap-2 rounded-lg bg-amber-500/10 border border-amber-500/30 px-3 py-2.5 text-xs text-amber-300 font-medium">
+                    <RefreshCw size={13} className="animate-spin flex-shrink-0" />
                     Page opened — waiting for scan results…
                   </div>
                 )}
