@@ -216,9 +216,9 @@ export default function LandingPage() {
         <div className="footer-inner">
           <div className="footer-left">
             <img src="/splitlab-logo-dark.png" alt="SplitLab" style={{height:'60px',width:'auto'}} />
-            <span className="footer-copy">&copy; 2026 SplitLab. Built by Infinity Media.</span>
+            <span className="footer-copy">&copy; 2026 SplitLab.</span>
           </div>
-          <div className="footer-links"><a href="#">Privacy</a><a href="#">Terms</a><a href="#">Support</a></div>
+          <div className="footer-links"><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/contact">Support</a></div>
         </div>
       </footer>
     </div>

@@ -51,7 +51,9 @@ export default function ManagerTeamClient({ initialMembers, seatLimit, currentUs
   const safePage    = Math.min(page, totalPages);
   const pageMembers = members.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
-  const atLimit = isFinite(seatLimit) && members.length >= seatLimit;
+  // Owner always occupies 1 seat, so available invite slots = seatLimit - 1
+  const usedSeats = members.length + 1; // +1 for the owner
+  const atLimit = isFinite(seatLimit) && usedSeats >= seatLimit;
   const noSeats = seatLimit === 0;
 
   async function handleInvite(e: React.FormEvent) {
@@ -128,7 +130,7 @@ export default function ManagerTeamClient({ initialMembers, seatLimit, currentUs
     <>
       <div className="flex items-center justify-between mb-6">
         <p className="text-slate-500 dark:text-slate-400 text-sm">
-          {members.length} of {isFinite(seatLimit) ? seatLimit : '∞'} seat{seatLimit !== 1 ? 's' : ''} used
+          {usedSeats} of {isFinite(seatLimit) ? seatLimit : '∞'} seat{seatLimit !== 1 ? 's' : ''} used
         </p>
         <div className="flex items-center gap-3">
           {atLimit && (
@@ -136,7 +138,7 @@ export default function ManagerTeamClient({ initialMembers, seatLimit, currentUs
               Upgrade for more seats
             </Link>
           )}
-          <Button onClick={() => setModalOpen(true)} disabled={atLimit}>
+          <Button onClick={() => setModalOpen(true)}>
             <Plus size={16} /> Invite Member
           </Button>
         </div>
@@ -235,45 +237,65 @@ export default function ManagerTeamClient({ initialMembers, seatLimit, currentUs
 
       {/* Invite modal */}
       <Modal open={modalOpen} onClose={() => { setModalOpen(false); resetForm(); }} title="Invite Team Member" size="sm">
-        <form onSubmit={handleInvite} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Full Name</label>
-            <input type="text" value={name} onChange={(e) => setName(e.target.value)} className="input-base" placeholder="Jane Smith" required />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Email</label>
-            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="input-base" placeholder="jane@company.com" required />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Temporary Password</label>
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="input-base" placeholder="Min. 8 characters" required minLength={8} />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Role</label>
-            <select value={role} onChange={(e) => setRole(e.target.value as 'manager' | 'viewer')} className="input-base">
-              <option value="viewer">Viewer — read-only access</option>
-              <option value="manager">Manager — can manage tests & pages</option>
-            </select>
-          </div>
-          <p className="text-xs text-slate-500 dark:text-slate-400">
-            They will receive an email with these credentials to log in.
-          </p>
-          {inviteError && (
-            <div className="flex items-start gap-2 rounded-lg bg-red-500/10 border border-red-500/30 px-3 py-2.5 text-sm text-red-400">
-              <AlertCircle size={15} className="flex-shrink-0 mt-0.5" />
-              <span>
-                {inviteError.message}
-                {inviteError.isLimit && (
-                  <> · <a href="/billing" className="underline font-medium hover:text-red-300">Upgrade Plan</a></>
-                )}
-              </span>
+        {atLimit ? (
+          <div className="text-center py-4">
+            <div className="w-12 h-12 rounded-full bg-amber-500/10 flex items-center justify-center mx-auto mb-4">
+              <AlertCircle size={22} className="text-amber-400" />
             </div>
-          )}
-          <div className="flex justify-end gap-3 pt-2">
-            <Button variant="secondary" type="button" onClick={() => { setModalOpen(false); resetForm(); }}>Cancel</Button>
-            <Button type="submit" loading={saving}>Send Invite</Button>
+            <h3 className="text-base font-semibold text-slate-800 dark:text-slate-200 mb-2">
+              Team seat limit reached
+            </h3>
+            <p className="text-sm text-slate-500 dark:text-slate-400 mb-5 max-w-sm mx-auto">
+              You&apos;re using {usedSeats} of {seatLimit} seat{seatLimit !== 1 ? 's' : ''} on your current plan. Upgrade to add more team members.
+            </p>
+            <div className="flex justify-center gap-3">
+              <Button variant="secondary" onClick={() => { setModalOpen(false); resetForm(); }}>Cancel</Button>
+              <Link href="/billing">
+                <Button>Upgrade Plan</Button>
+              </Link>
+            </div>
           </div>
-        </form>
+        ) : (
+          <form onSubmit={handleInvite} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Full Name</label>
+              <input type="text" value={name} onChange={(e) => setName(e.target.value)} className="input-base" placeholder="Jane Smith" required />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Email</label>
+              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="input-base" placeholder="jane@company.com" required />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Temporary Password</label>
+              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="input-base" placeholder="Min. 8 characters" required minLength={8} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Role</label>
+              <select value={role} onChange={(e) => setRole(e.target.value as 'manager' | 'viewer')} className="input-base">
+                <option value="viewer">Viewer — read-only access</option>
+                <option value="manager">Manager — can manage tests & pages</option>
+              </select>
+            </div>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              They will receive an email with these credentials to log in.
+            </p>
+            {inviteError && (
+              <div className="flex items-start gap-2 rounded-lg bg-red-500/10 border border-red-500/30 px-3 py-2.5 text-sm text-red-400">
+                <AlertCircle size={15} className="flex-shrink-0 mt-0.5" />
+                <span>
+                  {inviteError.message}
+                  {inviteError.isLimit && (
+                    <> · <a href="/billing" className="underline font-medium hover:text-red-300">Upgrade Plan</a></>
+                  )}
+                </span>
+              </div>
+            )}
+            <div className="flex justify-end gap-3 pt-2">
+              <Button variant="secondary" type="button" onClick={() => { setModalOpen(false); resetForm(); }}>Cancel</Button>
+              <Button type="submit" loading={saving}>Send Invite</Button>
+            </div>
+          </form>
+        )}
       </Modal>
 
       <ConfirmDialog

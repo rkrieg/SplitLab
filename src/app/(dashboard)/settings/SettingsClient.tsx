@@ -11,6 +11,7 @@ interface Props {
 
 export default function SettingsClient({ user }: Props) {
   const [name, setName] = useState(user.name);
+  const [email, setEmail] = useState(user.email);
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [savingProfile, setSavingProfile] = useState(false);
@@ -46,7 +47,7 @@ export default function SettingsClient({ user }: Props) {
       const res = await fetch(`/api/users/${user.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ name, email }),
       });
       if (!res.ok) { toast.error('Failed to save profile'); return; }
       toast.success('Profile updated');
@@ -92,8 +93,7 @@ export default function SettingsClient({ user }: Props) {
           </div>
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Email</label>
-            <input type="email" value={user.email} className="input-base opacity-50" disabled />
-            <p className="text-slate-400 dark:text-slate-500 text-xs mt-1">Email cannot be changed. Contact an admin if needed.</p>
+            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="input-base" required />
           </div>
           <div className="flex items-center justify-between pt-1">
             <div className="flex items-center gap-1.5 text-slate-400 dark:text-slate-500 text-xs">

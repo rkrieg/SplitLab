@@ -18,7 +18,8 @@ import {
 import toast from "react-hot-toast";
 
 interface UsageStat { used: number; limit: number | null; pct: number; limitLabel: string; }
-interface UsageData  { plan: string; planName: string; tests: UsageStat; clients: UsageStat; teamMembers?: UsageStat; }
+interface UsageData  { plan: string; planName: string; tests: UsageStat; clients: UsageStat; domains?: UsageStat; teamMembers?: UsageStat; }
+
 
 /** Horizontal progress bar — colour shifts red as it fills up. */
 function MeterBar({ pct, limit }: { pct: number; limit: number | null }) {
@@ -307,6 +308,7 @@ export default function BillingClient({
             {([
               { icon: FlaskConical, label: 'Active Tests',   stat: usage.tests },
               { icon: Building2,    label: 'Clients',        stat: usage.clients },
+              ...(usage.domains ? [{ icon: ExternalLink, label: 'Domains', stat: usage.domains }] : []),
               ...(usage.teamMembers ? [{ icon: Users, label: 'Team Members', stat: usage.teamMembers }] : []),
             ] as { icon: React.ElementType; label: string; stat: UsageStat }[]).map(({ icon: Icon, label, stat }) => {
               const isUnlimited = stat.limit === null;

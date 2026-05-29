@@ -43,7 +43,7 @@ export async function GET() {
 
   const clientCount = (clients ?? []).length;
 
-  // Count unique invited team members across all workspaces owned by this user
+  // Count unique team members (including owner) across all workspaces owned by this user
   let teamMemberCount = 0;
   if (limits.maxTeamSeats > 0) {
     const { data: workspaces } = await db
@@ -56,16 +56,38 @@ export async function GET() {
       const { data: memberRows } = await db
         .from('workspace_members')
         .select('user_id')
-        .in('workspace_id', workspaceIds)
-        .neq('user_id', userId);
+        .in('workspace_id', workspaceIds);
 
+      // Count all unique members including the owner
       teamMemberCount = new Set(memberRows?.map((m) => m.user_id)).size;
+    }
+    // Owner always counts as 1 seat minimum
+    if (teamMemberCount === 0) teamMemberCount = 1;
+  }
+
+  // Count domains across all workspaces owned by this user
+  let domainCount = 0;
+  const clientIds = (clients ?? []).map((c) => c.id);
+  if (clientIds.length) {
+    const { data: workspaces } = await db
+      .from('workspaces')
+      .select('id')
+      .in('client_id', clientIds);
+
+    const wsIds = (workspaces ?? []).map((w) => w.id);
+    if (wsIds.length) {
+      const { data: domainRows } = await db
+        .from('domains')
+        .select('id')
+        .in('workspace_id', wsIds);
+      domainCount = (domainRows ?? []).length;
     }
   }
 
   const isUnlimitedTests   = limits.maxActiveTests === Infinity;
   const isUnlimitedClients = limits.maxClients === Infinity;
   const isUnlimitedTeam    = limits.maxTeamSeats === Infinity;
+  const isUnlimitedDomains = limits.maxDomains === Infinity;
 
   return NextResponse.json({
     plan:     planId,
@@ -82,6 +104,15 @@ export async function GET() {
       pct:        isUnlimitedClients ? 0 : Math.round((clientCount / limits.maxClients) * 100),
       limitLabel: formatLimit(limits.maxClients),
     },
+    // Only included when plan has domains (avoids confusing 0/0 on free plan)
+    ...(limits.maxDomains > 0 && {
+      domains: {
+        used:       domainCount,
+        limit:      serialize(limits.maxDomains),
+        pct:        isUnlimitedDomains ? 0 : Math.round((domainCount / limits.maxDomains) * 100),
+        limitLabel: formatLimit(limits.maxDomains),
+      },
+    }),
     // Only included when plan has team seats (avoids confusing 0/0 on free plan)
     ...(limits.maxTeamSeats > 0 && {
       teamMembers: {

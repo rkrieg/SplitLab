@@ -29,6 +29,7 @@ export default async function ClientSettingsPage({ params }: { params: { id: str
           client={client}
           appUrl={appUrl}
           canManage={wsRole === 'manager'}
+          user={{ id: session.user.id, name: session.user.name, email: session.user.email, role: session.user.role }}
         />
       </div>
     </div>

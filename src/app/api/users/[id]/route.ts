@@ -7,6 +7,7 @@ import { z } from 'zod';
 
 const updateSchema = z.object({
   name: z.string().min(1).max(255).optional(),
+  email: z.string().email().optional(),
   role: z.enum(['admin', 'manager', 'viewer']).optional(),
   status: z.enum(['active', 'inactive']).optional(),
   password: z.string().min(8).optional(),
@@ -36,6 +37,7 @@ export async function PATCH(
 
     const updatePayload: Record<string, unknown> = {};
     if (data.name) updatePayload.name = data.name;
+    if (data.email) updatePayload.email = data.email.toLowerCase();
     if (data.role) updatePayload.role = data.role;
     if (data.status) updatePayload.status = data.status;
     if (data.password) {

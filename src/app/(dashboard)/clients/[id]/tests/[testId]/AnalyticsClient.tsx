@@ -39,6 +39,7 @@ import {
   Info,
   Loader2,
   AlertTriangle,
+  CheckCircle2,
 } from "lucide-react";
 import Spinner from "@/components/ui/Spinner";
 import Button from "@/components/ui/Button";
@@ -1714,20 +1715,19 @@ export default function AnalyticsClient({
                                   Open
                                 </button>
                                 <button
-                                  onClick={() => scanPage(stat.variant.id)}
-                                  disabled={
-                                    scanning ||
-                                    getVerifiedStatus(stat.variant) === false
-                                  }
+                                  onClick={() => {
+                                    if (getVerifiedStatus(stat.variant) === false) {
+                                      toast.error('Install the tracker.js snippet on your landing page first, then set up goal or event tracking.');
+                                      return;
+                                    }
+                                    scanPage(stat.variant.id);
+                                  }}
+                                  disabled={scanning}
                                   className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 hover:bg-indigo-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
-                                  title={
-                                    getVerifiedStatus(stat.variant) === false
-                                      ? "Tracker not found — install the tracker script first"
-                                      : `Scan ${stat.variant.name}`
-                                  }
+                                  title="Set up goal or event tracking"
                                 >
                                   <ScanLine size={11} />
-                                  Setup Tracking
+                                  Setup Goal Tracking
                                 </button>
                                 <button
                                   onClick={() => startEditVariant(stat.variant)}
@@ -2015,8 +2015,76 @@ export default function AnalyticsClient({
         {/* ─── SETTINGS TAB ─── */}
         {tab === "settings" && (
           <>
-            {/* Page Scanner */}
-            <div className="card overflow-hidden">
+            {/* Global Tracking Snippet */}
+            {(() => {
+              const trackerComplete = !anyTrackerMissing && variants.some(v => v.tracking_verified === true);
+              return (
+                <div className={`card overflow-hidden ${trackerComplete ? 'border-green-500/30 bg-green-500/5' : ''}`}>
+                  <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${trackerComplete ? 'bg-green-500/20' : 'bg-indigo-500/20'}`}>
+                        {trackerComplete
+                          ? <CheckCircle2 size={16} className="text-green-400" />
+                          : <Code2 size={16} className="text-indigo-400" />
+                        }
+                      </div>
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <p className="font-medium text-slate-800 dark:text-slate-200 text-sm">
+                            Global Tracking Snippet
+                          </p>
+                          {trackerComplete && (
+                            <span className="flex items-center gap-1 text-xs font-medium text-green-500">
+                              <CheckCircle2 size={12} /> Complete
+                            </span>
+                          )}
+                        </div>
+                        {trackerComplete ? (
+                          <p className="text-green-500/70 text-xs mt-0.5">Tracker detected on all variants</p>
+                        ) : (
+                          <div className="flex items-center gap-1.5 rounded-lg bg-amber-500/10 border border-amber-500/30 px-2.5 py-1.5 text-xs text-amber-600 dark:text-amber-300 mt-1">
+                            <Info size={12} className="flex-shrink-0" />
+                            <span>
+                              Paste before{" "}
+                              <code className="font-mono">&lt;/body&gt;</code> on your
+                              external landing page (redirect mode only)
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  <div className={`px-5 py-4 ${trackerComplete ? 'opacity-60' : ''}`}>
+                    <div className="flex items-center justify-between mb-3">
+                      <p className="text-slate-500 dark:text-slate-400 text-xs">
+                        Tracking context is passed via URL parameters.
+                      </p>
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(snippet);
+                          toast.success("Copied");
+                        }}
+                        className="btn-secondary text-xs"
+                      >
+                        <Copy size={12} /> Copy
+                      </button>
+                    </div>
+                    <pre className="bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-4 overflow-x-auto text-xs text-slate-700 dark:text-slate-300">
+                      <code>{snippet}</code>
+                    </pre>
+              </div>
+            </div>
+              );
+            })()}
+
+            {/* Set Up Goal Conversion Tracking */}
+            {anyTrackerMissing && (
+              <div className="flex items-start gap-2 rounded-lg bg-red-500/10 border border-red-500/30 px-4 py-3 text-sm text-red-400">
+                <AlertTriangle size={14} className="flex-shrink-0 mt-0.5" />
+                <span>Install the Global Tracking Snippet above on your landing pages before you can set up goals.</span>
+              </div>
+            )}
+            <div className={`card overflow-hidden ${anyTrackerMissing ? 'opacity-50 pointer-events-none' : ''}`}>
               <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700">
                 <div className="flex items-center gap-3">
                   <div className="w-8 h-8 rounded-lg bg-indigo-500/20 flex items-center justify-center">
@@ -2024,7 +2092,7 @@ export default function AnalyticsClient({
                   </div>
                   <div>
                     <p className="font-medium text-slate-800 dark:text-slate-200 text-sm">
-                      Page Scanner
+                      Set Up Goal Conversion Tracking
                     </p>
                     {scanning || scannedVariantName ? (
                       <p className="text-slate-500 text-xs">
@@ -2036,8 +2104,7 @@ export default function AnalyticsClient({
                       <div className="flex items-center gap-1.5 rounded-lg bg-amber-500/10 border border-amber-500/30 px-2.5 py-1.5 text-xs text-amber-600 dark:text-amber-300 mt-1">
                         <Info size={12} className="flex-shrink-0" />
                         <span>
-                          Click Scan on any variant in the Overview tab to
-                          detect elements
+                          Using the page scanner — click &ldquo;Setup Goal Tracking&rdquo; on any variant in the Overview tab to detect trackable elements
                         </span>
                       </div>
                     )}
@@ -2307,61 +2374,18 @@ export default function AnalyticsClient({
               </div>
             )}
 
-            {/* Tracking Setup */}
-            <div className="card overflow-hidden">
-              <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-lg bg-indigo-500/20 flex items-center justify-center">
-                    <Code2 size={16} className="text-indigo-400" />
-                  </div>
-                  <div>
-                    <p className="font-medium text-slate-800 dark:text-slate-200 text-sm">
-                      Tracking Snippet
-                    </p>
-                    <div className="flex items-center gap-1.5 rounded-lg bg-amber-500/10 border border-amber-500/30 px-2.5 py-1.5 text-xs text-amber-600 dark:text-amber-300 mt-1">
-                      <Info size={12} className="flex-shrink-0" />
-                      <span>
-                        Paste before{" "}
-                        <code className="font-mono">&lt;/body&gt;</code> on your
-                        external landing page (redirect mode only)
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <div className="px-5 py-4">
-                <div className="flex items-center justify-between mb-3">
-                  <p className="text-slate-500 dark:text-slate-400 text-xs">
-                    Tracking context is passed via URL parameters.
-                  </p>
-                  <button
-                    onClick={() => {
-                      navigator.clipboard.writeText(snippet);
-                      toast.success("Copied");
-                    }}
-                    className="btn-secondary text-xs"
-                  >
-                    <Copy size={12} /> Copy
-                  </button>
-                </div>
-                <pre className="bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-4 overflow-x-auto text-xs text-slate-700 dark:text-slate-300">
-                  <code>{snippet}</code>
-                </pre>
-              </div>
-            </div>
-
             {/* Head Scripts (for proxy / custom HTML mode) */}
             <div
               className={`card overflow-hidden ${allPureRedirect ? "opacity-60" : ""}`}
             >
               <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700">
                 <h3 className="font-medium text-slate-800 dark:text-slate-200">
-                  Head Scripts
+                  Page-Specific Head Scripts
                 </h3>
                 <div className="flex items-start gap-2 rounded-lg bg-amber-500/10 border border-amber-500/30 px-3 py-2.5 text-xs text-amber-600 dark:text-amber-300 mt-2">
                   <Info size={13} className="mt-0.5 flex-shrink-0" />
                   <span>
-                    Only works for custom HTML pages — not hosted URLs (Lovable,
+                    Injected into the <code className="font-mono">&lt;head&gt;</code> of this test&apos;s HTML pages only — not hosted URLs (Lovable,
                     Replit, site builders, etc.). For third-party scripts (GTM,
                     Pixel, etc.), add them directly to your site.
                   </span>

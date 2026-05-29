@@ -3,19 +3,30 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
-import { Copy, Save, Code2 } from 'lucide-react';
+import { Save, User, Lock, Info } from 'lucide-react';
 import Button from '@/components/ui/Button';
 
 interface Props {
   client: { id: string; name: string; slug: string };
   appUrl: string;
   canManage: boolean;
+  user: { id: string; name: string; email: string; role: string };
 }
 
-export default function ClientSettingsClient({ client, appUrl, canManage }: Props) {
+export default function ClientSettingsClient({ client, appUrl, canManage, user }: Props) {
   const router = useRouter();
   const [clientName, setClientName] = useState(client.name);
   const [savingName, setSavingName] = useState(false);
+
+  // Profile state
+  const [userName, setUserName] = useState(user.name);
+  const [userEmail, setUserEmail] = useState(user.email);
+  const [savingProfile, setSavingProfile] = useState(false);
+
+  // Password state
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [savingPassword, setSavingPassword] = useState(false);
 
   async function handleSaveName(e: React.FormEvent) {
     e.preventDefault();
@@ -41,8 +52,47 @@ export default function ClientSettingsClient({ client, appUrl, canManage }: Prop
     }
   }
 
+  async function handleSaveProfile(e: React.FormEvent) {
+    e.preventDefault();
+    setSavingProfile(true);
+    try {
+      const res = await fetch(`/api/users/${user.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: userName, email: userEmail }),
+      });
+      if (!res.ok) { toast.error('Failed to save profile'); return; }
+      toast.success('Profile updated');
+      router.refresh();
+    } finally {
+      setSavingProfile(false);
+    }
+  }
+
+  async function handleSavePassword(e: React.FormEvent) {
+    e.preventDefault();
+    if (password !== confirmPassword) {
+      toast.error('Passwords do not match');
+      return;
+    }
+    setSavingPassword(true);
+    try {
+      const res = await fetch(`/api/users/${user.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      });
+      if (!res.ok) { toast.error('Failed to update password'); return; }
+      setPassword('');
+      setConfirmPassword('');
+      toast.success('Password updated');
+    } finally {
+      setSavingPassword(false);
+    }
+  }
+
   return (
-    <div className="space-y-8 max-w-3xl">
+    <div className="space-y-6 max-w-2xl">
       {/* Client Name */}
       <section>
         <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100 mb-4">Client Name</h2>
@@ -68,37 +118,51 @@ export default function ClientSettingsClient({ client, appUrl, canManage }: Prop
         </form>
       </section>
 
-      {/* Tracking Setup */}
-      <section>
-        <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100 mb-4">Tracking Setup</h2>
-        <div className="card overflow-hidden">
-          <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700 flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-indigo-500/20 flex items-center justify-center flex-shrink-0">
-              <Code2 size={16} className="text-indigo-400" />
-            </div>
-            <div>
-              <p className="font-medium text-slate-800 dark:text-slate-200 text-sm">tracker.js</p>
-              <p className="text-slate-500 text-xs">Add this script to any external landing page to track conversions automatically</p>
-            </div>
-          </div>
-          <div className="px-5 py-4 space-y-3">
-            <p className="text-slate-500 dark:text-slate-400 text-xs">
-              Paste before <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded">&lt;/body&gt;</code> on your destination page. The script auto-detects button clicks, form submits, and call link clicks.
-            </p>
-            <div className="flex items-center gap-2">
-              <pre className="flex-1 bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-4 py-3 text-xs text-slate-700 dark:text-slate-300 font-mono overflow-x-auto">
-                {`<script src="${appUrl}/tracker.js"></script>`}
-              </pre>
-              <button
-                onClick={() => { navigator.clipboard.writeText(`<script src="${appUrl}/tracker.js"></script>`); toast.success('Copied'); }}
-                className="btn-secondary text-xs flex-shrink-0"
-              >
-                <Copy size={12} /> Copy
-              </button>
-            </div>
-          </div>
+      {/* Profile section */}
+      <div className="card p-6">
+        <div className="flex items-center gap-2 mb-5">
+          <User size={16} className="text-slate-500 dark:text-slate-400" />
+          <h2 className="font-semibold text-slate-900 dark:text-slate-100">Profile</h2>
         </div>
-      </section>
+        <form onSubmit={handleSaveProfile} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Display Name</label>
+            <input type="text" value={userName} onChange={(e) => setUserName(e.target.value)} className="input-base" required />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Email</label>
+            <input type="email" value={userEmail} onChange={(e) => setUserEmail(e.target.value)} className="input-base" required />
+          </div>
+          <div className="flex items-center justify-between pt-1">
+            <div className="flex items-center gap-1.5 text-slate-400 dark:text-slate-500 text-xs">
+              <Info size={12} />
+              Role: <span className="capitalize text-slate-500 dark:text-slate-400">{user.role}</span>
+            </div>
+            <Button type="submit" loading={savingProfile}>Save Profile</Button>
+          </div>
+        </form>
+      </div>
+
+      {/* Password section */}
+      <div className="card p-6">
+        <div className="flex items-center gap-2 mb-5">
+          <Lock size={16} className="text-slate-500 dark:text-slate-400" />
+          <h2 className="font-semibold text-slate-900 dark:text-slate-100">Change Password</h2>
+        </div>
+        <form onSubmit={handleSavePassword} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">New Password</label>
+            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="input-base" placeholder="Min. 8 characters" minLength={8} required />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Confirm Password</label>
+            <input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} className="input-base" required />
+          </div>
+          <div className="flex justify-end">
+            <Button type="submit" loading={savingPassword}>Update Password</Button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }
