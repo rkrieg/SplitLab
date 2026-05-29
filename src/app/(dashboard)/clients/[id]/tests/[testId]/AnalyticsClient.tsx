@@ -1442,8 +1442,8 @@ export default function AnalyticsClient({
               </button>
             </div>
 
-            <div className="card overflow-hidden">
-              <table className="w-full text-sm">
+            <div className="card overflow-x-auto">
+              <table className="w-full min-w-[900px] text-sm">
                 <thead>
                   <tr className="border-b border-slate-200 dark:border-slate-700">
                     <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">
@@ -1467,14 +1467,16 @@ export default function AnalyticsClient({
                     <th className="text-right px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">
                       Confidence
                     </th>
-                    <th className="text-center px-5 py-3 text-slate-400 font-medium w-24"></th>
+                    <th className="text-center px-5 py-3 text-slate-400 font-medium w-20"></th>
+                    <th className="text-center px-5 py-3 text-slate-400 font-medium w-36"></th>
+                    <th className="text-center px-5 py-3 text-slate-400 font-medium w-10"></th>
                   </tr>
                 </thead>
                 <tbody>
                   {loading ? (
                     <tr>
                       <td
-                        colSpan={8}
+                        colSpan={10}
                         className="px-5 py-10 text-center text-slate-400"
                       >
                         <RefreshCw
@@ -1487,7 +1489,7 @@ export default function AnalyticsClient({
                   ) : stats.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={8}
+                        colSpan={10}
                         className="px-5 py-10 text-center text-slate-400"
                       >
                         No data yet. Publish this page to start collecting
@@ -1692,23 +1694,23 @@ export default function AnalyticsClient({
                                 <span className="text-slate-500">—</span>
                               )}
                             </td>
+                            {/* Uplift % */}
                             <td className={`px-5 py-3.5 text-center ${rowBg}`}>
-                              <div className="flex items-center justify-center gap-2">
-                                {uplift !== null && (
-                                  <span
-                                    className={`flex items-center gap-0.5 text-xs font-medium ${uplift > 0 ? "text-green-400" : "text-red-400"}`}
-                                  >
-                                    <TrendingUp
-                                      size={11}
-                                      className={uplift < 0 ? "rotate-180" : ""}
-                                    />
-                                    {uplift > 0 ? "+" : ""}
-                                    {formatPercent(uplift)}
-                                  </span>
-                                )}
+                              {uplift !== null ? (
+                                <span className={`flex items-center justify-center gap-0.5 text-xs font-medium ${uplift > 0 ? "text-green-400" : "text-red-400"}`}>
+                                  <TrendingUp size={11} className={uplift < 0 ? "rotate-180" : ""} />
+                                  {uplift > 0 ? "+" : ""}{formatPercent(uplift)}
+                                </span>
+                              ) : (
+                                <span className="text-slate-500">—</span>
+                              )}
+                            </td>
+                            {/* Open + Setup Goal Tracking */}
+                            <td className={`px-3 py-3.5 text-center ${rowBg}`}>
+                              <div className="flex flex-col items-center gap-1">
                                 <button
                                   onClick={() => openVariant(stat.variant.id)}
-                                  className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-slate-500/10 border border-slate-500/20 text-slate-400 hover:bg-slate-500/20 hover:text-slate-300 transition-colors"
+                                  className="flex items-center justify-center gap-1 w-full px-2 py-1 rounded-lg text-xs font-medium bg-slate-500/10 border border-slate-500/20 text-slate-400 hover:bg-slate-500/20 hover:text-slate-300 transition-colors"
                                   title={`Open ${stat.variant.name}`}
                                 >
                                   <ExternalLink size={11} />
@@ -1723,27 +1725,30 @@ export default function AnalyticsClient({
                                     scanPage(stat.variant.id);
                                   }}
                                   disabled={scanning}
-                                  className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 hover:bg-indigo-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
+                                  className="flex items-center justify-center gap-1 w-full px-2 py-1 rounded-lg text-xs font-medium bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 hover:bg-indigo-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
                                   title="Set up goal or event tracking"
                                 >
                                   <ScanLine size={11} />
                                   Setup Goal Tracking
                                 </button>
-                                <button
-                                  onClick={() => startEditVariant(stat.variant)}
-                                  className={`p-1 rounded transition-colors ${isEditing ? "bg-indigo-500/20 text-indigo-400" : "text-slate-400 dark:text-slate-600 hover:text-slate-700 dark:hover:text-slate-300"}`}
-                                  title="Edit variant"
-                                >
-                                  <Pencil size={13} />
-                                </button>
                               </div>
+                            </td>
+                            {/* Edit icon */}
+                            <td className={`px-3 py-3.5 text-center ${rowBg}`}>
+                              <button
+                                onClick={() => startEditVariant(stat.variant)}
+                                className={`p-1 rounded transition-colors ${isEditing ? "bg-indigo-500/20 text-indigo-400" : "text-slate-400 dark:text-slate-600 hover:text-slate-700 dark:hover:text-slate-300"}`}
+                                title="Edit variant"
+                              >
+                                <Pencil size={13} />
+                              </button>
                             </td>
                           </tr>
 
                           {isEditing && (
                             <tr>
                               <td
-                                colSpan={8}
+                                colSpan={10}
                                 className="border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 px-6 py-4"
                               >
                                 <div className="grid grid-cols-2 gap-4 max-w-2xl">
