@@ -210,13 +210,12 @@ export default function ScriptsClient({
       </div>
 
       {/* Info banner */}
-      <div className="card p-4 mb-6 border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-800/50 text-sm text-slate-500 dark:text-slate-400">
-        Scripts marked as{" "}
-        <strong className="text-slate-700 dark:text-slate-300">
-          workspace-level
-        </strong>{" "}
-        will be injected into every page served for this client. You can also
-        assign a script to a specific page only.
+      <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 mb-6 text-sm text-amber-300">
+        When adding a script, choose its scope:{" "}
+        <strong className="font-semibold text-amber-200">Workspace-level</strong>{" "}
+        injects it into every page served for this client.{" "}
+        <strong className="font-semibold text-amber-200">Test-level</strong>{" "}
+        injects it only on pages belonging to a specific test.
       </div>
 
       {scripts.length === 0 && (
@@ -257,12 +256,16 @@ export default function ScriptsClient({
                     <span className="badge bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 text-[10px]">
                       {script.placement === "head" ? "<head>" : "</body>"}
                     </span>
-                    {scope && (
+                    {scope ? (
                       <span
                         className={`badge text-[10px] ${scope.isHosted ? "bg-amber-500/20 text-amber-400 border-amber-500/30" : "bg-blue-500/20 text-blue-400 border-blue-500/30"}`}
                       >
                         {scope.label}
                         {scope.isHosted && " (proxy)"}
+                      </span>
+                    ) : (
+                      <span className="badge text-[10px] bg-indigo-500/15 text-indigo-400 border-indigo-500/30">
+                        Workspace
                       </span>
                     )}
                   </div>
@@ -316,6 +319,30 @@ export default function ScriptsClient({
         size="md"
       >
         <form onSubmit={handleCreate} className="space-y-4">
+          {/* Scope — the most important decision, shown first */}
+          <div>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+              Apply To
+            </label>
+            <select
+              value={sTestId}
+              onChange={(e) => setSTestId(e.target.value)}
+              className="input-base"
+            >
+              <option value="">Workspace — all pages for this client</option>
+              {tests.map((t) => (
+                <option key={t.id} value={t.id}>
+                  Test: {t.name}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+              {sTestId
+                ? "Script will only be injected on pages belonging to the selected test."
+                : "Script will be injected on every page served for this client."}
+            </p>
+          </div>
+
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
@@ -345,7 +372,7 @@ export default function ScriptsClient({
                 value={sName}
                 onChange={(e) => setSName(e.target.value)}
                 className="input-base"
-                placeholder={`${selectedType.label} — Production`}
+                placeholder={`${selectedType.label}`}
                 required
               />
             </div>
@@ -376,39 +403,20 @@ export default function ScriptsClient({
             )}
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
-                Placement
-              </label>
-              <select
-                value={sPlacement}
-                onChange={(e) =>
-                  setSPlacement(e.target.value as "head" | "body_end")
-                }
-                className="input-base"
-              >
-                <option value="head">In &lt;head&gt;</option>
-                <option value="body_end">Before &lt;/body&gt;</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
-                Apply To
-              </label>
-              <select
-                value={sTestId}
-                onChange={(e) => setSTestId(e.target.value)}
-                className="input-base"
-              >
-                <option value="">All Pages (workspace)</option>
-                {tests.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
-                  </option>
-                ))}
-              </select>
-            </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+              Placement
+            </label>
+            <select
+              value={sPlacement}
+              onChange={(e) =>
+                setSPlacement(e.target.value as "head" | "body_end")
+              }
+              className="input-base"
+            >
+              <option value="head">In &lt;head&gt;</option>
+              <option value="body_end">Before &lt;/body&gt;</option>
+            </select>
           </div>
 
           {/* Fix 2 — Proxy warning note */}

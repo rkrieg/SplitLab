@@ -56,12 +56,12 @@ export default function Modal({
       {/* Dialog */}
       <div
         className={cn(
-          'relative w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl shadow-2xl',
+          'relative w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl shadow-2xl flex flex-col max-h-[90vh]',
           sizes[size]
         )}
       >
-        {/* Header */}
-        <div className="flex items-start justify-between p-6 border-b border-slate-200 dark:border-slate-700">
+        {/* Header — stays fixed */}
+        <div className="flex items-start justify-between p-6 border-b border-slate-200 dark:border-slate-700 flex-shrink-0">
           <div>
             <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">{title}</h2>
             {description && (
@@ -76,8 +76,8 @@ export default function Modal({
           </button>
         </div>
 
-        {/* Body */}
-        <div className="p-6">{children}</div>
+        {/* Body — scrolls when content overflows */}
+        <div className="p-6 overflow-y-auto">{children}</div>
       </div>
     </div>
   );
