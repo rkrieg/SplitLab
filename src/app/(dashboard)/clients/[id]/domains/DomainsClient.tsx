@@ -110,7 +110,7 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
         return;
       }
       const d = await res.json();
-      setDomains([d]);
+      setDomains(prev => [d, ...prev]);
       setModalOpen(false);
       resetAddModal();
       toast.success('Domain registered — now configure your DNS records');
@@ -134,7 +134,7 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
       });
       if (!res.ok) { const err = await res.json(); toast.error(err.error || 'Failed to update domain'); return; }
       const updated = await res.json();
-      setDomains([updated]);
+      setDomains(prev => prev.map(d => d.id === updated.id ? updated : d));
       setVerifyStatus(prev => { const n = { ...prev }; delete n[editDomain.id]; return n; });
       setVerifyMessage(prev => { const n = { ...prev }; delete n[editDomain.id]; return n; });
       setEditModalOpen(false);
