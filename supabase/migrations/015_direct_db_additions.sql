@@ -1,7 +1,9 @@
 -- Columns and tables that were added directly to the dev DB
 -- without a corresponding migration file. Run this after 001–014.
 
--- test_variants: proxy_mode (was not included in 002_variant_redirect_url)
+-- test_variants: tracking verification + proxy_mode
+ALTER TABLE test_variants ADD COLUMN IF NOT EXISTS tracking_verified BOOLEAN DEFAULT NULL;
+ALTER TABLE test_variants ADD COLUMN IF NOT EXISTS tracking_verified_at TIMESTAMPTZ DEFAULT NULL;
 ALTER TABLE test_variants ADD COLUMN IF NOT EXISTS proxy_mode BOOLEAN DEFAULT true;
 
 -- domains: fallback_url
