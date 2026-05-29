@@ -12,7 +12,6 @@ function getClient(): Anthropic {
   }
   return client;
 }
-
 export async function ask(
   prompt: string,
   options?: {
