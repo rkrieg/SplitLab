@@ -15,7 +15,7 @@ import {
   TrendingUp,
   Code2,
   Copy,
-  ChevronRight,
+  ChevronRight as ChevronRightSmall,
   ShieldCheck,
   ShieldX,
   FileCode2,
@@ -40,6 +40,9 @@ import {
   Loader2,
   AlertTriangle,
   CheckCircle2,
+  ClipboardList,
+  Search,
+  ChevronLeft,
 } from "lucide-react";
 import Spinner from "@/components/ui/Spinner";
 import Button from "@/components/ui/Button";
@@ -107,6 +110,22 @@ interface Lead {
   conversion_goals: { name: string } | null;
 }
 
+interface FormLead {
+  id: string;
+  visitor_hash: string | null;
+  submitted_at: string;
+  ip_address: string | null;
+  user_agent: string | null;
+  utm_source: string | null;
+  utm_medium: string | null;
+  utm_content: string | null;
+  utm_term: string | null;
+  utm_campaign: string | null;
+  gclid: string | null;
+  form_fields: Record<string, string>;
+  test_variants: { name: string } | null;
+}
+
 interface Props {
   test: Test;
   appUrl: string;
@@ -117,7 +136,7 @@ interface Props {
   userPlan: string;
 }
 
-type Tab = "overview" | "leads" | "settings";
+type Tab = "overview" | "leads" | "form-leads" | "settings";
 
 export default function AnalyticsClient({
   test: initialTest,
@@ -228,6 +247,20 @@ export default function AnalyticsClient({
   const [leads, setLeads] = useState<Lead[]>([]);
   const [leadsLoading, setLeadsLoading] = useState(false);
   const [leadsLoaded, setLeadsLoaded] = useState(false);
+
+  // Form Leads
+  const [formLeads, setFormLeads] = useState<FormLead[]>([]);
+  const [formLeadsFieldKeys, setFormLeadsFieldKeys] = useState<string[]>([]);
+  const [formLeadsTotal, setFormLeadsTotal] = useState(0);
+  const [formLeadsPage, setFormLeadsPage] = useState(1);
+  const [formLeadsLoading, setFormLeadsLoading] = useState(false);
+  const FORM_LEADS_LIMIT = 50;
+  // Filters
+  const [flVariantId, setFlVariantId] = useState("");
+  const [flFrom, setFlFrom] = useState("");
+  const [flTo, setFlTo] = useState("");
+  const [flSearch, setFlSearch] = useState("");
+  const [flSearchInput, setFlSearchInput] = useState("");
 
   // Page scanner
   interface ScanElement {
@@ -868,6 +901,56 @@ export default function AnalyticsClient({
     if (tab === "leads" && !leadsLoaded) fetchLeads();
   }, [tab, leadsLoaded, fetchLeads]);
 
+  // ─── Form Leads ──────────────────────────────────────────────────────
+
+  const fetchFormLeads = useCallback(async (page = 1, filters?: { variantId?: string; from?: string; to?: string; search?: string }) => {
+    setFormLeadsLoading(true);
+    try {
+      const params = new URLSearchParams({ page: String(page), limit: String(FORM_LEADS_LIMIT) });
+      const v = filters?.variantId ?? flVariantId;
+      const f = filters?.from ?? flFrom;
+      const t = filters?.to ?? flTo;
+      const s = filters?.search ?? flSearch;
+      if (v) params.set('variant_id', v);
+      if (f) params.set('from', f);
+      if (t) params.set('to', t);
+      if (s) params.set('search', s);
+      const res = await fetch(`/api/tests/${test.id}/form-leads?${params}`);
+      if (!res.ok) throw new Error();
+      const data = await res.json();
+      setFormLeads(data.leads || []);
+      setFormLeadsFieldKeys(data.fieldKeys || []);
+      setFormLeadsTotal(data.total || 0);
+      setFormLeadsPage(page);
+    } catch {
+      toast.error("Failed to load form leads");
+    } finally {
+      setFormLeadsLoading(false);
+    }
+  }, [test.id, flVariantId, flFrom, flTo, flSearch]);
+
+  useEffect(() => {
+    if (tab === "form-leads") fetchFormLeads(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
+
+  function exportFormLeadsCsv() {
+    if (formLeads.length === 0) return;
+    const fixedCols = ['submitted_at', 'variant', 'visitor_hash', 'ip_address', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'gclid', 'user_agent'];
+    const allCols = [...fixedCols, ...formLeadsFieldKeys];
+    const rows = formLeads.map((l) => allCols.map((col) => {
+      if (col === 'variant') return l.test_variants?.name ?? '';
+      if (col in l) return String((l as unknown as Record<string, unknown>)[col] ?? '');
+      return String(l.form_fields?.[col] ?? '');
+    }));
+    const csv = [allCols, ...rows].map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `form-leads-${test.id}.csv`; a.click();
+    URL.revokeObjectURL(url);
+  }
+
   useEffect(() => {
     if (tab === "settings" && !scanResultsLoaded && !scanning) {
       setScanResultsLoaded(true);
@@ -1107,6 +1190,7 @@ export default function AnalyticsClient({
   const tabs: { key: Tab; label: string; icon: React.ReactNode }[] = [
     { key: "overview", label: "Overview", icon: <BarChart3 size={14} /> },
     { key: "leads", label: "Leads", icon: <Users size={14} /> },
+    { key: "form-leads", label: "Form Leads", icon: <ClipboardList size={14} /> },
     { key: "settings", label: "Settings", icon: <SettingsIcon size={14} /> },
   ];
 
@@ -1121,14 +1205,14 @@ export default function AnalyticsClient({
           >
             {clientName}
           </Link>
-          <ChevronRight size={12} />
+          <ChevronRightSmall size={12} />
           <Link
             href={`/clients/${clientId}/pages`}
             className="hover:text-slate-700 dark:hover:text-slate-300 transition-colors"
           >
             Pages
           </Link>
-          <ChevronRight size={12} />
+          <ChevronRightSmall size={12} />
           <span className="text-slate-500 dark:text-slate-400">
             {test.name}
           </span>
@@ -2038,6 +2122,195 @@ export default function AnalyticsClient({
               </div>
             )}
           </>
+        )}
+
+        {/* ─── FORM LEADS TAB ─── */}
+        {tab === "form-leads" && (
+          <div className="space-y-4">
+            {/* Filters bar */}
+            <div className="card px-5 py-4">
+              <div className="flex flex-wrap gap-3 items-end">
+                {/* Variant filter */}
+                <div className="flex flex-col gap-1 min-w-[160px]">
+                  <label className="text-xs text-slate-500 dark:text-slate-400 font-medium">Variant</label>
+                  <select
+                    value={flVariantId}
+                    onChange={(e) => setFlVariantId(e.target.value)}
+                    className="input-base text-sm py-1.5"
+                  >
+                    <option value="">All Variants</option>
+                    {variants.map((v) => (
+                      <option key={v.id} value={v.id}>{v.name}</option>
+                    ))}
+                  </select>
+                </div>
+                {/* Date from */}
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs text-slate-500 dark:text-slate-400 font-medium">From</label>
+                  <input
+                    type="date"
+                    value={flFrom}
+                    onChange={(e) => setFlFrom(e.target.value)}
+                    className="input-base text-sm py-1.5"
+                  />
+                </div>
+                {/* Date to */}
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs text-slate-500 dark:text-slate-400 font-medium">To</label>
+                  <input
+                    type="date"
+                    value={flTo}
+                    onChange={(e) => setFlTo(e.target.value)}
+                    className="input-base text-sm py-1.5"
+                  />
+                </div>
+                {/* Search */}
+                <div className="flex flex-col gap-1 flex-1 min-w-[180px]">
+                  <label className="text-xs text-slate-500 dark:text-slate-400 font-medium">Search</label>
+                  <div className="relative">
+                    <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text"
+                      placeholder="Name, email, phone…"
+                      value={flSearchInput}
+                      onChange={(e) => setFlSearchInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') { setFlSearch(flSearchInput); fetchFormLeads(1, { variantId: flVariantId, from: flFrom, to: flTo, search: flSearchInput }); }
+                      }}
+                      className="input-base text-sm py-1.5 pl-8"
+                    />
+                  </div>
+                </div>
+                {/* Apply + Reset + Export */}
+                <div className="flex gap-2 pb-0.5">
+                  <button
+                    onClick={() => { setFlSearch(flSearchInput); fetchFormLeads(1, { variantId: flVariantId, from: flFrom, to: flTo, search: flSearchInput }); }}
+                    className="btn-primary text-xs"
+                    disabled={formLeadsLoading}
+                  >
+                    {formLeadsLoading ? <RefreshCw size={12} className="animate-spin" /> : <Search size={12} />}
+                    Apply
+                  </button>
+                  <button
+                    onClick={() => {
+                      setFlVariantId(""); setFlFrom(""); setFlTo(""); setFlSearch(""); setFlSearchInput("");
+                      fetchFormLeads(1, { variantId: "", from: "", to: "", search: "" });
+                    }}
+                    className="btn-secondary text-xs"
+                  >
+                    Reset
+                  </button>
+                  <button
+                    onClick={exportFormLeadsCsv}
+                    disabled={formLeads.length === 0}
+                    className="btn-secondary text-xs"
+                  >
+                    <Download size={12} /> CSV
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Table */}
+            {formLeadsLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <RefreshCw size={20} className="animate-spin text-slate-500 dark:text-slate-400" />
+              </div>
+            ) : formLeads.length === 0 ? (
+              <div className="text-center py-12">
+                <ClipboardList size={32} className="mx-auto text-slate-600 mb-3" />
+                <p className="text-slate-500 dark:text-slate-400 text-sm">No form leads yet.</p>
+                <p className="text-slate-500 text-xs mt-1">
+                  When a visitor submits a form on your test page, it will appear here.
+                </p>
+              </div>
+            ) : (
+              <div className="card overflow-hidden">
+                <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200 dark:border-slate-700">
+                  <p className="text-sm text-slate-500 dark:text-slate-400">
+                    {formLeadsTotal} lead{formLeadsTotal !== 1 ? "s" : ""} total
+                    {formLeadsTotal > FORM_LEADS_LIMIT && ` — page ${formLeadsPage} of ${Math.ceil(formLeadsTotal / FORM_LEADS_LIMIT)}`}
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => fetchFormLeads(1)}
+                      className="btn-secondary text-xs"
+                    >
+                      <RefreshCw size={12} /> Refresh
+                    </button>
+                  </div>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-200 dark:border-slate-700">
+                        <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap">#</th>
+                        <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap">Date / Time</th>
+                        <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap">Variant</th>
+                        {formLeadsFieldKeys.map((key) => (
+                          <th key={key} className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap capitalize">
+                            {key.replace(/_/g, ' ')}
+                          </th>
+                        ))}
+                        <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap">UTM Source</th>
+                        <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap">UTM Campaign</th>
+                        <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap">IP</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {formLeads.map((lead, idx) => (
+                        <tr key={lead.id} className="border-b border-slate-200 dark:border-slate-800 last:border-0 hover:bg-slate-50 dark:hover:bg-slate-800/40">
+                          <td className="px-4 py-2.5 text-slate-400 text-xs">
+                            {(formLeadsPage - 1) * FORM_LEADS_LIMIT + idx + 1}
+                          </td>
+                          <td className="px-4 py-2.5 text-slate-600 dark:text-slate-300 text-xs whitespace-nowrap">
+                            {new Date(lead.submitted_at).toLocaleString()}
+                          </td>
+                          <td className="px-4 py-2.5 text-slate-700 dark:text-slate-300 whitespace-nowrap">
+                            {lead.test_variants?.name ?? "—"}
+                          </td>
+                          {formLeadsFieldKeys.map((key) => (
+                            <td key={key} className="px-4 py-2.5 text-slate-700 dark:text-slate-300 max-w-[200px] truncate" title={lead.form_fields?.[key] ?? ''}>
+                              {lead.form_fields?.[key] ?? <span className="text-slate-400">—</span>}
+                            </td>
+                          ))}
+                          <td className="px-4 py-2.5 text-slate-500 text-xs">{lead.utm_source ?? "—"}</td>
+                          <td className="px-4 py-2.5 text-slate-500 text-xs">{lead.utm_campaign ?? "—"}</td>
+                          <td className="px-4 py-2.5 text-slate-400 text-xs font-mono">{lead.ip_address ?? "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Pagination */}
+                {formLeadsTotal > FORM_LEADS_LIMIT && (
+                  <div className="flex items-center justify-between px-5 py-3 border-t border-slate-200 dark:border-slate-700">
+                    <p className="text-xs text-slate-500">
+                      Showing {(formLeadsPage - 1) * FORM_LEADS_LIMIT + 1}–{Math.min(formLeadsPage * FORM_LEADS_LIMIT, formLeadsTotal)} of {formLeadsTotal}
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => fetchFormLeads(formLeadsPage - 1)}
+                        disabled={formLeadsPage <= 1 || formLeadsLoading}
+                        className="btn-secondary text-xs"
+                      >
+                        <ChevronLeft size={12} /> Prev
+                      </button>
+                      <span className="text-xs text-slate-500">Page {formLeadsPage} of {Math.ceil(formLeadsTotal / FORM_LEADS_LIMIT)}</span>
+                      <button
+                        onClick={() => fetchFormLeads(formLeadsPage + 1)}
+                        disabled={formLeadsPage >= Math.ceil(formLeadsTotal / FORM_LEADS_LIMIT) || formLeadsLoading}
+                        className="btn-secondary text-xs"
+                      >
+                        Next <ChevronRightSmall size={12} />
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         )}
 
         {/* ─── SETTINGS TAB ─── */}

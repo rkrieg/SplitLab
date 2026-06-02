@@ -113,12 +113,55 @@ export function buildTrackingSnippet(
       return Array.from(document.querySelectorAll(selector));
     }
 
+    // Capture form fields and POST to /api/form-leads
+    function captureFormLead(form) {
+      try {
+        var fields = {};
+        var elements = form.elements;
+        for (var i = 0; i < elements.length; i++) {
+          var el = elements[i];
+          if (!el.name) continue;
+          var t = (el.type || '').toLowerCase();
+          if (t === 'password' || t === 'hidden' || t === 'submit' || t === 'button' || t === 'reset' || t === 'file') continue;
+          if ((t === 'checkbox' || t === 'radio') && !el.checked) continue;
+          fields[el.name] = el.value || '';
+        }
+        // Extract UTM params from current URL
+        var sp = new URLSearchParams(window.location.search);
+        var utm = {};
+        ['utm_source','utm_medium','utm_content','utm_term','utm_campaign','gclid'].forEach(function(k) {
+          if (sp.get(k)) utm[k] = sp.get(k);
+        });
+        var payload = JSON.stringify({
+          testId: _SL.testId,
+          variantId: _SL.variantId,
+          visitorHash: _SL.visitorHash,
+          formFields: fields,
+          utm: utm
+        });
+        if (navigator.sendBeacon) {
+          try {
+            var blob = new Blob([payload], { type: 'application/json' });
+            navigator.sendBeacon(_SL.apiUrl + '/api/form-leads', blob);
+            return;
+          } catch(e) {}
+        }
+        fetch(_SL.apiUrl + '/api/form-leads', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: payload,
+          keepalive: true
+        }).catch(function() {});
+      } catch(e) {}
+    }
+
     _SL.goals.forEach(function(goal) {
       if (goal.type === 'url_reached') {
         // handled above
       } else if (goal.type === 'form_submit') {
         resolveElements(goal.selector, 'form_submit').forEach(function(form) {
           form.addEventListener('submit', function() {
+            captureFormLead(form);
             _SL.track('conversion', goal.id);
           });
         });
