@@ -29,6 +29,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Test not found' }, { status: 404 });
   }
 
+  // Reject empty form submissions (e.g. from outer proxy frame with no DOM access)
+  if (!formFields || Object.keys(formFields).length === 0) {
+    return NextResponse.json({ ok: true });
+  }
+
   const ip =
     request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
     request.headers.get('x-real-ip') ||

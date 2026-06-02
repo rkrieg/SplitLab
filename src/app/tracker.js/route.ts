@@ -226,6 +226,48 @@ function buildTrackerScript(appUrl: string): string {
     send(payload);
   }
 
+  // ─── Form lead capture ──────────────────────────────────────────────────────
+
+  function captureFormLead(form) {
+    if (!_ctx) return;
+    try {
+      var fields = {};
+      var elements = form.elements;
+      for (var i = 0; i < elements.length; i++) {
+        var el = elements[i];
+        if (!el.name) continue;
+        var t = (el.type || "").toLowerCase();
+        if (t === "password" || t === "hidden" || t === "submit" || t === "button" || t === "reset" || t === "file") continue;
+        if ((t === "checkbox" || t === "radio") && !el.checked) continue;
+        fields[el.name] = el.value || "";
+      }
+      var sp = new URLSearchParams(window.location.search);
+      var utm = {};
+      ["utm_source","utm_medium","utm_content","utm_term","utm_campaign","gclid"].forEach(function(k) {
+        if (sp.get(k)) utm[k] = sp.get(k);
+      });
+      var payload = JSON.stringify({
+        testId: _ctx.tid,
+        variantId: _ctx.vid,
+        visitorHash: _ctx.vh,
+        formFields: fields,
+        utm: utm
+      });
+      var FORM_LEADS_URL = API_BASE + "/api/form-leads";
+      if (navigator.sendBeacon) {
+        try {
+          var blob = new Blob([payload], { type: "application/json" });
+          if (navigator.sendBeacon(FORM_LEADS_URL, blob)) return;
+        } catch(e) {}
+      }
+      var xhr = new XMLHttpRequest();
+      xhr.open("POST", FORM_LEADS_URL, true);
+      xhr.withCredentials = false;
+      xhr.setRequestHeader("Content-Type", "application/json");
+      xhr.send(payload);
+    } catch(e) {}
+  }
+
   // ─── Auto-wire conversions (zero config) ────────────────────────────────────
 
   function wireAutoConversions() {
@@ -239,6 +281,7 @@ function buildTrackerScript(appUrl: string): string {
 
     document.addEventListener("submit", function(e) {
       var form = e.target;
+      captureFormLead(form);
       track("conversion", null, { trigger: "form_submit", id: (form && form.id) || null });
     }, true);
 
