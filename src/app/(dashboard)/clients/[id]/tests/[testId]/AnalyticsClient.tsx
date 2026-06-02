@@ -184,6 +184,9 @@ export default function AnalyticsClient({
   const [deleteVariantId, setDeleteVariantId] = useState<string | null>(null);
   const [deletingVariant, setDeletingVariant] = useState(false);
 
+  // Visitor cap
+  const [visitorOverCap, setVisitorOverCap] = useState(false);
+
   // Add variant
   const [addVariantOpen, setAddVariantOpen] = useState(false);
   const [newVariantName, setNewVariantName] = useState("");
@@ -292,6 +295,23 @@ export default function AnalyticsClient({
   useEffect(() => {
     fetchAnalytics();
   }, [fetchAnalytics]);
+
+  function refreshVisitorCap() {
+    fetch('/api/usage')
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => {
+        // Only update state when we have a confident answer — if response is missing
+        // or malformed, keep current state rather than incorrectly re-enabling buttons
+        if (d && typeof d.visitors?.overCap === 'boolean') {
+          setVisitorOverCap(d.visitors.overCap);
+        }
+      })
+      .catch(() => {});
+  }
+
+  useEffect(() => {
+    refreshVisitorCap();
+  }, []);
 
   // Auto-check tracker on load for redirect variants that have never been verified.
   // Uses `variants` (from SSR props) not `stats` — analytics response may omit tracking_verified.
@@ -906,6 +926,7 @@ export default function AnalyticsClient({
   function openVariant(variantId: string) {
     const freshHash = crypto.randomUUID();
     window.open(buildVariantUrl(variantId, { sl_vh: freshHash }), "_blank");
+    setTimeout(refreshVisitorCap, 1500);
   }
 
   async function scanPage(variantId: string) {
@@ -1262,9 +1283,10 @@ export default function AnalyticsClient({
             </div>
 
             <button
-              onClick={() => window.open(buildTestPreviewUrl(), "_blank")}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-slate-500/10 border border-slate-500/20 text-slate-400 hover:bg-slate-500/20 hover:text-slate-300"
-              title="Open the test as a fresh visitor — SplitLab assigns the variant"
+              onClick={() => { window.open(buildTestPreviewUrl(), "_blank"); setTimeout(refreshVisitorCap, 1500); }}
+              disabled={visitorOverCap}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-slate-500/10 border border-slate-500/20 text-slate-400 hover:bg-slate-500/20 hover:text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed"
+              title={visitorOverCap ? "Visitor limit reached — upgrade your plan to resume testing" : "Open the test as a fresh visitor — SplitLab assigns the variant"}
             >
               <ExternalLink size={14} /> Preview Test
             </button>
@@ -1710,8 +1732,9 @@ export default function AnalyticsClient({
                               <div className="flex flex-col items-center gap-1">
                                 <button
                                   onClick={() => openVariant(stat.variant.id)}
-                                  className="flex items-center justify-center gap-1 w-full px-2 py-1 rounded-lg text-xs font-medium bg-slate-500/10 border border-slate-500/20 text-slate-400 hover:bg-slate-500/20 hover:text-slate-300 transition-colors"
-                                  title={`Open ${stat.variant.name}`}
+                                  disabled={visitorOverCap}
+                                  className="flex items-center justify-center gap-1 w-full px-2 py-1 rounded-lg text-xs font-medium bg-slate-500/10 border border-slate-500/20 text-slate-400 hover:bg-slate-500/20 hover:text-slate-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                                  title={visitorOverCap ? "Visitor limit reached — upgrade your plan to resume testing" : `Open ${stat.variant.name}`}
                                 >
                                   <ExternalLink size={11} />
                                   Open

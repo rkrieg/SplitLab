@@ -57,8 +57,10 @@ export function buildTrackingSnippet(
     }
   };
 
-  // Auto-track pageview
-  _SL.track('pageview');
+  // Auto-track pageview (skip on scan requests — sl_scan=1 means dashboard goal setup)
+  if (new URLSearchParams(window.location.search).get('sl_scan') !== '1') {
+    _SL.track('pageview');
+  }
 
   // Wire up conversion goals
   function checkUrlGoals() {

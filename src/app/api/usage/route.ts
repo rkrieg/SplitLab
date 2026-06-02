@@ -84,10 +84,35 @@ export async function GET() {
     }
   }
 
-  const isUnlimitedTests   = limits.maxActiveTests === Infinity;
-  const isUnlimitedClients = limits.maxClients === Infinity;
-  const isUnlimitedTeam    = limits.maxTeamSeats === Infinity;
-  const isUnlimitedDomains = limits.maxDomains === Infinity;
+  // Count unique visitors this calendar month across ALL owner's tests (including completed)
+  // Must use a separate query — `tests` above excludes completed to avoid inflating the test count meter
+  const { data: allTests } = await db
+    .from('tests')
+    .select('id, workspaces!inner(client_id, clients!inner(owner_id))')
+    .eq('workspaces.clients.owner_id', userId);
+
+  const monthStart = new Date();
+  monthStart.setUTCDate(1);
+  monthStart.setUTCHours(0, 0, 0, 0);
+
+  let visitorCount = 0;
+  const allTestIds = (allTests ?? []).map((t) => t.id);
+  if (allTestIds.length > 0) {
+    const { data: visitorRows } = await db
+      .from('events')
+      .select('visitor_hash')
+      .eq('type', 'pageview')
+      .in('test_id', allTestIds)
+      .gte('created_at', monthStart.toISOString());
+    const uniqueVisitors = new Set((visitorRows ?? []).map((r: { visitor_hash: string }) => r.visitor_hash));
+    visitorCount = uniqueVisitors.size;
+  }
+
+  const isUnlimitedTests    = limits.maxActiveTests === Infinity;
+  const isUnlimitedClients  = limits.maxClients === Infinity;
+  const isUnlimitedTeam     = limits.maxTeamSeats === Infinity;
+  const isUnlimitedDomains  = limits.maxDomains === Infinity;
+  const isUnlimitedVisitors = limits.monthlyVisitors === Infinity;
 
   return NextResponse.json({
     plan:     planId,
@@ -122,5 +147,12 @@ export async function GET() {
         limitLabel: formatLimit(limits.maxTeamSeats),
       },
     }),
+    visitors: {
+      used:       visitorCount,
+      limit:      serialize(limits.monthlyVisitors),
+      pct:        isUnlimitedVisitors ? 0 : Math.round((visitorCount / limits.monthlyVisitors) * 100),
+      limitLabel: formatLimit(limits.monthlyVisitors),
+      overCap:    !isUnlimitedVisitors && visitorCount >= limits.monthlyVisitors,
+    },
   });
 }
