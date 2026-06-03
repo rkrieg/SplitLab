@@ -26,8 +26,9 @@ export async function GET(
 }
 
 // POST /api/workspaces/[id]/integrations
-// Body: { type: 'hubspot', access_token: string }
-// Creates or updates the integration for this workspace+type
+// Body: { type: string; config?: Record<string,unknown> }
+// For 'hubspot': OAuth handled separately — this is a general upsert endpoint.
+// For 'email': config is empty (Resend API key is in env); enabled flag stored here.
 export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } }
@@ -35,11 +36,11 @@ export async function POST(
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const body = await req.json() as { type?: string; access_token?: string };
-  const { type, access_token } = body;
+  const body = await req.json() as { type?: string; config?: Record<string, unknown> };
+  const { type, config } = body;
 
-  if (!type || !access_token) {
-    return NextResponse.json({ error: 'Missing type or access_token' }, { status: 400 });
+  if (!type) {
+    return NextResponse.json({ error: 'Missing type' }, { status: 400 });
   }
 
   const { data, error } = await db
@@ -48,7 +49,7 @@ export async function POST(
       {
         workspace_id: params.id,
         type,
-        config: { access_token },
+        config: config ?? {},
         enabled: true,
       },
       { onConflict: 'workspace_id,type' }

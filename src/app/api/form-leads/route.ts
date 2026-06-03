@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/supabase-server';
 import { syncLeadToHubSpot, getValidAccessToken } from '@/lib/integrations/hubspot';
+import { sendLeadNotificationEmail, type EmailConfig } from '@/lib/integrations/email';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,10 +25,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Missing testId' }, { status: 400 });
   }
 
-  // Verify test exists and get workspace_id for integration lookup
+  // Verify test exists and get workspace_id + name for integration lookup
   const { data: test } = await db
     .from('tests')
-    .select('id, workspace_id')
+    .select('id, name, workspace_id')
     .eq('id', testId)
     .single();
   if (!test) {
@@ -66,9 +67,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Failed to save lead' }, { status: 500 });
   }
 
-  // Fire-and-forget HubSpot sync — does not block the response
-  syncLeadToHubSpotBackground({
+  // Fire-and-forget integration dispatching — does not block the response
+  dispatchIntegrationsBackground({
     testId,
+    testName: test.name,
     workspaceId: test.workspace_id,
     variantId: variantId ?? null,
     formFields: formFields ?? {},
@@ -87,8 +89,9 @@ export async function POST(request: NextRequest) {
   return NextResponse.json({ ok: true });
 }
 
-async function syncLeadToHubSpotBackground(params: {
+interface DispatchParams {
   testId: string;
+  testName: string;
   workspaceId: string;
   variantId: string | null;
   formFields: Record<string, string>;
@@ -102,38 +105,31 @@ async function syncLeadToHubSpotBackground(params: {
     utm_term?: string | null;
     gclid?: string | null;
   };
-}) {
+}
+
+async function dispatchIntegrationsBackground(params: DispatchParams) {
   try {
-    // Get HubSpot integration for this workspace
-    const { data: integration } = await db
+    // Fetch all enabled workspace integrations for this workspace
+    const { data: workspaceIntegrations } = await db
       .from('workspace_integrations')
-      .select('id, config')
+      .select('id, type, config')
       .eq('workspace_id', params.workspaceId)
-      .eq('type', 'hubspot')
-      .eq('enabled', true)
-      .single();
+      .eq('enabled', true);
 
-    if (!integration) return;
+    if (!workspaceIntegrations || workspaceIntegrations.length === 0) return;
 
-    const config = integration.config as { access_token: string; refresh_token: string; expires_at: string };
-    if (!config.access_token) return;
-
-    // Auto-refresh token if expired
-    const accessToken = await getValidAccessToken({ id: integration.id, config });
-    if (!accessToken) return;
-
-    // Get test-level mapping (must be enabled)
-    const { data: mapping } = await db
+    // Fetch all enabled test-level mappings for this test in one query
+    const integrationIds = workspaceIntegrations.map(i => i.id);
+    const { data: mappings } = await db
       .from('test_integration_mappings')
-      .select('id, field_mappings')
+      .select('id, workspace_integration_id, field_mappings')
       .eq('test_id', params.testId)
-      .eq('workspace_integration_id', integration.id)
       .eq('enabled', true)
-      .single();
+      .in('workspace_integration_id', integrationIds);
 
-    if (!mapping || !mapping.field_mappings) return;
+    if (!mappings || mappings.length === 0) return;
 
-    // Get variant name for the "variant" system field
+    // Resolve variant name once (shared across all integrations)
     let variantName: string | undefined;
     if (params.variantId) {
       const { data: variant } = await db
@@ -144,20 +140,81 @@ async function syncLeadToHubSpotBackground(params: {
       variantName = variant?.name;
     }
 
-    const result = await syncLeadToHubSpot({
-      accessToken,
-      fieldMappings: mapping.field_mappings as Record<string, string>,
-      formFields: params.formFields,
-      systemData: { ...params.systemData, variantName },
-    });
+    // Dispatch each mapping to the correct integration handler
+    await Promise.allSettled(
+      mappings.map(async (mapping) => {
+        const integration = workspaceIntegrations.find(i => i.id === mapping.workspace_integration_id);
+        if (!integration) return;
 
-    if (result.ok) {
-      await db.rpc('increment_integration_synced', { p_mapping_id: mapping.id });
-    } else {
-      console.error('[hubspot-sync] failed:', result.error);
-      await db.rpc('increment_integration_failed', { p_mapping_id: mapping.id });
-    }
+        if (integration.type === 'hubspot') {
+          await handleHubSpot(params, mapping, integration, variantName);
+        } else if (integration.type === 'email') {
+          await handleEmail(params, mapping, variantName);
+        }
+        // Future CRMs: add more else-if branches here
+      })
+    );
   } catch (err) {
-    console.error('[hubspot-sync] unexpected error:', err);
+    console.error('[integrations] unexpected error:', err);
+  }
+}
+
+async function handleHubSpot(
+  params: DispatchParams,
+  mapping: { id: string; field_mappings: unknown },
+  integration: { id: string; config: unknown },
+  variantName: string | undefined,
+) {
+  const config = integration.config as { access_token: string; refresh_token: string; expires_at: string };
+  if (!config.access_token) return;
+
+  const accessToken = await getValidAccessToken({ id: integration.id, config });
+  if (!accessToken) return;
+
+  const fieldMappings = mapping.field_mappings as Record<string, string>;
+  if (!fieldMappings || Object.keys(fieldMappings).length === 0) return;
+
+  const result = await syncLeadToHubSpot({
+    accessToken,
+    fieldMappings,
+    formFields: params.formFields,
+    systemData: { ...params.systemData, variantName },
+  });
+
+  if (result.ok) {
+    await db.rpc('increment_integration_synced', { p_mapping_id: mapping.id });
+  } else {
+    console.error('[hubspot-sync] failed:', result.error);
+    await db.rpc('increment_integration_failed', { p_mapping_id: mapping.id });
+  }
+}
+
+async function handleEmail(
+  params: DispatchParams,
+  mapping: { id: string; field_mappings: unknown },
+  variantName: string | undefined,
+) {
+  const emailConfig = mapping.field_mappings as EmailConfig;
+  if (!emailConfig?.recipients) return;
+
+  const result = await sendLeadNotificationEmail({
+    config: emailConfig,
+    testName: params.testName,
+    variantName: variantName ?? 'Unknown Variant',
+    formFields: params.formFields,
+    systemData: {
+      ip_address:   params.systemData.ip_address,
+      submitted_at: params.systemData.submitted_at,
+      utm_source:   params.systemData.utm_source,
+      utm_medium:   params.systemData.utm_medium,
+      utm_campaign: params.systemData.utm_campaign,
+    },
+  });
+
+  if (result.ok) {
+    await db.rpc('increment_integration_synced', { p_mapping_id: mapping.id });
+  } else {
+    console.error('[email-notify] failed:', result.error);
+    await db.rpc('increment_integration_failed', { p_mapping_id: mapping.id });
   }
 }

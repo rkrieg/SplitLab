@@ -310,6 +310,17 @@ export default function AnalyticsClient({
   const [savingMapping, setSavingMapping] = useState(false);
   const [newFieldKey, setNewFieldKey] = useState("");
 
+  // Email notifications integration
+  const [emailIntegration, setEmailIntegration] = useState<{ id: string; enabled: boolean } | null>(null);
+  const [emailMapping, setEmailMapping] = useState<{ id?: string; recipients: string; subject: string; enabled: boolean }>({ recipients: '', subject: 'New lead: {{test}} - {{variant}}', enabled: true });
+  const [emailDisconnecting, setEmailDisconnecting] = useState(false);
+  const [savingEmail, setSavingEmail] = useState(false);
+  // Modal for configuring email before enabling
+  const [emailModalOpen, setEmailModalOpen] = useState(false);
+  const [emailModalRecipients, setEmailModalRecipients] = useState('');
+  const [emailModalSubject, setEmailModalSubject] = useState('New lead: {{test}} - {{variant}}');
+  const [emailModalError, setEmailModalError] = useState('');
+
   // Page scanner
   interface ScanElement {
     type: string;
@@ -990,33 +1001,49 @@ export default function AnalyticsClient({
       const res = await fetch(`/api/workspaces/${workspaceId}/integrations`);
       const data = await res.json() as { integrations?: { id: string; type: string; enabled: boolean }[] };
       const hs = data.integrations?.find(i => i.type === 'hubspot') ?? null;
+      const em = data.integrations?.find(i => i.type === 'email') ?? null;
       setHsIntegration(hs);
+      setEmailIntegration(em);
+
+      // Fetch all test mappings once (covers both hubspot + email)
+      const [mRes, kRes] = await Promise.all([
+        fetch(`/api/tests/${test.id}/integrations`),
+        fetch(`/api/tests/${test.id}/form-field-keys`),
+      ]);
+      const mData = await mRes.json() as { mappings?: { id?: string; enabled: boolean; field_mappings: Record<string, string>; last_synced_at?: string; total_synced?: number; total_failed?: number; workspace_integrations?: { id: string } }[] };
 
       if (hs) {
         setHsPropsLoading(true);
-        const [propsRes, mRes, kRes] = await Promise.all([
-          fetch(`/api/workspaces/${workspaceId}/integrations/hubspot-properties`),
-          fetch(`/api/tests/${test.id}/integrations`),
-          fetch(`/api/tests/${test.id}/form-field-keys`),
-        ]);
+        const propsRes = await fetch(`/api/workspaces/${workspaceId}/integrations/hubspot-properties`);
         setHsPropsLoading(false);
-
         const propsData = await propsRes.json() as { properties?: HubSpotProperty[]; error?: string };
         if (!propsRes.ok) {
           toast.error(`Failed to load HubSpot properties: ${propsData.error ?? 'Unknown error'}`);
         }
         setHsProperties(propsData.properties ?? []);
 
-        const mData = await mRes.json() as { mappings?: { id?: string; enabled: boolean; field_mappings: Record<string, string>; last_synced_at?: string; total_synced?: number; total_failed?: number; workspace_integrations?: { id: string } }[] };
         const m = mData.mappings?.find(x => x.workspace_integrations?.id === hs.id);
         setTestMapping(m
           ? { id: m.id, enabled: m.enabled, field_mappings: m.field_mappings, last_synced_at: m.last_synced_at, total_synced: m.total_synced, total_failed: m.total_failed }
           : { enabled: false, field_mappings: {} }
         );
-
-        const kData = await kRes.json() as { keys?: string[] };
-        setTestFormKeys(kData.keys ?? []);
       }
+
+      if (em) {
+        const em_m = mData.mappings?.find(x => x.workspace_integrations?.id === em.id);
+        if (em_m?.field_mappings) {
+          const cfg = em_m.field_mappings as { recipients?: string; subject?: string };
+          setEmailMapping({
+            id: em_m.id,
+            recipients: cfg.recipients ?? '',
+            subject: cfg.subject ?? 'New lead: {{test}} - {{variant}}',
+            enabled: em_m.enabled,
+          });
+        }
+      }
+
+      const kData = await kRes.json() as { keys?: string[] };
+      setTestFormKeys(kData.keys ?? []);
     } catch (err) {
       console.error('[integrations] load error', err);
       toast.error('Failed to load integrations');
@@ -1047,6 +1074,78 @@ export default function AnalyticsClient({
       toast.error('Failed to disconnect HubSpot');
     } finally {
       setHsDisconnecting(false);
+    }
+  }
+
+  function openEmailModal() {
+    // Pre-fill from existing config if editing
+    setEmailModalRecipients(emailMapping.recipients);
+    setEmailModalSubject(emailMapping.subject || 'New lead: {{test}} - {{variant}}');
+    setEmailModalError('');
+    setEmailModalOpen(true);
+  }
+
+  async function submitEmailModal(e: React.FormEvent) {
+    e.preventDefault();
+    const recipients = emailModalRecipients.trim().toLowerCase();
+    if (!recipients) { setEmailModalError('At least one recipient email is required.'); return; }
+    const valid = recipients.split(',').map(r => r.trim()).filter(Boolean).every(r => r.includes('@'));
+    if (!valid) { setEmailModalError('One or more email addresses look invalid.'); return; }
+
+    setSavingEmail(true);
+    setEmailModalError('');
+    try {
+      // Step 1: create / upsert workspace-level email integration
+      let integrationId = emailIntegration?.id;
+      if (!integrationId) {
+        const res = await fetch(`/api/workspaces/${workspaceId}/integrations`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type: 'email', config: {} }),
+        });
+        if (!res.ok) { setEmailModalError('Failed to enable email notifications.'); return; }
+        const { integration } = await res.json() as { integration: { id: string; enabled: boolean } };
+        setEmailIntegration(integration);
+        integrationId = integration.id;
+      }
+
+      // Step 2: save test-level config (recipients + subject)
+      const subject = emailModalSubject.trim() || 'New lead: {{test}} - {{variant}}';
+      const mRes = await fetch(`/api/tests/${test.id}/integrations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          workspace_integration_id: integrationId,
+          enabled: true,
+          field_mappings: { recipients, subject },
+        }),
+      });
+      if (!mRes.ok) { setEmailModalError('Failed to save email configuration.'); return; }
+      const { mapping } = await mRes.json() as { mapping: { id: string } };
+
+      setEmailMapping({ id: mapping.id, recipients, subject, enabled: true });
+      setEmailModalOpen(false);
+      toast.success('Email notifications configured');
+    } catch {
+      setEmailModalError('Something went wrong. Please try again.');
+    } finally {
+      setSavingEmail(false);
+    }
+  }
+
+  async function disconnectEmail() {
+    if (!workspaceId) return;
+    setEmailDisconnecting(true);
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}/integrations?type=email`, { method: 'DELETE' });
+      if (!res.ok) { toast.error('Failed to remove email notifications'); return; }
+      setEmailIntegration(null);
+      setEmailMapping({ recipients: '', subject: 'New lead: {{test}} - {{variant}}', enabled: true });
+      toast.success('Email notifications removed');
+    } catch {
+      toast.error('Failed to remove email notifications');
+    } finally {
+      setEmailDisconnecting(false);
     }
   }
 
@@ -2528,6 +2627,86 @@ export default function AnalyticsClient({
               </div>
             </div>
 
+            {/* ── Email Notifications card ── */}
+            <div className="card overflow-hidden">
+              <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700 flex items-center gap-3">
+                <div className="w-8 h-8 rounded-lg bg-indigo-500/15 flex items-center justify-center">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-indigo-400"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
+                </div>
+                <div>
+                  <p className="font-semibold text-sm text-slate-800 dark:text-slate-200">Email Notifications</p>
+                  <p className="text-xs text-slate-500">Get an email every time a form is submitted on this test</p>
+                </div>
+                {emailIntegration && (
+                  <span className="ml-auto flex items-center gap-1.5 text-xs font-medium text-green-500">
+                    <CheckCircle2 size={13} /> Enabled
+                  </span>
+                )}
+              </div>
+
+              <div className="px-5 py-4">
+                {!emailIntegration ? (
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs text-slate-500">
+                      Receive an email notification every time a visitor submits a form on any variant of this test.
+                    </p>
+                    <button
+                      onClick={openEmailModal}
+                      className="btn-primary text-sm flex items-center gap-2 px-4 py-2 rounded-lg font-medium ml-4 flex-shrink-0"
+                    >
+                      <Plus size={14} /> Enable
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs text-slate-500">
+                      Configure recipients and subject below. Notifications fire on every form submission.
+                    </p>
+                    <button
+                      onClick={disconnectEmail}
+                      disabled={emailDisconnecting}
+                      className="text-xs text-red-400 hover:text-red-300 transition-colors flex items-center gap-1 ml-4 flex-shrink-0"
+                    >
+                      <XCircle size={13} /> {emailDisconnecting ? 'Removing…' : 'Remove'}
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* ── Email config summary (when configured) ── */}
+            {emailIntegration && emailMapping.recipients && (
+              <div className="card overflow-hidden">
+                <div className="px-5 py-3 border-b border-slate-200 dark:border-slate-700 flex items-center gap-4">
+                  <p className="text-sm font-medium text-slate-800 dark:text-slate-200 flex-1">Email Configuration</p>
+                  <button
+                    onClick={openEmailModal}
+                    className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors flex items-center gap-1"
+                  >
+                    <Pencil size={12} /> Edit
+                  </button>
+                </div>
+                <div className="px-5 py-4 space-y-3">
+                  <div>
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Recipients</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {emailMapping.recipients.split(',').map(r => r.trim()).filter(Boolean).map(r => (
+                        <span key={r} className="inline-flex items-center px-2 py-0.5 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-xs font-mono">{r}</span>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Subject</p>
+                    <p className="text-sm text-slate-700 dark:text-slate-300 font-mono text-xs">{emailMapping.subject}</p>
+                  </div>
+                  <div className="flex items-start gap-2 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 px-3 py-2 text-xs text-slate-400">
+                    <Info size={12} className="flex-shrink-0 mt-0.5" />
+                    <span>Email includes all captured form fields, variant name, and UTM data. Same config applies to all variants.</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* ── Field mapping (one flat table for the whole test) ── */}
             {hsIntegration && (
               <div className="card overflow-hidden">
@@ -3219,6 +3398,78 @@ export default function AnalyticsClient({
         description="This will permanently delete the variant and its event data. Traffic weights will need to be adjusted."
         loading={deletingVariant}
       />
+
+      {/* Email Notifications Config Modal */}
+      <Modal
+        open={emailModalOpen}
+        onClose={() => !savingEmail && setEmailModalOpen(false)}
+        title={emailIntegration ? 'Edit Email Notifications' : 'Enable Email Notifications'}
+        size="sm"
+      >
+        <form onSubmit={submitEmailModal} className="space-y-5">
+          <div>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+              Notification Recipients
+            </label>
+            <input
+              type="text"
+              value={emailModalRecipients}
+              onChange={e => { setEmailModalRecipients(e.target.value); setEmailModalError(''); }}
+              placeholder="alice@agency.com, bob@agency.com"
+              className="input-base text-sm w-full"
+              autoFocus
+              disabled={savingEmail}
+            />
+            <p className="text-xs text-slate-400 mt-1.5">
+              Comma-separated. Every person listed receives a notification on each form submission.
+            </p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+              Subject Line
+            </label>
+            <input
+              type="text"
+              value={emailModalSubject}
+              onChange={e => setEmailModalSubject(e.target.value)}
+              placeholder="New lead: {{test}} - {{variant}}"
+              className="input-base text-sm w-full"
+              disabled={savingEmail}
+            />
+            <p className="text-xs text-slate-400 mt-1.5">
+              Use{' '}
+              <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded font-mono text-xs">{'{{test}}'}</code>{' '}
+              and{' '}
+              <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded font-mono text-xs">{'{{variant}}'}</code>{' '}
+              as dynamic placeholders.
+            </p>
+          </div>
+
+          <div className="flex items-start gap-2 rounded-lg bg-indigo-500/8 border border-indigo-500/20 px-3 py-2.5 text-xs text-indigo-400">
+            <Info size={13} className="flex-shrink-0 mt-0.5" />
+            <span>
+              The email body includes all captured form fields, variant name, submission time, and UTM data automatically.
+              One config applies to all variants of this test — the variant name appears inside each email.
+            </span>
+          </div>
+
+          {emailModalError && (
+            <div className="flex items-center gap-2 rounded-lg bg-red-500/10 border border-red-500/30 px-3 py-2 text-xs text-red-400">
+              <AlertTriangle size={13} className="flex-shrink-0" /> {emailModalError}
+            </div>
+          )}
+
+          <div className="flex justify-end gap-3 pt-1">
+            <Button variant="secondary" type="button" onClick={() => setEmailModalOpen(false)} disabled={savingEmail}>
+              Cancel
+            </Button>
+            <Button type="submit" loading={savingEmail}>
+              <Check size={13} /> {emailIntegration ? 'Save Changes' : 'Enable Notifications'}
+            </Button>
+          </div>
+        </form>
+      </Modal>
 
       {/* HTML Editor Modal */}
       {htmlEditVariant && (
