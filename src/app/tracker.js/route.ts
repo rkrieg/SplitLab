@@ -40,6 +40,7 @@ function buildTrackerScript(appUrl: string): string {
   var EVENT_URL = API_BASE + "/api/event";
   var RESOLVE_URL = API_BASE + "/api/resolve";
   var SCAN_URL = API_BASE + "/api/scan";
+  var REGISTER_FIELDS_URL = API_BASE + "/api/register-form-fields";
   var STORAGE_KEY = "sl_tracking";
   var _sent = {};
   var _ctx = null;
@@ -268,6 +269,32 @@ function buildTrackerScript(appUrl: string): string {
     } catch(e) {}
   }
 
+  // ─── Register form field names (for HubSpot mapping UI) ────────────────────
+
+  function registerFormFields() {
+    if (!_ctx) return;
+    try {
+      var seen = {};
+      var fields = [];
+      var inputs = document.querySelectorAll("input[name], select[name], textarea[name]");
+      for (var i = 0; i < inputs.length; i++) {
+        var el = inputs[i];
+        var name = el.name;
+        if (!name || seen[name]) continue;
+        var t = (el.type || "").toLowerCase();
+        if (t === "password" || t === "hidden" || t === "submit" || t === "button" || t === "reset" || t === "file") continue;
+        seen[name] = true;
+        fields.push(name);
+      }
+      if (fields.length === 0) return;
+      var xhr = new XMLHttpRequest();
+      xhr.open("POST", REGISTER_FIELDS_URL, true);
+      xhr.withCredentials = false;
+      xhr.setRequestHeader("Content-Type", "application/json");
+      xhr.send(JSON.stringify({ variantId: _ctx.vid, fields: fields }));
+    } catch(e) {}
+  }
+
   // ─── Auto-wire conversions (zero config) ────────────────────────────────────
 
   function wireAutoConversions() {
@@ -437,6 +464,7 @@ function buildTrackerScript(appUrl: string): string {
     function onReady() {
       wireUrlGoals();
       wireAutoConversions();
+      registerFormFields();
     }
     if (document.readyState === "loading") {
       document.addEventListener("DOMContentLoaded", onReady);

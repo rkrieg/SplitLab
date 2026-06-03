@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef, Fragment } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
+import { useSearchParams, useRouter } from "next/navigation";
 
 const CodeEditor = dynamic(() => import("@/components/pages/CodeEditor"), {
   ssr: false,
@@ -43,6 +44,9 @@ import {
   ClipboardList,
   Search,
   ChevronLeft,
+  Plug2,
+  ArrowRight,
+  XCircle,
 } from "lucide-react";
 import Spinner from "@/components/ui/Spinner";
 import Button from "@/components/ui/Button";
@@ -134,9 +138,25 @@ interface Props {
   domain?: string;
   userRole: string;
   userPlan: string;
+  workspaceId?: string;
 }
 
-type Tab = "overview" | "leads" | "form-leads" | "settings";
+interface HubSpotProperty {
+  name: string;
+  label: string;
+  groupName: string;
+}
+
+interface TestMapping {
+  id?: string;
+  enabled: boolean;
+  field_mappings: Record<string, string>;
+  last_synced_at?: string | null;
+  total_synced?: number;
+  total_failed?: number;
+}
+
+type Tab = "overview" | "leads" | "form-leads" | "integrations" | "settings";
 
 export default function AnalyticsClient({
   test: initialTest,
@@ -146,9 +166,25 @@ export default function AnalyticsClient({
   domain,
   userRole,
   userPlan,
+  workspaceId,
 }: Props) {
   const [test, setTest] = useState(initialTest);
   const [tab, setTab] = useState<Tab>("overview");
+  const searchParams = useSearchParams();
+  const router = useRouter();
+
+  // Show success/error toast on return from HubSpot OAuth
+  useEffect(() => {
+    if (searchParams.get('hs_connected') === '1') {
+      toast.success('HubSpot connected successfully!');
+      setTab('integrations');
+      router.replace(window.location.pathname);
+    } else if (searchParams.get('hs_error')) {
+      toast.error(`HubSpot connection failed: ${searchParams.get('hs_error')}`);
+      router.replace(window.location.pathname);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Analytics
   const [stats, setStats] = useState<VariantStat[]>([]);
@@ -261,6 +297,18 @@ export default function AnalyticsClient({
   const [flTo, setFlTo] = useState("");
   const [flSearch, setFlSearch] = useState("");
   const [flSearchInput, setFlSearchInput] = useState("");
+
+  // Integrations
+  const [hsIntegration, setHsIntegration] = useState<{ id: string; enabled: boolean } | null>(null);
+  const [hsDisconnecting, setHsDisconnecting] = useState(false);
+  const [hsProperties, setHsProperties] = useState<HubSpotProperty[]>([]);
+  const [hsPropsLoading, setHsPropsLoading] = useState(false);
+  const [integrationsLoaded, setIntegrationsLoaded] = useState(false);
+  // Test-level mapping (one flat mapping for the whole test)
+  const [testMapping, setTestMapping] = useState<TestMapping>({ enabled: true, field_mappings: {} });
+  const [testFormKeys, setTestFormKeys] = useState<string[]>([]);
+  const [savingMapping, setSavingMapping] = useState(false);
+  const [newFieldKey, setNewFieldKey] = useState("");
 
   // Page scanner
   interface ScanElement {
@@ -934,6 +982,113 @@ export default function AnalyticsClient({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
 
+  // ─── Integrations ────────────────────────────────────────────────────
+
+  const fetchIntegrations = useCallback(async () => {
+    if (!workspaceId) return;
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}/integrations`);
+      const data = await res.json() as { integrations?: { id: string; type: string; enabled: boolean }[] };
+      const hs = data.integrations?.find(i => i.type === 'hubspot') ?? null;
+      setHsIntegration(hs);
+
+      if (hs) {
+        setHsPropsLoading(true);
+        const [propsRes, mRes, kRes] = await Promise.all([
+          fetch(`/api/workspaces/${workspaceId}/integrations/hubspot-properties`),
+          fetch(`/api/tests/${test.id}/integrations`),
+          fetch(`/api/tests/${test.id}/form-field-keys`),
+        ]);
+        setHsPropsLoading(false);
+
+        const propsData = await propsRes.json() as { properties?: HubSpotProperty[]; error?: string };
+        if (!propsRes.ok) {
+          toast.error(`Failed to load HubSpot properties: ${propsData.error ?? 'Unknown error'}`);
+        }
+        setHsProperties(propsData.properties ?? []);
+
+        const mData = await mRes.json() as { mappings?: { id?: string; enabled: boolean; field_mappings: Record<string, string>; last_synced_at?: string; total_synced?: number; total_failed?: number; workspace_integrations?: { id: string } }[] };
+        const m = mData.mappings?.find(x => x.workspace_integrations?.id === hs.id);
+        setTestMapping(m
+          ? { id: m.id, enabled: m.enabled, field_mappings: m.field_mappings, last_synced_at: m.last_synced_at, total_synced: m.total_synced, total_failed: m.total_failed }
+          : { enabled: false, field_mappings: {} }
+        );
+
+        const kData = await kRes.json() as { keys?: string[] };
+        setTestFormKeys(kData.keys ?? []);
+      }
+    } catch (err) {
+      console.error('[integrations] load error', err);
+      toast.error('Failed to load integrations');
+    } finally {
+      setIntegrationsLoaded(true);
+    }
+  }, [workspaceId, test.id]);
+
+  useEffect(() => {
+    if (tab === "integrations" && !integrationsLoaded) fetchIntegrations();
+  }, [tab, integrationsLoaded, fetchIntegrations]);
+
+  async function disconnectHubSpot() {
+    if (!workspaceId) return;
+    setHsDisconnecting(true);
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}/integrations?type=hubspot`, { method: 'DELETE' });
+      if (!res.ok) { toast.error('Failed to disconnect HubSpot'); return; }
+      setHsIntegration(null);
+      setTestMapping({ enabled: true, field_mappings: {} });
+      setHsProperties([]);
+      setIntegrationsLoaded(false);
+      toast.success('HubSpot disconnected');
+    } catch {
+      toast.error('Failed to disconnect HubSpot');
+    } finally {
+      setHsDisconnecting(false);
+    }
+  }
+
+  async function saveTestMapping() {
+    if (!hsIntegration) return;
+    setSavingMapping(true);
+    try {
+      const res = await fetch(`/api/tests/${test.id}/integrations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          workspace_integration_id: hsIntegration.id,
+          enabled: true,
+          field_mappings: testMapping.field_mappings,
+        }),
+      });
+      if (!res.ok) { toast.error('Failed to save mapping'); return; }
+      toast.success('Mapping saved');
+    } finally {
+      setSavingMapping(false);
+    }
+  }
+
+  function updateMapping(ourField: string, hubspotProp: string) {
+    setTestMapping(prev => ({
+      ...prev,
+      field_mappings: { ...prev.field_mappings, [ourField]: hubspotProp },
+    }));
+  }
+
+  function removeMapping(ourField: string) {
+    setTestMapping(prev => {
+      const fm = { ...prev.field_mappings };
+      delete fm[ourField];
+      return { ...prev, field_mappings: fm };
+    });
+  }
+
+  function addCustomFormField() {
+    const key = newFieldKey.trim();
+    if (!key) return;
+    setTestFormKeys(prev => Array.from(new Set([...prev, key])));
+    setNewFieldKey('');
+  }
+
   function exportFormLeadsCsv() {
     if (formLeads.length === 0) return;
     const fixedCols = ['submitted_at', 'variant', 'visitor_hash', 'ip_address', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'gclid', 'user_agent'];
@@ -1191,6 +1346,7 @@ export default function AnalyticsClient({
     { key: "overview", label: "Overview", icon: <BarChart3 size={14} /> },
     { key: "leads", label: "Leads", icon: <Users size={14} /> },
     { key: "form-leads", label: "Form Leads", icon: <ClipboardList size={14} /> },
+    { key: "integrations", label: "Integrations", icon: <Plug2 size={14} /> },
     { key: "settings", label: "Settings", icon: <SettingsIcon size={14} /> },
   ];
 
@@ -2308,6 +2464,195 @@ export default function AnalyticsClient({
                     </div>
                   </div>
                 )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ─── INTEGRATIONS TAB ─── */}
+        {tab === "integrations" && (
+          <div className="space-y-6 p-6">
+
+            {/* ── HubSpot connect card ── */}
+            <div className="card overflow-hidden">
+              <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700 flex items-center gap-3">
+                <div className="w-8 h-8 rounded-lg bg-orange-500/15 flex items-center justify-center">
+                  <svg width="18" height="18" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M326.4 173.5v-51.7a43.5 43.5 0 0 0 25.2-39.3V80.9C351.6 57.4 332.7 38 309.2 38h-1.4c-23.5 0-42.4 19.4-42.4 42.9v1.6a43.5 43.5 0 0 0 25.2 39.3v51.7c-24.5 3.7-46.9 13.9-65.2 28.8L107 110.1a38.9 38.9 0 1 0-21.6 19.5l113.2 91.6c-16.7 22.4-26.6 50.2-26.6 80.4 0 73.3 59.5 132.8 132.8 132.8S437.6 374.9 437.6 301.6c0-69-52.6-125.7-120-131.8l8.8-.3zM304.8 392.4c-50 0-90.5-40.5-90.5-90.5s40.5-90.5 90.5-90.5 90.5 40.5 90.5 90.5-40.5 90.5-90.5 90.5z" fill="#FF7A59"/>
+                  </svg>
+                </div>
+                <div>
+                  <p className="font-semibold text-sm text-slate-800 dark:text-slate-200">HubSpot</p>
+                  <p className="text-xs text-slate-500">Send leads to your HubSpot CRM automatically</p>
+                </div>
+                {hsIntegration && (
+                  <span className="ml-auto flex items-center gap-1.5 text-xs font-medium text-green-500">
+                    <CheckCircle2 size={13} /> Connected
+                  </span>
+                )}
+              </div>
+
+              <div className="px-5 py-4">
+                {!hsIntegration ? (
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs text-slate-500">
+                      Connect your HubSpot account to automatically sync form leads to your CRM.
+                    </p>
+                    <a
+                      href={workspaceId ? `/api/integrations/hubspot/connect?workspaceId=${workspaceId}` : '#'}
+                      className="btn-primary text-sm flex items-center gap-2 px-4 py-2 rounded-lg font-medium no-underline"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M326.4 173.5v-51.7a43.5 43.5 0 0 0 25.2-39.3V80.9C351.6 57.4 332.7 38 309.2 38h-1.4c-23.5 0-42.4 19.4-42.4 42.9v1.6a43.5 43.5 0 0 0 25.2 39.3v51.7c-24.5 3.7-46.9 13.9-65.2 28.8L107 110.1a38.9 38.9 0 1 0-21.6 19.5l113.2 91.6c-16.7 22.4-26.6 50.2-26.6 80.4 0 73.3 59.5 132.8 132.8 132.8S437.6 374.9 437.6 301.6c0-69-52.6-125.7-120-131.8l8.8-.3zM304.8 392.4c-50 0-90.5-40.5-90.5-90.5s40.5-90.5 90.5-90.5 90.5 40.5 90.5 90.5-40.5 90.5-90.5 90.5z" fill="white"/>
+                      </svg>
+                      Connect HubSpot
+                    </a>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs text-slate-500">
+                      HubSpot is connected to this workspace. Configure field mappings per variant below.
+                    </p>
+                    <button
+                      onClick={disconnectHubSpot}
+                      disabled={hsDisconnecting}
+                      className="text-xs text-red-400 hover:text-red-300 transition-colors flex items-center gap-1"
+                    >
+                      <XCircle size={13} /> {hsDisconnecting ? 'Disconnecting…' : 'Disconnect'}
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* ── Field mapping (one flat table for the whole test) ── */}
+            {hsIntegration && (
+              <div className="card overflow-hidden">
+                {/* Header with enable toggle + sync status */}
+                <div className="px-5 py-3 border-b border-slate-200 dark:border-slate-700 flex items-center gap-4">
+                  <p className="text-sm font-medium text-slate-800 dark:text-slate-200 flex-1">Configure Field Mapping</p>
+
+                  {testMapping.last_synced_at && (
+                    <div className="flex items-center gap-3 text-xs text-slate-400">
+                      <span className="flex items-center gap-1">
+                        <CheckCircle2 size={12} className="text-green-400" />
+                        {testMapping.total_synced ?? 0} synced
+                      </span>
+                      {(testMapping.total_failed ?? 0) > 0 && (
+                        <span className="flex items-center gap-1 text-red-400">
+                          <XCircle size={12} /> {testMapping.total_failed} failed
+                        </span>
+                      )}
+                      <span className="flex items-center gap-1">
+                        <RefreshCw size={11} />
+                        {new Date(testMapping.last_synced_at).toLocaleDateString()}
+                      </span>
+                    </div>
+                  )}
+
+                </div>
+
+                {hsPropsLoading ? (
+                  <div className="px-5 py-6 flex items-center gap-2 text-sm text-slate-400">
+                    <Loader2 size={14} className="animate-spin" /> Loading HubSpot properties…
+                  </div>
+                ) : (
+                  <div className="px-5 py-4 space-y-2">
+                    {/* Column headers */}
+                    <div className="grid grid-cols-[1fr_32px_1fr_32px] gap-2 text-xs font-medium text-slate-500 uppercase tracking-wider mb-3">
+                      <span>SplitLab Field</span>
+                      <span />
+                      <span>HubSpot Property</span>
+                      <span />
+                    </div>
+
+                    {/* System fields */}
+                    {[
+                      { key: 'ip_address',   label: 'IP Address' },
+                      { key: 'variant',      label: 'Page Variant' },
+                      { key: 'submitted_at', label: 'Submission Date' },
+                      { key: 'utm_source',   label: 'UTM Source' },
+                      { key: 'utm_medium',   label: 'UTM Medium' },
+                      { key: 'utm_campaign', label: 'UTM Campaign' },
+                      { key: 'utm_content',  label: 'UTM Content' },
+                      { key: 'utm_term',     label: 'UTM Term' },
+                      { key: 'gclid',        label: 'GCLID' },
+                    ].map(sf => (
+                      <div key={sf.key} className="grid grid-cols-[1fr_32px_1fr_32px] gap-2 items-center">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs px-2 py-1 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-mono">{sf.label}</span>
+                          <span className="text-xs text-slate-400 bg-slate-50 dark:bg-slate-800/50 px-1.5 py-0.5 rounded">system</span>
+                        </div>
+                        <ArrowRight size={13} className="text-orange-400 mx-auto" />
+                        <select
+                          value={testMapping.field_mappings[sf.key] ?? ''}
+                          onChange={e => updateMapping(sf.key, e.target.value)}
+                          className="input text-xs py-1.5"
+                        >
+                          <option value="">(-) Not mapped</option>
+                          {hsProperties.map(p => (
+                            <option key={p.name} value={p.name}>{p.label} ({p.name})</option>
+                          ))}
+                        </select>
+                        <span />
+                      </div>
+                    ))}
+
+                    {/* Divider before form fields */}
+                    {testFormKeys.length > 0 && (
+                      <div className="border-t border-slate-100 dark:border-slate-800 my-3" />
+                    )}
+
+                    {/* Form fields from real leads */}
+                    {testFormKeys.map(fk => (
+                      <div key={fk} className="grid grid-cols-[1fr_32px_1fr_32px] gap-2 items-center">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs px-2 py-1 rounded bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 font-mono">{fk}</span>
+                          <span className="text-xs text-slate-400 bg-slate-50 dark:bg-slate-800/50 px-1.5 py-0.5 rounded">form</span>
+                        </div>
+                        <ArrowRight size={13} className="text-orange-400 mx-auto" />
+                        <select
+                          value={testMapping.field_mappings[fk] ?? ''}
+                          onChange={e => updateMapping(fk, e.target.value)}
+                          className="input text-xs py-1.5"
+                        >
+                          <option value="">(-) Not mapped</option>
+                          {hsProperties.map(p => (
+                            <option key={p.name} value={p.name}>{p.label} ({p.name})</option>
+                          ))}
+                        </select>
+                        <button onClick={() => removeMapping(fk)} className="text-slate-300 hover:text-red-400 transition-colors">
+                          <X size={14} />
+                        </button>
+                      </div>
+                    ))}
+
+                    {/* Add custom form field */}
+                    <div className="flex items-center gap-2 mt-4 pt-3 border-t border-slate-100 dark:border-slate-800">
+                      <input
+                        type="text"
+                        placeholder="+ Add another form field…"
+                        value={newFieldKey}
+                        onChange={e => setNewFieldKey(e.target.value)}
+                        onKeyDown={e => e.key === 'Enter' && addCustomFormField()}
+                        className="input text-xs py-1.5 flex-1"
+                      />
+                      <button
+                        onClick={() => addCustomFormField()}
+                        className="text-xs text-indigo-500 hover:text-indigo-400 transition-colors font-medium flex items-center gap-1"
+                      >
+                        <Plus size={13} /> Add field
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Save */}
+                <div className="px-5 py-3 border-t border-slate-200 dark:border-slate-700 flex justify-end">
+                  <Button size="sm" onClick={saveTestMapping} loading={savingMapping}>
+                    <Check size={13} /> Save Changes
+                  </Button>
+                </div>
               </div>
             )}
           </div>

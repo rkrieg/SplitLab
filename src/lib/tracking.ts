@@ -160,7 +160,10 @@ export function buildTrackingSnippet(
         // handled above
       } else if (goal.type === 'form_submit') {
         resolveElements(goal.selector, 'form_submit').forEach(function(form) {
-          form.addEventListener('submit', function() {
+          form.addEventListener('submit', function(e) {
+            // Prevent browser navigation when form has no real action URL
+            var action = form.getAttribute('action') || '';
+            if (!action || action === '#') e.preventDefault();
             captureFormLead(form);
             _SL.track('conversion', goal.id);
           });
@@ -182,10 +185,34 @@ export function buildTrackingSnippet(
     });
   }
 
+  function registerFormFields() {
+    try {
+      var seen = {};
+      var fields = [];
+      var inputs = document.querySelectorAll('input[name], select[name], textarea[name]');
+      for (var ri = 0; ri < inputs.length; ri++) {
+        var rel = inputs[ri];
+        var rname = rel.name;
+        if (!rname || seen[rname]) continue;
+        var rt = (rel.type || '').toLowerCase();
+        if (rt === 'password' || rt === 'hidden' || rt === 'submit' || rt === 'button' || rt === 'reset' || rt === 'file') continue;
+        seen[rname] = true;
+        fields.push(rname);
+      }
+      if (fields.length === 0) return;
+      var rxhr = new XMLHttpRequest();
+      rxhr.open('POST', _SL.apiUrl + '/api/register-form-fields', true);
+      rxhr.withCredentials = false;
+      rxhr.setRequestHeader('Content-Type', 'application/json');
+      rxhr.send(JSON.stringify({ variantId: _SL.variantId, fields: fields }));
+    } catch(e) {}
+  }
+
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initGoals);
+    document.addEventListener('DOMContentLoaded', function() { initGoals(); registerFormFields(); });
   } else {
     initGoals();
+    registerFormFields();
   }
 
   window.SplitLab = _SL;

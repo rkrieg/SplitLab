@@ -52,6 +52,7 @@ export default async function TestAnalyticsPage({
       domain={domain}
       userRole={session.user.role}
       userPlan={session.user.plan ?? 'free'}
+      workspaceId={workspace?.id}
     />
   );
 }

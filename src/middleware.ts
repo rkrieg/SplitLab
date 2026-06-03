@@ -28,7 +28,7 @@ export async function middleware(request: NextRequest) {
   }
 
   // ── Public tracking routes: bypass ALL middleware logic ────────────────
-  const PUBLIC_PATHS = ['/api/event', '/api/resolve', '/api/scan', '/api/form-leads', '/tracker.js'];
+  const PUBLIC_PATHS = ['/api/event', '/api/resolve', '/api/scan', '/api/form-leads', '/api/register-form-fields', '/tracker.js'];
   if (PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(p + '/'))) {
     const origin = request.headers.get('origin') || '*';
     if (request.method === 'OPTIONS') {
