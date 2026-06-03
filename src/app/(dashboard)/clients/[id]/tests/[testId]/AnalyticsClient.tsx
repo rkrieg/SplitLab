@@ -1026,8 +1026,11 @@ export default function AnalyticsClient({
   }, [workspaceId, test.id]);
 
   useEffect(() => {
-    if (tab === "integrations" && !integrationsLoaded) fetchIntegrations();
-  }, [tab, integrationsLoaded, fetchIntegrations]);
+    if (tab === "integrations") {
+      setIntegrationsLoaded(false);
+      fetchIntegrations();
+    }
+  }, [tab]);
 
   async function disconnectHubSpot() {
     if (!workspaceId) return;
