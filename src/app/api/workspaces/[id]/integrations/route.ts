@@ -16,7 +16,7 @@ export async function GET(
 
   const { data, error } = await db
     .from('workspace_integrations')
-    .select('id, type, enabled, created_at, updated_at')
+    .select('id, type, enabled, config, created_at, updated_at')
     .eq('workspace_id', params.id)
     .order('created_at', { ascending: true });
 
@@ -27,8 +27,9 @@ export async function GET(
 
 // POST /api/workspaces/[id]/integrations
 // Body: { type: string; config?: Record<string,unknown> }
-// For 'hubspot': OAuth handled separately — this is a general upsert endpoint.
-// For 'email': config is empty (Resend API key is in env); enabled flag stored here.
+// For 'hubspot': OAuth handled separately.
+// For 'email': config is empty (Resend API key is in env).
+// For 'webhook': config = { url, format, headers[] }. Multiple webhooks allowed — always INSERT.
 export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } }
@@ -43,15 +44,22 @@ export async function POST(
     return NextResponse.json({ error: 'Missing type' }, { status: 400 });
   }
 
+  // Webhooks allow multiple rows per workspace — always INSERT
+  if (type === 'webhook') {
+    const { data, error } = await db
+      .from('workspace_integrations')
+      .insert({ workspace_id: params.id, type, config: config ?? {}, enabled: true })
+      .select('id, type, enabled, created_at, updated_at')
+      .single();
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ integration: data });
+  }
+
+  // All other types: upsert (one per workspace per type)
   const { data, error } = await db
     .from('workspace_integrations')
     .upsert(
-      {
-        workspace_id: params.id,
-        type,
-        config: config ?? {},
-        enabled: true,
-      },
+      { workspace_id: params.id, type, config: config ?? {}, enabled: true },
       { onConflict: 'workspace_id,type' }
     )
     .select('id, type, enabled, created_at, updated_at')
@@ -62,8 +70,9 @@ export async function POST(
   return NextResponse.json({ integration: data });
 }
 
-// DELETE /api/workspaces/[id]/integrations?type=hubspot
-// Removes the integration and all associated variant mappings (cascade)
+// DELETE /api/workspaces/[id]/integrations
+// ?type=hubspot|email  — deletes by workspace+type (single integrations)
+// ?integrationId=uuid  — deletes by ID (for webhooks, which have multiple rows)
 export async function DELETE(
   req: NextRequest,
   { params }: { params: { id: string } }
@@ -71,16 +80,28 @@ export async function DELETE(
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
+  const integrationId = req.nextUrl.searchParams.get('integrationId');
   const type = req.nextUrl.searchParams.get('type');
-  if (!type) return NextResponse.json({ error: 'Missing type' }, { status: 400 });
 
-  const { error } = await db
-    .from('workspace_integrations')
-    .delete()
-    .eq('workspace_id', params.id)
-    .eq('type', type);
+  if (integrationId) {
+    const { error } = await db
+      .from('workspace_integrations')
+      .delete()
+      .eq('id', integrationId)
+      .eq('workspace_id', params.id);
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ ok: true });
+  }
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (type) {
+    const { error } = await db
+      .from('workspace_integrations')
+      .delete()
+      .eq('workspace_id', params.id)
+      .eq('type', type);
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ ok: true });
+  }
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ error: 'Missing type or integrationId' }, { status: 400 });
 }

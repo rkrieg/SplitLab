@@ -310,6 +310,9 @@ export default function AnalyticsClient({
   const [savingMapping, setSavingMapping] = useState(false);
   const [newFieldKey, setNewFieldKey] = useState("");
 
+  // Integrations sub-tab
+  const [integrationsSubTab, setIntegrationsSubTab] = useState<'native' | 'webhooks'>('native');
+
   // Email notifications integration
   const [emailIntegration, setEmailIntegration] = useState<{ id: string; enabled: boolean } | null>(null);
   const [emailMapping, setEmailMapping] = useState<{ id?: string; recipients: string; subject: string; enabled: boolean }>({ recipients: '', subject: 'New lead: {{test}} - {{variant}}', enabled: true });
@@ -320,6 +323,39 @@ export default function AnalyticsClient({
   const [emailModalRecipients, setEmailModalRecipients] = useState('');
   const [emailModalSubject, setEmailModalSubject] = useState('New lead: {{test}} - {{variant}}');
   const [emailModalError, setEmailModalError] = useState('');
+
+  // Webhook integrations
+  interface WebhookRow { id: string; enabled: boolean; config: { url: string; format: 'json' | 'form' | 'xml'; headers: { key: string; value: string }[] } }
+  interface WebhookMapping { id: string; formFields: Record<string, string>; systemFields: Record<string, string>; total_synced?: number; total_failed?: number; last_synced_at?: string | null }
+  const [webhooks, setWebhooks] = useState<WebhookRow[]>([]);
+  const [webhookMappings, setWebhookMappings] = useState<Record<string, WebhookMapping>>({});
+  const [webhookModalOpen, setWebhookModalOpen] = useState(false);
+  const [editingWebhookId, setEditingWebhookId] = useState<string | null>(null);
+  const [wUrl, setWUrl] = useState('');
+  const [wFormat, setWFormat] = useState<'json' | 'form' | 'xml'>('json');
+  const [wHeaders, setWHeaders] = useState<{ key: string; value: string }[]>([]);
+  const [wFormFields, setWFormFields] = useState<Record<string, string>>({});
+  const [wSystemFields, setWSystemFields] = useState<Record<string, string>>({});
+  const [wNewFormKey, setWNewFormKey] = useState('');
+  const [wSaving, setWSaving] = useState(false);
+  const [wDeleting, setWDeleting] = useState<string | null>(null);
+  const [wTestResult, setWTestResult] = useState<{ ok: boolean; statusCode?: number; error?: string } | null>(null);
+  const [wTesting, setWTesting] = useState(false);
+  const [wError, setWError] = useState('');
+
+  const SYSTEM_FIELDS = [
+    { key: 'ip_address',   label: 'IP Address' },
+    { key: 'submitted_at', label: 'Submitted At' },
+    { key: 'test_id',      label: 'Test ID' },
+    { key: 'test_name',    label: 'Test Name' },
+    { key: 'variant_id',   label: 'Variant ID' },
+    { key: 'variant_name', label: 'Variant Name' },
+    { key: 'utm_source',   label: 'UTM Source' },
+    { key: 'utm_medium',   label: 'UTM Medium' },
+    { key: 'utm_campaign', label: 'UTM Campaign' },
+    { key: 'utm_content',  label: 'UTM Content' },
+    { key: 'utm_term',     label: 'UTM Term' },
+  ];
 
   // Page scanner
   interface ScanElement {
@@ -999,18 +1035,20 @@ export default function AnalyticsClient({
     if (!workspaceId) return;
     try {
       const res = await fetch(`/api/workspaces/${workspaceId}/integrations`);
-      const data = await res.json() as { integrations?: { id: string; type: string; enabled: boolean }[] };
+      const data = await res.json() as { integrations?: { id: string; type: string; enabled: boolean; config?: unknown }[] };
       const hs = data.integrations?.find(i => i.type === 'hubspot') ?? null;
       const em = data.integrations?.find(i => i.type === 'email') ?? null;
+      const whs = (data.integrations ?? []).filter(i => i.type === 'webhook') as WebhookRow[];
       setHsIntegration(hs);
       setEmailIntegration(em);
+      setWebhooks(whs);
 
-      // Fetch all test mappings once (covers both hubspot + email)
+      // Fetch all test mappings once (covers hubspot + email + webhooks)
       const [mRes, kRes] = await Promise.all([
         fetch(`/api/tests/${test.id}/integrations`),
         fetch(`/api/tests/${test.id}/form-field-keys`),
       ]);
-      const mData = await mRes.json() as { mappings?: { id?: string; enabled: boolean; field_mappings: Record<string, string>; last_synced_at?: string; total_synced?: number; total_failed?: number; workspace_integrations?: { id: string } }[] };
+      const mData = await mRes.json() as { mappings?: { id?: string; enabled: boolean; field_mappings: unknown; last_synced_at?: string; total_synced?: number; total_failed?: number; workspace_integrations?: { id: string } }[] };
 
       if (hs) {
         setHsPropsLoading(true);
@@ -1024,7 +1062,7 @@ export default function AnalyticsClient({
 
         const m = mData.mappings?.find(x => x.workspace_integrations?.id === hs.id);
         setTestMapping(m
-          ? { id: m.id, enabled: m.enabled, field_mappings: m.field_mappings, last_synced_at: m.last_synced_at, total_synced: m.total_synced, total_failed: m.total_failed }
+          ? { id: m.id, enabled: m.enabled, field_mappings: m.field_mappings as Record<string, string>, last_synced_at: m.last_synced_at, total_synced: m.total_synced, total_failed: m.total_failed }
           : { enabled: false, field_mappings: {} }
         );
       }
@@ -1040,6 +1078,26 @@ export default function AnalyticsClient({
             enabled: em_m.enabled,
           });
         }
+      }
+
+      // Load webhook mappings
+      if (whs.length > 0) {
+        const whMappings: Record<string, WebhookMapping> = {};
+        for (const wh of whs) {
+          const m = mData.mappings?.find(x => x.workspace_integrations?.id === wh.id);
+          if (m?.field_mappings) {
+            const fm = m.field_mappings as { formFields?: Record<string, string>; systemFields?: Record<string, string> };
+            whMappings[wh.id] = {
+              id: m.id!,
+              formFields: fm.formFields ?? {},
+              systemFields: fm.systemFields ?? {},
+              total_synced: m.total_synced,
+              total_failed: m.total_failed,
+              last_synced_at: m.last_synced_at,
+            };
+          }
+        }
+        setWebhookMappings(whMappings);
       }
 
       const kData = await kRes.json() as { keys?: string[] };
@@ -1146,6 +1204,136 @@ export default function AnalyticsClient({
       toast.error('Failed to remove email notifications');
     } finally {
       setEmailDisconnecting(false);
+    }
+  }
+
+  function openAddWebhookModal() {
+    setEditingWebhookId(null);
+    setWUrl('');
+    setWFormat('json');
+    setWHeaders([]);
+    setWFormFields(Object.fromEntries(testFormKeys.map(k => [k, k])));
+    const defaultSys: Record<string, string> = {};
+    SYSTEM_FIELDS.forEach(sf => { defaultSys[sf.key] = sf.key; });
+    setWSystemFields(defaultSys);
+    setWNewFormKey('');
+    setWTestResult(null);
+    setWError('');
+    setWebhookModalOpen(true);
+  }
+
+  function openEditWebhookModal(wh: WebhookRow) {
+    const mapping = webhookMappings[wh.id];
+    setEditingWebhookId(wh.id);
+    setWUrl(wh.config?.url ?? '');
+    setWFormat(wh.config?.format ?? 'json');
+    setWHeaders(wh.config?.headers ?? []);
+    setWFormFields(mapping?.formFields ?? Object.fromEntries(testFormKeys.map(k => [k, k])));
+    const defaultSys: Record<string, string> = {};
+    SYSTEM_FIELDS.forEach(sf => { defaultSys[sf.key] = sf.key; });
+    setWSystemFields(mapping?.systemFields ?? defaultSys);
+    setWNewFormKey('');
+    setWTestResult(null);
+    setWError('');
+    setWebhookModalOpen(true);
+  }
+
+  async function submitWebhookModal(e: React.FormEvent) {
+    e.preventDefault();
+    const url = wUrl.trim();
+    if (!url) { setWError('Webhook URL is required.'); return; }
+    if (!url.startsWith('http://') && !url.startsWith('https://')) { setWError('URL must start with http:// or https://'); return; }
+    if (!workspaceId) return;
+
+    setWSaving(true);
+    setWError('');
+    try {
+      const config = { url, format: wFormat, headers: wHeaders.filter(h => h.key.trim()) };
+      const fieldMappings = { formFields: wFormFields, systemFields: wSystemFields };
+
+      let integrationId = editingWebhookId;
+
+      if (!integrationId) {
+        // Create new workspace integration
+        const iRes = await fetch(`/api/workspaces/${workspaceId}/integrations`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type: 'webhook', config }),
+        });
+        if (!iRes.ok) { setWError('Failed to create webhook.'); return; }
+        const { integration } = await iRes.json() as { integration: { id: string; enabled: boolean; config: WebhookRow['config'] } };
+        integrationId = integration.id;
+        setWebhooks(prev => [...prev, { id: integration.id, enabled: true, config }]);
+      } else {
+        // Update config — delete old and re-insert (simplest without a PATCH endpoint)
+        await fetch(`/api/workspaces/${workspaceId}/integrations?integrationId=${integrationId}`, { method: 'DELETE' });
+        const iRes = await fetch(`/api/workspaces/${workspaceId}/integrations`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type: 'webhook', config }),
+        });
+        if (!iRes.ok) { setWError('Failed to update webhook.'); return; }
+        const { integration } = await iRes.json() as { integration: { id: string; enabled: boolean; config: WebhookRow['config'] } };
+        integrationId = integration.id;
+        setWebhooks(prev => prev.map(w => w.id === editingWebhookId ? { ...w, id: integration.id, config } : w));
+      }
+
+      // Save test-level field mappings
+      const mRes = await fetch(`/api/tests/${test.id}/integrations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspace_integration_id: integrationId, enabled: true, field_mappings: fieldMappings }),
+      });
+      if (!mRes.ok) { setWError('Failed to save field mappings.'); return; }
+      const { mapping } = await mRes.json() as { mapping: { id: string } };
+
+      setWebhookMappings(prev => ({
+        ...prev,
+        [integrationId!]: { id: mapping.id, formFields: wFormFields, systemFields: wSystemFields },
+      }));
+      setWebhookModalOpen(false);
+      toast.success(editingWebhookId ? 'Webhook updated' : 'Webhook added');
+    } catch {
+      setWError('Something went wrong. Please try again.');
+    } finally {
+      setWSaving(false);
+    }
+  }
+
+  async function deleteWebhook(id: string) {
+    if (!workspaceId) return;
+    setWDeleting(id);
+    try {
+      await fetch(`/api/workspaces/${workspaceId}/integrations?integrationId=${id}`, { method: 'DELETE' });
+      setWebhooks(prev => prev.filter(w => w.id !== id));
+      setWebhookMappings(prev => { const n = { ...prev }; delete n[id]; return n; });
+      toast.success('Webhook removed');
+    } catch {
+      toast.error('Failed to remove webhook');
+    } finally {
+      setWDeleting(null);
+    }
+  }
+
+  async function testWebhook() {
+    if (!workspaceId || !wUrl.trim()) return;
+    setWTesting(true);
+    setWTestResult(null);
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}/integrations/test-webhook`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          config: { url: wUrl.trim(), format: wFormat, headers: wHeaders.filter(h => h.key.trim()) },
+          mappings: { formFields: wFormFields, systemFields: wSystemFields },
+        }),
+      });
+      const result = await res.json() as { ok: boolean; statusCode?: number; error?: string };
+      setWTestResult(result);
+    } catch {
+      setWTestResult({ ok: false, error: 'Request failed' });
+    } finally {
+      setWTesting(false);
     }
   }
 
@@ -2575,6 +2763,22 @@ export default function AnalyticsClient({
         {tab === "integrations" && (
           <div className="space-y-6 p-6">
 
+            {/* Sub-tabs */}
+            <div className="flex gap-1 bg-slate-100 dark:bg-slate-800 rounded-lg p-1 w-fit">
+              {(['native', 'webhooks'] as const).map(st => (
+                <button
+                  key={st}
+                  onClick={() => setIntegrationsSubTab(st)}
+                  className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${integrationsSubTab === st ? 'bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100 shadow-sm' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}
+                >
+                  {st === 'native' ? 'Native Integrations' : 'Webhooks'}
+                </button>
+              ))}
+            </div>
+
+            {/* ── NATIVE INTEGRATIONS ── */}
+            {integrationsSubTab === 'native' && (<>
+
             {/* ── HubSpot connect card ── */}
             <div className="card overflow-hidden">
               <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700 flex items-center gap-3">
@@ -2837,8 +3041,305 @@ export default function AnalyticsClient({
                 </div>
               </div>
             )}
+
+            </>)}
+
+            {/* ── WEBHOOKS TAB ── */}
+            {integrationsSubTab === 'webhooks' && (
+              <div className="space-y-4">
+                {/* Header row */}
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-slate-800 dark:text-slate-200">Webhooks</p>
+                    <p className="text-xs text-slate-500 mt-0.5">POST form data to any URL when a lead is submitted. Useful for Zapier, Make, or custom CRMs.</p>
+                  </div>
+                  <button onClick={openAddWebhookModal} className="btn-primary text-sm flex items-center gap-2 px-4 py-2 rounded-lg font-medium flex-shrink-0">
+                    <Plus size={14} /> Add Webhook
+                  </button>
+                </div>
+
+                {/* Webhook list */}
+                {webhooks.length === 0 ? (
+                  <div className="card px-6 py-10 text-center">
+                    <div className="w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center mx-auto mb-3">
+                      <Link2 size={18} className="text-slate-400" />
+                    </div>
+                    <p className="text-sm font-medium text-slate-600 dark:text-slate-400">No webhooks configured</p>
+                    <p className="text-xs text-slate-400 mt-1">Add a webhook to forward leads to any external URL.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {webhooks.map(wh => {
+                      const mapping = webhookMappings[wh.id];
+                      return (
+                        <div key={wh.id} className="card overflow-hidden">
+                          <div className="px-5 py-4 flex items-center gap-4">
+                            <div className="w-9 h-9 rounded-lg bg-violet-500/15 flex items-center justify-center flex-shrink-0">
+                              <Link2 size={16} className="text-violet-400" />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              {/* URL + format badge */}
+                              <div className="flex items-center gap-2 mb-1.5">
+                                <span className="flex-shrink-0 text-xs px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 font-semibold uppercase tracking-wide">POST</span>
+                                <p className="text-sm font-mono text-slate-700 dark:text-slate-200 truncate">{wh.config?.url ?? '—'}</p>
+                                <span className="flex-shrink-0 text-xs px-2 py-0.5 rounded-md bg-violet-500/10 text-violet-400 border border-violet-500/20 font-medium uppercase">{wh.config?.format ?? 'json'}</span>
+                              </div>
+                              {/* Stats row */}
+                              <div className="flex items-center gap-3 text-xs text-slate-400">
+                                {mapping?.last_synced_at ? (
+                                  <>
+                                    <span className="flex items-center gap-1">
+                                      <CheckCircle2 size={11} className="text-green-400" />
+                                      {mapping.total_synced ?? 0} delivered
+                                    </span>
+                                    {(mapping.total_failed ?? 0) > 0 && (
+                                      <span className="flex items-center gap-1 text-red-400">
+                                        <XCircle size={11} /> {mapping.total_failed} failed
+                                      </span>
+                                    )}
+                                    <span className="flex items-center gap-1">
+                                      <RefreshCw size={10} /> Last: {new Date(mapping.last_synced_at).toLocaleDateString()}
+                                    </span>
+                                  </>
+                                ) : (
+                                  <span className="text-slate-500 italic">No deliveries yet</span>
+                                )}
+                                {wh.config?.headers?.length ? (
+                                  <span className="flex items-center gap-1 text-slate-500">· {wh.config.headers.length} custom header{wh.config.headers.length > 1 ? 's' : ''}</span>
+                                ) : null}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-3 flex-shrink-0 border-l border-slate-200 dark:border-slate-700 pl-4">
+                              <button onClick={() => openEditWebhookModal(wh)} className="text-xs text-slate-400 hover:text-slate-200 transition-colors flex items-center gap-1.5">
+                                <Pencil size={13} /> Edit
+                              </button>
+                              <button
+                                onClick={() => deleteWebhook(wh.id)}
+                                disabled={wDeleting === wh.id}
+                                className="text-xs text-red-400 hover:text-red-300 transition-colors flex items-center gap-1.5"
+                              >
+                                {wDeleting === wh.id ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                                {wDeleting === wh.id ? 'Removing…' : 'Remove'}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
           </div>
         )}
+
+        {/* ── Webhook Modal ── */}
+        <Modal open={webhookModalOpen} onClose={() => setWebhookModalOpen(false)} title={editingWebhookId ? 'Edit Webhook' : 'Add a Webhook'}>
+          <form onSubmit={submitWebhookModal} className="space-y-6">
+            <p className="text-sm text-slate-500 dark:text-slate-400">POST your form data to any URL you choose. The payload fires every time a visitor submits a form on this test.</p>
+
+            {/* URL + Format row */}
+            <div className="grid grid-cols-[1fr_148px] gap-3 items-end">
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1.5">
+                  Webhook URL <span className="text-red-400">*</span>
+                </label>
+                <div className="flex items-stretch rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 focus-within:ring-2 focus-within:ring-indigo-500 focus-within:border-transparent transition-all overflow-hidden">
+                  <span className="flex items-center px-3 bg-slate-50 dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 text-slate-400 text-xs font-medium select-none flex-shrink-0">
+                    POST
+                  </span>
+                  <input
+                    type="url"
+                    placeholder="https://hooks.zapier.com/hooks/catch/…"
+                    value={wUrl}
+                    onChange={e => setWUrl(e.target.value)}
+                    className="flex-1 px-3 py-2.5 text-sm bg-transparent text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none font-mono placeholder:font-sans min-w-0"
+                    required
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1.5">Format</label>
+                <select value={wFormat} onChange={e => setWFormat(e.target.value as 'json' | 'form' | 'xml')} className="input w-full text-sm">
+                  <option value="json">JSON</option>
+                  <option value="form">Form Encoded</option>
+                  <option value="xml">XML</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Custom Headers */}
+            <div className="rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-2.5 bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-700">
+                <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wider">Custom Headers</span>
+                <button
+                  type="button"
+                  onClick={() => setWHeaders(prev => [...prev, { key: '', value: '' }])}
+                  className="text-xs text-indigo-500 hover:text-indigo-400 font-medium flex items-center gap-1 transition-colors"
+                >
+                  <Plus size={12} /> Add Header
+                </button>
+              </div>
+              <div className="px-4 py-3 space-y-2">
+                {wHeaders.length === 0 ? (
+                  <p className="text-xs text-slate-400 italic py-1">No custom headers. Add one if your endpoint requires authentication (e.g. <span className="font-mono not-italic">Authorization: Bearer …</span>).</p>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-[1fr_1fr_28px] gap-2 text-xs font-medium text-slate-400 uppercase tracking-wider">
+                      <span>Header Name</span><span>Value</span><span />
+                    </div>
+                    {wHeaders.map((h, i) => (
+                      <div key={i} className="grid grid-cols-[1fr_1fr_28px] gap-2 items-center">
+                        <input
+                          placeholder="e.g. Authorization"
+                          value={h.key}
+                          onChange={e => setWHeaders(prev => prev.map((x, j) => j === i ? { ...x, key: e.target.value } : x))}
+                          className="input text-sm font-mono placeholder:font-sans"
+                        />
+                        <input
+                          placeholder="e.g. Bearer token123"
+                          value={h.value}
+                          onChange={e => setWHeaders(prev => prev.map((x, j) => j === i ? { ...x, value: e.target.value } : x))}
+                          className="input text-sm font-mono placeholder:font-sans"
+                        />
+                        <button type="button" onClick={() => setWHeaders(prev => prev.filter((_, j) => j !== i))} className="text-slate-400 hover:text-red-400 transition-colors flex items-center justify-center">
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    ))}
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* Field Mapping */}
+            <div className="rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+              <div className="px-4 py-2.5 bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-700">
+                <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wider">Field Mapping</span>
+              </div>
+
+              <div className="px-4 py-3 space-y-5">
+                {/* Info callout */}
+                <div className="flex items-start gap-2 rounded-lg bg-amber-500/10 border border-amber-500/20 px-3 py-2.5 text-xs text-amber-500 dark:text-amber-400">
+                  <Info size={13} className="flex-shrink-0 mt-px" />
+                  <span>The <strong>right side</strong> is the key name your CRM or tool will receive. Leave it <strong>blank</strong> to exclude that field from the payload entirely.</span>
+                </div>
+
+                {/* Form Fields section */}
+                <div>
+                  <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2">Form Fields</p>
+                  {Object.keys(wFormFields).length === 0 ? (
+                    <p className="text-xs text-slate-400 italic mb-2">No form fields detected yet. Scan a variant or add fields manually below.</p>
+                  ) : (
+                    <div className="space-y-2 mb-3">
+                      <div className="grid grid-cols-[1fr_24px_1fr_28px] gap-2 text-xs font-medium text-slate-400 uppercase tracking-wider">
+                        <span>SplitLab Field</span><span /><span>Webhook Key</span><span />
+                      </div>
+                      {Object.keys(wFormFields).map(fk => (
+                        <div key={fk} className="grid grid-cols-[1fr_24px_1fr_28px] gap-2 items-center">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span className="inline-block text-xs px-2 py-1.5 rounded-lg bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 font-mono truncate border border-blue-100 dark:border-blue-800">{fk}</span>
+                          </div>
+                          <ArrowRight size={13} className="text-slate-300 dark:text-slate-600 mx-auto flex-shrink-0" />
+                          <input
+                            value={wFormFields[fk] ?? ''}
+                            onChange={e => setWFormFields(prev => ({ ...prev, [fk]: e.target.value }))}
+                            placeholder="(excluded)"
+                            className="input text-sm font-mono placeholder:font-sans placeholder:text-slate-300 dark:placeholder:text-slate-600"
+                          />
+                          <button type="button" onClick={() => setWFormFields(prev => { const n = { ...prev }; delete n[fk]; return n; })} className="text-slate-300 hover:text-red-400 transition-colors flex items-center justify-center">
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {/* Add form field */}
+                  <div className="flex items-center gap-2 pt-1 border-t border-slate-100 dark:border-slate-800">
+                    <input
+                      type="text"
+                      placeholder="Add a form field name (e.g. phone_number)"
+                      value={wNewFormKey}
+                      onChange={e => setWNewFormKey(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); const k = wNewFormKey.trim(); if (k) { setWFormFields(prev => ({ ...prev, [k]: k })); setWNewFormKey(''); } } }}
+                      className="input text-sm font-mono placeholder:font-sans flex-1"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => { const k = wNewFormKey.trim(); if (k) { setWFormFields(prev => ({ ...prev, [k]: k })); setWNewFormKey(''); } }}
+                      className="text-xs text-indigo-500 hover:text-indigo-400 font-medium flex items-center gap-1 flex-shrink-0 transition-colors"
+                    >
+                      <Plus size={12} /> Add
+                    </button>
+                  </div>
+                </div>
+
+                {/* System Fields section */}
+                <div className="border-t border-slate-100 dark:border-slate-800 pt-4">
+                  <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2">System Fields</p>
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-[1fr_24px_1fr] gap-2 text-xs font-medium text-slate-400 uppercase tracking-wider">
+                      <span>SplitLab Field</span><span /><span>Webhook Key</span>
+                    </div>
+                    {SYSTEM_FIELDS.map(sf => (
+                      <div key={sf.key} className="grid grid-cols-[1fr_24px_1fr] gap-2 items-center">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs px-2 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-mono border border-slate-200 dark:border-slate-700">{sf.label}</span>
+                        </div>
+                        <ArrowRight size={13} className="text-slate-300 dark:text-slate-600 mx-auto flex-shrink-0" />
+                        <input
+                          value={wSystemFields[sf.key] ?? ''}
+                          onChange={e => setWSystemFields(prev => ({ ...prev, [sf.key]: e.target.value }))}
+                          placeholder="(excluded)"
+                          className="input text-sm font-mono placeholder:font-sans placeholder:text-slate-300 dark:placeholder:text-slate-600"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Send Test */}
+            <div className="flex items-center gap-3 rounded-xl border border-slate-200 dark:border-slate-700 px-4 py-3 bg-slate-50 dark:bg-slate-800/40">
+              <button
+                type="button"
+                onClick={testWebhook}
+                disabled={wTesting || !wUrl.trim()}
+                className="btn-secondary text-sm flex items-center gap-2 px-4 py-2 rounded-lg font-medium flex-shrink-0 disabled:opacity-50"
+              >
+                {wTesting ? <Loader2 size={14} className="animate-spin" /> : <ScanLine size={14} />}
+                {wTesting ? 'Sending test…' : 'Send Test Payload'}
+              </button>
+              {wTestResult ? (
+                <div className={`flex items-center gap-2 text-sm font-medium ${wTestResult.ok ? 'text-green-500' : 'text-red-400'}`}>
+                  {wTestResult.ok ? <CheckCircle2 size={15} /> : <XCircle size={15} />}
+                  <span>
+                    {wTestResult.ok
+                      ? `${wTestResult.statusCode ?? 200} OK — Test payload delivered`
+                      : (wTestResult.error ?? `Error ${wTestResult.statusCode ?? ''}`)}
+                  </span>
+                </div>
+              ) : (
+                <p className="text-xs text-slate-400">Send a sample payload to verify your endpoint is working before saving.</p>
+              )}
+            </div>
+
+            {wError && (
+              <div className="flex items-center gap-2 rounded-lg bg-red-500/10 border border-red-500/20 px-3 py-2.5 text-sm text-red-400">
+                <XCircle size={14} className="flex-shrink-0" /> {wError}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-3 pt-1 border-t border-slate-200 dark:border-slate-700">
+              <button type="button" onClick={() => setWebhookModalOpen(false)} className="btn-secondary text-sm px-5 py-2">Cancel</button>
+              <Button type="submit" loading={wSaving}>
+                <Check size={14} /> Save Changes
+              </Button>
+            </div>
+          </form>
+        </Modal>
 
         {/* ─── SETTINGS TAB ─── */}
         {tab === "settings" && (

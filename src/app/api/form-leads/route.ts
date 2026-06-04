@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/supabase-server';
 import { syncLeadToHubSpot, getValidAccessToken } from '@/lib/integrations/hubspot';
 import { sendLeadNotificationEmail, type EmailConfig } from '@/lib/integrations/email';
+import { fireWebhook, type WebhookConfig, type WebhookFieldMappings } from '@/lib/integrations/webhook';
 
 export const dynamic = 'force-dynamic';
 
@@ -150,8 +151,9 @@ async function dispatchIntegrationsBackground(params: DispatchParams) {
           await handleHubSpot(params, mapping, integration, variantName);
         } else if (integration.type === 'email') {
           await handleEmail(params, mapping, variantName);
+        } else if (integration.type === 'webhook') {
+          await handleWebhook(params, mapping, integration, variantName);
         }
-        // Future CRMs: add more else-if branches here
       })
     );
   } catch (err) {
@@ -215,6 +217,47 @@ async function handleEmail(
     await db.rpc('increment_integration_synced', { p_mapping_id: mapping.id });
   } else {
     console.error('[email-notify] failed:', result.error);
+    await db.rpc('increment_integration_failed', { p_mapping_id: mapping.id });
+  }
+}
+
+async function handleWebhook(
+  params: DispatchParams,
+  mapping: { id: string; field_mappings: unknown },
+  integration: { id: string; config: unknown },
+  variantName: string | undefined,
+) {
+  const config = integration.config as WebhookConfig;
+  if (!config?.url) return;
+
+  const fieldMappings = mapping.field_mappings as WebhookFieldMappings;
+  if (!fieldMappings) return;
+
+  const systemValues: Record<string, string | null | undefined> = {
+    ip_address:   params.systemData.ip_address,
+    submitted_at: params.systemData.submitted_at,
+    test_id:      params.testId,
+    test_name:    params.testName,
+    variant_id:   params.variantId,
+    variant_name: variantName,
+    utm_source:   params.systemData.utm_source,
+    utm_medium:   params.systemData.utm_medium,
+    utm_campaign: params.systemData.utm_campaign,
+    utm_content:  params.systemData.utm_content,
+    utm_term:     params.systemData.utm_term,
+  };
+
+  const result = await fireWebhook({
+    config,
+    mappings: fieldMappings,
+    formFields: params.formFields,
+    systemValues,
+  });
+
+  if (result.ok) {
+    await db.rpc('increment_integration_synced', { p_mapping_id: mapping.id });
+  } else {
+    console.error('[webhook] failed:', result.error, result.statusCode);
     await db.rpc('increment_integration_failed', { p_mapping_id: mapping.id });
   }
 }
