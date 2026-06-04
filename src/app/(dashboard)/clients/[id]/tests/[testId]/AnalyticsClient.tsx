@@ -1,6 +1,16 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef, Fragment } from "react";
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+} from "recharts";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
@@ -44,9 +54,12 @@ import {
   ClipboardList,
   Search,
   ChevronLeft,
+  ChevronDown,
   Plug2,
   ArrowRight,
   XCircle,
+  Eye,
+  Activity,
 } from "lucide-react";
 import Spinner from "@/components/ui/Spinner";
 import Button from "@/components/ui/Button";
@@ -193,6 +206,70 @@ export default function AnalyticsClient({
   const [loading, setLoading] = useState(true);
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
+
+  // Page Reporting (collapsible chart section)
+  type ReportingVariant = { id: string; name: string; is_control: boolean };
+  type ReportingTotals = { visitors: number; views: number; conversions: number; cvr: number };
+  const [reportingOpen, setReportingOpen] = useState(false);
+  const [reportingLoaded, setReportingLoaded] = useState(false);
+  const [reportingLoading, setReportingLoading] = useState(false);
+  const [reportingDaily, setReportingDaily] = useState<Record<string, unknown>[]>([]);
+  const [reportingVariants, setReportingVariants] = useState<ReportingVariant[]>([]);
+  const [reportingTotals, setReportingTotals] = useState<ReportingTotals>({ visitors: 0, views: 0, conversions: 0, cvr: 0 });
+  const [reportingFrom, setReportingFrom] = useState(() => {
+    const d = new Date(); d.setDate(d.getDate() - 29);
+    return d.toISOString().slice(0, 10);
+  });
+  const [reportingTo, setReportingTo] = useState(() => new Date().toISOString().slice(0, 10));
+  const [reportingMetric, setReportingMetric] = useState<'views' | 'visitors' | 'conversions' | 'cvr'>('conversions');
+  const [reportingVariantFilter, setReportingVariantFilter] = useState<Set<string>>(new Set(['overall']));
+  const [reportingVariantDropdownOpen, setReportingVariantDropdownOpen] = useState(false);
+  const reportingDropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!reportingVariantDropdownOpen) return;
+    function handleClick(e: MouseEvent) {
+      if (reportingDropdownRef.current && !reportingDropdownRef.current.contains(e.target as Node)) {
+        setReportingVariantDropdownOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [reportingVariantDropdownOpen]);
+
+  const CHART_COLORS = ['#3D8BDA','#f59e0b','#10b981','#f43f5e','#8b5cf6','#06b6d4','#ec4899','#84cc16','#fb923c','#a78bfa'];
+
+  const [reportingError, setReportingError] = useState<string | null>(null);
+
+  async function fetchReporting() {
+    setReportingLoading(true);
+    setReportingError(null);
+    try {
+      const params = new URLSearchParams({ from: reportingFrom, to: reportingTo });
+      const res = await fetch(`/api/tests/${test.id}/reporting?${params}`);
+      if (!res.ok) throw new Error(`Server error ${res.status}`);
+      const json = await res.json();
+      setReportingVariants(json.variants || []);
+      setReportingDaily(json.daily || []);
+      setReportingTotals(json.totals || { visitors: 0, views: 0, conversions: 0, cvr: 0 });
+      setReportingLoaded(true);
+      // Default: show all variants + overall on first load
+      if (reportingVariantFilter.size === 1 && reportingVariantFilter.has('overall')) {
+        const allIds = new Set<string>(['overall']);
+        (json.variants || []).forEach((v: ReportingVariant) => allIds.add(v.id));
+        setReportingVariantFilter(allIds);
+      }
+    } catch (err) {
+      setReportingError(err instanceof Error ? err.message : 'Failed to load reporting data');
+    } finally {
+      setReportingLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (reportingOpen && !reportingLoaded) fetchReporting();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reportingOpen]);
 
   // Inline editing
   const [editingName, setEditingName] = useState(false);
@@ -2475,6 +2552,253 @@ export default function AnalyticsClient({
                   <Plus size={14} /> Add Variant
                 </button>
               </div>
+            </div>
+
+            {/* ── PAGE REPORTING ── */}
+            <div className="card overflow-hidden">
+              {/* Header / toggle */}
+              <button
+                onClick={() => setReportingOpen((o) => !o)}
+                className="w-full flex items-center justify-between px-5 py-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
+              >
+                <div className="flex items-center gap-2.5">
+                  <Activity size={16} className="text-indigo-400" />
+                  <span className="font-semibold text-sm text-slate-800 dark:text-slate-200">Page Reporting</span>
+                  {reportingLoaded && (
+                    <span className="text-xs text-slate-400 font-normal">
+                      {reportingFrom} – {reportingTo}
+                    </span>
+                  )}
+                </div>
+                <ChevronDown
+                  size={16}
+                  className={`text-slate-400 transition-transform duration-200 ${reportingOpen ? "rotate-180" : ""}`}
+                />
+              </button>
+
+              {reportingOpen && (
+                <div className="border-t border-slate-200 dark:border-slate-700">
+                  {/* Controls */}
+                  <div className="px-5 pt-4 pb-3 flex flex-wrap items-end gap-3">
+                    {/* Date range */}
+                    <div className="flex flex-col gap-1">
+                      <label className="text-xs text-slate-500 font-medium">From</label>
+                      <input
+                        type="date"
+                        value={reportingFrom}
+                        onChange={(e) => setReportingFrom(e.target.value)}
+                        className="input-base w-36 text-sm"
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-xs text-slate-500 font-medium">To</label>
+                      <input
+                        type="date"
+                        value={reportingTo}
+                        onChange={(e) => setReportingTo(e.target.value)}
+                        className="input-base w-36 text-sm"
+                      />
+                    </div>
+
+                    {/* Metric */}
+                    <div className="flex flex-col gap-1">
+                      <label className="text-xs text-slate-500 font-medium">Metric</label>
+                      <select
+                        value={reportingMetric}
+                        onChange={(e) => setReportingMetric(e.target.value as typeof reportingMetric)}
+                        className="input-base text-sm pr-8"
+                      >
+                        <option value="conversions">Conversions Over Time</option>
+                        <option value="cvr">Conversion Rate Over Time</option>
+                        <option value="visitors">Visitors Over Time</option>
+                        <option value="views">Views Over Time</option>
+                      </select>
+                    </div>
+
+                    {/* Variant filter */}
+                    <div className="flex flex-col gap-1 relative" ref={reportingDropdownRef}>
+                      <label className="text-xs text-slate-500 font-medium">Variants</label>
+                      <button
+                        onClick={() => setReportingVariantDropdownOpen((o) => !o)}
+                        className="input-base text-sm flex items-center gap-2 min-w-[160px] justify-between"
+                      >
+                        <span className="truncate">
+                          {reportingVariantFilter.size === reportingVariants.length + 1
+                            ? "All Variants"
+                            : reportingVariantFilter.size === 0
+                            ? "None"
+                            : `${reportingVariantFilter.size} selected`}
+                        </span>
+                        <ChevronDown size={12} className="flex-shrink-0 text-slate-400" />
+                      </button>
+                      {reportingVariantDropdownOpen && (
+                        <div className="absolute top-full mt-1 left-0 z-50 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl py-2 min-w-[220px] max-h-72 overflow-y-auto">
+                          {/* Overall */}
+                          <label className="flex items-center gap-2.5 px-3 py-1.5 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
+                            <input
+                              type="checkbox"
+                              checked={reportingVariantFilter.has('overall')}
+                              onChange={(e) => {
+                                const next = new Set(reportingVariantFilter);
+                                e.target.checked ? next.add('overall') : next.delete('overall');
+                                setReportingVariantFilter(next);
+                              }}
+                              className="rounded accent-indigo-500"
+                            />
+                            <span className="text-sm text-slate-700 dark:text-slate-200 font-medium">Overall</span>
+                          </label>
+                          {/* Variants */}
+                          {reportingVariants.length > 0 && (
+                            <>
+                              <div className="px-3 py-1 mt-1">
+                                <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Variants</span>
+                              </div>
+                              {reportingVariants.map((v) => (
+                                <label key={v.id} className="flex items-center gap-2.5 px-3 py-1.5 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
+                                  <input
+                                    type="checkbox"
+                                    checked={reportingVariantFilter.has(v.id)}
+                                    onChange={(e) => {
+                                      const next = new Set(reportingVariantFilter);
+                                      e.target.checked ? next.add(v.id) : next.delete(v.id);
+                                      setReportingVariantFilter(next);
+                                    }}
+                                    className="rounded accent-indigo-500"
+                                  />
+                                  <span className="text-sm text-slate-700 dark:text-slate-200 truncate">{v.name}</span>
+                                </label>
+                              ))}
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    <button
+                      onClick={() => { setReportingLoaded(false); fetchReporting(); }}
+                      disabled={reportingLoading}
+                      className="btn-secondary self-end"
+                    >
+                      <RefreshCw size={13} className={reportingLoading ? "animate-spin" : ""} />
+                      Apply
+                    </button>
+                  </div>
+
+                  {/* Summary cards */}
+                  {reportingLoaded && (
+                    <div className="px-5 pb-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      {[
+                        { label: "Visitors", value: reportingTotals.visitors.toLocaleString(), icon: <Users size={14} className="text-indigo-400" /> },
+                        { label: "Views", value: reportingTotals.views.toLocaleString(), icon: <Eye size={14} className="text-sky-400" /> },
+                        { label: "Conversions", value: reportingTotals.conversions.toLocaleString(), icon: <TrendingUp size={14} className="text-green-400" /> },
+                        { label: "Conv. Rate", value: `${reportingTotals.cvr}%`, icon: <Activity size={14} className="text-amber-400" /> },
+                      ].map((card) => (
+                        <div key={card.label} className="bg-slate-50 dark:bg-slate-800/60 rounded-xl px-4 py-3 flex flex-col gap-1 border border-slate-200 dark:border-slate-700">
+                          <div className="flex items-center gap-1.5 text-slate-500 dark:text-slate-400">
+                            {card.icon}
+                            <span className="text-xs font-medium">{card.label}</span>
+                          </div>
+                          <span className="text-xl font-bold text-slate-800 dark:text-slate-100">{card.value}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Chart */}
+                  <div className="px-5 pb-5">
+                    {reportingLoading ? (
+                      <div className="flex items-center justify-center h-64 gap-2 text-slate-400">
+                        <RefreshCw size={16} className="animate-spin" />
+                        <span className="text-sm">Loading chart…</span>
+                      </div>
+                    ) : reportingError ? (
+                      <div className="flex flex-col items-center justify-center h-64 gap-2 text-red-400">
+                        <AlertTriangle size={24} className="opacity-60" />
+                        <p className="text-sm">{reportingError}</p>
+                        <button onClick={fetchReporting} className="btn-secondary text-xs mt-1">
+                          <RefreshCw size={12} /> Retry
+                        </button>
+                      </div>
+                    ) : !reportingLoaded ? null : reportingDaily.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center h-64 gap-2 text-slate-400">
+                        <BarChart3 size={32} className="opacity-30" />
+                        <p className="text-sm">No data for selected range</p>
+                      </div>
+                    ) : (
+                      <ResponsiveContainer width="100%" height={280}>
+                        <LineChart data={reportingDaily} margin={{ top: 4, right: 16, bottom: 0, left: -10 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.15)" />
+                          <XAxis
+                            dataKey="date"
+                            tick={{ fontSize: 11, fill: '#94a3b8' }}
+                            tickFormatter={(v: string) => {
+                              const d = new Date(v + 'T00:00:00');
+                              return `${d.toLocaleString('default', { month: 'short' })} ${d.getDate()}`;
+                            }}
+                            tickLine={false}
+                            axisLine={false}
+                          />
+                          <YAxis
+                            tick={{ fontSize: 11, fill: '#94a3b8' }}
+                            tickLine={false}
+                            axisLine={false}
+                            allowDecimals={reportingMetric === 'cvr'}
+                            tickFormatter={(v: number) => reportingMetric === 'cvr' ? `${v}%` : String(v)}
+                          />
+                          <Tooltip
+                            contentStyle={{
+                              background: 'rgba(15,23,42,0.95)',
+                              border: '1px solid rgba(148,163,184,0.2)',
+                              borderRadius: '10px',
+                              fontSize: '12px',
+                              color: '#e2e8f0',
+                            }}
+                            formatter={(value: number, name: string) => {
+                              const label = reportingMetric === 'cvr' ? `${value}%` : value;
+                              return [label, name];
+                            }}
+                            labelFormatter={(label: string) => {
+                              const d = new Date(label + 'T00:00:00');
+                              return d.toLocaleDateString('default', { month: 'short', day: 'numeric', year: 'numeric' });
+                            }}
+                          />
+                          <Legend
+                            wrapperStyle={{ fontSize: '11px', paddingTop: '12px' }}
+                            formatter={(value: string) => <span style={{ color: '#94a3b8' }}>{value}</span>}
+                          />
+                          {/* Overall line */}
+                          {reportingVariantFilter.has('overall') && (
+                            <Line
+                              type="monotone"
+                              dataKey={`overall_${reportingMetric}`}
+                              name="Overall"
+                              stroke={CHART_COLORS[0]}
+                              strokeWidth={2}
+                              dot={{ r: 3, fill: CHART_COLORS[0] }}
+                              activeDot={{ r: 5 }}
+                            />
+                          )}
+                          {/* Per-variant lines */}
+                          {reportingVariants.map((v, idx) =>
+                            reportingVariantFilter.has(v.id) ? (
+                              <Line
+                                key={v.id}
+                                type="monotone"
+                                dataKey={`${v.id}_${reportingMetric}`}
+                                name={v.name}
+                                stroke={CHART_COLORS[(idx + 1) % CHART_COLORS.length]}
+                                strokeWidth={1.5}
+                                dot={{ r: 2.5, fill: CHART_COLORS[(idx + 1) % CHART_COLORS.length] }}
+                                activeDot={{ r: 4.5 }}
+                              />
+                            ) : null
+                          )}
+                        </LineChart>
+                      </ResponsiveContainer>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
 
             {stats.length > 0 && (
