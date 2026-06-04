@@ -123,7 +123,13 @@ function buildTrackerScript(appUrl: string): string {
       'display:flex','align-items:center','gap:8px','max-width:320px'
     ].join(';'));
     _scanBanner.innerHTML = '<span style="font-size:15px">✦</span><span>Detecting events within your page that you can track</span>';
-    document.body.appendChild(_scanBanner);
+    if (document.body) {
+      document.body.appendChild(_scanBanner);
+    } else {
+      document.addEventListener('DOMContentLoaded', function() {
+        document.body.appendChild(_scanBanner);
+      });
+    }
   }
   function completeScanBanner() {
     if (_scanBanner) {
