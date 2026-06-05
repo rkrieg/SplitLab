@@ -455,6 +455,7 @@ export default function AnalyticsClient({
     null,
   );
   const [scanResultsLoaded, setScanResultsLoaded] = useState(false);
+  const [scanTab, setScanTab] = useState<string | null>(null);
 
   // Computed
   const variants = test.test_variants || [];
@@ -3789,115 +3790,123 @@ export default function AnalyticsClient({
                   </div>
                 )}
 
-                {scanResults && (
-                  <div className="space-y-4 max-h-96 overflow-y-auto pr-1">
-                    {scanResults.variants.map((vs) => (
-                      <div key={vs.variant_id}>
-                        <div className="flex items-center gap-2 mb-2">
-                          <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">
-                            {vs.variant_name}
-                          </span>
-                          <span className="text-slate-400 text-xs">
-                            {vs.elements.length} element
-                            {vs.elements.length !== 1 ? "s" : ""}
-                          </span>
-                          <span className="text-slate-500 text-xs ml-auto">
-                            {new Date(vs.scanned_at).toLocaleString()}
-                          </span>
+                {scanResults && (() => {
+                  const activeId = scanTab ?? scanResults.variants[0]?.variant_id;
+                  const activeVs = scanResults.variants.find(v => v.variant_id === activeId) ?? scanResults.variants[0];
+                  return (
+                    <div>
+                      {/* Variant tabs */}
+                      {scanResults.variants.length > 1 && (
+                        <div className="flex gap-0 mb-4 border-b border-slate-200 dark:border-slate-700 -mx-5 px-5 overflow-x-auto">
+                          {scanResults.variants.map((vs) => (
+                            <button
+                              key={vs.variant_id}
+                              type="button"
+                              onClick={() => setScanTab(vs.variant_id)}
+                              className={`px-4 py-2 text-xs font-medium border-b-2 transition-colors whitespace-nowrap flex items-center gap-1.5 ${
+                                vs.variant_id === activeId
+                                  ? "border-indigo-500 text-indigo-400"
+                                  : "border-transparent text-slate-500 hover:text-slate-300"
+                              }`}
+                            >
+                              {vs.variant_name}
+                              <span className={`text-xs ${vs.variant_id === activeId ? "text-indigo-400/60" : "text-slate-600"}`}>
+                                {vs.elements.length}
+                              </span>
+                            </button>
+                          ))}
                         </div>
-                        {vs.elements.length === 0 ? (
-                          <p className="text-slate-400 text-xs px-3 py-2">
-                            No trackable elements found.
-                          </p>
-                        ) : (
-                          <div className="space-y-1.5">
-                            {vs.elements.map((el, i) => {
-                              const icon =
-                                el.type === "form" ? (
-                                  <FormInput
-                                    size={13}
-                                    className="text-purple-400 flex-shrink-0"
-                                  />
-                                ) : el.type === "call" ? (
-                                  <Phone
-                                    size={13}
-                                    className="text-green-400 flex-shrink-0"
-                                  />
-                                ) : el.type === "link" ? (
-                                  <ExternalLink
-                                    size={13}
-                                    className="text-blue-400 flex-shrink-0"
-                                  />
-                                ) : el.type === "toggle" ? (
-                                  <ToggleLeft
-                                    size={13}
-                                    className="text-amber-400 flex-shrink-0"
-                                  />
-                                ) : (
-                                  <MousePointerClick
-                                    size={13}
-                                    className="text-indigo-400 flex-shrink-0"
-                                  />
-                                );
+                      )}
 
-                              const label = el.text
-                                ? `"${el.text}"`
-                                : el.id
-                                  ? `#${el.id}`
-                                  : el.type;
-
-                              const alreadyAdded = editGoals.some((g) => {
-                                if (el.id) return g.selector === `id:${el.id}`;
-                                if (el.text)
-                                  return g.selector === `text:${el.text}`;
-                                return false;
-                              });
-
-                              return (
-                                <div
-                                  key={i}
-                                  className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700"
-                                >
-                                  <div className="flex items-center gap-2 min-w-0">
-                                    {icon}
-                                    <span className="text-slate-700 dark:text-slate-300 text-sm truncate">
-                                      {label}
-                                    </span>
-                                    {el.id && (
-                                      <span className="text-slate-400 font-mono text-xs flex-shrink-0">
-                                        #{el.id}
-                                      </span>
-                                    )}
-                                    <span className="text-slate-400 text-xs flex-shrink-0 capitalize">
-                                      {el.type.replace("_", " ")}
-                                    </span>
-                                  </div>
-                                  {alreadyAdded ? (
-                                    <button
-                                      type="button"
-                                      onClick={() => removeGoalBySelector(el)}
-                                      className="flex-shrink-0 flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-colors"
-                                    >
-                                      <X size={11} /> Remove
-                                    </button>
-                                  ) : (
-                                    <button
-                                      type="button"
-                                      onClick={() => enableAsGoal(el)}
-                                      className="flex-shrink-0 text-xs px-2.5 py-1 rounded-lg border border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/10 transition-colors"
-                                    >
-                                      + Goal
-                                    </button>
-                                  )}
-                                </div>
-                              );
-                            })}
+                      {/* Active variant content */}
+                      {activeVs && (
+                        <div>
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-xs text-slate-500">
+                              {activeVs.elements.length} element{activeVs.elements.length !== 1 ? "s" : ""}
+                            </span>
+                            <span className="text-slate-500 text-xs">
+                              {new Date(activeVs.scanned_at).toLocaleString()}
+                            </span>
                           </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
+                          {activeVs.elements.length === 0 ? (
+                            <p className="text-slate-400 text-xs px-3 py-2">
+                              No trackable elements found.
+                            </p>
+                          ) : (
+                            <div className="space-y-1.5 max-h-72 overflow-y-auto pr-1">
+                              {activeVs.elements.map((el, i) => {
+                                const icon =
+                                  el.type === "form" ? (
+                                    <FormInput size={13} className="text-purple-400 flex-shrink-0" />
+                                  ) : el.type === "call" ? (
+                                    <Phone size={13} className="text-green-400 flex-shrink-0" />
+                                  ) : el.type === "link" ? (
+                                    <ExternalLink size={13} className="text-blue-400 flex-shrink-0" />
+                                  ) : el.type === "toggle" ? (
+                                    <ToggleLeft size={13} className="text-amber-400 flex-shrink-0" />
+                                  ) : (
+                                    <MousePointerClick size={13} className="text-indigo-400 flex-shrink-0" />
+                                  );
+
+                                const label = el.text
+                                  ? `"${el.text}"`
+                                  : el.id
+                                    ? `#${el.id}`
+                                    : el.type;
+
+                                const alreadyAdded = editGoals.some((g) => {
+                                  if (el.id) return g.selector === `id:${el.id}`;
+                                  if (el.text) return g.selector === `text:${el.text}`;
+                                  return false;
+                                });
+
+                                return (
+                                  <div
+                                    key={i}
+                                    className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700"
+                                  >
+                                    <div className="flex items-center gap-2 min-w-0">
+                                      {icon}
+                                      <span className="text-slate-700 dark:text-slate-300 text-sm truncate">
+                                        {label}
+                                      </span>
+                                      {el.id && (
+                                        <span className="text-slate-400 font-mono text-xs flex-shrink-0">
+                                          #{el.id}
+                                        </span>
+                                      )}
+                                      <span className="text-slate-400 text-xs flex-shrink-0 capitalize">
+                                        {el.type.replace("_", " ")}
+                                      </span>
+                                    </div>
+                                    {alreadyAdded ? (
+                                      <button
+                                        type="button"
+                                        onClick={() => removeGoalBySelector(el)}
+                                        className="flex-shrink-0 flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-colors"
+                                      >
+                                        <X size={11} /> Remove
+                                      </button>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={() => enableAsGoal(el)}
+                                        className="flex-shrink-0 text-xs px-2.5 py-1 rounded-lg border border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/10 transition-colors"
+                                      >
+                                        + Goal
+                                      </button>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             </div>
 
