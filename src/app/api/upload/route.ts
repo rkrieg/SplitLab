@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { uploadHtml } from '@/lib/storage';
+import { resolveWorkspaceRole } from '@/lib/workspace-auth';
 import { z } from 'zod';
 
 const MAX_SIZE = 5 * 1024 * 1024; // 5 MB
@@ -25,7 +26,6 @@ const metaSchema = z.object({
 export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  if (session.user.role === 'viewer') return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
   try {
     const formData = await request.formData();
@@ -36,6 +36,9 @@ export async function POST(request: NextRequest) {
     const tags = tagsRaw ? tagsRaw.split(',').map((t) => t.trim()).filter(Boolean) : [];
 
     metaSchema.parse({ name, workspace_id: workspaceId, tags });
+
+    const wsRole = await resolveWorkspaceRole(workspaceId, session.user.id, session.user.role);
+    if (!wsRole || wsRole === 'viewer') return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
     let htmlContent = '';
 

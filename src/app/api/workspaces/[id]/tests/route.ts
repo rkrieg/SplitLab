@@ -72,23 +72,26 @@ export async function POST(
     const body = await request.json();
     const data = createSchema.parse(body);
 
-    // Enforce plan limits (admins bypass)
+    // Enforce plan limits (admins bypass).
+    // Use workspace owner's plan — invited managers have plan:'free' on their own row.
     if (session.user.role !== 'admin') {
-      const { data: userRow } = await db
-        .from('users')
-        .select('plan')
-        .eq('id', session.user.id)
-        .single();
+      const { data: wsData } = await db.from('workspaces').select('client_id').eq('id', params.id).single();
+      let planOwnerId = session.user.id;
+      if (wsData) {
+        const { data: clientData } = await db.from('clients').select('owner_id').eq('id', wsData.client_id).single();
+        if (clientData?.owner_id) planOwnerId = clientData.owner_id;
+      }
 
+      const { data: userRow } = await db.from('users').select('plan').eq('id', planOwnerId).single();
       const plan = userRow?.plan ?? 'free';
 
-      // 1. Enforce test count limit (counted across all workspaces owned by this user)
+      // 1. Enforce test count limit (counted across all workspaces owned by the plan owner)
       const testLimit = PLAN_LIMITS[plan]?.tests ?? 1;
       if (isFinite(testLimit)) {
         const { count: testCount } = await db
           .from('tests')
           .select('id, workspaces!inner(client_id, clients!inner(owner_id))', { count: 'exact', head: true })
-          .eq('workspaces.clients.owner_id', session.user.id)
+          .eq('workspaces.clients.owner_id', planOwnerId)
           .not('status', 'eq', 'completed');
 
         if ((testCount ?? 0) >= testLimit) {

@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { uploadHtml } from '@/lib/storage';
+import { resolveWorkspaceRole } from '@/lib/workspace-auth';
 import { PLAN_LIMITS } from '@/lib/plans';
 import { z } from 'zod';
 
@@ -14,18 +15,12 @@ const addVariantSchema = z.object({
   traffic_weight: z.number().int().min(1).max(100),
 });
 
-// TODO (post-trial): Replace global role check with workspace ownership check —
-// verify the test belongs to the requesting user before allowing variant creation.
-
 export async function POST(
   request: NextRequest,
   { params }: { params: { id: string } }
 ) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  if (session.user.role !== 'admin' && session.user.role !== 'manager') {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  }
 
   try {
     const body = await request.json();
@@ -35,12 +30,45 @@ export async function POST(
       return NextResponse.json({ error: 'Either redirect_url or html_content is required' }, { status: 400 });
     }
 
-    // Enforce variant limit per plan (admins bypass)
+    // Fetch test first — needed for both auth and workspace context
+    const { data: test, error: testErr } = await db
+      .from('tests')
+      .select('id, workspace_id')
+      .eq('id', params.id)
+      .single();
+    if (testErr || !test) {
+      return NextResponse.json({ error: 'Test not found' }, { status: 404 });
+    }
+
+    const wsRole = await resolveWorkspaceRole(test.workspace_id, session.user.id, session.user.role);
+    if (!wsRole || wsRole === 'viewer') {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
+    // Enforce variant limit per plan (admins bypass).
+    // Always check the workspace owner's plan — an invited manager has plan:'free'
+    // on their own user row, which would wrongly cap them at 2 variants.
     if (session.user.role !== 'admin') {
+      const { data: wsData } = await db
+        .from('workspaces')
+        .select('client_id')
+        .eq('id', test.workspace_id)
+        .single();
+
+      let planOwnerId = session.user.id;
+      if (wsData) {
+        const { data: clientData } = await db
+          .from('clients')
+          .select('owner_id')
+          .eq('id', wsData.client_id)
+          .single();
+        if (clientData?.owner_id) planOwnerId = clientData.owner_id;
+      }
+
       const { data: userRow } = await db
         .from('users')
         .select('plan')
-        .eq('id', session.user.id)
+        .eq('id', planOwnerId)
         .single();
 
       const plan = userRow?.plan ?? 'free';
@@ -59,16 +87,6 @@ export async function POST(
           );
         }
       }
-    }
-
-    // Fetch test with workspace_id
-    const { data: test, error: testErr } = await db
-      .from('tests')
-      .select('id, workspace_id')
-      .eq('id', params.id)
-      .single();
-    if (testErr || !test) {
-      return NextResponse.json({ error: 'Test not found' }, { status: 404 });
     }
 
     let pageId: string | null = null;

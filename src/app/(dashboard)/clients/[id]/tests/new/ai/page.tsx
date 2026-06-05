@@ -2,6 +2,7 @@ import { getServerSession } from 'next-auth';
 import { redirect, notFound } from 'next/navigation';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
+import { resolveWorkspaceRole } from '@/lib/workspace-auth';
 import Header from '@/components/layout/Header';
 import AIGenerateClient from './AIGenerateClient';
 
@@ -12,7 +13,6 @@ export default async function AIGeneratePage({
 }) {
   const session = await getServerSession(authOptions);
   if (!session) redirect('/login');
-  if (session.user.role === 'viewer') redirect(`/clients/${params.id}/pages`);
 
   const { data: workspace } = await db
     .from('workspaces')
@@ -20,6 +20,9 @@ export default async function AIGeneratePage({
     .eq('client_id', params.id)
     .single();
   if (!workspace) notFound();
+
+  const wsRole = await resolveWorkspaceRole(workspace.id, session.user.id, session.user.role);
+  if (!wsRole || wsRole === 'viewer') redirect(`/clients/${params.id}/pages`);
 
   const { data: client } = await db
     .from('clients')
