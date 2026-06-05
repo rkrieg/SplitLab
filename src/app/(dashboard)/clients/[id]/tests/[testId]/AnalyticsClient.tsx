@@ -1492,7 +1492,7 @@ export default function AnalyticsClient({
   }
 
   useEffect(() => {
-    if (tab === "settings" && !scanResultsLoaded && !scanning) {
+    if (!scanResultsLoaded && !scanning) {
       setScanResultsLoaded(true);
       fetch(`/api/tests/${test.id}/scan-results`)
         .then((r) => (r.ok ? r.json() : null))
@@ -1501,7 +1501,7 @@ export default function AnalyticsClient({
         })
         .catch(() => {});
     }
-  }, [tab, scanResultsLoaded, scanning, test.id]);
+  }, [scanResultsLoaded, scanning, test.id]);
 
   // ─── Page Scanner ────────────────────────────────────────────────────
 
@@ -2373,8 +2373,12 @@ export default function AnalyticsClient({
                                     scanPage(stat.variant.id);
                                   }}
                                   disabled={scanning}
-                                  className="flex items-center justify-center gap-1 w-full px-2 py-1 rounded-lg text-xs font-medium bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 hover:bg-indigo-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
-                                  title="Set up goal or event tracking"
+                                  className={`flex items-center justify-center gap-1 w-full px-2 py-1 rounded-lg text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap ${
+                                    scanResults !== null && !scanResults.variants.some(vs => vs.variant_id === stat.variant.id)
+                                      ? "bg-amber-500 border border-amber-400 text-white hover:bg-amber-600 shadow-sm shadow-amber-500/30"
+                                      : "bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 hover:bg-indigo-500/20"
+                                  }`}
+                                  title={scanResults !== null && !scanResults.variants.some(vs => vs.variant_id === stat.variant.id) ? "This variant has never been scanned — click to detect trackable elements" : "Set up goal or event tracking"}
                                 >
                                   <ScanLine size={11} />
                                   Setup Goal Tracking
