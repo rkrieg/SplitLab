@@ -3158,7 +3158,7 @@ export default function AnalyticsClient({
                 ) : (
                   <div className="flex items-center justify-between">
                     <p className="text-xs text-slate-500">
-                      HubSpot is connected to this workspace. Configure field mappings per variant below.
+                      HubSpot is connected. Map your form fields to HubSpot contact properties below.
                     </p>
                     <button
                       onClick={disconnectHubSpot}
@@ -3170,6 +3170,128 @@ export default function AnalyticsClient({
                   </div>
                 )}
               </div>
+
+              {/* ── Field mapping (inline when connected) ── */}
+              {hsIntegration && (
+                <>
+                  <div className="px-5 py-3 border-t border-b border-slate-200 dark:border-slate-700 flex items-center gap-4">
+                    <p className="text-sm font-medium text-slate-800 dark:text-slate-200 flex-1">Field Mapping</p>
+                    {testMapping.last_synced_at && (
+                      <div className="flex items-center gap-3 text-xs text-slate-400">
+                        <span className="flex items-center gap-1">
+                          <CheckCircle2 size={12} className="text-green-400" />
+                          {testMapping.total_synced ?? 0} synced
+                        </span>
+                        {(testMapping.total_failed ?? 0) > 0 && (
+                          <span className="flex items-center gap-1 text-red-400">
+                            <XCircle size={12} /> {testMapping.total_failed} failed
+                          </span>
+                        )}
+                        <span className="flex items-center gap-1">
+                          <RefreshCw size={11} />
+                          {new Date(testMapping.last_synced_at).toLocaleDateString()}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  {hsPropsLoading ? (
+                    <div className="px-5 py-6 flex items-center gap-2 text-sm text-slate-400">
+                      <Loader2 size={14} className="animate-spin" /> Loading HubSpot properties…
+                    </div>
+                  ) : (
+                    <div className="px-5 py-4 space-y-2">
+                      <div className="grid grid-cols-[1fr_32px_1fr_32px] gap-2 text-xs font-medium text-slate-500 uppercase tracking-wider mb-3">
+                        <span>SplitLab Field</span>
+                        <span />
+                        <span>HubSpot Property</span>
+                        <span />
+                      </div>
+
+                      {[
+                        { key: 'ip_address',   label: 'IP Address' },
+                        { key: 'variant',      label: 'Page Variant' },
+                        { key: 'submitted_at', label: 'Submission Date' },
+                        { key: 'utm_source',   label: 'UTM Source' },
+                        { key: 'utm_medium',   label: 'UTM Medium' },
+                        { key: 'utm_campaign', label: 'UTM Campaign' },
+                        { key: 'utm_content',  label: 'UTM Content' },
+                        { key: 'utm_term',     label: 'UTM Term' },
+                        { key: 'gclid',        label: 'GCLID' },
+                      ].map(sf => (
+                        <div key={sf.key} className="grid grid-cols-[1fr_32px_1fr_32px] gap-2 items-center">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs px-2 py-1 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-mono">{sf.label}</span>
+                            <span className="text-xs text-slate-400 bg-slate-50 dark:bg-slate-800/50 px-1.5 py-0.5 rounded">system</span>
+                          </div>
+                          <ArrowRight size={13} className="text-orange-400 mx-auto" />
+                          <select
+                            value={testMapping.field_mappings[sf.key] ?? ''}
+                            onChange={e => updateMapping(sf.key, e.target.value)}
+                            className="input text-xs py-1.5"
+                          >
+                            <option value="">(-) Not mapped</option>
+                            {hsProperties.map(p => (
+                              <option key={p.name} value={p.name}>{p.label} ({p.name})</option>
+                            ))}
+                          </select>
+                          <span />
+                        </div>
+                      ))}
+
+                      {testFormKeys.length > 0 && (
+                        <div className="border-t border-slate-100 dark:border-slate-800 my-3" />
+                      )}
+
+                      {testFormKeys.map(fk => (
+                        <div key={fk} className="grid grid-cols-[1fr_32px_1fr_32px] gap-2 items-center">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs px-2 py-1 rounded bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 font-mono">{fk}</span>
+                            <span className="text-xs text-slate-400 bg-slate-50 dark:bg-slate-800/50 px-1.5 py-0.5 rounded">form</span>
+                          </div>
+                          <ArrowRight size={13} className="text-orange-400 mx-auto" />
+                          <select
+                            value={testMapping.field_mappings[fk] ?? ''}
+                            onChange={e => updateMapping(fk, e.target.value)}
+                            className="input text-xs py-1.5"
+                          >
+                            <option value="">(-) Not mapped</option>
+                            {hsProperties.map(p => (
+                              <option key={p.name} value={p.name}>{p.label} ({p.name})</option>
+                            ))}
+                          </select>
+                          <button onClick={() => removeMapping(fk)} className="text-slate-300 hover:text-red-400 transition-colors">
+                            <X size={14} />
+                          </button>
+                        </div>
+                      ))}
+
+                      <div className="flex items-center gap-2 mt-4 pt-3 border-t border-slate-100 dark:border-slate-800">
+                        <input
+                          type="text"
+                          placeholder="+ Add another form field…"
+                          value={newFieldKey}
+                          onChange={e => setNewFieldKey(e.target.value)}
+                          onKeyDown={e => e.key === 'Enter' && addCustomFormField()}
+                          className="input text-xs py-1.5 flex-1"
+                        />
+                        <button
+                          onClick={() => addCustomFormField()}
+                          className="text-xs text-indigo-500 hover:text-indigo-400 transition-colors font-medium flex items-center gap-1"
+                        >
+                          <Plus size={13} /> Add field
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="px-5 py-3 border-t border-slate-200 dark:border-slate-700 flex justify-end">
+                    <Button size="sm" onClick={saveTestMapping} loading={savingMapping}>
+                      <Check size={13} /> Save Changes
+                    </Button>
+                  </div>
+                </>
+              )}
             </div>
 
             {/* ── Email Notifications card ── */}
@@ -3252,136 +3374,6 @@ export default function AnalyticsClient({
               </div>
             )}
 
-            {/* ── Field mapping (one flat table for the whole test) ── */}
-            {hsIntegration && (
-              <div className="card overflow-hidden">
-                {/* Header with enable toggle + sync status */}
-                <div className="px-5 py-3 border-b border-slate-200 dark:border-slate-700 flex items-center gap-4">
-                  <p className="text-sm font-medium text-slate-800 dark:text-slate-200 flex-1">Configure Field Mapping</p>
-
-                  {testMapping.last_synced_at && (
-                    <div className="flex items-center gap-3 text-xs text-slate-400">
-                      <span className="flex items-center gap-1">
-                        <CheckCircle2 size={12} className="text-green-400" />
-                        {testMapping.total_synced ?? 0} synced
-                      </span>
-                      {(testMapping.total_failed ?? 0) > 0 && (
-                        <span className="flex items-center gap-1 text-red-400">
-                          <XCircle size={12} /> {testMapping.total_failed} failed
-                        </span>
-                      )}
-                      <span className="flex items-center gap-1">
-                        <RefreshCw size={11} />
-                        {new Date(testMapping.last_synced_at).toLocaleDateString()}
-                      </span>
-                    </div>
-                  )}
-
-                </div>
-
-                {hsPropsLoading ? (
-                  <div className="px-5 py-6 flex items-center gap-2 text-sm text-slate-400">
-                    <Loader2 size={14} className="animate-spin" /> Loading HubSpot properties…
-                  </div>
-                ) : (
-                  <div className="px-5 py-4 space-y-2">
-                    {/* Column headers */}
-                    <div className="grid grid-cols-[1fr_32px_1fr_32px] gap-2 text-xs font-medium text-slate-500 uppercase tracking-wider mb-3">
-                      <span>SplitLab Field</span>
-                      <span />
-                      <span>HubSpot Property</span>
-                      <span />
-                    </div>
-
-                    {/* System fields */}
-                    {[
-                      { key: 'ip_address',   label: 'IP Address' },
-                      { key: 'variant',      label: 'Page Variant' },
-                      { key: 'submitted_at', label: 'Submission Date' },
-                      { key: 'utm_source',   label: 'UTM Source' },
-                      { key: 'utm_medium',   label: 'UTM Medium' },
-                      { key: 'utm_campaign', label: 'UTM Campaign' },
-                      { key: 'utm_content',  label: 'UTM Content' },
-                      { key: 'utm_term',     label: 'UTM Term' },
-                      { key: 'gclid',        label: 'GCLID' },
-                    ].map(sf => (
-                      <div key={sf.key} className="grid grid-cols-[1fr_32px_1fr_32px] gap-2 items-center">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs px-2 py-1 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-mono">{sf.label}</span>
-                          <span className="text-xs text-slate-400 bg-slate-50 dark:bg-slate-800/50 px-1.5 py-0.5 rounded">system</span>
-                        </div>
-                        <ArrowRight size={13} className="text-orange-400 mx-auto" />
-                        <select
-                          value={testMapping.field_mappings[sf.key] ?? ''}
-                          onChange={e => updateMapping(sf.key, e.target.value)}
-                          className="input text-xs py-1.5"
-                        >
-                          <option value="">(-) Not mapped</option>
-                          {hsProperties.map(p => (
-                            <option key={p.name} value={p.name}>{p.label} ({p.name})</option>
-                          ))}
-                        </select>
-                        <span />
-                      </div>
-                    ))}
-
-                    {/* Divider before form fields */}
-                    {testFormKeys.length > 0 && (
-                      <div className="border-t border-slate-100 dark:border-slate-800 my-3" />
-                    )}
-
-                    {/* Form fields from real leads */}
-                    {testFormKeys.map(fk => (
-                      <div key={fk} className="grid grid-cols-[1fr_32px_1fr_32px] gap-2 items-center">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs px-2 py-1 rounded bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 font-mono">{fk}</span>
-                          <span className="text-xs text-slate-400 bg-slate-50 dark:bg-slate-800/50 px-1.5 py-0.5 rounded">form</span>
-                        </div>
-                        <ArrowRight size={13} className="text-orange-400 mx-auto" />
-                        <select
-                          value={testMapping.field_mappings[fk] ?? ''}
-                          onChange={e => updateMapping(fk, e.target.value)}
-                          className="input text-xs py-1.5"
-                        >
-                          <option value="">(-) Not mapped</option>
-                          {hsProperties.map(p => (
-                            <option key={p.name} value={p.name}>{p.label} ({p.name})</option>
-                          ))}
-                        </select>
-                        <button onClick={() => removeMapping(fk)} className="text-slate-300 hover:text-red-400 transition-colors">
-                          <X size={14} />
-                        </button>
-                      </div>
-                    ))}
-
-                    {/* Add custom form field */}
-                    <div className="flex items-center gap-2 mt-4 pt-3 border-t border-slate-100 dark:border-slate-800">
-                      <input
-                        type="text"
-                        placeholder="+ Add another form field…"
-                        value={newFieldKey}
-                        onChange={e => setNewFieldKey(e.target.value)}
-                        onKeyDown={e => e.key === 'Enter' && addCustomFormField()}
-                        className="input text-xs py-1.5 flex-1"
-                      />
-                      <button
-                        onClick={() => addCustomFormField()}
-                        className="text-xs text-indigo-500 hover:text-indigo-400 transition-colors font-medium flex items-center gap-1"
-                      >
-                        <Plus size={13} /> Add field
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Save */}
-                <div className="px-5 py-3 border-t border-slate-200 dark:border-slate-700 flex justify-end">
-                  <Button size="sm" onClick={saveTestMapping} loading={savingMapping}>
-                    <Check size={13} /> Save Changes
-                  </Button>
-                </div>
-              </div>
-            )}
 
             </>)}
 
