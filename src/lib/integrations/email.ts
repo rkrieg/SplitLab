@@ -1,18 +1,8 @@
 import { Resend } from 'resend';
-import fs from 'fs';
-import path from 'path';
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
-function getLogoBase64(): string {
-  try {
-    const logoPath = path.join(process.cwd(), 'public', 'splitlab-logo-light.png');
-    const data = fs.readFileSync(logoPath);
-    return `data:image/png;base64,${data.toString('base64')}`;
-  } catch {
-    return '';
-  }
-}
+const LOGO_URL = 'https://www.trysplitlab.com/splitlab-logo-light.png';
 
 export interface EmailConfig {
   recipients: string;  // comma-separated email addresses
@@ -37,7 +27,7 @@ function buildEmailHtml(params: {
   };
 }): string {
   const { testName, variantName, formFields, systemData } = params;
-  const logoSrc = getLogoBase64();
+  const logoSrc = LOGO_URL;
 
   const fieldRows = Object.entries(formFields)
     .filter(([, v]) => v)
@@ -67,10 +57,7 @@ function buildEmailHtml(params: {
           <table width="100%" cellpadding="0" cellspacing="0">
             <tr>
               <td>
-                ${logoSrc
-                  ? `<img src="${logoSrc}" alt="SplitLab" height="28" style="display:block;height:28px;width:auto;" />`
-                  : `<span style="font-size:20px;font-weight:800;color:#ffffff;letter-spacing:-0.5px;">SplitLab</span>`
-                }
+                <img src="${logoSrc}" alt="SplitLab" height="28" style="display:block;height:28px;width:auto;" />
               </td>
               <td align="right">
                 <span style="display:inline-block;background:#3D8BDA22;border:1px solid #3D8BDA44;border-radius:6px;padding:4px 10px;font-size:11px;font-weight:600;color:#3D8BDA;letter-spacing:0.5px;">NEW LEAD</span>
