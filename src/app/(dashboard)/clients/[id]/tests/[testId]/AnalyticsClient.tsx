@@ -476,6 +476,7 @@ export default function AnalyticsClient({
         : v.tracking_verified) === false,
   );
 
+
   // ─── Analytics ──────────────────────────────────────────────────────
 
   const fetchAnalytics = useCallback(async () => {
@@ -3746,12 +3747,12 @@ export default function AnalyticsClient({
 
             {/* Set Up Goal Conversion Tracking */}
             {anyTrackerMissing && (
-              <div className="flex items-start gap-2 rounded-lg bg-red-500/10 border border-red-500/30 px-4 py-3 text-sm text-red-400">
+              <div className="flex items-start gap-2 rounded-lg bg-amber-500/10 border border-amber-500/30 px-4 py-3 text-sm text-amber-400">
                 <AlertTriangle size={14} className="flex-shrink-0 mt-0.5" />
-                <span>Install the Global Tracking Snippet above on your landing pages before you can set up goals.</span>
+                <span>Some variants are missing the tracker snippet — conversions may not be recorded for those variants until it is installed.</span>
               </div>
             )}
-            <div className={`card overflow-hidden ${anyTrackerMissing ? 'opacity-50 pointer-events-none' : ''}`}>
+            <div className="card overflow-hidden">
               <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700">
                 <div className="flex items-center gap-3">
                   <div className="w-8 h-8 rounded-lg bg-indigo-500/20 flex items-center justify-center">
