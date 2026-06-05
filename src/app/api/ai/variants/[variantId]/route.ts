@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
+import { resolveWorkspaceRole } from '@/lib/workspace-auth';
 
 const VARIANTS_BUCKET = 'variants';
 
@@ -11,11 +12,17 @@ export async function PUT(
 ) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  if (session.user.role !== 'admin' && session.user.role !== 'manager') {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  }
 
   const { variantId } = params;
+
+  const { data: variantRow } = await db.from('test_variants').select('test_id').eq('id', variantId).single();
+  if (variantRow) {
+    const { data: testRow } = await db.from('tests').select('workspace_id').eq('id', variantRow.test_id).single();
+    if (testRow) {
+      const wsRole = await resolveWorkspaceRole(testRow.workspace_id, session.user.id, session.user.role);
+      if (!wsRole || wsRole === 'viewer') return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+  }
 
   let html: string;
   try {

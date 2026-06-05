@@ -3,10 +3,8 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { uploadHtml, deleteHtmlFile, fileNameFromUrl } from '@/lib/storage';
+import { resolveWorkspaceRole } from '@/lib/workspace-auth';
 import { z } from 'zod';
-
-// TODO (post-trial): Add ownership check — verify the page's workspace belongs to the
-// requesting user before allowing GET/PATCH/DELETE. Same gap as tests/[id]/route.ts.
 
 const updateSchema = z.object({
   name: z.string().min(1).max(255).optional(),
@@ -39,6 +37,11 @@ export async function PATCH(
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
+  const { data: pageMeta } = await db.from('pages').select('workspace_id, html_url').eq('id', params.id).single();
+  if (!pageMeta) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  const wsRole = await resolveWorkspaceRole(pageMeta.workspace_id, session.user.id, session.user.role);
+  if (!wsRole || wsRole === 'viewer') return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+
   try {
     const body = await request.json();
     const data = updateSchema.parse(body);
@@ -46,11 +49,7 @@ export async function PATCH(
     // If html_content is being updated, re-upload to storage
     let storageUrl: string | undefined;
     if (data.html_content) {
-      const { data: existing } = await db
-        .from('pages')
-        .select('html_url')
-        .eq('id', params.id)
-        .single();
+      const existing = pageMeta;
 
       if (existing?.html_url) {
         const fileName = fileNameFromUrl(existing.html_url);
@@ -88,16 +87,17 @@ export async function DELETE(
 ) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  if (session.user.role === 'viewer') {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  }
 
-  // Get page to clean up storage
   const { data: page } = await db
     .from('pages')
-    .select('html_url')
+    .select('workspace_id, html_url')
     .eq('id', params.id)
     .single();
+
+  if (!page) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+
+  const wsRole = await resolveWorkspaceRole(page.workspace_id, session.user.id, session.user.role);
+  if (!wsRole || wsRole === 'viewer') return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
   if (page?.html_url) {
     const fileName = fileNameFromUrl(page.html_url);

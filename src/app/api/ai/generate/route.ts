@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { ask } from '@/lib/claude';
+import { resolveWorkspaceRole } from '@/lib/workspace-auth';
 
 export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
@@ -131,13 +132,6 @@ export async function POST(request: NextRequest) {
       headers: { 'Content-Type': 'application/json' },
     });
   }
-  if (session.user.role !== 'admin' && session.user.role !== 'manager') {
-    return new Response(JSON.stringify({ error: 'Forbidden' }), {
-      status: 403,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
-
   let scrapedPageId: string;
   let testId: string;
   let numVariants: number;
@@ -173,6 +167,14 @@ export async function POST(request: NextRequest) {
   if (testErr || !test) {
     return new Response(JSON.stringify({ error: 'Test not found' }), {
       status: 404,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const wsRole = await resolveWorkspaceRole(test.workspace_id, session.user.id, session.user.role);
+  if (!wsRole || wsRole === 'viewer') {
+    return new Response(JSON.stringify({ error: 'Forbidden' }), {
+      status: 403,
       headers: { 'Content-Type': 'application/json' },
     });
   }

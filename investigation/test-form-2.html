@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Bug Report</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Manrope:wght@300;400;600&display=swap" rel="stylesheet"/>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #0d1117; color: #c9d1d9; font-family: 'Manrope', sans-serif; font-weight: 300; min-height: 100vh; display: grid; place-items: center; padding: 2rem 1rem; }
+    .card { background: #161b22; border: 1px solid #30363d; max-width: 600px; width: 100%; padding: 2.5rem; border-radius: 6px; }
+    .top { display: flex; align-items: center; gap: .75rem; margin-bottom: 2rem; }
+    .bug-icon { width: 36px; height: 36px; background: #da3633; border-radius: 50%; display: grid; place-items: center; font-size: 1rem; flex-shrink: 0; }
+    h1 { font-family: 'JetBrains Mono', monospace; font-size: 1.3rem; font-weight: 700; color: #f0f6fc; }
+    .sub { font-size: .8rem; color: #8b949e; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    .full { grid-column: 1 / -1; }
+    .field { display: flex; flex-direction: column; gap: .35rem; }
+    label { font-family: 'JetBrains Mono', monospace; font-size: .68rem; color: #8b949e; letter-spacing: .08em; }
+    input, select, textarea { background: #0d1117; border: 1px solid #30363d; color: #c9d1d9; font-family: 'Manrope', sans-serif; font-size: .88rem; padding: .6rem .85rem; width: 100%; outline: none; border-radius: 4px; transition: border-color .2s; }
+    input:focus, select:focus, textarea:focus { border-color: #388bfd; }
+    select option { background: #161b22; }
+    textarea { resize: vertical; min-height: 100px; }
+    .check-group { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .2rem; }
+    .check-group label { display: flex; align-items: center; gap: .4rem; font-size: .78rem; letter-spacing: 0; font-family: 'Manrope', sans-serif; color: #c9d1d9; padding: .4rem .75rem; border: 1px solid #30363d; border-radius: 4px; cursor: pointer; transition: border-color .2s, background .2s; }
+    .check-group input[type="checkbox"] { width: auto; accent-color: #388bfd; }
+    .check-group label:hover { border-color: #388bfd; background: rgba(56,139,253,.07); }
+    .severity { display: flex; gap: .5rem; margin-top: .2rem; }
+    .severity label { display: flex; align-items: center; gap: .4rem; padding: .4rem .8rem; border: 1px solid #30363d; border-radius: 4px; cursor: pointer; font-size: .78rem; font-family: 'Manrope', sans-serif; color: #c9d1d9; transition: all .2s; }
+    .severity input[type="radio"] { width: auto; }
+    .severity label:nth-of-type(1):hover { border-color: #3fb950; color: #3fb950; }
+    .severity label:nth-of-type(2):hover { border-color: #e3b341; color: #e3b341; }
+    .severity label:nth-of-type(3):hover { border-color: #f85149; color: #f85149; }
+    .actions { display: flex; gap: .75rem; margin-top: 1.75rem; }
+    .btn-cancel { flex: 1; background: none; border: 1px solid #30363d; color: #8b949e; font-family: 'Manrope', sans-serif; font-size: .85rem; padding: .7rem; border-radius: 4px; cursor: pointer; transition: border-color .2s; }
+    .btn-cancel:hover { border-color: #8b949e; }
+    .btn-submit { flex: 2; background: #da3633; border: none; color: #fff; font-family: 'JetBrains Mono', monospace; font-size: .85rem; font-weight: 700; padding: .7rem; border-radius: 4px; cursor: pointer; letter-spacing: .05em; transition: opacity .2s; }
+    .btn-submit:hover { opacity: .85; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="top">
+      <div class="bug-icon">🐛</div>
+      <div>
+        <h1>Report a Bug</h1>
+        <p class="sub">Help us squash it — the more detail, the better.</p>
+      </div>
+    </div>
+    <form id="bug-report-form">
+      <div class="grid">
+        <div class="field full">
+          <label for="bug_title">Bug Title</label>
+          <input type="text" id="bug_title" name="bug_title" placeholder="Short, descriptive title of the issue" required/>
+        </div>
+        <div class="field">
+          <label for="full_name">Your Name</label>
+          <input type="text" id="full_name" name="full_name" placeholder="John Doe" required/>
+        </div>
+        <div class="field">
+          <label for="email">Email</label>
+          <input type="email" id="email" name="email" placeholder="john@example.com" required/>
+        </div>
+        <div class="field">
+          <label for="app_version">App Version</label>
+          <input type="text" id="app_version" name="app_version" placeholder="e.g. v2.4.1"/>
+        </div>
+        <div class="field">
+          <label for="environment">Environment</label>
+          <select id="environment" name="environment" required>
+            <option value="" disabled selected>Select environment</option>
+            <option value="production">Production</option>
+            <option value="staging">Staging</option>
+            <option value="local">Local / Dev</option>
+          </select>
+        </div>
+        <div class="field full">
+          <label>Severity</label>
+          <div class="severity">
+            <label><input type="radio" name="severity" value="low"/> Low</label>
+            <label><input type="radio" name="severity" value="medium"/> Medium</label>
+            <label><input type="radio" name="severity" value="critical"/> Critical</label>
+          </div>
+        </div>
+        <div class="field full">
+          <label>Affected Area</label>
+          <div class="check-group">
+            <label><input type="checkbox" name="affected_area" value="login_auth"/> Login / Auth</label>
+            <label><input type="checkbox" name="affected_area" value="dashboard"/> Dashboard</label>
+            <label><input type="checkbox" name="affected_area" value="payments"/> Payments</label>
+            <label><input type="checkbox" name="affected_area" value="api"/> API</label>
+            <label><input type="checkbox" name="affected_area" value="notifications"/> Notifications</label>
+            <label><input type="checkbox" name="affected_area" value="other"/> Other</label>
+          </div>
+        </div>
+        <div class="field full">
+          <label for="steps_to_reproduce">Steps to Reproduce</label>
+          <textarea id="steps_to_reproduce" name="steps_to_reproduce" placeholder="1. Go to...&#10;2. Click on...&#10;3. See error..."></textarea>
+        </div>
+        <div class="field full">
+          <label for="expected_vs_actual">Expected vs Actual Behavior</label>
+          <textarea id="expected_vs_actual" name="expected_vs_actual" placeholder="Expected: ...&#10;Actual: ..."></textarea>
+        </div>
+      </div>
+      <div class="actions">
+        <button type="reset" class="btn-cancel">Clear</button>
+        <button type="submit" class="btn-submit">Submit Bug Report</button>
+      </div>
+    </form>
+  </div>
+</body>
+</html>

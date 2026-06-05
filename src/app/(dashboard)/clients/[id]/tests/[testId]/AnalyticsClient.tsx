@@ -1,8 +1,19 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef, Fragment } from "react";
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+} from "recharts";
 import dynamic from "next/dynamic";
 import Link from "next/link";
+import { useSearchParams, useRouter } from "next/navigation";
 
 const CodeEditor = dynamic(() => import("@/components/pages/CodeEditor"), {
   ssr: false,
@@ -15,7 +26,7 @@ import {
   TrendingUp,
   Code2,
   Copy,
-  ChevronRight,
+  ChevronRight as ChevronRightSmall,
   ShieldCheck,
   ShieldX,
   FileCode2,
@@ -40,6 +51,15 @@ import {
   Loader2,
   AlertTriangle,
   CheckCircle2,
+  ClipboardList,
+  Search,
+  ChevronLeft,
+  ChevronDown,
+  Plug2,
+  ArrowRight,
+  XCircle,
+  Eye,
+  Activity,
 } from "lucide-react";
 import Spinner from "@/components/ui/Spinner";
 import Button from "@/components/ui/Button";
@@ -107,6 +127,22 @@ interface Lead {
   conversion_goals: { name: string } | null;
 }
 
+interface FormLead {
+  id: string;
+  visitor_hash: string | null;
+  submitted_at: string;
+  ip_address: string | null;
+  user_agent: string | null;
+  utm_source: string | null;
+  utm_medium: string | null;
+  utm_content: string | null;
+  utm_term: string | null;
+  utm_campaign: string | null;
+  gclid: string | null;
+  form_fields: Record<string, string>;
+  test_variants: { name: string } | null;
+}
+
 interface Props {
   test: Test;
   appUrl: string;
@@ -115,9 +151,25 @@ interface Props {
   domain?: string;
   userRole: string;
   userPlan: string;
+  workspaceId?: string;
 }
 
-type Tab = "overview" | "leads" | "settings";
+interface HubSpotProperty {
+  name: string;
+  label: string;
+  groupName: string;
+}
+
+interface TestMapping {
+  id?: string;
+  enabled: boolean;
+  field_mappings: Record<string, string>;
+  last_synced_at?: string | null;
+  total_synced?: number;
+  total_failed?: number;
+}
+
+type Tab = "overview" | "leads" | "form-leads" | "integrations" | "settings";
 
 export default function AnalyticsClient({
   test: initialTest,
@@ -127,9 +179,25 @@ export default function AnalyticsClient({
   domain,
   userRole,
   userPlan,
+  workspaceId,
 }: Props) {
   const [test, setTest] = useState(initialTest);
   const [tab, setTab] = useState<Tab>("overview");
+  const searchParams = useSearchParams();
+  const router = useRouter();
+
+  // Show success/error toast on return from HubSpot OAuth
+  useEffect(() => {
+    if (searchParams.get('hs_connected') === '1') {
+      toast.success('HubSpot connected successfully!');
+      setTab('integrations');
+      router.replace(window.location.pathname);
+    } else if (searchParams.get('hs_error')) {
+      toast.error(`HubSpot connection failed: ${searchParams.get('hs_error')}`);
+      router.replace(window.location.pathname);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Analytics
   const [stats, setStats] = useState<VariantStat[]>([]);
@@ -138,6 +206,70 @@ export default function AnalyticsClient({
   const [loading, setLoading] = useState(true);
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
+
+  // Page Reporting (collapsible chart section)
+  type ReportingVariant = { id: string; name: string; is_control: boolean };
+  type ReportingTotals = { visitors: number; views: number; conversions: number; cvr: number };
+  const [reportingOpen, setReportingOpen] = useState(false);
+  const [reportingLoaded, setReportingLoaded] = useState(false);
+  const [reportingLoading, setReportingLoading] = useState(false);
+  const [reportingDaily, setReportingDaily] = useState<Record<string, unknown>[]>([]);
+  const [reportingVariants, setReportingVariants] = useState<ReportingVariant[]>([]);
+  const [reportingTotals, setReportingTotals] = useState<ReportingTotals>({ visitors: 0, views: 0, conversions: 0, cvr: 0 });
+  const [reportingFrom, setReportingFrom] = useState(() => {
+    const d = new Date(); d.setDate(d.getDate() - 29);
+    return d.toISOString().slice(0, 10);
+  });
+  const [reportingTo, setReportingTo] = useState(() => new Date().toISOString().slice(0, 10));
+  const [reportingMetric, setReportingMetric] = useState<'views' | 'visitors' | 'conversions' | 'cvr'>('conversions');
+  const [reportingVariantFilter, setReportingVariantFilter] = useState<Set<string>>(new Set(['overall']));
+  const [reportingVariantDropdownOpen, setReportingVariantDropdownOpen] = useState(false);
+  const reportingDropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!reportingVariantDropdownOpen) return;
+    function handleClick(e: MouseEvent) {
+      if (reportingDropdownRef.current && !reportingDropdownRef.current.contains(e.target as Node)) {
+        setReportingVariantDropdownOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [reportingVariantDropdownOpen]);
+
+  const CHART_COLORS = ['#3D8BDA','#f59e0b','#10b981','#f43f5e','#8b5cf6','#06b6d4','#ec4899','#84cc16','#fb923c','#a78bfa'];
+
+  const [reportingError, setReportingError] = useState<string | null>(null);
+
+  async function fetchReporting() {
+    setReportingLoading(true);
+    setReportingError(null);
+    try {
+      const params = new URLSearchParams({ from: reportingFrom, to: reportingTo });
+      const res = await fetch(`/api/tests/${test.id}/reporting?${params}`);
+      if (!res.ok) throw new Error(`Server error ${res.status}`);
+      const json = await res.json();
+      setReportingVariants(json.variants || []);
+      setReportingDaily(json.daily || []);
+      setReportingTotals(json.totals || { visitors: 0, views: 0, conversions: 0, cvr: 0 });
+      setReportingLoaded(true);
+      // Default: show all variants + overall on first load
+      if (reportingVariantFilter.size === 1 && reportingVariantFilter.has('overall')) {
+        const allIds = new Set<string>(['overall']);
+        (json.variants || []).forEach((v: ReportingVariant) => allIds.add(v.id));
+        setReportingVariantFilter(allIds);
+      }
+    } catch (err) {
+      setReportingError(err instanceof Error ? err.message : 'Failed to load reporting data');
+    } finally {
+      setReportingLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (reportingOpen && !reportingLoaded) fetchReporting();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reportingOpen]);
 
   // Inline editing
   const [editingName, setEditingName] = useState(false);
@@ -184,6 +316,9 @@ export default function AnalyticsClient({
   const [deleteVariantId, setDeleteVariantId] = useState<string | null>(null);
   const [deletingVariant, setDeletingVariant] = useState(false);
 
+  // Visitor cap
+  const [visitorOverCap, setVisitorOverCap] = useState(false);
+
   // Add variant
   const [addVariantOpen, setAddVariantOpen] = useState(false);
   const [newVariantName, setNewVariantName] = useState("");
@@ -226,6 +361,79 @@ export default function AnalyticsClient({
   const [leadsLoading, setLeadsLoading] = useState(false);
   const [leadsLoaded, setLeadsLoaded] = useState(false);
 
+  // Form Leads
+  const [formLeads, setFormLeads] = useState<FormLead[]>([]);
+  const [formLeadsFieldKeys, setFormLeadsFieldKeys] = useState<string[]>([]);
+  const [formLeadsTotal, setFormLeadsTotal] = useState(0);
+  const [formLeadsPage, setFormLeadsPage] = useState(1);
+  const [formLeadsLoading, setFormLeadsLoading] = useState(false);
+  const FORM_LEADS_LIMIT = 50;
+  // Filters
+  const [flVariantId, setFlVariantId] = useState("");
+  const [flFrom, setFlFrom] = useState("");
+  const [flTo, setFlTo] = useState("");
+  const [flSearch, setFlSearch] = useState("");
+  const [flSearchInput, setFlSearchInput] = useState("");
+
+  // Integrations
+  const [hsIntegration, setHsIntegration] = useState<{ id: string; enabled: boolean } | null>(null);
+  const [hsDisconnecting, setHsDisconnecting] = useState(false);
+  const [hsProperties, setHsProperties] = useState<HubSpotProperty[]>([]);
+  const [hsPropsLoading, setHsPropsLoading] = useState(false);
+  const [integrationsLoaded, setIntegrationsLoaded] = useState(false);
+  // Test-level mapping (one flat mapping for the whole test)
+  const [testMapping, setTestMapping] = useState<TestMapping>({ enabled: true, field_mappings: {} });
+  const [testFormKeys, setTestFormKeys] = useState<string[]>([]);
+  const [savingMapping, setSavingMapping] = useState(false);
+  const [newFieldKey, setNewFieldKey] = useState("");
+
+  // Integrations sub-tab
+  const [integrationsSubTab, setIntegrationsSubTab] = useState<'native' | 'webhooks'>('native');
+
+  // Email notifications integration
+  const [emailIntegration, setEmailIntegration] = useState<{ id: string; enabled: boolean } | null>(null);
+  const [emailMapping, setEmailMapping] = useState<{ id?: string; recipients: string; subject: string; enabled: boolean }>({ recipients: '', subject: 'New lead: {{test}} - {{variant}}', enabled: true });
+  const [emailDisconnecting, setEmailDisconnecting] = useState(false);
+  const [savingEmail, setSavingEmail] = useState(false);
+  // Modal for configuring email before enabling
+  const [emailModalOpen, setEmailModalOpen] = useState(false);
+  const [emailModalRecipients, setEmailModalRecipients] = useState('');
+  const [emailModalSubject, setEmailModalSubject] = useState('New lead: {{test}} - {{variant}}');
+  const [emailModalError, setEmailModalError] = useState('');
+
+  // Webhook integrations
+  interface WebhookRow { id: string; enabled: boolean; config: { url: string; format: 'json' | 'form' | 'xml'; headers: { key: string; value: string }[] } }
+  interface WebhookMapping { id: string; formFields: Record<string, string>; systemFields: Record<string, string>; total_synced?: number; total_failed?: number; last_synced_at?: string | null }
+  const [webhooks, setWebhooks] = useState<WebhookRow[]>([]);
+  const [webhookMappings, setWebhookMappings] = useState<Record<string, WebhookMapping>>({});
+  const [webhookModalOpen, setWebhookModalOpen] = useState(false);
+  const [editingWebhookId, setEditingWebhookId] = useState<string | null>(null);
+  const [wUrl, setWUrl] = useState('');
+  const [wFormat, setWFormat] = useState<'json' | 'form' | 'xml'>('json');
+  const [wHeaders, setWHeaders] = useState<{ key: string; value: string }[]>([]);
+  const [wFormFields, setWFormFields] = useState<Record<string, string>>({});
+  const [wSystemFields, setWSystemFields] = useState<Record<string, string>>({});
+  const [wNewFormKey, setWNewFormKey] = useState('');
+  const [wSaving, setWSaving] = useState(false);
+  const [wDeleting, setWDeleting] = useState<string | null>(null);
+  const [wTestResult, setWTestResult] = useState<{ ok: boolean; statusCode?: number; error?: string } | null>(null);
+  const [wTesting, setWTesting] = useState(false);
+  const [wError, setWError] = useState('');
+
+  const SYSTEM_FIELDS = [
+    { key: 'ip_address',   label: 'IP Address' },
+    { key: 'submitted_at', label: 'Submitted At' },
+    { key: 'test_id',      label: 'Test ID' },
+    { key: 'test_name',    label: 'Test Name' },
+    { key: 'variant_id',   label: 'Variant ID' },
+    { key: 'variant_name', label: 'Variant Name' },
+    { key: 'utm_source',   label: 'UTM Source' },
+    { key: 'utm_medium',   label: 'UTM Medium' },
+    { key: 'utm_campaign', label: 'UTM Campaign' },
+    { key: 'utm_content',  label: 'UTM Content' },
+    { key: 'utm_term',     label: 'UTM Term' },
+  ];
+
   // Page scanner
   interface ScanElement {
     type: string;
@@ -247,6 +455,7 @@ export default function AnalyticsClient({
     null,
   );
   const [scanResultsLoaded, setScanResultsLoaded] = useState(false);
+  const [scanTab, setScanTab] = useState<string | null>(null);
 
   // Computed
   const variants = test.test_variants || [];
@@ -266,6 +475,7 @@ export default function AnalyticsClient({
         ? variantOverrides[v.id]
         : v.tracking_verified) === false,
   );
+
 
   // ─── Analytics ──────────────────────────────────────────────────────
 
@@ -292,6 +502,23 @@ export default function AnalyticsClient({
   useEffect(() => {
     fetchAnalytics();
   }, [fetchAnalytics]);
+
+  function refreshVisitorCap() {
+    fetch('/api/usage')
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => {
+        // Only update state when we have a confident answer — if response is missing
+        // or malformed, keep current state rather than incorrectly re-enabling buttons
+        if (d && typeof d.visitors?.overCap === 'boolean') {
+          setVisitorOverCap(d.visitors.overCap);
+        }
+      })
+      .catch(() => {});
+  }
+
+  useEffect(() => {
+    refreshVisitorCap();
+  }, []);
 
   // Auto-check tracker on load for redirect variants that have never been verified.
   // Uses `variants` (from SSR props) not `stats` — analytics response may omit tracking_verified.
@@ -518,6 +745,16 @@ export default function AnalyticsClient({
   }
 
   async function saveVariant(variantId: string) {
+    const editedUrl = variantDraft.redirect_url.trim();
+    if (editedUrl) {
+      const duplicate = variants.find(
+        (v) => v.id !== variantId && v.redirect_url && v.redirect_url.trim() === editedUrl
+      );
+      if (duplicate) {
+        toast.error(`This URL is already used by "${duplicate.name}". Each variant must have a unique destination URL.`);
+        return;
+      }
+    }
     setSavingVariant(true);
     try {
       const res = await fetch(`/api/tests/${test.id}`, {
@@ -637,6 +874,13 @@ export default function AnalyticsClient({
         setNewVariantUrlError(
           "Please enter a valid URL (e.g. https://example.com).",
         );
+        return;
+      }
+      const duplicate = variants.find(
+        (v) => v.redirect_url && v.redirect_url.trim() === trimmed
+      );
+      if (duplicate) {
+        setNewVariantUrlError(`This URL is already used by "${duplicate.name}". Each variant must have a unique destination URL.`);
         return;
       }
       setNewVariantUrlError("");
@@ -848,8 +1092,408 @@ export default function AnalyticsClient({
     if (tab === "leads" && !leadsLoaded) fetchLeads();
   }, [tab, leadsLoaded, fetchLeads]);
 
+  // ─── Form Leads ──────────────────────────────────────────────────────
+
+  const fetchFormLeads = useCallback(async (page = 1, filters?: { variantId?: string; from?: string; to?: string; search?: string }) => {
+    setFormLeadsLoading(true);
+    try {
+      const params = new URLSearchParams({ page: String(page), limit: String(FORM_LEADS_LIMIT) });
+      const v = filters?.variantId ?? flVariantId;
+      const f = filters?.from ?? flFrom;
+      const t = filters?.to ?? flTo;
+      const s = filters?.search ?? flSearch;
+      if (v) params.set('variant_id', v);
+      if (f) params.set('from', f);
+      if (t) params.set('to', t);
+      if (s) params.set('search', s);
+      const res = await fetch(`/api/tests/${test.id}/form-leads?${params}`);
+      if (!res.ok) throw new Error();
+      const data = await res.json();
+      setFormLeads(data.leads || []);
+      setFormLeadsFieldKeys(data.fieldKeys || []);
+      setFormLeadsTotal(data.total || 0);
+      setFormLeadsPage(page);
+    } catch {
+      toast.error("Failed to load form leads");
+    } finally {
+      setFormLeadsLoading(false);
+    }
+  }, [test.id, flVariantId, flFrom, flTo, flSearch]);
+
   useEffect(() => {
-    if (tab === "settings" && !scanResultsLoaded && !scanning) {
+    if (tab === "form-leads") fetchFormLeads(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
+
+  // ─── Integrations ────────────────────────────────────────────────────
+
+  const fetchIntegrations = useCallback(async () => {
+    if (!workspaceId) return;
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}/integrations`);
+      const data = await res.json() as { integrations?: { id: string; type: string; enabled: boolean; config?: unknown }[] };
+      const hs = data.integrations?.find(i => i.type === 'hubspot') ?? null;
+      const em = data.integrations?.find(i => i.type === 'email') ?? null;
+      const whs = (data.integrations ?? []).filter(i => i.type === 'webhook') as WebhookRow[];
+      setHsIntegration(hs);
+      setEmailIntegration(em);
+      setWebhooks(whs);
+
+      // Fetch all test mappings once (covers hubspot + email + webhooks)
+      const [mRes, kRes] = await Promise.all([
+        fetch(`/api/tests/${test.id}/integrations`),
+        fetch(`/api/tests/${test.id}/form-field-keys`),
+      ]);
+      const mData = await mRes.json() as { mappings?: { id?: string; enabled: boolean; field_mappings: unknown; last_synced_at?: string; total_synced?: number; total_failed?: number; workspace_integrations?: { id: string } }[] };
+
+      if (hs) {
+        setHsPropsLoading(true);
+        const propsRes = await fetch(`/api/workspaces/${workspaceId}/integrations/hubspot-properties`);
+        setHsPropsLoading(false);
+        const propsData = await propsRes.json() as { properties?: HubSpotProperty[]; error?: string };
+        if (!propsRes.ok) {
+          toast.error(`Failed to load HubSpot properties: ${propsData.error ?? 'Unknown error'}`);
+        }
+        setHsProperties(propsData.properties ?? []);
+
+        const m = mData.mappings?.find(x => x.workspace_integrations?.id === hs.id);
+        setTestMapping(m
+          ? { id: m.id, enabled: m.enabled, field_mappings: m.field_mappings as Record<string, string>, last_synced_at: m.last_synced_at, total_synced: m.total_synced, total_failed: m.total_failed }
+          : { enabled: false, field_mappings: {} }
+        );
+      }
+
+      if (em) {
+        const em_m = mData.mappings?.find(x => x.workspace_integrations?.id === em.id);
+        if (em_m?.field_mappings) {
+          const cfg = em_m.field_mappings as { recipients?: string; subject?: string };
+          setEmailMapping({
+            id: em_m.id,
+            recipients: cfg.recipients ?? '',
+            subject: cfg.subject ?? 'New lead: {{test}} - {{variant}}',
+            enabled: em_m.enabled,
+          });
+        }
+      }
+
+      // Load webhook mappings
+      if (whs.length > 0) {
+        const whMappings: Record<string, WebhookMapping> = {};
+        for (const wh of whs) {
+          const m = mData.mappings?.find(x => x.workspace_integrations?.id === wh.id);
+          if (m?.field_mappings) {
+            const fm = m.field_mappings as { formFields?: Record<string, string>; systemFields?: Record<string, string> };
+            whMappings[wh.id] = {
+              id: m.id!,
+              formFields: fm.formFields ?? {},
+              systemFields: fm.systemFields ?? {},
+              total_synced: m.total_synced,
+              total_failed: m.total_failed,
+              last_synced_at: m.last_synced_at,
+            };
+          }
+        }
+        setWebhookMappings(whMappings);
+      }
+
+      const kData = await kRes.json() as { keys?: string[] };
+      setTestFormKeys(kData.keys ?? []);
+    } catch (err) {
+      console.error('[integrations] load error', err);
+      toast.error('Failed to load integrations');
+    } finally {
+      setIntegrationsLoaded(true);
+    }
+  }, [workspaceId, test.id]);
+
+  useEffect(() => {
+    if (tab === "integrations") {
+      setIntegrationsLoaded(false);
+      fetchIntegrations();
+    }
+  }, [tab]);
+
+  async function disconnectHubSpot() {
+    if (!workspaceId) return;
+    setHsDisconnecting(true);
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}/integrations?type=hubspot`, { method: 'DELETE' });
+      if (!res.ok) { toast.error('Failed to disconnect HubSpot'); return; }
+      setHsIntegration(null);
+      setTestMapping({ enabled: true, field_mappings: {} });
+      setHsProperties([]);
+      setIntegrationsLoaded(false);
+      toast.success('HubSpot disconnected');
+    } catch {
+      toast.error('Failed to disconnect HubSpot');
+    } finally {
+      setHsDisconnecting(false);
+    }
+  }
+
+  function openEmailModal() {
+    // Pre-fill from existing config if editing
+    setEmailModalRecipients(emailMapping.recipients);
+    setEmailModalSubject(emailMapping.subject || 'New lead: {{test}} - {{variant}}');
+    setEmailModalError('');
+    setEmailModalOpen(true);
+  }
+
+  async function submitEmailModal(e: React.FormEvent) {
+    e.preventDefault();
+    const recipients = emailModalRecipients.trim().toLowerCase();
+    if (!recipients) { setEmailModalError('At least one recipient email is required.'); return; }
+    const valid = recipients.split(',').map(r => r.trim()).filter(Boolean).every(r => r.includes('@'));
+    if (!valid) { setEmailModalError('One or more email addresses look invalid.'); return; }
+
+    setSavingEmail(true);
+    setEmailModalError('');
+    try {
+      // Step 1: create / upsert workspace-level email integration
+      let integrationId = emailIntegration?.id;
+      if (!integrationId) {
+        const res = await fetch(`/api/workspaces/${workspaceId}/integrations`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type: 'email', config: {} }),
+        });
+        if (!res.ok) { setEmailModalError('Failed to enable email notifications.'); return; }
+        const { integration } = await res.json() as { integration: { id: string; enabled: boolean } };
+        setEmailIntegration(integration);
+        integrationId = integration.id;
+      }
+
+      // Step 2: save test-level config (recipients + subject)
+      const subject = emailModalSubject.trim() || 'New lead: {{test}} - {{variant}}';
+      const mRes = await fetch(`/api/tests/${test.id}/integrations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          workspace_integration_id: integrationId,
+          enabled: true,
+          field_mappings: { recipients, subject },
+        }),
+      });
+      if (!mRes.ok) { setEmailModalError('Failed to save email configuration.'); return; }
+      const { mapping } = await mRes.json() as { mapping: { id: string } };
+
+      setEmailMapping({ id: mapping.id, recipients, subject, enabled: true });
+      setEmailModalOpen(false);
+      toast.success('Email notifications configured');
+    } catch {
+      setEmailModalError('Something went wrong. Please try again.');
+    } finally {
+      setSavingEmail(false);
+    }
+  }
+
+  async function disconnectEmail() {
+    if (!workspaceId) return;
+    setEmailDisconnecting(true);
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}/integrations?type=email`, { method: 'DELETE' });
+      if (!res.ok) { toast.error('Failed to remove email notifications'); return; }
+      setEmailIntegration(null);
+      setEmailMapping({ recipients: '', subject: 'New lead: {{test}} - {{variant}}', enabled: true });
+      toast.success('Email notifications removed');
+    } catch {
+      toast.error('Failed to remove email notifications');
+    } finally {
+      setEmailDisconnecting(false);
+    }
+  }
+
+  function openAddWebhookModal() {
+    setEditingWebhookId(null);
+    setWUrl('');
+    setWFormat('json');
+    setWHeaders([]);
+    setWFormFields(Object.fromEntries(testFormKeys.map(k => [k, k])));
+    const defaultSys: Record<string, string> = {};
+    SYSTEM_FIELDS.forEach(sf => { defaultSys[sf.key] = sf.key; });
+    setWSystemFields(defaultSys);
+    setWNewFormKey('');
+    setWTestResult(null);
+    setWError('');
+    setWebhookModalOpen(true);
+  }
+
+  function openEditWebhookModal(wh: WebhookRow) {
+    const mapping = webhookMappings[wh.id];
+    setEditingWebhookId(wh.id);
+    setWUrl(wh.config?.url ?? '');
+    setWFormat(wh.config?.format ?? 'json');
+    setWHeaders(wh.config?.headers ?? []);
+    setWFormFields(mapping?.formFields ?? Object.fromEntries(testFormKeys.map(k => [k, k])));
+    const defaultSys: Record<string, string> = {};
+    SYSTEM_FIELDS.forEach(sf => { defaultSys[sf.key] = sf.key; });
+    setWSystemFields(mapping?.systemFields ?? defaultSys);
+    setWNewFormKey('');
+    setWTestResult(null);
+    setWError('');
+    setWebhookModalOpen(true);
+  }
+
+  async function submitWebhookModal(e: React.FormEvent) {
+    e.preventDefault();
+    const url = wUrl.trim();
+    if (!url) { setWError('Webhook URL is required.'); return; }
+    if (!url.startsWith('http://') && !url.startsWith('https://')) { setWError('URL must start with http:// or https://'); return; }
+    if (!workspaceId) return;
+
+    setWSaving(true);
+    setWError('');
+    try {
+      const config = { url, format: wFormat, headers: wHeaders.filter(h => h.key.trim()) };
+      const fieldMappings = { formFields: wFormFields, systemFields: wSystemFields };
+
+      let integrationId = editingWebhookId;
+
+      if (!integrationId) {
+        // Create new workspace integration
+        const iRes = await fetch(`/api/workspaces/${workspaceId}/integrations`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type: 'webhook', config }),
+        });
+        if (!iRes.ok) { setWError('Failed to create webhook.'); return; }
+        const { integration } = await iRes.json() as { integration: { id: string; enabled: boolean; config: WebhookRow['config'] } };
+        integrationId = integration.id;
+        setWebhooks(prev => [...prev, { id: integration.id, enabled: true, config }]);
+      } else {
+        // Update config — delete old and re-insert (simplest without a PATCH endpoint)
+        await fetch(`/api/workspaces/${workspaceId}/integrations?integrationId=${integrationId}`, { method: 'DELETE' });
+        const iRes = await fetch(`/api/workspaces/${workspaceId}/integrations`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type: 'webhook', config }),
+        });
+        if (!iRes.ok) { setWError('Failed to update webhook.'); return; }
+        const { integration } = await iRes.json() as { integration: { id: string; enabled: boolean; config: WebhookRow['config'] } };
+        integrationId = integration.id;
+        setWebhooks(prev => prev.map(w => w.id === editingWebhookId ? { ...w, id: integration.id, config } : w));
+      }
+
+      // Save test-level field mappings
+      const mRes = await fetch(`/api/tests/${test.id}/integrations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspace_integration_id: integrationId, enabled: true, field_mappings: fieldMappings }),
+      });
+      if (!mRes.ok) { setWError('Failed to save field mappings.'); return; }
+      const { mapping } = await mRes.json() as { mapping: { id: string } };
+
+      setWebhookMappings(prev => ({
+        ...prev,
+        [integrationId!]: { id: mapping.id, formFields: wFormFields, systemFields: wSystemFields },
+      }));
+      setWebhookModalOpen(false);
+      toast.success(editingWebhookId ? 'Webhook updated' : 'Webhook added');
+    } catch {
+      setWError('Something went wrong. Please try again.');
+    } finally {
+      setWSaving(false);
+    }
+  }
+
+  async function deleteWebhook(id: string) {
+    if (!workspaceId) return;
+    setWDeleting(id);
+    try {
+      await fetch(`/api/workspaces/${workspaceId}/integrations?integrationId=${id}`, { method: 'DELETE' });
+      setWebhooks(prev => prev.filter(w => w.id !== id));
+      setWebhookMappings(prev => { const n = { ...prev }; delete n[id]; return n; });
+      toast.success('Webhook removed');
+    } catch {
+      toast.error('Failed to remove webhook');
+    } finally {
+      setWDeleting(null);
+    }
+  }
+
+  async function testWebhook() {
+    if (!workspaceId || !wUrl.trim()) return;
+    setWTesting(true);
+    setWTestResult(null);
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}/integrations/test-webhook`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          config: { url: wUrl.trim(), format: wFormat, headers: wHeaders.filter(h => h.key.trim()) },
+          mappings: { formFields: wFormFields, systemFields: wSystemFields },
+        }),
+      });
+      const result = await res.json() as { ok: boolean; statusCode?: number; error?: string };
+      setWTestResult(result);
+    } catch {
+      setWTestResult({ ok: false, error: 'Request failed' });
+    } finally {
+      setWTesting(false);
+    }
+  }
+
+  async function saveTestMapping() {
+    if (!hsIntegration) return;
+    setSavingMapping(true);
+    try {
+      const res = await fetch(`/api/tests/${test.id}/integrations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          workspace_integration_id: hsIntegration.id,
+          enabled: true,
+          field_mappings: testMapping.field_mappings,
+        }),
+      });
+      if (!res.ok) { toast.error('Failed to save mapping'); return; }
+      toast.success('Mapping saved');
+    } finally {
+      setSavingMapping(false);
+    }
+  }
+
+  function updateMapping(ourField: string, hubspotProp: string) {
+    setTestMapping(prev => ({
+      ...prev,
+      field_mappings: { ...prev.field_mappings, [ourField]: hubspotProp },
+    }));
+  }
+
+  function removeMapping(ourField: string) {
+    setTestMapping(prev => {
+      const fm = { ...prev.field_mappings };
+      delete fm[ourField];
+      return { ...prev, field_mappings: fm };
+    });
+  }
+
+  function addCustomFormField() {
+    const key = newFieldKey.trim();
+    if (!key) return;
+    setTestFormKeys(prev => Array.from(new Set([...prev, key])));
+    setNewFieldKey('');
+  }
+
+  function exportFormLeadsCsv() {
+    if (formLeads.length === 0) return;
+    const fixedCols = ['submitted_at', 'variant', 'visitor_hash', 'ip_address', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'gclid', 'user_agent'];
+    const allCols = [...fixedCols, ...formLeadsFieldKeys];
+    const rows = formLeads.map((l) => allCols.map((col) => {
+      if (col === 'variant') return l.test_variants?.name ?? '';
+      if (col in l) return String((l as unknown as Record<string, unknown>)[col] ?? '');
+      return String(l.form_fields?.[col] ?? '');
+    }));
+    const csv = [allCols, ...rows].map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `form-leads-${test.id}.csv`; a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  useEffect(() => {
+    if (!scanResultsLoaded && !scanning) {
       setScanResultsLoaded(true);
       fetch(`/api/tests/${test.id}/scan-results`)
         .then((r) => (r.ok ? r.json() : null))
@@ -858,7 +1502,7 @@ export default function AnalyticsClient({
         })
         .catch(() => {});
     }
-  }, [tab, scanResultsLoaded, scanning, test.id]);
+  }, [scanResultsLoaded, scanning, test.id]);
 
   // ─── Page Scanner ────────────────────────────────────────────────────
 
@@ -906,6 +1550,7 @@ export default function AnalyticsClient({
   function openVariant(variantId: string) {
     const freshHash = crypto.randomUUID();
     window.open(buildVariantUrl(variantId, { sl_vh: freshHash }), "_blank");
+    setTimeout(refreshVisitorCap, 1500);
   }
 
   async function scanPage(variantId: string) {
@@ -1086,6 +1731,8 @@ export default function AnalyticsClient({
   const tabs: { key: Tab; label: string; icon: React.ReactNode }[] = [
     { key: "overview", label: "Overview", icon: <BarChart3 size={14} /> },
     { key: "leads", label: "Leads", icon: <Users size={14} /> },
+    { key: "form-leads", label: "Form Leads", icon: <ClipboardList size={14} /> },
+    { key: "integrations", label: "Integrations", icon: <Plug2 size={14} /> },
     { key: "settings", label: "Settings", icon: <SettingsIcon size={14} /> },
   ];
 
@@ -1100,14 +1747,14 @@ export default function AnalyticsClient({
           >
             {clientName}
           </Link>
-          <ChevronRight size={12} />
+          <ChevronRightSmall size={12} />
           <Link
             href={`/clients/${clientId}/pages`}
             className="hover:text-slate-700 dark:hover:text-slate-300 transition-colors"
           >
             Pages
           </Link>
-          <ChevronRight size={12} />
+          <ChevronRightSmall size={12} />
           <span className="text-slate-500 dark:text-slate-400">
             {test.name}
           </span>
@@ -1262,9 +1909,10 @@ export default function AnalyticsClient({
             </div>
 
             <button
-              onClick={() => window.open(buildTestPreviewUrl(), "_blank")}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-slate-500/10 border border-slate-500/20 text-slate-400 hover:bg-slate-500/20 hover:text-slate-300"
-              title="Open the test as a fresh visitor — SplitLab assigns the variant"
+              onClick={() => { window.open(buildTestPreviewUrl(), "_blank"); setTimeout(refreshVisitorCap, 1500); }}
+              disabled={visitorOverCap}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-slate-500/10 border border-slate-500/20 text-slate-400 hover:bg-slate-500/20 hover:text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed"
+              title={visitorOverCap ? "Visitor limit reached — upgrade your plan to resume testing" : "Open the test as a fresh visitor — SplitLab assigns the variant"}
             >
               <ExternalLink size={14} /> Preview Test
             </button>
@@ -1710,8 +2358,9 @@ export default function AnalyticsClient({
                               <div className="flex flex-col items-center gap-1">
                                 <button
                                   onClick={() => openVariant(stat.variant.id)}
-                                  className="flex items-center justify-center gap-1 w-full px-2 py-1 rounded-lg text-xs font-medium bg-slate-500/10 border border-slate-500/20 text-slate-400 hover:bg-slate-500/20 hover:text-slate-300 transition-colors"
-                                  title={`Open ${stat.variant.name}`}
+                                  disabled={visitorOverCap}
+                                  className="flex items-center justify-center gap-1 w-full px-2 py-1 rounded-lg text-xs font-medium bg-slate-500/10 border border-slate-500/20 text-slate-400 hover:bg-slate-500/20 hover:text-slate-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                                  title={visitorOverCap ? "Visitor limit reached — upgrade your plan to resume testing" : `Open ${stat.variant.name}`}
                                 >
                                   <ExternalLink size={11} />
                                   Open
@@ -1725,8 +2374,12 @@ export default function AnalyticsClient({
                                     scanPage(stat.variant.id);
                                   }}
                                   disabled={scanning}
-                                  className="flex items-center justify-center gap-1 w-full px-2 py-1 rounded-lg text-xs font-medium bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 hover:bg-indigo-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
-                                  title="Set up goal or event tracking"
+                                  className={`flex items-center justify-center gap-1 w-full px-2 py-1 rounded-lg text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap ${
+                                    scanResults !== null && !scanResults.variants.some(vs => vs.variant_id === stat.variant.id)
+                                      ? "bg-amber-500 border border-amber-400 text-white hover:bg-amber-600 shadow-sm shadow-amber-500/30"
+                                      : "bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 hover:bg-indigo-500/20"
+                                  }`}
+                                  title={scanResults !== null && !scanResults.variants.some(vs => vs.variant_id === stat.variant.id) ? "This variant has never been scanned — click to detect trackable elements" : "Set up goal or event tracking"}
                                 >
                                   <ScanLine size={11} />
                                   Setup Goal Tracking
@@ -1924,6 +2577,253 @@ export default function AnalyticsClient({
               </div>
             </div>
 
+            {/* ── PAGE REPORTING ── */}
+            <div className="card overflow-hidden">
+              {/* Header / toggle */}
+              <button
+                onClick={() => setReportingOpen((o) => !o)}
+                className="w-full flex items-center justify-between px-5 py-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
+              >
+                <div className="flex items-center gap-2.5">
+                  <Activity size={16} className="text-indigo-400" />
+                  <span className="font-semibold text-sm text-slate-800 dark:text-slate-200">Page Reporting</span>
+                  {reportingLoaded && (
+                    <span className="text-xs text-slate-400 font-normal">
+                      {reportingFrom} – {reportingTo}
+                    </span>
+                  )}
+                </div>
+                <ChevronDown
+                  size={16}
+                  className={`text-slate-400 transition-transform duration-200 ${reportingOpen ? "rotate-180" : ""}`}
+                />
+              </button>
+
+              {reportingOpen && (
+                <div className="border-t border-slate-200 dark:border-slate-700">
+                  {/* Controls */}
+                  <div className="px-5 pt-4 pb-3 flex flex-wrap items-end gap-3">
+                    {/* Date range */}
+                    <div className="flex flex-col gap-1">
+                      <label className="text-xs text-slate-500 font-medium">From</label>
+                      <input
+                        type="date"
+                        value={reportingFrom}
+                        onChange={(e) => setReportingFrom(e.target.value)}
+                        className="input-base w-36 text-sm"
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-xs text-slate-500 font-medium">To</label>
+                      <input
+                        type="date"
+                        value={reportingTo}
+                        onChange={(e) => setReportingTo(e.target.value)}
+                        className="input-base w-36 text-sm"
+                      />
+                    </div>
+
+                    {/* Metric */}
+                    <div className="flex flex-col gap-1">
+                      <label className="text-xs text-slate-500 font-medium">Metric</label>
+                      <select
+                        value={reportingMetric}
+                        onChange={(e) => setReportingMetric(e.target.value as typeof reportingMetric)}
+                        className="input-base text-sm pr-8"
+                      >
+                        <option value="conversions">Conversions Over Time</option>
+                        <option value="cvr">Conversion Rate Over Time</option>
+                        <option value="visitors">Visitors Over Time</option>
+                        <option value="views">Views Over Time</option>
+                      </select>
+                    </div>
+
+                    {/* Variant filter */}
+                    <div className="flex flex-col gap-1 relative" ref={reportingDropdownRef}>
+                      <label className="text-xs text-slate-500 font-medium">Variants</label>
+                      <button
+                        onClick={() => setReportingVariantDropdownOpen((o) => !o)}
+                        className="input-base text-sm flex items-center gap-2 min-w-[160px] justify-between"
+                      >
+                        <span className="truncate">
+                          {reportingVariantFilter.size === reportingVariants.length + 1
+                            ? "All Variants"
+                            : reportingVariantFilter.size === 0
+                            ? "None"
+                            : `${reportingVariantFilter.size} selected`}
+                        </span>
+                        <ChevronDown size={12} className="flex-shrink-0 text-slate-400" />
+                      </button>
+                      {reportingVariantDropdownOpen && (
+                        <div className="absolute top-full mt-1 left-0 z-50 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl py-2 min-w-[220px] max-h-72 overflow-y-auto">
+                          {/* Overall */}
+                          <label className="flex items-center gap-2.5 px-3 py-1.5 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
+                            <input
+                              type="checkbox"
+                              checked={reportingVariantFilter.has('overall')}
+                              onChange={(e) => {
+                                const next = new Set(reportingVariantFilter);
+                                e.target.checked ? next.add('overall') : next.delete('overall');
+                                setReportingVariantFilter(next);
+                              }}
+                              className="rounded accent-indigo-500"
+                            />
+                            <span className="text-sm text-slate-700 dark:text-slate-200 font-medium">Overall</span>
+                          </label>
+                          {/* Variants */}
+                          {reportingVariants.length > 0 && (
+                            <>
+                              <div className="px-3 py-1 mt-1">
+                                <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Variants</span>
+                              </div>
+                              {reportingVariants.map((v) => (
+                                <label key={v.id} className="flex items-center gap-2.5 px-3 py-1.5 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
+                                  <input
+                                    type="checkbox"
+                                    checked={reportingVariantFilter.has(v.id)}
+                                    onChange={(e) => {
+                                      const next = new Set(reportingVariantFilter);
+                                      e.target.checked ? next.add(v.id) : next.delete(v.id);
+                                      setReportingVariantFilter(next);
+                                    }}
+                                    className="rounded accent-indigo-500"
+                                  />
+                                  <span className="text-sm text-slate-700 dark:text-slate-200 truncate">{v.name}</span>
+                                </label>
+                              ))}
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    <button
+                      onClick={() => { setReportingLoaded(false); fetchReporting(); }}
+                      disabled={reportingLoading}
+                      className="btn-secondary self-end"
+                    >
+                      <RefreshCw size={13} className={reportingLoading ? "animate-spin" : ""} />
+                      Apply
+                    </button>
+                  </div>
+
+                  {/* Summary cards */}
+                  {reportingLoaded && (
+                    <div className="px-5 pb-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      {[
+                        { label: "Visitors", value: reportingTotals.visitors.toLocaleString(), icon: <Users size={14} className="text-indigo-400" /> },
+                        { label: "Views", value: reportingTotals.views.toLocaleString(), icon: <Eye size={14} className="text-sky-400" /> },
+                        { label: "Conversions", value: reportingTotals.conversions.toLocaleString(), icon: <TrendingUp size={14} className="text-green-400" /> },
+                        { label: "Conv. Rate", value: `${reportingTotals.cvr}%`, icon: <Activity size={14} className="text-amber-400" /> },
+                      ].map((card) => (
+                        <div key={card.label} className="bg-slate-50 dark:bg-slate-800/60 rounded-xl px-4 py-3 flex flex-col gap-1 border border-slate-200 dark:border-slate-700">
+                          <div className="flex items-center gap-1.5 text-slate-500 dark:text-slate-400">
+                            {card.icon}
+                            <span className="text-xs font-medium">{card.label}</span>
+                          </div>
+                          <span className="text-xl font-bold text-slate-800 dark:text-slate-100">{card.value}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Chart */}
+                  <div className="px-5 pb-5">
+                    {reportingLoading ? (
+                      <div className="flex items-center justify-center h-64 gap-2 text-slate-400">
+                        <RefreshCw size={16} className="animate-spin" />
+                        <span className="text-sm">Loading chart…</span>
+                      </div>
+                    ) : reportingError ? (
+                      <div className="flex flex-col items-center justify-center h-64 gap-2 text-red-400">
+                        <AlertTriangle size={24} className="opacity-60" />
+                        <p className="text-sm">{reportingError}</p>
+                        <button onClick={fetchReporting} className="btn-secondary text-xs mt-1">
+                          <RefreshCw size={12} /> Retry
+                        </button>
+                      </div>
+                    ) : !reportingLoaded ? null : reportingDaily.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center h-64 gap-2 text-slate-400">
+                        <BarChart3 size={32} className="opacity-30" />
+                        <p className="text-sm">No data for selected range</p>
+                      </div>
+                    ) : (
+                      <ResponsiveContainer width="100%" height={280}>
+                        <LineChart data={reportingDaily} margin={{ top: 4, right: 16, bottom: 0, left: -10 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.15)" />
+                          <XAxis
+                            dataKey="date"
+                            tick={{ fontSize: 11, fill: '#94a3b8' }}
+                            tickFormatter={(v: string) => {
+                              const d = new Date(v + 'T00:00:00');
+                              return `${d.toLocaleString('default', { month: 'short' })} ${d.getDate()}`;
+                            }}
+                            tickLine={false}
+                            axisLine={false}
+                          />
+                          <YAxis
+                            tick={{ fontSize: 11, fill: '#94a3b8' }}
+                            tickLine={false}
+                            axisLine={false}
+                            allowDecimals={reportingMetric === 'cvr'}
+                            tickFormatter={(v: number) => reportingMetric === 'cvr' ? `${v}%` : String(v)}
+                          />
+                          <Tooltip
+                            contentStyle={{
+                              background: 'rgba(15,23,42,0.95)',
+                              border: '1px solid rgba(148,163,184,0.2)',
+                              borderRadius: '10px',
+                              fontSize: '12px',
+                              color: '#e2e8f0',
+                            }}
+                            formatter={(value: number, name: string) => {
+                              const label = reportingMetric === 'cvr' ? `${value}%` : value;
+                              return [label, name];
+                            }}
+                            labelFormatter={(label: string) => {
+                              const d = new Date(label + 'T00:00:00');
+                              return d.toLocaleDateString('default', { month: 'short', day: 'numeric', year: 'numeric' });
+                            }}
+                          />
+                          <Legend
+                            wrapperStyle={{ fontSize: '11px', paddingTop: '12px' }}
+                            formatter={(value: string) => <span style={{ color: '#94a3b8' }}>{value}</span>}
+                          />
+                          {/* Overall line */}
+                          {reportingVariantFilter.has('overall') && (
+                            <Line
+                              type="monotone"
+                              dataKey={`overall_${reportingMetric}`}
+                              name="Overall"
+                              stroke={CHART_COLORS[0]}
+                              strokeWidth={2}
+                              dot={{ r: 3, fill: CHART_COLORS[0] }}
+                              activeDot={{ r: 5 }}
+                            />
+                          )}
+                          {/* Per-variant lines */}
+                          {reportingVariants.map((v, idx) =>
+                            reportingVariantFilter.has(v.id) ? (
+                              <Line
+                                key={v.id}
+                                type="monotone"
+                                dataKey={`${v.id}_${reportingMetric}`}
+                                name={v.name}
+                                stroke={CHART_COLORS[(idx + 1) % CHART_COLORS.length]}
+                                strokeWidth={1.5}
+                                dot={{ r: 2.5, fill: CHART_COLORS[(idx + 1) % CHART_COLORS.length] }}
+                                activeDot={{ r: 4.5 }}
+                              />
+                            ) : null
+                          )}
+                        </LineChart>
+                      </ResponsiveContainer>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
             {stats.length > 0 && (
               <p className="text-xs text-slate-500">
                 Confidence is calculated using a chi-square test. 95%+ is
@@ -2017,6 +2917,769 @@ export default function AnalyticsClient({
           </>
         )}
 
+        {/* ─── FORM LEADS TAB ─── */}
+        {tab === "form-leads" && (
+          <div className="space-y-4">
+            {/* Filters bar */}
+            <div className="card px-5 py-4">
+              <div className="flex flex-wrap gap-3 items-end">
+                {/* Variant filter */}
+                <div className="flex flex-col gap-1 min-w-[160px]">
+                  <label className="text-xs text-slate-500 dark:text-slate-400 font-medium">Variant</label>
+                  <select
+                    value={flVariantId}
+                    onChange={(e) => setFlVariantId(e.target.value)}
+                    className="input-base text-sm py-1.5"
+                  >
+                    <option value="">All Variants</option>
+                    {variants.map((v) => (
+                      <option key={v.id} value={v.id}>{v.name}</option>
+                    ))}
+                  </select>
+                </div>
+                {/* Date from */}
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs text-slate-500 dark:text-slate-400 font-medium">From</label>
+                  <input
+                    type="date"
+                    value={flFrom}
+                    onChange={(e) => setFlFrom(e.target.value)}
+                    className="input-base text-sm py-1.5"
+                  />
+                </div>
+                {/* Date to */}
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs text-slate-500 dark:text-slate-400 font-medium">To</label>
+                  <input
+                    type="date"
+                    value={flTo}
+                    onChange={(e) => setFlTo(e.target.value)}
+                    className="input-base text-sm py-1.5"
+                  />
+                </div>
+                {/* Search */}
+                <div className="flex flex-col gap-1 flex-1 min-w-[180px]">
+                  <label className="text-xs text-slate-500 dark:text-slate-400 font-medium">Search</label>
+                  <div className="relative">
+                    <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text"
+                      placeholder="Name, email, phone…"
+                      value={flSearchInput}
+                      onChange={(e) => setFlSearchInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') { setFlSearch(flSearchInput); fetchFormLeads(1, { variantId: flVariantId, from: flFrom, to: flTo, search: flSearchInput }); }
+                      }}
+                      className="input-base text-sm py-1.5 pl-8"
+                    />
+                  </div>
+                </div>
+                {/* Apply + Reset + Export */}
+                <div className="flex gap-2 pb-0.5">
+                  <button
+                    onClick={() => { setFlSearch(flSearchInput); fetchFormLeads(1, { variantId: flVariantId, from: flFrom, to: flTo, search: flSearchInput }); }}
+                    className="btn-primary text-xs"
+                    disabled={formLeadsLoading}
+                  >
+                    {formLeadsLoading ? <RefreshCw size={12} className="animate-spin" /> : <Search size={12} />}
+                    Apply
+                  </button>
+                  <button
+                    onClick={() => {
+                      setFlVariantId(""); setFlFrom(""); setFlTo(""); setFlSearch(""); setFlSearchInput("");
+                      fetchFormLeads(1, { variantId: "", from: "", to: "", search: "" });
+                    }}
+                    className="btn-secondary text-xs"
+                  >
+                    Reset
+                  </button>
+                  <button
+                    onClick={exportFormLeadsCsv}
+                    disabled={formLeads.length === 0}
+                    className="btn-secondary text-xs"
+                  >
+                    <Download size={12} /> CSV
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Table */}
+            {formLeadsLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <RefreshCw size={20} className="animate-spin text-slate-500 dark:text-slate-400" />
+              </div>
+            ) : formLeads.length === 0 ? (
+              <div className="text-center py-12">
+                <ClipboardList size={32} className="mx-auto text-slate-600 mb-3" />
+                <p className="text-slate-500 dark:text-slate-400 text-sm">No form leads yet.</p>
+                <p className="text-slate-500 text-xs mt-1">
+                  When a visitor submits a form on your test page, it will appear here.
+                </p>
+              </div>
+            ) : (
+              <div className="card overflow-hidden">
+                <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200 dark:border-slate-700">
+                  <p className="text-sm text-slate-500 dark:text-slate-400">
+                    {formLeadsTotal} lead{formLeadsTotal !== 1 ? "s" : ""} total
+                    {formLeadsTotal > FORM_LEADS_LIMIT && ` — page ${formLeadsPage} of ${Math.ceil(formLeadsTotal / FORM_LEADS_LIMIT)}`}
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => fetchFormLeads(1)}
+                      className="btn-secondary text-xs"
+                    >
+                      <RefreshCw size={12} /> Refresh
+                    </button>
+                  </div>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-200 dark:border-slate-700">
+                        <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap">#</th>
+                        <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap">Date / Time</th>
+                        <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap">Variant</th>
+                        {formLeadsFieldKeys.map((key) => (
+                          <th key={key} className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap capitalize">
+                            {key.replace(/_/g, ' ')}
+                          </th>
+                        ))}
+                        <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap">UTM Source</th>
+                        <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap">UTM Campaign</th>
+                        <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap">IP</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {formLeads.map((lead, idx) => (
+                        <tr key={lead.id} className="border-b border-slate-200 dark:border-slate-800 last:border-0 hover:bg-slate-50 dark:hover:bg-slate-800/40">
+                          <td className="px-4 py-2.5 text-slate-400 text-xs">
+                            {(formLeadsPage - 1) * FORM_LEADS_LIMIT + idx + 1}
+                          </td>
+                          <td className="px-4 py-2.5 text-slate-600 dark:text-slate-300 text-xs whitespace-nowrap">
+                            {new Date(lead.submitted_at).toLocaleString()}
+                          </td>
+                          <td className="px-4 py-2.5 text-slate-700 dark:text-slate-300 whitespace-nowrap">
+                            {lead.test_variants?.name ?? "—"}
+                          </td>
+                          {formLeadsFieldKeys.map((key) => (
+                            <td key={key} className="px-4 py-2.5 text-slate-700 dark:text-slate-300 max-w-[200px] truncate" title={lead.form_fields?.[key] ?? ''}>
+                              {lead.form_fields?.[key] ?? <span className="text-slate-400">—</span>}
+                            </td>
+                          ))}
+                          <td className="px-4 py-2.5 text-slate-500 text-xs">{lead.utm_source ?? "—"}</td>
+                          <td className="px-4 py-2.5 text-slate-500 text-xs">{lead.utm_campaign ?? "—"}</td>
+                          <td className="px-4 py-2.5 text-slate-400 text-xs font-mono">{lead.ip_address ?? "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Pagination */}
+                {formLeadsTotal > FORM_LEADS_LIMIT && (
+                  <div className="flex items-center justify-between px-5 py-3 border-t border-slate-200 dark:border-slate-700">
+                    <p className="text-xs text-slate-500">
+                      Showing {(formLeadsPage - 1) * FORM_LEADS_LIMIT + 1}–{Math.min(formLeadsPage * FORM_LEADS_LIMIT, formLeadsTotal)} of {formLeadsTotal}
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => fetchFormLeads(formLeadsPage - 1)}
+                        disabled={formLeadsPage <= 1 || formLeadsLoading}
+                        className="btn-secondary text-xs"
+                      >
+                        <ChevronLeft size={12} /> Prev
+                      </button>
+                      <span className="text-xs text-slate-500">Page {formLeadsPage} of {Math.ceil(formLeadsTotal / FORM_LEADS_LIMIT)}</span>
+                      <button
+                        onClick={() => fetchFormLeads(formLeadsPage + 1)}
+                        disabled={formLeadsPage >= Math.ceil(formLeadsTotal / FORM_LEADS_LIMIT) || formLeadsLoading}
+                        className="btn-secondary text-xs"
+                      >
+                        Next <ChevronRightSmall size={12} />
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ─── INTEGRATIONS TAB ─── */}
+        {tab === "integrations" && (
+          <div className="space-y-6 p-6">
+
+            {/* Sub-tabs */}
+            <div className="flex gap-1 bg-slate-100 dark:bg-slate-800 rounded-lg p-1 w-fit">
+              {(['native', 'webhooks'] as const).map(st => (
+                <button
+                  key={st}
+                  onClick={() => setIntegrationsSubTab(st)}
+                  className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${integrationsSubTab === st ? 'bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100 shadow-sm' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}
+                >
+                  {st === 'native' ? 'Native Integrations' : 'Webhooks'}
+                </button>
+              ))}
+            </div>
+
+            {/* ── NATIVE INTEGRATIONS ── */}
+            {integrationsSubTab === 'native' && (<>
+
+            {/* ── HubSpot connect card ── */}
+            <div className="card overflow-hidden">
+              <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700 flex items-center gap-3">
+                <div className="w-8 h-8 rounded-lg bg-orange-500/15 flex items-center justify-center">
+                  <svg width="18" height="18" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M326.4 173.5v-51.7a43.5 43.5 0 0 0 25.2-39.3V80.9C351.6 57.4 332.7 38 309.2 38h-1.4c-23.5 0-42.4 19.4-42.4 42.9v1.6a43.5 43.5 0 0 0 25.2 39.3v51.7c-24.5 3.7-46.9 13.9-65.2 28.8L107 110.1a38.9 38.9 0 1 0-21.6 19.5l113.2 91.6c-16.7 22.4-26.6 50.2-26.6 80.4 0 73.3 59.5 132.8 132.8 132.8S437.6 374.9 437.6 301.6c0-69-52.6-125.7-120-131.8l8.8-.3zM304.8 392.4c-50 0-90.5-40.5-90.5-90.5s40.5-90.5 90.5-90.5 90.5 40.5 90.5 90.5-40.5 90.5-90.5 90.5z" fill="#FF7A59"/>
+                  </svg>
+                </div>
+                <div>
+                  <p className="font-semibold text-sm text-slate-800 dark:text-slate-200">HubSpot</p>
+                  <p className="text-xs text-slate-500">Send leads to your HubSpot CRM automatically</p>
+                </div>
+                {hsIntegration && (
+                  <span className="ml-auto flex items-center gap-1.5 text-xs font-medium text-green-500">
+                    <CheckCircle2 size={13} /> Connected
+                  </span>
+                )}
+              </div>
+
+              <div className="px-5 py-4">
+                {!hsIntegration ? (
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs text-slate-500">
+                      Connect your HubSpot account to automatically sync form leads to your CRM.
+                    </p>
+                    <a
+                      href={workspaceId ? `/api/integrations/hubspot/connect?workspaceId=${workspaceId}` : '#'}
+                      className="btn-primary text-sm flex items-center gap-2 px-4 py-2 rounded-lg font-medium no-underline"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M326.4 173.5v-51.7a43.5 43.5 0 0 0 25.2-39.3V80.9C351.6 57.4 332.7 38 309.2 38h-1.4c-23.5 0-42.4 19.4-42.4 42.9v1.6a43.5 43.5 0 0 0 25.2 39.3v51.7c-24.5 3.7-46.9 13.9-65.2 28.8L107 110.1a38.9 38.9 0 1 0-21.6 19.5l113.2 91.6c-16.7 22.4-26.6 50.2-26.6 80.4 0 73.3 59.5 132.8 132.8 132.8S437.6 374.9 437.6 301.6c0-69-52.6-125.7-120-131.8l8.8-.3zM304.8 392.4c-50 0-90.5-40.5-90.5-90.5s40.5-90.5 90.5-90.5 90.5 40.5 90.5 90.5-40.5 90.5-90.5 90.5z" fill="white"/>
+                      </svg>
+                      Connect HubSpot
+                    </a>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs text-slate-500">
+                      HubSpot is connected. Map your form fields to HubSpot contact properties below.
+                    </p>
+                    <button
+                      onClick={disconnectHubSpot}
+                      disabled={hsDisconnecting}
+                      className="text-xs text-red-400 hover:text-red-300 transition-colors flex items-center gap-1"
+                    >
+                      <XCircle size={13} /> {hsDisconnecting ? 'Disconnecting…' : 'Disconnect'}
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* ── Field mapping (inline when connected) ── */}
+              {hsIntegration && (
+                <>
+                  <div className="px-5 py-3 border-t border-b border-slate-200 dark:border-slate-700 flex items-center gap-4">
+                    <p className="text-sm font-medium text-slate-800 dark:text-slate-200 flex-1">Field Mapping</p>
+                    {testMapping.last_synced_at && (
+                      <div className="flex items-center gap-3 text-xs text-slate-400">
+                        <span className="flex items-center gap-1">
+                          <CheckCircle2 size={12} className="text-green-400" />
+                          {testMapping.total_synced ?? 0} synced
+                        </span>
+                        {(testMapping.total_failed ?? 0) > 0 && (
+                          <span className="flex items-center gap-1 text-red-400">
+                            <XCircle size={12} /> {testMapping.total_failed} failed
+                          </span>
+                        )}
+                        <span className="flex items-center gap-1">
+                          <RefreshCw size={11} />
+                          {new Date(testMapping.last_synced_at).toLocaleDateString()}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  {hsPropsLoading ? (
+                    <div className="px-5 py-6 flex items-center gap-2 text-sm text-slate-400">
+                      <Loader2 size={14} className="animate-spin" /> Loading HubSpot properties…
+                    </div>
+                  ) : (
+                    <div className="px-5 py-4 space-y-2">
+                      <div className="grid grid-cols-[1fr_32px_1fr_32px] gap-2 text-xs font-medium text-slate-500 uppercase tracking-wider mb-3">
+                        <span>SplitLab Field</span>
+                        <span />
+                        <span>HubSpot Property</span>
+                        <span />
+                      </div>
+
+                      {[
+                        { key: 'ip_address',   label: 'IP Address' },
+                        { key: 'variant',      label: 'Page Variant' },
+                        { key: 'submitted_at', label: 'Submission Date' },
+                        { key: 'utm_source',   label: 'UTM Source' },
+                        { key: 'utm_medium',   label: 'UTM Medium' },
+                        { key: 'utm_campaign', label: 'UTM Campaign' },
+                        { key: 'utm_content',  label: 'UTM Content' },
+                        { key: 'utm_term',     label: 'UTM Term' },
+                        { key: 'gclid',        label: 'GCLID' },
+                      ].map(sf => (
+                        <div key={sf.key} className="grid grid-cols-[1fr_32px_1fr_32px] gap-2 items-center">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs px-2 py-1 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-mono">{sf.label}</span>
+                            <span className="text-xs text-slate-400 bg-slate-50 dark:bg-slate-800/50 px-1.5 py-0.5 rounded">system</span>
+                          </div>
+                          <ArrowRight size={13} className="text-orange-400 mx-auto" />
+                          <select
+                            value={testMapping.field_mappings[sf.key] ?? ''}
+                            onChange={e => updateMapping(sf.key, e.target.value)}
+                            className="input text-xs py-1.5"
+                          >
+                            <option value="">(-) Not mapped</option>
+                            {hsProperties.map(p => (
+                              <option key={p.name} value={p.name}>{p.label} ({p.name})</option>
+                            ))}
+                          </select>
+                          <span />
+                        </div>
+                      ))}
+
+                      {testFormKeys.length > 0 && (
+                        <div className="border-t border-slate-100 dark:border-slate-800 my-3" />
+                      )}
+
+                      {testFormKeys.map(fk => (
+                        <div key={fk} className="grid grid-cols-[1fr_32px_1fr_32px] gap-2 items-center">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs px-2 py-1 rounded bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 font-mono">{fk}</span>
+                            <span className="text-xs text-slate-400 bg-slate-50 dark:bg-slate-800/50 px-1.5 py-0.5 rounded">form</span>
+                          </div>
+                          <ArrowRight size={13} className="text-orange-400 mx-auto" />
+                          <select
+                            value={testMapping.field_mappings[fk] ?? ''}
+                            onChange={e => updateMapping(fk, e.target.value)}
+                            className="input text-xs py-1.5"
+                          >
+                            <option value="">(-) Not mapped</option>
+                            {hsProperties.map(p => (
+                              <option key={p.name} value={p.name}>{p.label} ({p.name})</option>
+                            ))}
+                          </select>
+                          <button onClick={() => removeMapping(fk)} className="text-slate-300 hover:text-red-400 transition-colors">
+                            <X size={14} />
+                          </button>
+                        </div>
+                      ))}
+
+                      <div className="flex items-center gap-2 mt-4 pt-3 border-t border-slate-100 dark:border-slate-800">
+                        <input
+                          type="text"
+                          placeholder="+ Add another form field…"
+                          value={newFieldKey}
+                          onChange={e => setNewFieldKey(e.target.value)}
+                          onKeyDown={e => e.key === 'Enter' && addCustomFormField()}
+                          className="input text-xs py-1.5 flex-1"
+                        />
+                        <button
+                          onClick={() => addCustomFormField()}
+                          className="text-xs text-indigo-500 hover:text-indigo-400 transition-colors font-medium flex items-center gap-1"
+                        >
+                          <Plus size={13} /> Add field
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="px-5 py-3 border-t border-slate-200 dark:border-slate-700 flex justify-end">
+                    <Button size="sm" onClick={saveTestMapping} loading={savingMapping}>
+                      <Check size={13} /> Save Changes
+                    </Button>
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* ── Email Notifications card ── */}
+            <div className="card overflow-hidden">
+              <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700 flex items-center gap-3">
+                <div className="w-8 h-8 rounded-lg bg-indigo-500/15 flex items-center justify-center">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-indigo-400"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
+                </div>
+                <div>
+                  <p className="font-semibold text-sm text-slate-800 dark:text-slate-200">Email Notifications</p>
+                  <p className="text-xs text-slate-500">Get an email every time a form is submitted on this test</p>
+                </div>
+                {emailIntegration && (
+                  <span className="ml-auto flex items-center gap-1.5 text-xs font-medium text-green-500">
+                    <CheckCircle2 size={13} /> Enabled
+                  </span>
+                )}
+              </div>
+
+              <div className="px-5 py-4">
+                {!emailIntegration ? (
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs text-slate-500">
+                      Receive an email notification every time a visitor submits a form on any variant of this test.
+                    </p>
+                    <button
+                      onClick={openEmailModal}
+                      className="btn-primary text-sm flex items-center gap-2 px-4 py-2 rounded-lg font-medium ml-4 flex-shrink-0"
+                    >
+                      <Plus size={14} /> Enable
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs text-slate-500">
+                      Configure recipients and subject below. Notifications fire on every form submission.
+                    </p>
+                    <button
+                      onClick={disconnectEmail}
+                      disabled={emailDisconnecting}
+                      className="text-xs text-red-400 hover:text-red-300 transition-colors flex items-center gap-1 ml-4 flex-shrink-0"
+                    >
+                      <XCircle size={13} /> {emailDisconnecting ? 'Removing…' : 'Remove'}
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* ── Email config summary (when configured) ── */}
+            {emailIntegration && emailMapping.recipients && (
+              <div className="card overflow-hidden">
+                <div className="px-5 py-3 border-b border-slate-200 dark:border-slate-700 flex items-center gap-4">
+                  <p className="text-sm font-medium text-slate-800 dark:text-slate-200 flex-1">Email Configuration</p>
+                  <button
+                    onClick={openEmailModal}
+                    className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors flex items-center gap-1"
+                  >
+                    <Pencil size={12} /> Edit
+                  </button>
+                </div>
+                <div className="px-5 py-4 space-y-3">
+                  <div>
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Recipients</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {emailMapping.recipients.split(',').map(r => r.trim()).filter(Boolean).map(r => (
+                        <span key={r} className="inline-flex items-center px-2 py-0.5 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-xs font-mono">{r}</span>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Subject</p>
+                    <p className="text-sm text-slate-700 dark:text-slate-300 font-mono text-xs">{emailMapping.subject}</p>
+                  </div>
+                  <div className="flex items-start gap-2 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 px-3 py-2 text-xs text-slate-400">
+                    <Info size={12} className="flex-shrink-0 mt-0.5" />
+                    <span>Email includes all captured form fields, variant name, and UTM data. Same config applies to all variants.</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+
+            </>)}
+
+            {/* ── WEBHOOKS TAB ── */}
+            {integrationsSubTab === 'webhooks' && (
+              <div className="space-y-4">
+                {/* Header row */}
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-slate-800 dark:text-slate-200">Webhooks</p>
+                    <p className="text-xs text-slate-500 mt-0.5">POST form data to any URL when a lead is submitted. Useful for Zapier, Make, or custom CRMs.</p>
+                  </div>
+                  <button onClick={openAddWebhookModal} className="btn-primary text-sm flex items-center gap-2 px-4 py-2 rounded-lg font-medium flex-shrink-0">
+                    <Plus size={14} /> Add Webhook
+                  </button>
+                </div>
+
+                {/* Webhook list */}
+                {webhooks.length === 0 ? (
+                  <div className="card px-6 py-10 text-center">
+                    <div className="w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center mx-auto mb-3">
+                      <Link2 size={18} className="text-slate-400" />
+                    </div>
+                    <p className="text-sm font-medium text-slate-600 dark:text-slate-400">No webhooks configured</p>
+                    <p className="text-xs text-slate-400 mt-1">Add a webhook to forward leads to any external URL.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {webhooks.map(wh => {
+                      const mapping = webhookMappings[wh.id];
+                      return (
+                        <div key={wh.id} className="card overflow-hidden">
+                          <div className="px-5 py-4 flex items-center gap-4">
+                            <div className="w-9 h-9 rounded-lg bg-violet-500/15 flex items-center justify-center flex-shrink-0">
+                              <Link2 size={16} className="text-violet-400" />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              {/* URL + format badge */}
+                              <div className="flex items-center gap-2 mb-1.5">
+                                <span className="flex-shrink-0 text-xs px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 font-semibold uppercase tracking-wide">POST</span>
+                                <p className="text-sm font-mono text-slate-700 dark:text-slate-200 truncate">{wh.config?.url ?? '—'}</p>
+                                <span className="flex-shrink-0 text-xs px-2 py-0.5 rounded-md bg-violet-500/10 text-violet-400 border border-violet-500/20 font-medium uppercase">{wh.config?.format ?? 'json'}</span>
+                              </div>
+                              {/* Stats row */}
+                              <div className="flex items-center gap-3 text-xs text-slate-400">
+                                {mapping?.last_synced_at ? (
+                                  <>
+                                    <span className="flex items-center gap-1">
+                                      <CheckCircle2 size={11} className="text-green-400" />
+                                      {mapping.total_synced ?? 0} delivered
+                                    </span>
+                                    {(mapping.total_failed ?? 0) > 0 && (
+                                      <span className="flex items-center gap-1 text-red-400">
+                                        <XCircle size={11} /> {mapping.total_failed} failed
+                                      </span>
+                                    )}
+                                    <span className="flex items-center gap-1">
+                                      <RefreshCw size={10} /> Last: {new Date(mapping.last_synced_at).toLocaleDateString()}
+                                    </span>
+                                  </>
+                                ) : (
+                                  <span className="text-slate-500 italic">No deliveries yet</span>
+                                )}
+                                {wh.config?.headers?.length ? (
+                                  <span className="flex items-center gap-1 text-slate-500">· {wh.config.headers.length} custom header{wh.config.headers.length > 1 ? 's' : ''}</span>
+                                ) : null}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-3 flex-shrink-0 border-l border-slate-200 dark:border-slate-700 pl-4">
+                              <button onClick={() => openEditWebhookModal(wh)} className="text-xs text-slate-400 hover:text-slate-200 transition-colors flex items-center gap-1.5">
+                                <Pencil size={13} /> Edit
+                              </button>
+                              <button
+                                onClick={() => deleteWebhook(wh.id)}
+                                disabled={wDeleting === wh.id}
+                                className="text-xs text-red-400 hover:text-red-300 transition-colors flex items-center gap-1.5"
+                              >
+                                {wDeleting === wh.id ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                                {wDeleting === wh.id ? 'Removing…' : 'Remove'}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+          </div>
+        )}
+
+        {/* ── Webhook Modal ── */}
+        <Modal open={webhookModalOpen} onClose={() => setWebhookModalOpen(false)} title={editingWebhookId ? 'Edit Webhook' : 'Add a Webhook'}>
+          <form onSubmit={submitWebhookModal} className="space-y-6">
+            <p className="text-sm text-slate-500 dark:text-slate-400">POST your form data to any URL you choose. The payload fires every time a visitor submits a form on this test.</p>
+
+            {/* URL + Format row */}
+            <div className="grid grid-cols-[1fr_148px] gap-3 items-end">
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1.5">
+                  Webhook URL <span className="text-red-400">*</span>
+                </label>
+                <div className="flex items-stretch rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 focus-within:ring-2 focus-within:ring-indigo-500 focus-within:border-transparent transition-all overflow-hidden">
+                  <span className="flex items-center px-3 bg-slate-50 dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 text-slate-400 text-xs font-medium select-none flex-shrink-0">
+                    POST
+                  </span>
+                  <input
+                    type="url"
+                    placeholder="https://hooks.zapier.com/hooks/catch/…"
+                    value={wUrl}
+                    onChange={e => setWUrl(e.target.value)}
+                    className="flex-1 px-3 py-2.5 text-sm bg-transparent text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none font-mono placeholder:font-sans min-w-0"
+                    required
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1.5">Format</label>
+                <select value={wFormat} onChange={e => setWFormat(e.target.value as 'json' | 'form' | 'xml')} className="input w-full text-sm">
+                  <option value="json">JSON</option>
+                  <option value="form">Form Encoded</option>
+                  <option value="xml">XML</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Custom Headers */}
+            <div className="rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-2.5 bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-700">
+                <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wider">Custom Headers</span>
+                <button
+                  type="button"
+                  onClick={() => setWHeaders(prev => [...prev, { key: '', value: '' }])}
+                  className="text-xs text-indigo-500 hover:text-indigo-400 font-medium flex items-center gap-1 transition-colors"
+                >
+                  <Plus size={12} /> Add Header
+                </button>
+              </div>
+              <div className="px-4 py-3 space-y-2">
+                {wHeaders.length === 0 ? (
+                  <p className="text-xs text-slate-400 italic py-1">No custom headers. Add one if your endpoint requires authentication (e.g. <span className="font-mono not-italic">Authorization: Bearer …</span>).</p>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-[1fr_1fr_28px] gap-2 text-xs font-medium text-slate-400 uppercase tracking-wider">
+                      <span>Header Name</span><span>Value</span><span />
+                    </div>
+                    {wHeaders.map((h, i) => (
+                      <div key={i} className="grid grid-cols-[1fr_1fr_28px] gap-2 items-center">
+                        <input
+                          placeholder="e.g. Authorization"
+                          value={h.key}
+                          onChange={e => setWHeaders(prev => prev.map((x, j) => j === i ? { ...x, key: e.target.value } : x))}
+                          className="input text-sm font-mono placeholder:font-sans"
+                        />
+                        <input
+                          placeholder="e.g. Bearer token123"
+                          value={h.value}
+                          onChange={e => setWHeaders(prev => prev.map((x, j) => j === i ? { ...x, value: e.target.value } : x))}
+                          className="input text-sm font-mono placeholder:font-sans"
+                        />
+                        <button type="button" onClick={() => setWHeaders(prev => prev.filter((_, j) => j !== i))} className="text-slate-400 hover:text-red-400 transition-colors flex items-center justify-center">
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    ))}
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* Field Mapping */}
+            <div className="rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+              <div className="px-4 py-2.5 bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-700">
+                <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wider">Field Mapping</span>
+              </div>
+
+              <div className="px-4 py-3 space-y-5">
+                {/* Info callout */}
+                <div className="flex items-start gap-2 rounded-lg bg-amber-500/10 border border-amber-500/20 px-3 py-2.5 text-xs text-amber-500 dark:text-amber-400">
+                  <Info size={13} className="flex-shrink-0 mt-px" />
+                  <span>The <strong>right side</strong> is the key name your CRM or tool will receive. Leave it <strong>blank</strong> to exclude that field from the payload entirely.</span>
+                </div>
+
+                {/* Form Fields section */}
+                <div>
+                  <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2">Form Fields</p>
+                  {Object.keys(wFormFields).length === 0 ? (
+                    <p className="text-xs text-slate-400 italic mb-2">No form fields detected yet. Scan a variant or add fields manually below.</p>
+                  ) : (
+                    <div className="space-y-2 mb-3">
+                      <div className="grid grid-cols-[1fr_24px_1fr_28px] gap-2 text-xs font-medium text-slate-400 uppercase tracking-wider">
+                        <span>SplitLab Field</span><span /><span>Webhook Key</span><span />
+                      </div>
+                      {Object.keys(wFormFields).map(fk => (
+                        <div key={fk} className="grid grid-cols-[1fr_24px_1fr_28px] gap-2 items-center">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span className="inline-block text-xs px-2 py-1.5 rounded-lg bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 font-mono truncate border border-blue-100 dark:border-blue-800">{fk}</span>
+                          </div>
+                          <ArrowRight size={13} className="text-slate-300 dark:text-slate-600 mx-auto flex-shrink-0" />
+                          <input
+                            value={wFormFields[fk] ?? ''}
+                            onChange={e => setWFormFields(prev => ({ ...prev, [fk]: e.target.value }))}
+                            placeholder="(excluded)"
+                            className="input text-sm font-mono placeholder:font-sans placeholder:text-slate-300 dark:placeholder:text-slate-600"
+                          />
+                          <button type="button" onClick={() => setWFormFields(prev => { const n = { ...prev }; delete n[fk]; return n; })} className="text-slate-300 hover:text-red-400 transition-colors flex items-center justify-center">
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {/* Add form field */}
+                  <div className="flex items-center gap-2 pt-1 border-t border-slate-100 dark:border-slate-800">
+                    <input
+                      type="text"
+                      placeholder="Add a form field name (e.g. phone_number)"
+                      value={wNewFormKey}
+                      onChange={e => setWNewFormKey(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); const k = wNewFormKey.trim(); if (k) { setWFormFields(prev => ({ ...prev, [k]: k })); setWNewFormKey(''); } } }}
+                      className="input text-sm font-mono placeholder:font-sans flex-1"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => { const k = wNewFormKey.trim(); if (k) { setWFormFields(prev => ({ ...prev, [k]: k })); setWNewFormKey(''); } }}
+                      className="text-xs text-indigo-500 hover:text-indigo-400 font-medium flex items-center gap-1 flex-shrink-0 transition-colors"
+                    >
+                      <Plus size={12} /> Add
+                    </button>
+                  </div>
+                </div>
+
+                {/* System Fields section */}
+                <div className="border-t border-slate-100 dark:border-slate-800 pt-4">
+                  <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2">System Fields</p>
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-[1fr_24px_1fr] gap-2 text-xs font-medium text-slate-400 uppercase tracking-wider">
+                      <span>SplitLab Field</span><span /><span>Webhook Key</span>
+                    </div>
+                    {SYSTEM_FIELDS.map(sf => (
+                      <div key={sf.key} className="grid grid-cols-[1fr_24px_1fr] gap-2 items-center">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs px-2 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-mono border border-slate-200 dark:border-slate-700">{sf.label}</span>
+                        </div>
+                        <ArrowRight size={13} className="text-slate-300 dark:text-slate-600 mx-auto flex-shrink-0" />
+                        <input
+                          value={wSystemFields[sf.key] ?? ''}
+                          onChange={e => setWSystemFields(prev => ({ ...prev, [sf.key]: e.target.value }))}
+                          placeholder="(excluded)"
+                          className="input text-sm font-mono placeholder:font-sans placeholder:text-slate-300 dark:placeholder:text-slate-600"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Send Test */}
+            <div className="flex items-center gap-3 rounded-xl border border-slate-200 dark:border-slate-700 px-4 py-3 bg-slate-50 dark:bg-slate-800/40">
+              <button
+                type="button"
+                onClick={testWebhook}
+                disabled={wTesting || !wUrl.trim()}
+                className="btn-secondary text-sm flex items-center gap-2 px-4 py-2 rounded-lg font-medium flex-shrink-0 disabled:opacity-50"
+              >
+                {wTesting ? <Loader2 size={14} className="animate-spin" /> : <ScanLine size={14} />}
+                {wTesting ? 'Sending test…' : 'Send Test Payload'}
+              </button>
+              {wTestResult ? (
+                <div className={`flex items-center gap-2 text-sm font-medium ${wTestResult.ok ? 'text-green-500' : 'text-red-400'}`}>
+                  {wTestResult.ok ? <CheckCircle2 size={15} /> : <XCircle size={15} />}
+                  <span>
+                    {wTestResult.ok
+                      ? `${wTestResult.statusCode ?? 200} OK — Test payload delivered`
+                      : (wTestResult.error ?? `Error ${wTestResult.statusCode ?? ''}`)}
+                  </span>
+                </div>
+              ) : (
+                <p className="text-xs text-slate-400">Send a sample payload to verify your endpoint is working before saving.</p>
+              )}
+            </div>
+
+            {wError && (
+              <div className="flex items-center gap-2 rounded-lg bg-red-500/10 border border-red-500/20 px-3 py-2.5 text-sm text-red-400">
+                <XCircle size={14} className="flex-shrink-0" /> {wError}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-3 pt-1 border-t border-slate-200 dark:border-slate-700">
+              <button type="button" onClick={() => setWebhookModalOpen(false)} className="btn-secondary text-sm px-5 py-2">Cancel</button>
+              <Button type="submit" loading={wSaving}>
+                <Check size={14} /> Save Changes
+              </Button>
+            </div>
+          </form>
+        </Modal>
+
         {/* ─── SETTINGS TAB ─── */}
         {tab === "settings" && (
           <>
@@ -2084,12 +3747,12 @@ export default function AnalyticsClient({
 
             {/* Set Up Goal Conversion Tracking */}
             {anyTrackerMissing && (
-              <div className="flex items-start gap-2 rounded-lg bg-red-500/10 border border-red-500/30 px-4 py-3 text-sm text-red-400">
+              <div className="flex items-start gap-2 rounded-lg bg-amber-500/10 border border-amber-500/30 px-4 py-3 text-sm text-amber-400">
                 <AlertTriangle size={14} className="flex-shrink-0 mt-0.5" />
-                <span>Install the Global Tracking Snippet above on your landing pages before you can set up goals.</span>
+                <span>Some variants are missing the tracker snippet — conversions may not be recorded for those variants until it is installed.</span>
               </div>
             )}
-            <div className={`card overflow-hidden ${anyTrackerMissing ? 'opacity-50 pointer-events-none' : ''}`}>
+            <div className="card overflow-hidden">
               <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700">
                 <div className="flex items-center gap-3">
                   <div className="w-8 h-8 rounded-lg bg-indigo-500/20 flex items-center justify-center">
@@ -2132,115 +3795,123 @@ export default function AnalyticsClient({
                   </div>
                 )}
 
-                {scanResults && (
-                  <div className="space-y-4 max-h-96 overflow-y-auto pr-1">
-                    {scanResults.variants.map((vs) => (
-                      <div key={vs.variant_id}>
-                        <div className="flex items-center gap-2 mb-2">
-                          <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">
-                            {vs.variant_name}
-                          </span>
-                          <span className="text-slate-400 text-xs">
-                            {vs.elements.length} element
-                            {vs.elements.length !== 1 ? "s" : ""}
-                          </span>
-                          <span className="text-slate-500 text-xs ml-auto">
-                            {new Date(vs.scanned_at).toLocaleString()}
-                          </span>
+                {scanResults && (() => {
+                  const activeId = scanTab ?? scanResults.variants[0]?.variant_id;
+                  const activeVs = scanResults.variants.find(v => v.variant_id === activeId) ?? scanResults.variants[0];
+                  return (
+                    <div>
+                      {/* Variant tabs */}
+                      {scanResults.variants.length > 1 && (
+                        <div className="flex gap-0 mb-4 border-b border-slate-200 dark:border-slate-700 -mx-5 px-5 overflow-x-auto">
+                          {scanResults.variants.map((vs) => (
+                            <button
+                              key={vs.variant_id}
+                              type="button"
+                              onClick={() => setScanTab(vs.variant_id)}
+                              className={`px-4 py-2 text-xs font-medium border-b-2 transition-colors whitespace-nowrap flex items-center gap-1.5 ${
+                                vs.variant_id === activeId
+                                  ? "border-indigo-500 text-indigo-400"
+                                  : "border-transparent text-slate-500 hover:text-slate-300"
+                              }`}
+                            >
+                              {vs.variant_name}
+                              <span className={`text-xs ${vs.variant_id === activeId ? "text-indigo-400/60" : "text-slate-600"}`}>
+                                {vs.elements.length}
+                              </span>
+                            </button>
+                          ))}
                         </div>
-                        {vs.elements.length === 0 ? (
-                          <p className="text-slate-400 text-xs px-3 py-2">
-                            No trackable elements found.
-                          </p>
-                        ) : (
-                          <div className="space-y-1.5">
-                            {vs.elements.map((el, i) => {
-                              const icon =
-                                el.type === "form" ? (
-                                  <FormInput
-                                    size={13}
-                                    className="text-purple-400 flex-shrink-0"
-                                  />
-                                ) : el.type === "call" ? (
-                                  <Phone
-                                    size={13}
-                                    className="text-green-400 flex-shrink-0"
-                                  />
-                                ) : el.type === "link" ? (
-                                  <ExternalLink
-                                    size={13}
-                                    className="text-blue-400 flex-shrink-0"
-                                  />
-                                ) : el.type === "toggle" ? (
-                                  <ToggleLeft
-                                    size={13}
-                                    className="text-amber-400 flex-shrink-0"
-                                  />
-                                ) : (
-                                  <MousePointerClick
-                                    size={13}
-                                    className="text-indigo-400 flex-shrink-0"
-                                  />
-                                );
+                      )}
 
-                              const label = el.text
-                                ? `"${el.text}"`
-                                : el.id
-                                  ? `#${el.id}`
-                                  : el.type;
-
-                              const alreadyAdded = editGoals.some((g) => {
-                                if (el.id) return g.selector === `id:${el.id}`;
-                                if (el.text)
-                                  return g.selector === `text:${el.text}`;
-                                return false;
-                              });
-
-                              return (
-                                <div
-                                  key={i}
-                                  className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700"
-                                >
-                                  <div className="flex items-center gap-2 min-w-0">
-                                    {icon}
-                                    <span className="text-slate-700 dark:text-slate-300 text-sm truncate">
-                                      {label}
-                                    </span>
-                                    {el.id && (
-                                      <span className="text-slate-400 font-mono text-xs flex-shrink-0">
-                                        #{el.id}
-                                      </span>
-                                    )}
-                                    <span className="text-slate-400 text-xs flex-shrink-0 capitalize">
-                                      {el.type.replace("_", " ")}
-                                    </span>
-                                  </div>
-                                  {alreadyAdded ? (
-                                    <button
-                                      type="button"
-                                      onClick={() => removeGoalBySelector(el)}
-                                      className="flex-shrink-0 flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-colors"
-                                    >
-                                      <X size={11} /> Remove
-                                    </button>
-                                  ) : (
-                                    <button
-                                      type="button"
-                                      onClick={() => enableAsGoal(el)}
-                                      className="flex-shrink-0 text-xs px-2.5 py-1 rounded-lg border border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/10 transition-colors"
-                                    >
-                                      + Goal
-                                    </button>
-                                  )}
-                                </div>
-                              );
-                            })}
+                      {/* Active variant content */}
+                      {activeVs && (
+                        <div>
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-xs text-slate-500">
+                              {activeVs.elements.length} element{activeVs.elements.length !== 1 ? "s" : ""}
+                            </span>
+                            <span className="text-slate-500 text-xs">
+                              {new Date(activeVs.scanned_at).toLocaleString()}
+                            </span>
                           </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
+                          {activeVs.elements.length === 0 ? (
+                            <p className="text-slate-400 text-xs px-3 py-2">
+                              No trackable elements found.
+                            </p>
+                          ) : (
+                            <div className="space-y-1.5 max-h-72 overflow-y-auto pr-1">
+                              {activeVs.elements.map((el, i) => {
+                                const icon =
+                                  el.type === "form" ? (
+                                    <FormInput size={13} className="text-purple-400 flex-shrink-0" />
+                                  ) : el.type === "call" ? (
+                                    <Phone size={13} className="text-green-400 flex-shrink-0" />
+                                  ) : el.type === "link" ? (
+                                    <ExternalLink size={13} className="text-blue-400 flex-shrink-0" />
+                                  ) : el.type === "toggle" ? (
+                                    <ToggleLeft size={13} className="text-amber-400 flex-shrink-0" />
+                                  ) : (
+                                    <MousePointerClick size={13} className="text-indigo-400 flex-shrink-0" />
+                                  );
+
+                                const label = el.text
+                                  ? `"${el.text}"`
+                                  : el.id
+                                    ? `#${el.id}`
+                                    : el.type;
+
+                                const alreadyAdded = editGoals.some((g) => {
+                                  if (el.id) return g.selector === `id:${el.id}`;
+                                  if (el.text) return g.selector === `text:${el.text}`;
+                                  return false;
+                                });
+
+                                return (
+                                  <div
+                                    key={i}
+                                    className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700"
+                                  >
+                                    <div className="flex items-center gap-2 min-w-0">
+                                      {icon}
+                                      <span className="text-slate-700 dark:text-slate-300 text-sm truncate">
+                                        {label}
+                                      </span>
+                                      {el.id && (
+                                        <span className="text-slate-400 font-mono text-xs flex-shrink-0">
+                                          #{el.id}
+                                        </span>
+                                      )}
+                                      <span className="text-slate-400 text-xs flex-shrink-0 capitalize">
+                                        {el.type.replace("_", " ")}
+                                      </span>
+                                    </div>
+                                    {alreadyAdded ? (
+                                      <button
+                                        type="button"
+                                        onClick={() => removeGoalBySelector(el)}
+                                        className="flex-shrink-0 flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-colors"
+                                      >
+                                        <X size={11} /> Remove
+                                      </button>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={() => enableAsGoal(el)}
+                                        className="flex-shrink-0 text-xs px-2.5 py-1 rounded-lg border border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/10 transition-colors"
+                                      >
+                                        + Goal
+                                      </button>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             </div>
 
@@ -2575,6 +4246,78 @@ export default function AnalyticsClient({
         description="This will permanently delete the variant and its event data. Traffic weights will need to be adjusted."
         loading={deletingVariant}
       />
+
+      {/* Email Notifications Config Modal */}
+      <Modal
+        open={emailModalOpen}
+        onClose={() => !savingEmail && setEmailModalOpen(false)}
+        title={emailIntegration ? 'Edit Email Notifications' : 'Enable Email Notifications'}
+        size="sm"
+      >
+        <form onSubmit={submitEmailModal} className="space-y-5">
+          <div>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+              Notification Recipients
+            </label>
+            <input
+              type="text"
+              value={emailModalRecipients}
+              onChange={e => { setEmailModalRecipients(e.target.value); setEmailModalError(''); }}
+              placeholder="alice@agency.com, bob@agency.com"
+              className="input-base text-sm w-full"
+              autoFocus
+              disabled={savingEmail}
+            />
+            <p className="text-xs text-slate-400 mt-1.5">
+              Comma-separated. Every person listed receives a notification on each form submission.
+            </p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+              Subject Line
+            </label>
+            <input
+              type="text"
+              value={emailModalSubject}
+              onChange={e => setEmailModalSubject(e.target.value)}
+              placeholder="New lead: {{test}} - {{variant}}"
+              className="input-base text-sm w-full"
+              disabled={savingEmail}
+            />
+            <p className="text-xs text-slate-400 mt-1.5">
+              Use{' '}
+              <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded font-mono text-xs">{'{{test}}'}</code>{' '}
+              and{' '}
+              <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded font-mono text-xs">{'{{variant}}'}</code>{' '}
+              as dynamic placeholders.
+            </p>
+          </div>
+
+          <div className="flex items-start gap-2 rounded-lg bg-indigo-500/8 border border-indigo-500/20 px-3 py-2.5 text-xs text-indigo-400">
+            <Info size={13} className="flex-shrink-0 mt-0.5" />
+            <span>
+              The email body includes all captured form fields, variant name, submission time, and UTM data automatically.
+              One config applies to all variants of this test — the variant name appears inside each email.
+            </span>
+          </div>
+
+          {emailModalError && (
+            <div className="flex items-center gap-2 rounded-lg bg-red-500/10 border border-red-500/30 px-3 py-2 text-xs text-red-400">
+              <AlertTriangle size={13} className="flex-shrink-0" /> {emailModalError}
+            </div>
+          )}
+
+          <div className="flex justify-end gap-3 pt-1">
+            <Button variant="secondary" type="button" onClick={() => setEmailModalOpen(false)} disabled={savingEmail}>
+              Cancel
+            </Button>
+            <Button type="submit" loading={savingEmail}>
+              <Check size={13} /> {emailIntegration ? 'Save Changes' : 'Enable Notifications'}
+            </Button>
+          </div>
+        </form>
+      </Modal>
 
       {/* HTML Editor Modal */}
       {htmlEditVariant && (

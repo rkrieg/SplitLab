@@ -40,6 +40,7 @@ function buildTrackerScript(appUrl: string): string {
   var EVENT_URL = API_BASE + "/api/event";
   var RESOLVE_URL = API_BASE + "/api/resolve";
   var SCAN_URL = API_BASE + "/api/scan";
+  var REGISTER_FIELDS_URL = API_BASE + "/api/register-form-fields";
   var STORAGE_KEY = "sl_tracking";
   var _sent = {};
   var _ctx = null;
@@ -122,7 +123,13 @@ function buildTrackerScript(appUrl: string): string {
       'display:flex','align-items:center','gap:8px','max-width:320px'
     ].join(';'));
     _scanBanner.innerHTML = '<span style="font-size:15px">✦</span><span>Detecting events within your page that you can track</span>';
-    document.body.appendChild(_scanBanner);
+    if (document.body) {
+      document.body.appendChild(_scanBanner);
+    } else {
+      document.addEventListener('DOMContentLoaded', function() {
+        document.body.appendChild(_scanBanner);
+      });
+    }
   }
   function completeScanBanner() {
     if (_scanBanner) {
@@ -226,6 +233,74 @@ function buildTrackerScript(appUrl: string): string {
     send(payload);
   }
 
+  // ─── Form lead capture ──────────────────────────────────────────────────────
+
+  function captureFormLead(form) {
+    if (!_ctx) return;
+    try {
+      var fields = {};
+      var elements = form.elements;
+      for (var i = 0; i < elements.length; i++) {
+        var el = elements[i];
+        if (!el.name) continue;
+        var t = (el.type || "").toLowerCase();
+        if (t === "password" || t === "hidden" || t === "submit" || t === "button" || t === "reset" || t === "file") continue;
+        if ((t === "checkbox" || t === "radio") && !el.checked) continue;
+        fields[el.name] = el.value || "";
+      }
+      var sp = new URLSearchParams(window.location.search);
+      var utm = {};
+      ["utm_source","utm_medium","utm_content","utm_term","utm_campaign","gclid"].forEach(function(k) {
+        if (sp.get(k)) utm[k] = sp.get(k);
+      });
+      var payload = JSON.stringify({
+        testId: _ctx.tid,
+        variantId: _ctx.vid,
+        visitorHash: _ctx.vh,
+        formFields: fields,
+        utm: utm
+      });
+      var FORM_LEADS_URL = API_BASE + "/api/form-leads";
+      if (navigator.sendBeacon) {
+        try {
+          var blob = new Blob([payload], { type: "application/json" });
+          if (navigator.sendBeacon(FORM_LEADS_URL, blob)) return;
+        } catch(e) {}
+      }
+      var xhr = new XMLHttpRequest();
+      xhr.open("POST", FORM_LEADS_URL, true);
+      xhr.withCredentials = false;
+      xhr.setRequestHeader("Content-Type", "application/json");
+      xhr.send(payload);
+    } catch(e) {}
+  }
+
+  // ─── Register form field names (for HubSpot mapping UI) ────────────────────
+
+  function registerFormFields() {
+    if (!_ctx) return;
+    try {
+      var seen = {};
+      var fields = [];
+      var inputs = document.querySelectorAll("input[name], select[name], textarea[name]");
+      for (var i = 0; i < inputs.length; i++) {
+        var el = inputs[i];
+        var name = el.name;
+        if (!name || seen[name]) continue;
+        var t = (el.type || "").toLowerCase();
+        if (t === "password" || t === "hidden" || t === "submit" || t === "button" || t === "reset" || t === "file") continue;
+        seen[name] = true;
+        fields.push(name);
+      }
+      if (fields.length === 0) return;
+      var xhr = new XMLHttpRequest();
+      xhr.open("POST", REGISTER_FIELDS_URL, true);
+      xhr.withCredentials = false;
+      xhr.setRequestHeader("Content-Type", "application/json");
+      xhr.send(JSON.stringify({ variantId: _ctx.vid, fields: fields }));
+    } catch(e) {}
+  }
+
   // ─── Auto-wire conversions (zero config) ────────────────────────────────────
 
   function wireAutoConversions() {
@@ -239,6 +314,7 @@ function buildTrackerScript(appUrl: string): string {
 
     document.addEventListener("submit", function(e) {
       var form = e.target;
+      captureFormLead(form);
       track("conversion", null, { trigger: "form_submit", id: (form && form.id) || null });
     }, true);
 
@@ -394,6 +470,7 @@ function buildTrackerScript(appUrl: string): string {
     function onReady() {
       wireUrlGoals();
       wireAutoConversions();
+      registerFormFields();
     }
     if (document.readyState === "loading") {
       document.addEventListener("DOMContentLoaded", onReady);

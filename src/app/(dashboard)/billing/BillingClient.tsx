@@ -6,8 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import {
   CreditCard, CheckCircle, AlertTriangle, ExternalLink,
   Loader2, FlaskConical, Building2, ArrowRight, Zap, Users,
-  CalendarClock,
-  ShieldCheck,
+  CalendarClock, ShieldCheck, Eye,
 } from 'lucide-react';
 import {
   PLAN_DETAILS,
@@ -17,8 +16,8 @@ import {
 } from "@/lib/plans";
 import toast from "react-hot-toast";
 
-interface UsageStat { used: number; limit: number | null; pct: number; limitLabel: string; }
-interface UsageData  { plan: string; planName: string; tests: UsageStat; clients: UsageStat; domains?: UsageStat; teamMembers?: UsageStat; }
+interface UsageStat { used: number; limit: number | null; pct: number; limitLabel: string; overCap?: boolean; }
+interface UsageData  { plan: string; planName: string; tests: UsageStat; clients: UsageStat; domains?: UsageStat; teamMembers?: UsageStat; visitors?: UsageStat; }
 
 
 /** Horizontal progress bar — colour shifts red as it fills up. */
@@ -306,18 +305,24 @@ export default function BillingClient({
           </h3>
           <div className="space-y-4">
             {([
-              { icon: FlaskConical, label: 'Active Tests',   stat: usage.tests },
-              { icon: Building2,    label: 'Clients',        stat: usage.clients },
-              ...(usage.domains ? [{ icon: ExternalLink, label: 'Domains', stat: usage.domains }] : []),
-              ...(usage.teamMembers ? [{ icon: Users, label: 'Team Members', stat: usage.teamMembers }] : []),
-            ] as { icon: React.ElementType; label: string; stat: UsageStat }[]).map(({ icon: Icon, label, stat }) => {
+              { icon: FlaskConical, label: 'Active Tests',      stat: usage.tests,       tooltip: null },
+              { icon: Building2,    label: 'Clients',           stat: usage.clients,     tooltip: null },
+              ...(usage.visitors    ? [{ icon: Eye,          label: 'Unique Visitors / mo', stat: usage.visitors,   tooltip: 'Counts unique people across all your tests this calendar month — not total page loads. One person visiting 5 times = 1 visitor.' }] : []),
+              ...(usage.domains     ? [{ icon: ExternalLink, label: 'Domains',              stat: usage.domains,    tooltip: null }] : []),
+              ...(usage.teamMembers ? [{ icon: Users,        label: 'Team Members',         stat: usage.teamMembers, tooltip: null }] : []),
+            ] as { icon: React.ElementType; label: string; stat: UsageStat; tooltip: string | null }[]).map(({ icon: Icon, label, stat, tooltip }) => {
               const isUnlimited = stat.limit === null;
               return (
                 <div key={label} className="flex items-center gap-3">
                   <Icon size={14} className="text-slate-400 flex-shrink-0" />
-                  <span className="text-sm text-slate-500 dark:text-slate-400 w-28 flex-shrink-0">
-                    {label}
-                  </span>
+                  <div className="flex items-center gap-1 w-36 flex-shrink-0">
+                    <span className="text-sm text-slate-500 dark:text-slate-400">
+                      {label}
+                    </span>
+                    {tooltip && (
+                      <span title={tooltip} className="cursor-help text-slate-400 hover:text-slate-300 text-xs">ⓘ</span>
+                    )}
+                  </div>
                   <MeterBar pct={stat.pct} limit={stat.limit} />
                   <span className="text-sm font-medium text-slate-700 dark:text-slate-300 w-24 text-right tabular-nums whitespace-nowrap">
                     {isUnlimited

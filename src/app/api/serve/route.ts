@@ -3,6 +3,7 @@ import { db } from '@/lib/supabase-server';
 import { downloadHtml } from '@/lib/storage';
 import { buildTrackingSnippet, buildScanScript, injectIntoHtml, buildScriptTag } from '@/lib/tracking';
 import { assignVariant } from '@/lib/utils';
+import { getPlanDetails } from '@/lib/plans';
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 const COOKIE_NAME = 'sl_visitor';
@@ -97,6 +98,68 @@ export async function GET(request: NextRequest) {
     const existingCookie = request.cookies.get(COOKIE_NAME)?.value;
     const visitorId = forcedVh || existingCookie || crypto.randomUUID();
 
+    // 4b. Visitor cap check (skip for scan and Open-button/forcedVh and returning visitors)
+    // previewTestId is NOT excluded — for free users the preview URL is the real traffic URL
+    let overVisitorCap = false;
+    if (!isScan && !forcedVh && !existingCookie) {
+      // Resolve workspace → client → owner
+      const { data: wsRow } = await db
+        .from('workspaces')
+        .select('client_id, clients(owner_id)')
+        .eq('id', workspaceId)
+        .single();
+
+      // Supabase may return clients as array or object depending on relationship definition
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const clientsData = wsRow?.clients as any;
+      const ownerId: string | undefined = Array.isArray(clientsData)
+        ? clientsData[0]?.owner_id
+        : clientsData?.owner_id;
+
+      if (ownerId) {
+        const { data: ownerRow } = await db
+          .from('users')
+          .select('plan, role')
+          .eq('id', ownerId)
+          .single();
+
+        const ownerRole = ownerRow?.role ?? 'manager';
+        const ownerPlan = ownerRow?.plan ?? 'free';
+
+        // Admins bypass all limits
+        if (ownerRole !== 'admin') {
+          const planDetails = getPlanDetails(ownerPlan);
+
+          if (isFinite(planDetails.monthlyVisitors)) {
+            // Count all owner's tests to scope the visitor query
+            const { data: ownerTests } = await db
+              .from('tests')
+              .select('id, workspaces!inner(client_id, clients!inner(owner_id))')
+              .eq('workspaces.clients.owner_id', ownerId);
+
+            // Always include the current test.id — the ownership join may miss it
+            const ownerTestIds = Array.from(new Set([test.id, ...(ownerTests ?? []).map((t) => t.id)]));
+
+            if (ownerTestIds.length > 0) {
+              const monthStart = new Date();
+              monthStart.setUTCDate(1);
+              monthStart.setUTCHours(0, 0, 0, 0);
+
+              const { data: visitorRows } = await db
+                .from('events')
+                .select('visitor_hash')
+                .eq('type', 'pageview')
+                .in('test_id', ownerTestIds)
+                .gte('created_at', monthStart.toISOString());
+
+              const uniqueCount = new Set((visitorRows ?? []).map((r: { visitor_hash: string }) => r.visitor_hash)).size;
+              overVisitorCap = uniqueCount >= planDetails.monthlyVisitors;
+            }
+          }
+        }
+      }
+    }
+
     // 5. Check for sticky assignment cookie for this specific test
     const stickyCookieName = `sl_test_${test.id}`;
     const stickyVariantId = request.cookies.get(stickyCookieName)?.value;
@@ -140,7 +203,7 @@ export async function GET(request: NextRequest) {
           .select('*')
           .eq('test_id', test.id);
 
-        const proxyTrackingSnippet = buildTrackingSnippet(
+        const proxyTrackingSnippet = (overVisitorCap || forcedVh) ? '' : buildTrackingSnippet(
           test.id, selectedVariant.id, visitorId, proxyGoals || [], APP_URL
         );
 
@@ -165,14 +228,16 @@ ${proxyTrackingSnippet}
 </body>
 </html>`;
 
-        // Record server-side pageview
-        await db.from('events').insert({
-          test_id: test.id,
-          variant_id: selectedVariant.id,
-          visitor_hash: visitorId,
-          type: 'pageview',
-          metadata: { redirect_url: selectedVariant.redirect_url, proxy: true },
-        });
+        // Record server-side pageview (skip for cap, scan, and Open-button previews)
+        if (!overVisitorCap && !isScan && !forcedVh) {
+          await db.from('events').insert({
+            test_id: test.id,
+            variant_id: selectedVariant.id,
+            visitor_hash: visitorId,
+            type: 'pageview',
+            metadata: { redirect_url: selectedVariant.redirect_url, proxy: true },
+          });
+        }
 
         const proxyResponse = new NextResponse(iframeHtml, {
           status: 200,
@@ -180,8 +245,8 @@ ${proxyTrackingSnippet}
         });
 
         const cookieOptions = { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax' as const, maxAge: 60 * 60 * 24 * 90, path: '/' };
-        if (!existingCookie) proxyResponse.cookies.set(COOKIE_NAME, visitorId, cookieOptions);
-        if (!stickyVariantId) proxyResponse.cookies.set(stickyCookieName, selectedVariant.id, cookieOptions);
+        if (!existingCookie && !overVisitorCap && !isScan && !forcedVh) proxyResponse.cookies.set(COOKIE_NAME, visitorId, cookieOptions);
+        if (!stickyVariantId && !isScan && !forcedVh) proxyResponse.cookies.set(stickyCookieName, selectedVariant.id, cookieOptions);
 
         return proxyResponse;
       }
@@ -201,20 +266,22 @@ ${proxyTrackingSnippet}
         path: '/',
       };
 
-      if (!existingCookie) {
+      if (!existingCookie && !overVisitorCap && !isScan && !forcedVh) {
         redirectResponse.cookies.set(COOKIE_NAME, visitorId, cookieOptions);
       }
-      if (!stickyVariantId) {
+      if (!stickyVariantId && !isScan && !forcedVh) {
         redirectResponse.cookies.set(stickyCookieName, selectedVariant.id, cookieOptions);
       }
 
-      await db.from('events').insert({
-        test_id: test.id,
-        variant_id: selectedVariant.id,
-        visitor_hash: visitorId,
-        type: 'pageview',
-        metadata: { redirect_url: selectedVariant.redirect_url },
-      });
+      if (!overVisitorCap && !isScan && !forcedVh) {
+        await db.from('events').insert({
+          test_id: test.id,
+          variant_id: selectedVariant.id,
+          visitor_hash: visitorId,
+          type: 'pageview',
+          metadata: { redirect_url: selectedVariant.redirect_url },
+        });
+      }
 
       return redirectResponse;
     }
@@ -264,21 +331,23 @@ ${proxyTrackingSnippet}
             .select('*')
             .eq('test_id', test.id);
 
-          const hostedTracking = buildTrackingSnippet(
+          const hostedTracking = (overVisitorCap || forcedVh) ? '' : buildTrackingSnippet(
             test.id, selectedVariant.id, visitorId, hostedGoals || [], APP_URL
           );
 
           if (isScan) hostedBodyScripts.push(buildScanScript(selectedVariant.id, APP_URL));
           hostedHtml = injectIntoHtml(hostedHtml, hostedHeadScripts, hostedBodyScripts, hostedTracking);
 
-          // Record pageview
-          await db.from('events').insert({
-            test_id: test.id,
-            variant_id: selectedVariant.id,
-            visitor_hash: visitorId,
-            type: 'pageview',
-            metadata: { variant_type: 'hosted' },
-          });
+          // Record pageview (skip for cap, scan, and Open-button previews)
+          if (!overVisitorCap && !isScan && !forcedVh) {
+            await db.from('events').insert({
+              test_id: test.id,
+              variant_id: selectedVariant.id,
+              visitor_hash: visitorId,
+              type: 'pageview',
+              metadata: { variant_type: 'hosted' },
+            });
+          }
 
           const hostedResponse = new NextResponse(hostedHtml, {
             status: 200,
@@ -289,8 +358,8 @@ ${proxyTrackingSnippet}
           });
 
           const hostedCookieOptions = { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax' as const, maxAge: 60 * 60 * 24 * 90, path: '/' };
-          if (!existingCookie) hostedResponse.cookies.set(COOKIE_NAME, visitorId, hostedCookieOptions);
-          if (!stickyVariantId) hostedResponse.cookies.set(stickyCookieName, selectedVariant.id, hostedCookieOptions);
+          if (!existingCookie && !overVisitorCap && !isScan && !forcedVh) hostedResponse.cookies.set(COOKIE_NAME, visitorId, hostedCookieOptions);
+          if (!stickyVariantId && !isScan && !forcedVh) hostedResponse.cookies.set(stickyCookieName, selectedVariant.id, hostedCookieOptions);
 
           return hostedResponse;
         }
@@ -346,9 +415,9 @@ ${proxyTrackingSnippet}
       .select('*')
       .eq('test_id', test.id);
 
-    // 9. Build tracking snippet
+    // 9. Build tracking snippet (skip for cap, scan, and Open-button previews)
     const visitorHash = visitorId;
-    const trackingSnippet = buildTrackingSnippet(
+    const trackingSnippet = (overVisitorCap || forcedVh) ? '' : buildTrackingSnippet(
       test.id,
       selectedVariant.id,
       visitorHash,
@@ -359,6 +428,17 @@ ${proxyTrackingSnippet}
     // 10. Inject everything into HTML
     if (isScan) bodyEndScripts.push(buildScanScript(selectedVariant.id, APP_URL));
     const finalHtml = injectIntoHtml(html, headScripts, bodyEndScripts, trackingSnippet);
+
+    // 10b. Record pageview (skip for cap, scan, and Open-button previews)
+    if (!overVisitorCap && !isScan && !forcedVh) {
+      await db.from('events').insert({
+        test_id: test.id,
+        variant_id: selectedVariant.id,
+        visitor_hash: visitorId,
+        type: 'pageview',
+        metadata: {},
+      });
+    }
 
     // 11. Build response with sticky cookies
     const response = new NextResponse(finalHtml, {
@@ -374,11 +454,11 @@ ${proxyTrackingSnippet}
       path: '/',
     };
 
-    if (!existingCookie) {
+    if (!existingCookie && !overVisitorCap && !isScan && !forcedVh) {
       response.cookies.set(COOKIE_NAME, visitorId, cookieOptions);
     }
 
-    if (!stickyVariantId) {
+    if (!stickyVariantId && !isScan && !forcedVh) {
       response.cookies.set(stickyCookieName, selectedVariant.id, cookieOptions);
     }
 
