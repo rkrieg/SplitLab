@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/supabase-server';
+import { getPlanDetails } from '@/lib/plans';
 import { z } from 'zod';
 
 function corsHeaders(request: NextRequest) {
@@ -43,6 +44,58 @@ export async function POST(request: NextRequest) {
 
       if (existing) {
         return NextResponse.json({ ok: true, duplicate: true }, { headers });
+      }
+
+      // Visitor cap enforcement — only for brand new visitor hashes (returning visitors pass freely)
+      const monthStart = new Date();
+      monthStart.setUTCDate(1);
+      monthStart.setUTCHours(0, 0, 0, 0);
+
+      const { data: wsRow } = await db
+        .from('tests')
+        .select('workspaces!inner(client_id, clients!inner(owner_id))')
+        .eq('id', data.testId)
+        .single();
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const clientsData = (wsRow as any)?.workspaces?.clients;
+      const ownerId: string | undefined = Array.isArray(clientsData) ? clientsData[0]?.owner_id : clientsData?.owner_id;
+
+      if (ownerId) {
+        const { data: ownerRow } = await db.from('users').select('plan, role').eq('id', ownerId).single();
+        if (ownerRow?.role !== 'admin') {
+          const planDetails = getPlanDetails(ownerRow?.plan ?? 'free');
+          if (isFinite(planDetails.monthlyVisitors)) {
+            // Check if this visitor hash is already counted this month (returning visitor across any test)
+            const { data: existingVisitor } = await db
+              .from('events')
+              .select('id')
+              .eq('visitor_hash', data.visitorHash)
+              .eq('type', 'pageview')
+              .gte('created_at', monthStart.toISOString())
+              .limit(1)
+              .single();
+
+            if (!existingVisitor) {
+              // Brand new visitor — check if cap is already hit
+              const { data: ownerTests } = await db
+                .from('tests')
+                .select('id, workspaces!inner(client_id, clients!inner(owner_id))')
+                .eq('workspaces.clients.owner_id', ownerId);
+              const ownerTestIds = Array.from(new Set([data.testId, ...(ownerTests ?? []).map((t: { id: string }) => t.id)]));
+              const { data: visitorRows } = await db
+                .from('events')
+                .select('visitor_hash')
+                .eq('type', 'pageview')
+                .in('test_id', ownerTestIds)
+                .gte('created_at', monthStart.toISOString());
+              const uniqueCount = new Set((visitorRows ?? []).map((r: { visitor_hash: string }) => r.visitor_hash)).size;
+              if (uniqueCount >= planDetails.monthlyVisitors) {
+                return NextResponse.json({ ok: true, capped: true }, { headers });
+              }
+            }
+          }
+        }
       }
     }
 
