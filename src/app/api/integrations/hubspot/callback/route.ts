@@ -85,23 +85,32 @@ export async function GET(req: NextRequest) {
     .eq('id', workspaceId)
     .single();
 
-  // Save tokens to workspace_integrations (upsert — reconnect replaces old tokens)
-  const { error: dbError } = await db
+  // Save tokens — SELECT then INSERT or UPDATE (upsert avoided: unique constraint dropped for multi-webhook support)
+  const newConfig = {
+    access_token: tokenData.access_token,
+    refresh_token: tokenData.refresh_token,
+    expires_at: expiresAt,
+    hub_id: tokenData.hub_id ?? null,
+  };
+
+  const { data: existingHs } = await db
     .from('workspace_integrations')
-    .upsert(
-      {
-        workspace_id: workspaceId,
-        type: 'hubspot',
-        config: {
-          access_token: tokenData.access_token,
-          refresh_token: tokenData.refresh_token,
-          expires_at: expiresAt,
-          hub_id: tokenData.hub_id ?? null,
-        },
-        enabled: true,
-      },
-      { onConflict: 'workspace_id,type' }
-    );
+    .select('id')
+    .eq('workspace_id', workspaceId)
+    .eq('type', 'hubspot')
+    .single();
+
+  let dbError;
+  if (existingHs) {
+    ({ error: dbError } = await db
+      .from('workspace_integrations')
+      .update({ config: newConfig, enabled: true })
+      .eq('id', existingHs.id));
+  } else {
+    ({ error: dbError } = await db
+      .from('workspace_integrations')
+      .insert({ workspace_id: workspaceId, type: 'hubspot', config: newConfig, enabled: true }));
+  }
 
   if (dbError) {
     console.error('[hubspot callback] db error:', dbError);
