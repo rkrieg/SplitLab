@@ -55,18 +55,32 @@ export async function POST(
     return NextResponse.json({ integration: data });
   }
 
-  // All other types: upsert (one per workspace per type)
+  // All other types: one per workspace per type — SELECT then INSERT or UPDATE
+  const { data: existing } = await db
+    .from('workspace_integrations')
+    .select('id')
+    .eq('workspace_id', params.id)
+    .eq('type', type)
+    .single();
+
+  if (existing) {
+    const { data, error } = await db
+      .from('workspace_integrations')
+      .update({ config: config ?? {}, enabled: true })
+      .eq('id', existing.id)
+      .select('id, type, enabled, created_at, updated_at')
+      .single();
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ integration: data });
+  }
+
   const { data, error } = await db
     .from('workspace_integrations')
-    .upsert(
-      { workspace_id: params.id, type, config: config ?? {}, enabled: true },
-      { onConflict: 'workspace_id,type' }
-    )
+    .insert({ workspace_id: params.id, type, config: config ?? {}, enabled: true })
     .select('id, type, enabled, created_at, updated_at')
     .single();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-
   return NextResponse.json({ integration: data });
 }
 
