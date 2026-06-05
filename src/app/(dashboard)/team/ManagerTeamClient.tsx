@@ -51,8 +51,7 @@ export default function ManagerTeamClient({ initialMembers, seatLimit, currentUs
   const safePage    = Math.min(page, totalPages);
   const pageMembers = members.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
-  // Owner always occupies 1 seat, so available invite slots = seatLimit - 1
-  const usedSeats = members.length + 1; // +1 for the owner
+  const usedSeats = members.length;
   const atLimit = isFinite(seatLimit) && usedSeats >= seatLimit;
   const noSeats = seatLimit === 0;
 
