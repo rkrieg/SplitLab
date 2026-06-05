@@ -743,6 +743,16 @@ export default function AnalyticsClient({
   }
 
   async function saveVariant(variantId: string) {
+    const editedUrl = variantDraft.redirect_url.trim();
+    if (editedUrl) {
+      const duplicate = variants.find(
+        (v) => v.id !== variantId && v.redirect_url && v.redirect_url.trim() === editedUrl
+      );
+      if (duplicate) {
+        toast.error(`This URL is already used by "${duplicate.name}". Each variant must have a unique destination URL.`);
+        return;
+      }
+    }
     setSavingVariant(true);
     try {
       const res = await fetch(`/api/tests/${test.id}`, {
@@ -862,6 +872,13 @@ export default function AnalyticsClient({
         setNewVariantUrlError(
           "Please enter a valid URL (e.g. https://example.com).",
         );
+        return;
+      }
+      const duplicate = variants.find(
+        (v) => v.redirect_url && v.redirect_url.trim() === trimmed
+      );
+      if (duplicate) {
+        setNewVariantUrlError(`This URL is already used by "${duplicate.name}". Each variant must have a unique destination URL.`);
         return;
       }
       setNewVariantUrlError("");
