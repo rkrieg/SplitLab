@@ -117,6 +117,23 @@ export async function POST(
       );
     }
 
+    // Block duplicate active url_path within the same workspace
+    const { data: pathConflict } = await db
+      .from('tests')
+      .select('name')
+      .eq('workspace_id', params.id)
+      .eq('url_path', data.url_path)
+      .eq('status', 'active')
+      .limit(1)
+      .single();
+
+    if (pathConflict) {
+      return NextResponse.json(
+        { error: `Another active test "${pathConflict.name}" is already running on path "${data.url_path}". Pause it before creating a new test on the same path.` },
+        { status: 409 }
+      );
+    }
+
     const { data: test, error: testError } = await db
       .from('tests')
       .insert({ workspace_id: params.id, name: data.name, url_path: data.url_path, status: data.status ?? 'active' })
