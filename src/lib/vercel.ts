@@ -29,7 +29,7 @@ export async function addDomainToVercel(domain: string): Promise<VercelDomainAdd
     {
       method: 'POST',
       headers: headers(),
-      body: JSON.stringify({ name: domain, ...(process.env.VERCEL_GIT_COMMIT_REF ? { gitBranch: process.env.VERCEL_GIT_COMMIT_REF } : {}) }),
+      body: JSON.stringify({ name: domain, ...(process.env.VERCEL_GIT_COMMIT_REF && process.env.VERCEL_GIT_COMMIT_REF !== 'main' ? { gitBranch: process.env.VERCEL_GIT_COMMIT_REF } : {}) }),
     }
   );
 

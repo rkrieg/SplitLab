@@ -1922,7 +1922,7 @@ export default function AnalyticsClient({
               (userRole === "admin" || userPlan !== "free") && (
                 <Link
                   href={`/clients/${clientId}/domains`}
-                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-indigo-500/20 border border-indigo-500/40 text-indigo-300 hover:bg-indigo-500/30 hover:text-indigo-200 ring-1 ring-indigo-500/30"
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold transition-colors bg-indigo-600 border border-indigo-500 text-white hover:bg-indigo-500 shadow-lg shadow-indigo-500/30"
                 >
                   <Globe size={14} /> Add Domain
                 </Link>
