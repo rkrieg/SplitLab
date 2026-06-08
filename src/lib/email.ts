@@ -1,6 +1,6 @@
 import { Resend } from 'resend';
 
-const FROM = 'SplitLab <renny@infinitymediala.com>';
+const FROM = process.env.RESEND_FROM_EMAIL || 'SplitLab <notifications@trysplitlab.com>';
 const LOGIN_URL = process.env.NEXT_PUBLIC_APP_URL ? `${process.env.NEXT_PUBLIC_APP_URL}/login` : 'https://www.trysplitlab.com/login';
 
 function getResend(): Resend {

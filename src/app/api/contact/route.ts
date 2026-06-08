@@ -15,8 +15,8 @@ export async function POST(request: NextRequest) {
 
   const resend = new Resend(key);
   const { error } = await resend.emails.send({
-    from: 'SplitLab <renny@infinitymediala.com>',
-    to: 'renny@infinitymediala.com',
+    from: process.env.RESEND_FROM_EMAIL || 'SplitLab <notifications@trysplitlab.com>',
+    to: process.env.RESEND_CONTACT_TO || 'notifications@trysplitlab.com',
     replyTo: email,
     subject: `[SplitLab Support] Message from ${name}`,
     html: `
