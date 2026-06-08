@@ -3729,7 +3729,7 @@ export default function AnalyticsClient({
           <>
             {/* Global Tracking Snippet */}
             {(() => {
-              const trackerComplete = !anyTrackerMissing && variants.some(v => v.tracking_verified === true);
+              const trackerComplete = !anyTrackerMissing && variants.some(v => getVerifiedStatus(v) === true);
               return (
                 <div className={`card overflow-hidden ${trackerComplete ? 'border-green-500/30 bg-green-500/5' : ''}`}>
                   <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700">
@@ -3766,25 +3766,27 @@ export default function AnalyticsClient({
                       </div>
                     </div>
                   </div>
-                  <div className={`px-5 py-4 ${trackerComplete ? 'opacity-60' : ''}`}>
-                    <div className="flex items-center justify-between mb-3">
-                      <p className="text-slate-500 dark:text-slate-400 text-xs">
-                        Tracking context is passed via URL parameters.
-                      </p>
-                      <button
-                        onClick={() => {
-                          navigator.clipboard.writeText(snippet);
-                          toast.success("Copied");
-                        }}
-                        className="btn-secondary text-xs"
-                      >
-                        <Copy size={12} /> Copy
-                      </button>
+                  {!trackerComplete && (
+                    <div className="px-5 py-4">
+                      <div className="flex items-center justify-between mb-3">
+                        <p className="text-slate-500 dark:text-slate-400 text-xs">
+                          Tracking context is passed via URL parameters.
+                        </p>
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(snippet);
+                            toast.success("Copied");
+                          }}
+                          className="btn-secondary text-xs"
+                        >
+                          <Copy size={12} /> Copy
+                        </button>
+                      </div>
+                      <pre className="bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-4 overflow-x-auto text-xs text-slate-700 dark:text-slate-300">
+                        <code>{snippet}</code>
+                      </pre>
                     </div>
-                    <pre className="bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-4 overflow-x-auto text-xs text-slate-700 dark:text-slate-300">
-                      <code>{snippet}</code>
-                    </pre>
-              </div>
+                  )}
             </div>
               );
             })()}
