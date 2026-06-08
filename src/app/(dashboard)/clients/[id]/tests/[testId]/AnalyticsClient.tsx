@@ -3196,7 +3196,7 @@ export default function AnalyticsClient({
                       Connect your HubSpot account to automatically sync form leads to your CRM.
                     </p>
                     <a
-                      href={workspaceId ? `/api/integrations/hubspot/connect?workspaceId=${workspaceId}` : '#'}
+                      href={workspaceId ? `/api/integrations/hubspot/connect?workspaceId=${workspaceId}&returnTo=${encodeURIComponent(window.location.pathname + '?tab=integrations&hs_connected=1')}` : '#'}
                       className="btn-primary text-sm flex items-center gap-2 px-4 py-2 rounded-lg font-medium no-underline"
                     >
                       <svg width="14" height="14" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">

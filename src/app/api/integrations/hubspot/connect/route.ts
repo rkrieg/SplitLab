@@ -17,6 +17,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Missing workspaceId' }, { status: 400 });
   }
 
+  const returnTo = req.nextUrl.searchParams.get('returnTo') || null;
+
   const clientId = process.env.HUBSPOT_CLIENT_ID;
   const redirectUri = process.env.HUBSPOT_REDIRECT_URI;
 
@@ -24,8 +26,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'HubSpot OAuth not configured' }, { status: 500 });
   }
 
-  // Encode workspaceId in state so we know which workspace to connect on callback
-  const state = Buffer.from(JSON.stringify({ workspaceId })).toString('base64');
+  // Encode workspaceId + returnTo in state so callback knows where to redirect
+  const state = Buffer.from(JSON.stringify({ workspaceId, returnTo })).toString('base64');
 
   const params = new URLSearchParams({
     client_id: clientId,

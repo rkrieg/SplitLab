@@ -28,9 +28,11 @@ export async function GET(req: NextRequest) {
 
   // Decode workspaceId from state
   let workspaceId: string;
+  let returnTo: string | null = null;
   try {
-    const decoded = JSON.parse(Buffer.from(state, 'base64').toString('utf-8')) as { workspaceId: string };
+    const decoded = JSON.parse(Buffer.from(state, 'base64').toString('utf-8')) as { workspaceId: string; returnTo?: string };
     workspaceId = decoded.workspaceId;
+    returnTo = decoded.returnTo ?? null;
   } catch {
     return NextResponse.redirect(new URL('/dashboard?hs_error=invalid_state', req.url));
   }
@@ -117,10 +119,11 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(new URL('/dashboard?hs_error=db_error', req.url));
   }
 
-  // Redirect back to the client's integrations tab
-  const redirectTo = workspace?.client_id
-    ? `/clients/${workspace.client_id}?tab=integrations&hs_connected=1`
-    : '/dashboard?hs_connected=1';
+  // Redirect back to where the OAuth was initiated, or fall back to client integrations
+  const redirectTo = returnTo
+    ?? (workspace?.client_id
+      ? `/clients/${workspace.client_id}/pages?hs_connected=1`
+      : '/dashboard?hs_connected=1');
 
   return NextResponse.redirect(new URL(redirectTo, req.url));
 }
