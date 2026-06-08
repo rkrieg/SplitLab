@@ -307,6 +307,41 @@ export default function AnalyticsClient({
     setTrackerCardDismissed(true);
   }
 
+  const [bannerVerifying, setBannerVerifying] = useState(false);
+
+  async function verifyAllTracking() {
+    const toVerify = variants.filter(
+      (v) => v.redirect_url && getVerifiedStatus(v) !== true,
+    );
+    if (toVerify.length === 0) return;
+    setBannerVerifying(true);
+    const results = await Promise.all(
+      toVerify.map((v) =>
+        fetch("/api/check-tracking", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: v.redirect_url, variant_id: v.id }),
+        })
+          .then((r) => r.json())
+          .then((data) => {
+            setVariantOverrides((prev) => ({ ...prev, [v.id]: data.verified }));
+            return data.verified as boolean;
+          })
+          .catch(() => false),
+      ),
+    );
+    setBannerVerifying(false);
+    const allVerified = results.every(Boolean);
+    const anyVerified = results.some(Boolean);
+    if (allVerified) {
+      toast.success("Tracker verified on all variants");
+    } else if (anyVerified) {
+      toast.error("Tracker not found on some variants — make sure the snippet is pasted.");
+    } else {
+      toast.error("Tracker not found on some variants");
+    }
+  }
+
   // Weight editing
   const [editingWeightId, setEditingWeightId] = useState<string | null>(null);
   const [weightDraft, setWeightDraft] = useState("");
@@ -527,7 +562,7 @@ export default function AnalyticsClient({
     const toCheck = variants.filter(
       (v) =>
         v.redirect_url &&
-        v.tracking_verified == null && // null OR undefined = never checked
+        v.tracking_verified !== true && // re-check if never checked (null) or previously failed (false)
         !autoCheckedRef.current.has(v.id),
     );
     if (toCheck.length === 0) return;
@@ -985,6 +1020,17 @@ export default function AnalyticsClient({
     if (variantOverrides[v.id] !== undefined) return variantOverrides[v.id];
     return v.tracking_verified;
   }
+
+  // Auto-dismiss tracker banner once all redirect variants become verified
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const redirectVariants = variants.filter((v) => v.redirect_url);
+    if (redirectVariants.length === 0) return;
+    const allVerified = redirectVariants.every((v) => getVerifiedStatus(v) === true);
+    if (allVerified && !trackerCardDismissed) {
+      dismissTrackerCard();
+    }
+  }, [variantOverrides]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function checkTracking(variantId: string, url: string) {
     setCheckingTracking(variantId);
@@ -2009,6 +2055,19 @@ export default function AnalyticsClient({
                       >
                         <Copy size={12} /> Copy
                       </button>
+                      {anyTrackerMissing && (
+                        <button
+                          onClick={verifyAllTracking}
+                          disabled={bannerVerifying}
+                          className="btn-primary text-xs flex-shrink-0"
+                        >
+                          {bannerVerifying ? (
+                            <><Spinner size="sm" /> Verifying…</>
+                          ) : (
+                            <><ShieldCheck size={12} /> Verify Tracking</>
+                          )}
+                        </button>
+                      )}
                     </div>
                   </div>
                   {!anyTrackerMissing && (
@@ -2206,12 +2265,7 @@ export default function AnalyticsClient({
                               )}
                               {stat.variant.redirect_url && !isEditing && (
                                 <div className="flex items-center gap-1.5 mt-1">
-                                  {checkingTracking === stat.variant.id ||
-                                  autoCheckingIds.includes(stat.variant.id) ? (
-                                    <span className="inline-flex items-center gap-1 text-[10px] text-slate-500">
-                                      <Spinner size="sm" /> Checking…
-                                    </span>
-                                  ) : verified === true ? (
+                                  {verified === true ? (
                                     <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-green-500/10 border border-green-500/20 text-green-400">
                                       <ShieldCheck size={10} /> Tracker detected
                                       <button
@@ -2227,24 +2281,7 @@ export default function AnalyticsClient({
                                         <RefreshCw size={9} />
                                       </button>
                                     </span>
-                                  ) : verified === false ? (
-                                    <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-red-500/10 border border-red-500/20 text-red-400">
-                                      <ShieldX size={10} /> Tracker not found
-                                      <button
-                                        onClick={() =>
-                                          checkTracking(
-                                            stat.variant.id,
-                                            stat.variant.redirect_url!,
-                                          )
-                                        }
-                                        className="ml-0.5 opacity-60 hover:opacity-100 transition-opacity"
-                                        title="Re-check"
-                                      >
-                                        <RefreshCw size={9} />
-                                      </button>
-                                    </span>
                                   ) : (
-                                    // Auto-check failed or hasn't fired yet — allow manual trigger
                                     <button
                                       onClick={() =>
                                         checkTracking(
@@ -2252,13 +2289,20 @@ export default function AnalyticsClient({
                                           stat.variant.redirect_url!,
                                         )
                                       }
-                                      className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-slate-500/10 border border-slate-500/20 text-slate-400 hover:text-slate-300 transition-colors"
+                                      disabled={checkingTracking === stat.variant.id || autoCheckingIds.includes(stat.variant.id)}
+                                      className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-lg border transition-colors disabled:opacity-50 ${
+                                        verified === false
+                                          ? "bg-red-500/10 border-red-500/40 text-red-400 hover:bg-red-500/20"
+                                          : "bg-slate-500/10 border-slate-500/30 text-slate-400 hover:bg-slate-500/20"
+                                      }`}
                                     >
-                                      <ShieldCheck
-                                        size={10}
-                                        className="opacity-50"
-                                      />{" "}
-                                      Check tracker
+                                      {checkingTracking === stat.variant.id || autoCheckingIds.includes(stat.variant.id) ? (
+                                        <><Spinner size="sm" /> Checking…</>
+                                      ) : verified === false ? (
+                                        <><ShieldX size={12} /> Verify Tracking</>
+                                      ) : (
+                                        <><ShieldCheck size={12} /> Verify Tracking</>
+                                      )}
                                     </button>
                                   )}
                                 </div>
@@ -3152,7 +3196,7 @@ export default function AnalyticsClient({
                       Connect your HubSpot account to automatically sync form leads to your CRM.
                     </p>
                     <a
-                      href={workspaceId ? `/api/integrations/hubspot/connect?workspaceId=${workspaceId}` : '#'}
+                      href={workspaceId ? `/api/integrations/hubspot/connect?workspaceId=${workspaceId}&returnTo=${encodeURIComponent(window.location.pathname + '?tab=integrations&hs_connected=1')}` : '#'}
                       className="btn-primary text-sm flex items-center gap-2 px-4 py-2 rounded-lg font-medium no-underline"
                     >
                       <svg width="14" height="14" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -3685,7 +3729,7 @@ export default function AnalyticsClient({
           <>
             {/* Global Tracking Snippet */}
             {(() => {
-              const trackerComplete = !anyTrackerMissing && variants.some(v => v.tracking_verified === true);
+              const trackerComplete = !anyTrackerMissing && variants.some(v => getVerifiedStatus(v) === true);
               return (
                 <div className={`card overflow-hidden ${trackerComplete ? 'border-green-500/30 bg-green-500/5' : ''}`}>
                   <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700">
@@ -3722,25 +3766,27 @@ export default function AnalyticsClient({
                       </div>
                     </div>
                   </div>
-                  <div className={`px-5 py-4 ${trackerComplete ? 'opacity-60' : ''}`}>
-                    <div className="flex items-center justify-between mb-3">
-                      <p className="text-slate-500 dark:text-slate-400 text-xs">
-                        Tracking context is passed via URL parameters.
-                      </p>
-                      <button
-                        onClick={() => {
-                          navigator.clipboard.writeText(snippet);
-                          toast.success("Copied");
-                        }}
-                        className="btn-secondary text-xs"
-                      >
-                        <Copy size={12} /> Copy
-                      </button>
+                  {!trackerComplete && (
+                    <div className="px-5 py-4">
+                      <div className="flex items-center justify-between mb-3">
+                        <p className="text-slate-500 dark:text-slate-400 text-xs">
+                          Tracking context is passed via URL parameters.
+                        </p>
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(snippet);
+                            toast.success("Copied");
+                          }}
+                          className="btn-secondary text-xs"
+                        >
+                          <Copy size={12} /> Copy
+                        </button>
+                      </div>
+                      <pre className="bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-4 overflow-x-auto text-xs text-slate-700 dark:text-slate-300">
+                        <code>{snippet}</code>
+                      </pre>
                     </div>
-                    <pre className="bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-4 overflow-x-auto text-xs text-slate-700 dark:text-slate-300">
-                      <code>{snippet}</code>
-                    </pre>
-              </div>
+                  )}
             </div>
               );
             })()}
