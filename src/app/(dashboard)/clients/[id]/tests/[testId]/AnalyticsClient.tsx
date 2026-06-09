@@ -3836,29 +3836,26 @@ export default function AnalyticsClient({
                 <span>Some variants are missing the tracker snippet — conversions may not be recorded for those variants until it is installed.</span>
               </div>
             )}
-            <div className="card overflow-hidden">
-              <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700">
+            <div className={`card overflow-hidden ${!scanResults && !scanning ? "ring-2 ring-indigo-400/60 border-indigo-400/50" : ""}`}>
+              <div className={`px-5 py-4 border-b border-slate-200 dark:border-slate-700 ${!scanResults && !scanning ? "bg-indigo-500/10" : ""}`}>
                 <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-lg bg-indigo-500/20 flex items-center justify-center">
-                    <ScanLine size={16} className="text-indigo-400" />
+                  <div className="w-9 h-9 rounded-lg bg-indigo-500/30 flex items-center justify-center flex-shrink-0">
+                    <ScanLine size={18} className="text-indigo-300" />
                   </div>
-                  <div>
-                    <p className="font-medium text-slate-800 dark:text-slate-200 text-sm">
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-slate-800 dark:text-slate-100 text-sm">
                       Set Up Goal Conversion Tracking
                     </p>
                     {scanning || scannedVariantName ? (
-                      <p className="text-slate-500 text-xs">
+                      <p className="text-slate-500 text-xs mt-0.5">
                         {scanning
                           ? `Scanning ${scannedVariantName}…`
                           : `Last scanned: ${scannedVariantName}`}
                       </p>
                     ) : (
-                      <div className="flex items-center gap-1.5 rounded-lg bg-amber-500/10 border border-amber-500/30 px-2.5 py-1.5 text-xs text-amber-600 dark:text-amber-300 mt-1">
-                        <Info size={12} className="flex-shrink-0" />
-                        <span>
-                          Using the page scanner — click &ldquo;Setup Goal Tracking&rdquo; on any variant in the Overview tab to detect trackable elements
-                        </span>
-                      </div>
+                      <p className="text-slate-400 text-xs mt-0.5">
+                        Scan your page to detect buttons &amp; forms — then pick which ones count as a conversion.
+                      </p>
                     )}
                   </div>
                 </div>
@@ -3866,10 +3863,13 @@ export default function AnalyticsClient({
 
               <div className="px-5 py-4">
                 {!scanning && !scanResults && (
-                  <p className="text-slate-500 text-xs">
-                    No scan results yet. Use the Scan button on a variant row in
-                    the Overview tab.
-                  </p>
+                  <div className="flex items-start gap-3 rounded-lg bg-indigo-500/15 border border-indigo-400/30 px-4 py-3">
+                    <Info size={14} className="text-indigo-300 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-sm font-medium text-indigo-200">How to set up goals</p>
+                      <p className="text-xs text-slate-300 mt-1">Go to the <span className="font-medium text-white">Overview tab</span>, find a variant row, and click <span className="font-medium text-white">&ldquo;Setup Goal Tracking&rdquo;</span> to scan that page for trackable elements. Once scanned, you can turn any button or form into a conversion goal right here.</p>
+                    </div>
+                  </div>
                 )}
 
                 {scanning && (
@@ -3981,7 +3981,7 @@ export default function AnalyticsClient({
                                       <button
                                         type="button"
                                         onClick={() => enableAsGoal(el)}
-                                        className="flex-shrink-0 text-xs px-2.5 py-1 rounded-lg border border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/10 transition-colors"
+                                        className="flex-shrink-0 text-xs px-2.5 py-1 rounded-lg border border-indigo-400/60 text-indigo-300 bg-indigo-500/15 hover:bg-indigo-500/30 font-medium transition-colors"
                                       >
                                         + Goal
                                       </button>
