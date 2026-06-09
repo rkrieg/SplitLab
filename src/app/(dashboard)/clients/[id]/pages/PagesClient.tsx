@@ -73,6 +73,8 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
   const [variantUrl, setVariantUrl] = useState('');
   const [variantUrlFrameable, setVariantUrlFrameable] = useState<boolean | null>(null);
   const [checkingFrameable, setCheckingFrameable] = useState(false);
+  const [destinationUrlFrameable, setDestinationUrlFrameable] = useState<boolean | null>(null);
+  const [checkingCreateFrameable, setCheckingCreateFrameable] = useState(false);
   const [variantWeight, setVariantWeight] = useState(50);
   const [addingVariant, setAddingVariant] = useState(false);
   const [variantMode, setVariantMode] = useState<'url' | 'html'>('url');
@@ -156,6 +158,8 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
     setPageName('');
     setUrlPath('/');
     setDestinationUrl('');
+    setDestinationUrlFrameable(null);
+    setCheckingCreateFrameable(false);
     setCreateMode('url');
     setCreateHtml('');
     setCreatePageError(null);
@@ -460,8 +464,42 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
           {createMode === 'url' ? (
             <div>
               <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Your Page URL</label>
-              <input type="text" value={destinationUrl} onChange={(e) => setDestinationUrl(e.target.value)} className="input-base font-mono text-sm" placeholder="https://yoursite.com/landing" required />
-              <p className="text-slate-400 dark:text-slate-500 text-xs mt-1">SplitLab will proxy this page through your domain so A/B tests run on your URL.</p>
+              <input
+                type="text"
+                value={destinationUrl}
+                onChange={(e) => { setDestinationUrl(e.target.value); setDestinationUrlFrameable(null); }}
+                onBlur={(e) => {
+                  const raw = e.target.value.trim();
+                  if (!raw) return;
+                  const url = raw.match(/^https?:\/\//) ? raw : `https://${raw}`;
+                  setCheckingCreateFrameable(true);
+                  fetch(`/api/check-frameable?url=${encodeURIComponent(url)}`)
+                    .then((r) => r.json())
+                    .then((d) => setDestinationUrlFrameable(d.frameable ?? null))
+                    .catch(() => setDestinationUrlFrameable(null))
+                    .finally(() => setCheckingCreateFrameable(false));
+                }}
+                className="input-base font-mono text-sm"
+                placeholder="https://yoursite.com/landing"
+                required
+              />
+              {checkingCreateFrameable && (
+                <p className="mt-1.5 text-xs text-slate-400 flex items-center gap-1.5">
+                  <Spinner size="sm" /> Checking URL…
+                </p>
+              )}
+              {!checkingCreateFrameable && destinationUrlFrameable === false && (
+                <div className="mt-1.5 text-xs text-amber-500 flex items-start gap-1.5 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
+                  <AlertTriangle size={12} className="flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-medium">This page blocks iframe embedding.</p>
+                    <p className="text-amber-400/80 mt-0.5">Make sure you own this domain and can add a <code className="font-mono">&lt;script&gt;</code> tag — SplitLab needs to inject tracking into your page.</p>
+                  </div>
+                </div>
+              )}
+              {!checkingCreateFrameable && destinationUrlFrameable !== false && (
+                <p className="text-slate-400 dark:text-slate-500 text-xs mt-1">SplitLab will proxy this page through your domain so A/B tests run on your URL.</p>
+              )}
             </div>
           ) : (
             <div>
@@ -498,7 +536,7 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
           )}
           <div className="flex justify-end gap-3 pt-2">
             <Button variant="secondary" type="button" onClick={() => { setCreateOpen(false); resetCreateForm(); }}>Cancel</Button>
-            <Button type="submit" loading={saving}>Create Page</Button>
+            <Button type="submit" loading={saving} disabled={checkingCreateFrameable}>Create Page</Button>
           </div>
         </form>
       </Modal>
