@@ -359,6 +359,9 @@ export default function AnalyticsClient({
   const [newVariantName, setNewVariantName] = useState("");
   const [newVariantUrl, setNewVariantUrl] = useState("");
   const [newVariantUrlError, setNewVariantUrlError] = useState("");
+  const [newVariantUrlFrameable, setNewVariantUrlFrameable] = useState<boolean | null>(null);
+  const [editUrlFrameable, setEditUrlFrameable] = useState<boolean | null>(null);
+  const [checkingFrameable, setCheckingFrameable] = useState(false);
   const [newVariantMode, setNewVariantMode] = useState<"url" | "html">("url");
   const [newVariantHtml, setNewVariantHtml] = useState("");
   const [addingVariant, setAddingVariant] = useState(false);
@@ -772,6 +775,7 @@ export default function AnalyticsClient({
       return;
     }
     setEditingVariantId(v.id);
+    setEditUrlFrameable(null);
     setVariantDraft({
       name: v.name,
       redirect_url: v.redirect_url || "",
@@ -979,6 +983,7 @@ export default function AnalyticsClient({
       setAddVariantOpen(false);
       setNewVariantName("");
       setNewVariantUrl("");
+      setNewVariantUrlFrameable(null);
       setNewVariantHtml("");
       setNewVariantMode("url");
       setAddVariantError(null);
@@ -1031,6 +1036,20 @@ export default function AnalyticsClient({
       dismissTrackerCard();
     }
   }, [variantOverrides]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function checkFrameable(url: string, setter: (v: boolean | null) => void) {
+    if (!url.startsWith('http')) { setter(null); return; }
+    setCheckingFrameable(true);
+    try {
+      const res = await fetch(`/api/check-frameable?url=${encodeURIComponent(url)}`);
+      const data = await res.json();
+      setter(data.frameable ?? null);
+    } catch {
+      setter(null);
+    } finally {
+      setCheckingFrameable(false);
+    }
+  }
 
   async function checkTracking(variantId: string, url: string) {
     setCheckingTracking(variantId);
@@ -1909,7 +1928,7 @@ export default function AnalyticsClient({
                   {/* No domain configured — show the preview URL so it can be shared/tested */}
                   <div className="flex items-center gap-2">
                     <span className="text-[11px] text-slate-500">
-                      Preview URL:
+                      URL:
                     </span>
                     <code className="text-[11px] text-indigo-400 font-mono truncate max-w-[320px]">
                       {appUrl}/api/serve?preview_test_id={test.id}
@@ -2485,15 +2504,34 @@ export default function AnalyticsClient({
                                       <input
                                         type="url"
                                         value={variantDraft.redirect_url}
-                                        onChange={(e) =>
+                                        onChange={(e) => {
                                           setVariantDraft({
                                             ...variantDraft,
                                             redirect_url: e.target.value,
-                                          })
-                                        }
+                                          });
+                                          setEditUrlFrameable(null);
+                                        }}
+                                        onBlur={(e) => {
+                                          const url = e.target.value.trim();
+                                          if (url) checkFrameable(url, setEditUrlFrameable);
+                                        }}
                                         className="input-base text-sm font-mono"
                                         placeholder="https://..."
                                       />
+                                      {checkingFrameable && (
+                                        <p className="mt-1.5 text-xs text-slate-400 flex items-center gap-1.5">
+                                          <Spinner size="sm" /> Checking URL…
+                                        </p>
+                                      )}
+                                      {!checkingFrameable && editUrlFrameable === false && (
+                                        <div className="mt-1.5 text-xs text-amber-500 flex items-start gap-1.5 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
+                                          <AlertTriangle size={12} className="flex-shrink-0 mt-0.5" />
+                                          <div>
+                                            <p className="font-medium">This page blocks iframe embedding.</p>
+                                            <p className="text-amber-400/80 mt-0.5">Make sure you own this domain and can add a <code className="font-mono">&lt;script&gt;</code> tag — the redirect variant will still work for A/B testing.</p>
+                                          </div>
+                                        </div>
+                                      )}
                                     </div>
                                   )}
                                 </div>
@@ -3798,29 +3836,26 @@ export default function AnalyticsClient({
                 <span>Some variants are missing the tracker snippet — conversions may not be recorded for those variants until it is installed.</span>
               </div>
             )}
-            <div className="card overflow-hidden">
-              <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700">
+            <div className={`card overflow-hidden ${!scanResults && !scanning ? "ring-2 ring-indigo-400/60 border-indigo-400/50" : ""}`}>
+              <div className={`px-5 py-4 border-b border-slate-200 dark:border-slate-700 ${!scanResults && !scanning ? "bg-indigo-500/10" : ""}`}>
                 <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-lg bg-indigo-500/20 flex items-center justify-center">
-                    <ScanLine size={16} className="text-indigo-400" />
+                  <div className="w-9 h-9 rounded-lg bg-indigo-500/30 flex items-center justify-center flex-shrink-0">
+                    <ScanLine size={18} className="text-indigo-300" />
                   </div>
-                  <div>
-                    <p className="font-medium text-slate-800 dark:text-slate-200 text-sm">
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-slate-800 dark:text-slate-100 text-sm">
                       Set Up Goal Conversion Tracking
                     </p>
                     {scanning || scannedVariantName ? (
-                      <p className="text-slate-500 text-xs">
+                      <p className="text-slate-500 text-xs mt-0.5">
                         {scanning
                           ? `Scanning ${scannedVariantName}…`
                           : `Last scanned: ${scannedVariantName}`}
                       </p>
                     ) : (
-                      <div className="flex items-center gap-1.5 rounded-lg bg-amber-500/10 border border-amber-500/30 px-2.5 py-1.5 text-xs text-amber-600 dark:text-amber-300 mt-1">
-                        <Info size={12} className="flex-shrink-0" />
-                        <span>
-                          Using the page scanner — click &ldquo;Setup Goal Tracking&rdquo; on any variant in the Overview tab to detect trackable elements
-                        </span>
-                      </div>
+                      <p className="text-slate-400 text-xs mt-0.5">
+                        Scan your page to detect buttons &amp; forms — then pick which ones count as a conversion.
+                      </p>
                     )}
                   </div>
                 </div>
@@ -3828,10 +3863,13 @@ export default function AnalyticsClient({
 
               <div className="px-5 py-4">
                 {!scanning && !scanResults && (
-                  <p className="text-slate-500 text-xs">
-                    No scan results yet. Use the Scan button on a variant row in
-                    the Overview tab.
-                  </p>
+                  <div className="flex items-start gap-3 rounded-lg bg-indigo-500/15 border border-indigo-400/30 px-4 py-3">
+                    <Info size={14} className="text-indigo-300 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-sm font-medium text-indigo-200">How to set up goals</p>
+                      <p className="text-xs text-slate-300 mt-1">Go to the <span className="font-medium text-white">Overview tab</span>, find a variant row, and click <span className="font-medium text-white">&ldquo;Setup Goal Tracking&rdquo;</span> to scan that page for trackable elements. Once scanned, you can turn any button or form into a conversion goal right here.</p>
+                    </div>
+                  </div>
                 )}
 
                 {scanning && (
@@ -3943,7 +3981,7 @@ export default function AnalyticsClient({
                                       <button
                                         type="button"
                                         onClick={() => enableAsGoal(el)}
-                                        className="flex-shrink-0 text-xs px-2.5 py-1 rounded-lg border border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/10 transition-colors"
+                                        className="flex-shrink-0 text-xs px-2.5 py-1 rounded-lg border border-indigo-400/60 text-indigo-300 bg-indigo-500/15 hover:bg-indigo-500/30 font-medium transition-colors"
                                       >
                                         + Goal
                                       </button>
@@ -4164,7 +4202,7 @@ export default function AnalyticsClient({
       {/* ═══ MODALS ═══ */}
       <Modal
         open={addVariantOpen}
-        onClose={() => { setAddVariantOpen(false); setAddVariantError(null); }}
+        onClose={() => { setAddVariantOpen(false); setAddVariantError(null); setNewVariantUrlFrameable(null); setCheckingFrameable(false); }}
         title="Add Variant"
         size="sm"
       >
@@ -4211,7 +4249,12 @@ export default function AnalyticsClient({
                 value={newVariantUrl}
                 onChange={(e) => {
                   setNewVariantUrl(e.target.value);
+                  setNewVariantUrlFrameable(null);
                   if (newVariantUrlError) setNewVariantUrlError("");
+                }}
+                onBlur={(e) => {
+                  const url = e.target.value.trim();
+                  if (url) checkFrameable(url, setNewVariantUrlFrameable);
                 }}
                 className={`input-base font-mono text-sm ${newVariantUrlError ? "border-red-500 focus:ring-red-500" : ""}`}
                 placeholder="https://..."
@@ -4221,6 +4264,20 @@ export default function AnalyticsClient({
                   <AlertTriangle size={11} className="flex-shrink-0" />{" "}
                   {newVariantUrlError}
                 </p>
+              )}
+              {checkingFrameable && (
+                <p className="mt-1.5 text-xs text-slate-400 flex items-center gap-1.5">
+                  <Spinner size="sm" /> Checking URL…
+                </p>
+              )}
+              {!checkingFrameable && newVariantUrlFrameable === false && !newVariantUrlError && (
+                <div className="mt-1.5 text-xs text-amber-500 flex items-start gap-1.5 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
+                  <AlertTriangle size={12} className="flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-medium">This page blocks iframe embedding.</p>
+                    <p className="text-amber-400/80 mt-0.5">Make sure you own this domain and can add a <code className="font-mono">&lt;script&gt;</code> tag — the redirect variant will still work for A/B testing.</p>
+                  </div>
+                </div>
               )}
             </div>
           ) : (
@@ -4277,7 +4334,7 @@ export default function AnalyticsClient({
             >
               Cancel
             </Button>
-            <Button type="submit" loading={addingVariant}>
+            <Button type="submit" loading={addingVariant} disabled={checkingFrameable}>
               Add Variant
             </Button>
           </div>

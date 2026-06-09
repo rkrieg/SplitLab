@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
 import {
   Plus, FileCode2, MoreHorizontal, Play, Pause, Check, Trash2,
-  Globe, Link2, ShieldCheck, ShieldX, Edit2, Sparkles,
+  Globe, Link2, ShieldCheck, ShieldX, Edit2, Sparkles, AlertTriangle,
 } from 'lucide-react';
 import Spinner from '@/components/ui/Spinner';
 import Modal from '@/components/ui/Modal';
@@ -71,6 +71,10 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
   const [addVariantTestId, setAddVariantTestId] = useState<string | null>(null);
   const [variantName, setVariantName] = useState('');
   const [variantUrl, setVariantUrl] = useState('');
+  const [variantUrlFrameable, setVariantUrlFrameable] = useState<boolean | null>(null);
+  const [checkingFrameable, setCheckingFrameable] = useState(false);
+  const [destinationUrlFrameable, setDestinationUrlFrameable] = useState<boolean | null>(null);
+  const [checkingCreateFrameable, setCheckingCreateFrameable] = useState(false);
   const [variantWeight, setVariantWeight] = useState(50);
   const [addingVariant, setAddingVariant] = useState(false);
   const [variantMode, setVariantMode] = useState<'url' | 'html'>('url');
@@ -79,6 +83,20 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
   // Modal errors
   const [createPageError, setCreatePageError] = useState<{ message: string; isLimit: boolean } | null>(null);
   const [addVariantError, setAddVariantError] = useState<{ message: string; isLimit: boolean } | null>(null);
+
+  async function checkFrameable(url: string, setter: (v: boolean | null) => void) {
+    if (!url.startsWith('http')) { setter(null); return; }
+    setCheckingFrameable(true);
+    try {
+      const res = await fetch(`/api/check-frameable?url=${encodeURIComponent(url)}`);
+      const data = await res.json();
+      setter(data.frameable ?? null);
+    } catch {
+      setter(null);
+    } finally {
+      setCheckingFrameable(false);
+    }
+  }
 
   // ─── Create Page ────────────────────────────────────────────────────────
 
@@ -140,6 +158,8 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
     setPageName('');
     setUrlPath('/');
     setDestinationUrl('');
+    setDestinationUrlFrameable(null);
+    setCheckingCreateFrameable(false);
     setCreateMode('url');
     setCreateHtml('');
     setCreatePageError(null);
@@ -210,6 +230,8 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
     const count = (test.test_variants ?? []).length;
     setVariantName(`Variant ${String.fromCharCode(65 + count)}`);
     setVariantUrl('');
+    setVariantUrlFrameable(null);
+    setCheckingFrameable(false);
     setVariantWeight(50);
     setVariantMode('url');
     setVariantHtml('');
@@ -240,6 +262,7 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
       setTests((prev) => prev.map((t) => (t.id === addVariantTestId ? updated : t)));
       setAddVariantTestId(null);
       setAddVariantError(null);
+      setVariantUrlFrameable(null);
       toast.success('Variant added');
     } catch { toast.error('Unexpected error'); } finally { setAddingVariant(false); }
   }
@@ -441,8 +464,42 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
           {createMode === 'url' ? (
             <div>
               <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Your Page URL</label>
-              <input type="text" value={destinationUrl} onChange={(e) => setDestinationUrl(e.target.value)} className="input-base font-mono text-sm" placeholder="https://yoursite.com/landing" required />
-              <p className="text-slate-400 dark:text-slate-500 text-xs mt-1">SplitLab will proxy this page through your domain so A/B tests run on your URL.</p>
+              <input
+                type="text"
+                value={destinationUrl}
+                onChange={(e) => { setDestinationUrl(e.target.value); setDestinationUrlFrameable(null); }}
+                onBlur={(e) => {
+                  const raw = e.target.value.trim();
+                  if (!raw) return;
+                  const url = raw.match(/^https?:\/\//) ? raw : `https://${raw}`;
+                  setCheckingCreateFrameable(true);
+                  fetch(`/api/check-frameable?url=${encodeURIComponent(url)}`)
+                    .then((r) => r.json())
+                    .then((d) => setDestinationUrlFrameable(d.frameable ?? null))
+                    .catch(() => setDestinationUrlFrameable(null))
+                    .finally(() => setCheckingCreateFrameable(false));
+                }}
+                className="input-base font-mono text-sm"
+                placeholder="https://yoursite.com/landing"
+                required
+              />
+              {checkingCreateFrameable && (
+                <p className="mt-1.5 text-xs text-slate-400 flex items-center gap-1.5">
+                  <Spinner size="sm" /> Checking URL…
+                </p>
+              )}
+              {!checkingCreateFrameable && destinationUrlFrameable === false && (
+                <div className="mt-1.5 text-xs text-amber-500 flex items-start gap-1.5 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
+                  <AlertTriangle size={12} className="flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-medium">This page blocks iframe embedding.</p>
+                    <p className="text-amber-400/80 mt-0.5">Make sure you own this domain and can add a <code className="font-mono">&lt;script&gt;</code> tag — SplitLab needs to inject tracking into your page.</p>
+                  </div>
+                </div>
+              )}
+              {!checkingCreateFrameable && destinationUrlFrameable !== false && (
+                <p className="text-slate-400 dark:text-slate-500 text-xs mt-1">SplitLab will proxy this page through your domain so A/B tests run on your URL.</p>
+              )}
             </div>
           ) : (
             <div>
@@ -479,7 +536,7 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
           )}
           <div className="flex justify-end gap-3 pt-2">
             <Button variant="secondary" type="button" onClick={() => { setCreateOpen(false); resetCreateForm(); }}>Cancel</Button>
-            <Button type="submit" loading={saving}>Create Page</Button>
+            <Button type="submit" loading={saving} disabled={checkingCreateFrameable}>Create Page</Button>
           </div>
         </form>
       </Modal>
@@ -503,7 +560,7 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
       </Modal>
 
       {/* Add Variant Modal */}
-      <Modal open={!!addVariantTestId} onClose={() => { setAddVariantTestId(null); setAddVariantError(null); }} title="Add Variant" size="sm">
+      <Modal open={!!addVariantTestId} onClose={() => { setAddVariantTestId(null); setAddVariantError(null); setVariantUrlFrameable(null); setCheckingFrameable(false); }} title="Add Variant" size="sm">
         <form onSubmit={handleAddVariant} className="space-y-4">
           {/* Mode toggle */}
           <div className="flex border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
@@ -531,7 +588,29 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
           {variantMode === 'url' ? (
             <div>
               <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Destination URL</label>
-              <input type="url" value={variantUrl} onChange={(e) => setVariantUrl(e.target.value)} className="input-base font-mono text-sm" placeholder="https://example.com/variant-b" required />
+              <input
+                type="url"
+                value={variantUrl}
+                onChange={(e) => { setVariantUrl(e.target.value); setVariantUrlFrameable(null); }}
+                onBlur={(e) => { const u = e.target.value.trim(); if (u) checkFrameable(u, setVariantUrlFrameable); }}
+                className="input-base font-mono text-sm"
+                placeholder="https://example.com/variant-b"
+                required
+              />
+              {checkingFrameable && (
+                <p className="mt-1.5 text-xs text-slate-400 flex items-center gap-1.5">
+                  <Spinner size="sm" /> Checking URL…
+                </p>
+              )}
+              {!checkingFrameable && variantUrlFrameable === false && (
+                <div className="mt-1.5 text-xs text-amber-500 flex items-start gap-1.5 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
+                  <AlertTriangle size={12} className="flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-medium">This page blocks iframe embedding.</p>
+                    <p className="text-amber-400/80 mt-0.5">Make sure you own this domain and can add a <code className="font-mono">&lt;script&gt;</code> tag — the redirect variant will still work for A/B testing.</p>
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
             <div>
@@ -579,7 +658,7 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
           )}
           <div className="flex justify-end gap-3 pt-2">
             <Button variant="secondary" type="button" onClick={() => { setAddVariantTestId(null); setAddVariantError(null); }}>Cancel</Button>
-            <Button type="submit" loading={addingVariant}>Add Variant</Button>
+            <Button type="submit" loading={addingVariant} disabled={checkingFrameable}>Add Variant</Button>
           </div>
         </form>
       </Modal>
