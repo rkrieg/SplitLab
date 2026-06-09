@@ -366,7 +366,6 @@ export default function AnalyticsClient({
   const [newVariantHtml, setNewVariantHtml] = useState("");
   const [addingVariant, setAddingVariant] = useState(false);
   const [addVariantError, setAddVariantError] = useState<{ message: string; isLimit: boolean } | null>(null);
-  const [redirectConfirmed, setRedirectConfirmed] = useState(false);
 
   // Tracking verification
   const [checkingTracking, setCheckingTracking] = useState<string | null>(null);
@@ -925,15 +924,6 @@ export default function AnalyticsClient({
         return;
       }
       setNewVariantUrlError("");
-      // Run frameable check if not done yet (user clicked Add without blurring)
-      if (frameableResult === null) {
-        frameableResult = await checkFrameable(trimmed, setNewVariantUrlFrameable);
-      }
-      // If not frameable and user hasn't confirmed redirect mode yet, show warning and wait
-      if (frameableResult === false && !redirectConfirmed) {
-        setRedirectConfirmed(true); // next click will proceed
-        return;
-      }
     }
     setAddingVariant(true);
     try {
@@ -997,7 +987,6 @@ export default function AnalyticsClient({
       setNewVariantName("");
       setNewVariantUrl("");
       setNewVariantUrlFrameable(null);
-      setRedirectConfirmed(false);
       setNewVariantHtml("");
       setNewVariantMode("url");
       setAddVariantError(null);
@@ -2546,10 +2535,7 @@ export default function AnalyticsClient({
                                             redirect_url: e.target.value,
                                           });
                                           setEditUrlFrameable(null);
-                                        }}
-                                        onBlur={(e) => {
-                                          const url = e.target.value.trim();
-                                          if (url) checkFrameable(url, setEditUrlFrameable);
+                                          setCheckingFrameable(false);
                                         }}
                                         className="input-base text-sm font-mono"
                                         placeholder="https://..."
@@ -2656,15 +2642,26 @@ export default function AnalyticsClient({
                                         <Trash2 size={12} /> Delete
                                       </button>
                                     )}
-                                    <Button
-                                      size="sm"
-                                      onClick={() =>
-                                        saveVariant(stat.variant.id)
-                                      }
-                                      loading={savingVariant}
-                                    >
-                                      <Check size={12} /> Save
-                                    </Button>
+                                    {variantDraft.redirect_url && editUrlFrameable === null ? (
+                                      <Button
+                                        size="sm"
+                                        loading={checkingFrameable}
+                                        onClick={async () => {
+                                          const url = variantDraft.redirect_url?.trim();
+                                          if (url) await checkFrameable(url, setEditUrlFrameable);
+                                        }}
+                                      >
+                                        Check Compatibility
+                                      </Button>
+                                    ) : (
+                                      <Button
+                                        size="sm"
+                                        onClick={() => saveVariant(stat.variant.id)}
+                                        loading={savingVariant}
+                                      >
+                                        <Check size={12} /> Save
+                                      </Button>
+                                    )}
                                   </div>
                                 </div>
                               </td>
@@ -4238,7 +4235,7 @@ export default function AnalyticsClient({
       {/* ═══ MODALS ═══ */}
       <Modal
         open={addVariantOpen}
-        onClose={() => { setAddVariantOpen(false); setAddVariantError(null); setNewVariantUrlFrameable(null); setRedirectConfirmed(false); setCheckingFrameable(false); }}
+        onClose={() => { setAddVariantOpen(false); setAddVariantError(null); setNewVariantUrlFrameable(null); setCheckingFrameable(false); }}
         title="Add Variant"
         size="sm"
       >
@@ -4286,12 +4283,8 @@ export default function AnalyticsClient({
                 onChange={(e) => {
                   setNewVariantUrl(e.target.value);
                   setNewVariantUrlFrameable(null);
-                  setRedirectConfirmed(false);
+                  setCheckingFrameable(false);
                   if (newVariantUrlError) setNewVariantUrlError("");
-                }}
-                onBlur={(e) => {
-                  const url = e.target.value.trim();
-                  if (url) checkFrameable(url, setNewVariantUrlFrameable);
                 }}
                 className={`input-base font-mono text-sm ${newVariantUrlError ? "border-red-500 focus:ring-red-500" : ""}`}
                 placeholder="https://..."
@@ -4312,13 +4305,14 @@ export default function AnalyticsClient({
                   <AlertTriangle size={12} className="flex-shrink-0 mt-0.5" />
                   <div>
                     <p className="font-medium">This page blocks iframe embedding.</p>
-                    <p className="text-amber-400/80 mt-0.5">
-                      {redirectConfirmed
-                        ? "Click \"Add Variant\" again to save it as a redirect variant."
-                        : "It will be saved as a redirect variant. Make sure you own this domain and can add the tracker script for conversion tracking."}
-                    </p>
+                    <p className="text-amber-400/80 mt-0.5">It will be saved as a redirect variant. Make sure you own this domain and can add the tracker script for conversion tracking.</p>
                   </div>
                 </div>
+              )}
+              {!checkingFrameable && newVariantUrlFrameable === true && !newVariantUrlError && (
+                <p className="mt-1.5 text-xs text-green-500 flex items-center gap-1.5">
+                  <span>✓</span> This page supports embedding.
+                </p>
               )}
             </div>
           ) : (
@@ -4375,9 +4369,25 @@ export default function AnalyticsClient({
             >
               Cancel
             </Button>
-            <Button type="submit" loading={addingVariant || checkingFrameable}>
-              Add Variant
-            </Button>
+            {newVariantMode === "url" && newVariantUrlFrameable === null ? (
+              <Button
+                type="button"
+                loading={checkingFrameable}
+                onClick={async () => {
+                  const trimmed = newVariantUrl.trim();
+                  if (!trimmed) { setNewVariantUrlError("Please enter a destination URL."); return; }
+                  try { new URL(trimmed); } catch { setNewVariantUrlError("Please enter a valid URL (e.g. https://example.com)."); return; }
+                  setNewVariantUrlError("");
+                  await checkFrameable(trimmed, setNewVariantUrlFrameable);
+                }}
+              >
+                Check Compatibility
+              </Button>
+            ) : (
+              <Button type="submit" loading={addingVariant}>
+                {newVariantUrlFrameable === false ? "Add as Redirect Variant" : "Add Variant"}
+              </Button>
+            )}
           </div>
         </form>
       </Modal>
