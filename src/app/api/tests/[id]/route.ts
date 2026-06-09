@@ -143,6 +143,22 @@ export async function PATCH(
         const pruned = { variants: existingScans.variants.filter(v => v.variant_id !== delete_variant_id) };
         await db.from('tests').update({ scan_results: pruned }).eq('id', params.id);
       }
+
+      // Redistribute weights equally among remaining variants
+      const { data: remaining } = await db
+        .from('test_variants')
+        .select('id')
+        .eq('test_id', params.id)
+        .order('created_at', { ascending: true });
+
+      if (remaining && remaining.length > 0) {
+        const equalWeight = Math.floor(100 / remaining.length);
+        let remainder = 100 - equalWeight * remaining.length;
+        for (const v of remaining) {
+          const w = equalWeight + (remainder-- > 0 ? 1 : 0);
+          await db.from('test_variants').update({ traffic_weight: w }).eq('id', v.id);
+        }
+      }
     }
 
     // Upsert goals — preserve existing UUIDs so historical events stay linked
