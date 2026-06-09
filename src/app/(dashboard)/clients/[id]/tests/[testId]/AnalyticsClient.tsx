@@ -1925,27 +1925,46 @@ export default function AnalyticsClient({
                   >
                     {test.url_path}
                   </button>
-                  {/* No domain configured — show the preview URL so it can be shared/tested */}
-                  <div className="flex items-center gap-2">
-                    <span className="text-[11px] text-slate-500">
-                      URL:
-                    </span>
-                    <code className="text-[11px] text-indigo-400 font-mono truncate max-w-[320px]">
-                      {appUrl}/api/serve?preview_test_id={test.id}
-                    </code>
-                    <button
-                      onClick={() => {
-                        navigator.clipboard.writeText(
-                          `${appUrl}/api/serve?preview_test_id=${test.id}`,
-                        );
-                        toast.success("Preview URL copied");
-                      }}
-                      className="text-slate-500 hover:text-slate-300 transition-colors flex-shrink-0"
-                      title="Copy preview URL"
-                    >
-                      <Copy size={11} />
-                    </button>
-                  </div>
+                  {/* No domain configured — show the test URL for real traffic */}
+                  {(() => {
+                    const nameSlug = test.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+                    const testUrl = `${appUrl}/${nameSlug}/${test.id}`;
+                    return (
+                      <>
+                        <div className="flex items-center gap-2">
+                          <code className="text-[11px] text-indigo-400 font-mono truncate max-w-[360px]">
+                            {testUrl}
+                          </code>
+                          <button
+                            onClick={() => {
+                              navigator.clipboard.writeText(testUrl);
+                              toast.success("URL copied");
+                            }}
+                            className="text-slate-500 hover:text-slate-300 transition-colors flex-shrink-0"
+                            title="Copy URL"
+                          >
+                            <Copy size={11} />
+                          </button>
+                          {test.status === "active" ? (
+                            <a
+                              href={testUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-slate-500 hover:text-slate-300 transition-colors flex-shrink-0"
+                              title="Open URL"
+                            >
+                              <ExternalLink size={11} />
+                            </a>
+                          ) : null}
+                        </div>
+                        <p className={`text-[10px] mt-0.5 ${test.status === "active" ? "text-green-500" : "text-amber-500"}`}>
+                          {test.status === "active"
+                            ? "This link is live and accepting real traffic."
+                            : "This link only works when the test is published."}
+                        </p>
+                      </>
+                    );
+                  })()}
                 </div>
               )}
             </div>

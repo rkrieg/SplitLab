@@ -38,6 +38,13 @@ export async function GET(request: NextRequest) {
           headers: { 'Content-Type': 'text/html' },
         });
       }
+      // Real traffic (no sl_vh) only serves active tests. Dashboard preview (sl_vh) bypasses this.
+      if (testRow.status !== 'active' && !forcedVh) {
+        return new NextResponse(notFoundHtml('preview'), {
+          status: 404,
+          headers: { 'Content-Type': 'text/html' },
+        });
+      }
       test = testRow;
       workspaceId = testRow.workspace_id;
     } else {
