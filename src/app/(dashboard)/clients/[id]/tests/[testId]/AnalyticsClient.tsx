@@ -3836,8 +3836,8 @@ export default function AnalyticsClient({
                 <span>Some variants are missing the tracker snippet — conversions may not be recorded for those variants until it is installed.</span>
               </div>
             )}
-            <div className={`card overflow-hidden ${!scanResults && !scanning ? "ring-2 ring-indigo-400/60 border-indigo-400/50" : ""}`}>
-              <div className={`px-5 py-4 border-b border-slate-200 dark:border-slate-700 ${!scanResults && !scanning ? "bg-indigo-500/10" : ""}`}>
+            <div className="card overflow-hidden ring-2 ring-indigo-400/60 border-indigo-400/50">
+              <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700 bg-indigo-500/10">
                 <div className="flex items-center gap-3">
                   <div className="w-9 h-9 rounded-lg bg-indigo-500/30 flex items-center justify-center flex-shrink-0">
                     <ScanLine size={18} className="text-indigo-300" />
