@@ -1957,7 +1957,7 @@ export default function AnalyticsClient({
                             </a>
                           ) : null}
                         </div>
-                        <p className="text-[10px] text-slate-500 mt-0.5">
+                        <p className={`text-[10px] mt-0.5 ${test.status === "active" ? "text-green-500" : "text-amber-500"}`}>
                           {test.status === "active"
                             ? "This link is live and accepting real traffic."
                             : "This link only works when the test is published."}
