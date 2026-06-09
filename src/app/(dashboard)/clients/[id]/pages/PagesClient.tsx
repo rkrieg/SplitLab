@@ -130,7 +130,7 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
             variants: [{
               name: 'Control',
               redirect_url: normalizedUrl,
-              proxy_mode: true,
+              proxy_mode: destinationUrlFrameable !== false,
               traffic_weight: 100,
               is_control: true,
             }],

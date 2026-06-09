@@ -2648,7 +2648,12 @@ export default function AnalyticsClient({
                                         loading={checkingFrameable}
                                         onClick={async () => {
                                           const url = variantDraft.redirect_url?.trim();
-                                          if (url) await checkFrameable(url, setEditUrlFrameable);
+                                          if (url) {
+                                            const result = await checkFrameable(url, setEditUrlFrameable);
+                                            if (result === false) {
+                                              setVariantDraft((d) => ({ ...d, proxy_mode: false }));
+                                            }
+                                          }
                                         }}
                                       >
                                         Check Compatibility
