@@ -1928,7 +1928,7 @@ export default function AnalyticsClient({
                   {/* No domain configured — show the preview URL so it can be shared/tested */}
                   <div className="flex items-center gap-2">
                     <span className="text-[11px] text-slate-500">
-                      Preview URL:
+                      URL:
                     </span>
                     <code className="text-[11px] text-indigo-400 font-mono truncate max-w-[320px]">
                       {appUrl}/api/serve?preview_test_id={test.id}
