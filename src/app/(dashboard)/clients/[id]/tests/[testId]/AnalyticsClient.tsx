@@ -359,6 +359,8 @@ export default function AnalyticsClient({
   const [newVariantName, setNewVariantName] = useState("");
   const [newVariantUrl, setNewVariantUrl] = useState("");
   const [newVariantUrlError, setNewVariantUrlError] = useState("");
+  const [newVariantUrlFrameable, setNewVariantUrlFrameable] = useState<boolean | null>(null);
+  const [editUrlFrameable, setEditUrlFrameable] = useState<boolean | null>(null);
   const [newVariantMode, setNewVariantMode] = useState<"url" | "html">("url");
   const [newVariantHtml, setNewVariantHtml] = useState("");
   const [addingVariant, setAddingVariant] = useState(false);
@@ -772,6 +774,7 @@ export default function AnalyticsClient({
       return;
     }
     setEditingVariantId(v.id);
+    setEditUrlFrameable(null);
     setVariantDraft({
       name: v.name,
       redirect_url: v.redirect_url || "",
@@ -979,6 +982,7 @@ export default function AnalyticsClient({
       setAddVariantOpen(false);
       setNewVariantName("");
       setNewVariantUrl("");
+      setNewVariantUrlFrameable(null);
       setNewVariantHtml("");
       setNewVariantMode("url");
       setAddVariantError(null);
@@ -1031,6 +1035,17 @@ export default function AnalyticsClient({
       dismissTrackerCard();
     }
   }, [variantOverrides]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function checkFrameable(url: string, setter: (v: boolean | null) => void) {
+    if (!url.startsWith('http')) { setter(null); return; }
+    try {
+      const res = await fetch(`/api/check-frameable?url=${encodeURIComponent(url)}`);
+      const data = await res.json();
+      setter(data.frameable ?? null);
+    } catch {
+      setter(null);
+    }
+  }
 
   async function checkTracking(variantId: string, url: string) {
     setCheckingTracking(variantId);
@@ -2485,15 +2500,26 @@ export default function AnalyticsClient({
                                       <input
                                         type="url"
                                         value={variantDraft.redirect_url}
-                                        onChange={(e) =>
+                                        onChange={(e) => {
                                           setVariantDraft({
                                             ...variantDraft,
                                             redirect_url: e.target.value,
-                                          })
-                                        }
+                                          });
+                                          setEditUrlFrameable(null);
+                                        }}
+                                        onBlur={(e) => {
+                                          const url = e.target.value.trim();
+                                          if (url) checkFrameable(url, setEditUrlFrameable);
+                                        }}
                                         className="input-base text-sm font-mono"
                                         placeholder="https://..."
                                       />
+                                      {editUrlFrameable === false && (
+                                        <p className="mt-1.5 text-xs text-amber-500 flex items-start gap-1.5">
+                                          <AlertTriangle size={11} className="flex-shrink-0 mt-0.5" />
+                                          This page blocks iframe embedding. Make sure you own this domain and can add a <code className="font-mono">&lt;script&gt;</code> tag — the preview won&apos;t load inline, but the redirect will still work.
+                                        </p>
+                                      )}
                                     </div>
                                   )}
                                 </div>
@@ -4211,7 +4237,12 @@ export default function AnalyticsClient({
                 value={newVariantUrl}
                 onChange={(e) => {
                   setNewVariantUrl(e.target.value);
+                  setNewVariantUrlFrameable(null);
                   if (newVariantUrlError) setNewVariantUrlError("");
+                }}
+                onBlur={(e) => {
+                  const url = e.target.value.trim();
+                  if (url) checkFrameable(url, setNewVariantUrlFrameable);
                 }}
                 className={`input-base font-mono text-sm ${newVariantUrlError ? "border-red-500 focus:ring-red-500" : ""}`}
                 placeholder="https://..."
@@ -4220,6 +4251,13 @@ export default function AnalyticsClient({
                 <p className="mt-1.5 text-xs text-red-500 flex items-center gap-1">
                   <AlertTriangle size={11} className="flex-shrink-0" />{" "}
                   {newVariantUrlError}
+                </p>
+              )}
+              {newVariantUrlFrameable === false && !newVariantUrlError && (
+                <p className="mt-1.5 text-xs text-amber-500 flex items-start gap-1.5">
+                  <AlertTriangle size={11} className="flex-shrink-0 mt-0.5" />
+                  This page blocks iframe embedding. Make sure you own this domain and can add a{" "}
+                  <code className="font-mono">&lt;script&gt;</code> tag to it — the preview link won&apos;t load inline, but the redirect variant will still work for A/B testing.
                 </p>
               )}
             </div>

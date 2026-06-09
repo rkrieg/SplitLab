@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
 import {
   Plus, FileCode2, MoreHorizontal, Play, Pause, Check, Trash2,
-  Globe, Link2, ShieldCheck, ShieldX, Edit2, Sparkles,
+  Globe, Link2, ShieldCheck, ShieldX, Edit2, Sparkles, AlertTriangle,
 } from 'lucide-react';
 import Spinner from '@/components/ui/Spinner';
 import Modal from '@/components/ui/Modal';
@@ -71,6 +71,7 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
   const [addVariantTestId, setAddVariantTestId] = useState<string | null>(null);
   const [variantName, setVariantName] = useState('');
   const [variantUrl, setVariantUrl] = useState('');
+  const [variantUrlFrameable, setVariantUrlFrameable] = useState<boolean | null>(null);
   const [variantWeight, setVariantWeight] = useState(50);
   const [addingVariant, setAddingVariant] = useState(false);
   const [variantMode, setVariantMode] = useState<'url' | 'html'>('url');
@@ -79,6 +80,17 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
   // Modal errors
   const [createPageError, setCreatePageError] = useState<{ message: string; isLimit: boolean } | null>(null);
   const [addVariantError, setAddVariantError] = useState<{ message: string; isLimit: boolean } | null>(null);
+
+  async function checkFrameable(url: string, setter: (v: boolean | null) => void) {
+    if (!url.startsWith('http')) { setter(null); return; }
+    try {
+      const res = await fetch(`/api/check-frameable?url=${encodeURIComponent(url)}`);
+      const data = await res.json();
+      setter(data.frameable ?? null);
+    } catch {
+      setter(null);
+    }
+  }
 
   // ─── Create Page ────────────────────────────────────────────────────────
 
@@ -210,6 +222,7 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
     const count = (test.test_variants ?? []).length;
     setVariantName(`Variant ${String.fromCharCode(65 + count)}`);
     setVariantUrl('');
+    setVariantUrlFrameable(null);
     setVariantWeight(50);
     setVariantMode('url');
     setVariantHtml('');
@@ -240,6 +253,7 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
       setTests((prev) => prev.map((t) => (t.id === addVariantTestId ? updated : t)));
       setAddVariantTestId(null);
       setAddVariantError(null);
+      setVariantUrlFrameable(null);
       toast.success('Variant added');
     } catch { toast.error('Unexpected error'); } finally { setAddingVariant(false); }
   }
@@ -531,7 +545,22 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
           {variantMode === 'url' ? (
             <div>
               <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Destination URL</label>
-              <input type="url" value={variantUrl} onChange={(e) => setVariantUrl(e.target.value)} className="input-base font-mono text-sm" placeholder="https://example.com/variant-b" required />
+              <input
+                type="url"
+                value={variantUrl}
+                onChange={(e) => { setVariantUrl(e.target.value); setVariantUrlFrameable(null); }}
+                onBlur={(e) => { const u = e.target.value.trim(); if (u) checkFrameable(u, setVariantUrlFrameable); }}
+                className="input-base font-mono text-sm"
+                placeholder="https://example.com/variant-b"
+                required
+              />
+              {variantUrlFrameable === false && (
+                <p className="mt-1.5 text-xs text-amber-500 flex items-start gap-1.5">
+                  <AlertTriangle size={11} className="flex-shrink-0 mt-0.5" />
+                  This page blocks iframe embedding. Make sure you own this domain and can add a{' '}
+                  <code className="font-mono">&lt;script&gt;</code> tag to it — the preview won&apos;t load inline, but the redirect variant will still work for A/B testing.
+                </p>
+              )}
             </div>
           ) : (
             <div>
