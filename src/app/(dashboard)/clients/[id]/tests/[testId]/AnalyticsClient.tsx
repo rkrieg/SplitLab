@@ -366,6 +366,7 @@ export default function AnalyticsClient({
   const [newVariantHtml, setNewVariantHtml] = useState("");
   const [addingVariant, setAddingVariant] = useState(false);
   const [addVariantError, setAddVariantError] = useState<{ message: string; isLimit: boolean } | null>(null);
+  const [redirectConfirmed, setRedirectConfirmed] = useState(false);
 
   // Tracking verification
   const [checkingTracking, setCheckingTracking] = useState<string | null>(null);
@@ -901,6 +902,7 @@ export default function AnalyticsClient({
 
   async function handleAddVariant(e: React.FormEvent) {
     e.preventDefault();
+    let frameableResult = newVariantUrlFrameable;
     if (newVariantMode === "url") {
       const trimmed = newVariantUrl.trim();
       if (!trimmed) {
@@ -923,12 +925,23 @@ export default function AnalyticsClient({
         return;
       }
       setNewVariantUrlError("");
+      // Run frameable check if not done yet (user clicked Add without blurring)
+      if (frameableResult === null) {
+        frameableResult = await checkFrameable(trimmed, setNewVariantUrlFrameable);
+      }
+      // If not frameable and user hasn't confirmed redirect mode yet, show warning and wait
+      if (frameableResult === false && !redirectConfirmed) {
+        setRedirectConfirmed(true); // next click will proceed
+        return;
+      }
     }
     setAddingVariant(true);
     try {
       const count = variants.length + 1;
       const weight = Math.floor(100 / count);
       const remainder = 100 - weight * count;
+      // Auto-use redirect mode if site blocks iframe embedding
+      const useProxyMode = frameableResult !== false;
 
       const payload =
         newVariantMode === "html"
@@ -940,7 +953,7 @@ export default function AnalyticsClient({
           : {
               name: newVariantName,
               redirect_url: newVariantUrl,
-              proxy_mode: true,
+              proxy_mode: useProxyMode,
               traffic_weight: weight + remainder,
             };
       const res = await fetch(`/api/tests/${test.id}/variants`, {
@@ -984,6 +997,7 @@ export default function AnalyticsClient({
       setNewVariantName("");
       setNewVariantUrl("");
       setNewVariantUrlFrameable(null);
+      setRedirectConfirmed(false);
       setNewVariantHtml("");
       setNewVariantMode("url");
       setAddVariantError(null);
@@ -1037,15 +1051,18 @@ export default function AnalyticsClient({
     }
   }, [variantOverrides]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function checkFrameable(url: string, setter: (v: boolean | null) => void) {
-    if (!url.startsWith('http')) { setter(null); return; }
+  async function checkFrameable(url: string, setter: (v: boolean | null) => void): Promise<boolean | null> {
+    if (!url.startsWith('http')) { setter(null); return null; }
     setCheckingFrameable(true);
     try {
       const res = await fetch(`/api/check-frameable?url=${encodeURIComponent(url)}`);
       const data = await res.json();
-      setter(data.frameable ?? null);
+      const result: boolean | null = data.frameable ?? null;
+      setter(result);
+      return result;
     } catch {
       setter(null);
+      return null;
     } finally {
       setCheckingFrameable(false);
     }
@@ -4221,7 +4238,7 @@ export default function AnalyticsClient({
       {/* ═══ MODALS ═══ */}
       <Modal
         open={addVariantOpen}
-        onClose={() => { setAddVariantOpen(false); setAddVariantError(null); setNewVariantUrlFrameable(null); setCheckingFrameable(false); }}
+        onClose={() => { setAddVariantOpen(false); setAddVariantError(null); setNewVariantUrlFrameable(null); setRedirectConfirmed(false); setCheckingFrameable(false); }}
         title="Add Variant"
         size="sm"
       >
@@ -4269,6 +4286,7 @@ export default function AnalyticsClient({
                 onChange={(e) => {
                   setNewVariantUrl(e.target.value);
                   setNewVariantUrlFrameable(null);
+                  setRedirectConfirmed(false);
                   if (newVariantUrlError) setNewVariantUrlError("");
                 }}
                 onBlur={(e) => {
@@ -4294,7 +4312,11 @@ export default function AnalyticsClient({
                   <AlertTriangle size={12} className="flex-shrink-0 mt-0.5" />
                   <div>
                     <p className="font-medium">This page blocks iframe embedding.</p>
-                    <p className="text-amber-400/80 mt-0.5">Make sure you own this domain and can add a <code className="font-mono">&lt;script&gt;</code> tag — the redirect variant will still work for A/B testing.</p>
+                    <p className="text-amber-400/80 mt-0.5">
+                      {redirectConfirmed
+                        ? "Click \"Add Variant\" again to save it as a redirect variant."
+                        : "It will be saved as a redirect variant. Make sure you own this domain and can add the tracker script for conversion tracking."}
+                    </p>
                   </div>
                 </div>
               )}
@@ -4353,7 +4375,7 @@ export default function AnalyticsClient({
             >
               Cancel
             </Button>
-            <Button type="submit" loading={addingVariant} disabled={checkingFrameable}>
+            <Button type="submit" loading={addingVariant || checkingFrameable}>
               Add Variant
             </Button>
           </div>
