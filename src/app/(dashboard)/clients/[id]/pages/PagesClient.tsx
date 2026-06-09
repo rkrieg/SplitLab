@@ -72,6 +72,7 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
   const [variantName, setVariantName] = useState('');
   const [variantUrl, setVariantUrl] = useState('');
   const [variantUrlFrameable, setVariantUrlFrameable] = useState<boolean | null>(null);
+  const [checkingFrameable, setCheckingFrameable] = useState(false);
   const [variantWeight, setVariantWeight] = useState(50);
   const [addingVariant, setAddingVariant] = useState(false);
   const [variantMode, setVariantMode] = useState<'url' | 'html'>('url');
@@ -83,12 +84,15 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
 
   async function checkFrameable(url: string, setter: (v: boolean | null) => void) {
     if (!url.startsWith('http')) { setter(null); return; }
+    setCheckingFrameable(true);
     try {
       const res = await fetch(`/api/check-frameable?url=${encodeURIComponent(url)}`);
       const data = await res.json();
       setter(data.frameable ?? null);
     } catch {
       setter(null);
+    } finally {
+      setCheckingFrameable(false);
     }
   }
 
@@ -223,6 +227,7 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
     setVariantName(`Variant ${String.fromCharCode(65 + count)}`);
     setVariantUrl('');
     setVariantUrlFrameable(null);
+    setCheckingFrameable(false);
     setVariantWeight(50);
     setVariantMode('url');
     setVariantHtml('');
@@ -517,7 +522,7 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
       </Modal>
 
       {/* Add Variant Modal */}
-      <Modal open={!!addVariantTestId} onClose={() => { setAddVariantTestId(null); setAddVariantError(null); }} title="Add Variant" size="sm">
+      <Modal open={!!addVariantTestId} onClose={() => { setAddVariantTestId(null); setAddVariantError(null); setVariantUrlFrameable(null); setCheckingFrameable(false); }} title="Add Variant" size="sm">
         <form onSubmit={handleAddVariant} className="space-y-4">
           {/* Mode toggle */}
           <div className="flex border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
@@ -554,12 +559,19 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
                 placeholder="https://example.com/variant-b"
                 required
               />
-              {variantUrlFrameable === false && (
-                <p className="mt-1.5 text-xs text-amber-500 flex items-start gap-1.5">
-                  <AlertTriangle size={11} className="flex-shrink-0 mt-0.5" />
-                  This page blocks iframe embedding. Make sure you own this domain and can add a{' '}
-                  <code className="font-mono">&lt;script&gt;</code> tag to it — the preview won&apos;t load inline, but the redirect variant will still work for A/B testing.
+              {checkingFrameable && (
+                <p className="mt-1.5 text-xs text-slate-400 flex items-center gap-1.5">
+                  <Spinner size="sm" /> Checking URL…
                 </p>
+              )}
+              {!checkingFrameable && variantUrlFrameable === false && (
+                <div className="mt-1.5 text-xs text-amber-500 flex items-start gap-1.5 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
+                  <AlertTriangle size={12} className="flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-medium">This page blocks iframe embedding.</p>
+                    <p className="text-amber-400/80 mt-0.5">Make sure you own this domain and can add a <code className="font-mono">&lt;script&gt;</code> tag — the redirect variant will still work for A/B testing.</p>
+                  </div>
+                </div>
               )}
             </div>
           ) : (
@@ -608,7 +620,7 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
           )}
           <div className="flex justify-end gap-3 pt-2">
             <Button variant="secondary" type="button" onClick={() => { setAddVariantTestId(null); setAddVariantError(null); }}>Cancel</Button>
-            <Button type="submit" loading={addingVariant}>Add Variant</Button>
+            <Button type="submit" loading={addingVariant} disabled={checkingFrameable}>Add Variant</Button>
           </div>
         </form>
       </Modal>

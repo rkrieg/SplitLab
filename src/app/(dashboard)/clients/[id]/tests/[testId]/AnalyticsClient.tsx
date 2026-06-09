@@ -361,6 +361,7 @@ export default function AnalyticsClient({
   const [newVariantUrlError, setNewVariantUrlError] = useState("");
   const [newVariantUrlFrameable, setNewVariantUrlFrameable] = useState<boolean | null>(null);
   const [editUrlFrameable, setEditUrlFrameable] = useState<boolean | null>(null);
+  const [checkingFrameable, setCheckingFrameable] = useState(false);
   const [newVariantMode, setNewVariantMode] = useState<"url" | "html">("url");
   const [newVariantHtml, setNewVariantHtml] = useState("");
   const [addingVariant, setAddingVariant] = useState(false);
@@ -1038,12 +1039,15 @@ export default function AnalyticsClient({
 
   async function checkFrameable(url: string, setter: (v: boolean | null) => void) {
     if (!url.startsWith('http')) { setter(null); return; }
+    setCheckingFrameable(true);
     try {
       const res = await fetch(`/api/check-frameable?url=${encodeURIComponent(url)}`);
       const data = await res.json();
       setter(data.frameable ?? null);
     } catch {
       setter(null);
+    } finally {
+      setCheckingFrameable(false);
     }
   }
 
@@ -2514,11 +2518,19 @@ export default function AnalyticsClient({
                                         className="input-base text-sm font-mono"
                                         placeholder="https://..."
                                       />
-                                      {editUrlFrameable === false && (
-                                        <p className="mt-1.5 text-xs text-amber-500 flex items-start gap-1.5">
-                                          <AlertTriangle size={11} className="flex-shrink-0 mt-0.5" />
-                                          This page blocks iframe embedding. Make sure you own this domain and can add a <code className="font-mono">&lt;script&gt;</code> tag — the preview won&apos;t load inline, but the redirect will still work.
+                                      {checkingFrameable && (
+                                        <p className="mt-1.5 text-xs text-slate-400 flex items-center gap-1.5">
+                                          <Spinner size="sm" /> Checking URL…
                                         </p>
+                                      )}
+                                      {!checkingFrameable && editUrlFrameable === false && (
+                                        <div className="mt-1.5 text-xs text-amber-500 flex items-start gap-1.5 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
+                                          <AlertTriangle size={12} className="flex-shrink-0 mt-0.5" />
+                                          <div>
+                                            <p className="font-medium">This page blocks iframe embedding.</p>
+                                            <p className="text-amber-400/80 mt-0.5">Make sure you own this domain and can add a <code className="font-mono">&lt;script&gt;</code> tag — the redirect variant will still work for A/B testing.</p>
+                                          </div>
+                                        </div>
                                       )}
                                     </div>
                                   )}
@@ -4190,7 +4202,7 @@ export default function AnalyticsClient({
       {/* ═══ MODALS ═══ */}
       <Modal
         open={addVariantOpen}
-        onClose={() => { setAddVariantOpen(false); setAddVariantError(null); }}
+        onClose={() => { setAddVariantOpen(false); setAddVariantError(null); setNewVariantUrlFrameable(null); setCheckingFrameable(false); }}
         title="Add Variant"
         size="sm"
       >
@@ -4253,12 +4265,19 @@ export default function AnalyticsClient({
                   {newVariantUrlError}
                 </p>
               )}
-              {newVariantUrlFrameable === false && !newVariantUrlError && (
-                <p className="mt-1.5 text-xs text-amber-500 flex items-start gap-1.5">
-                  <AlertTriangle size={11} className="flex-shrink-0 mt-0.5" />
-                  This page blocks iframe embedding. Make sure you own this domain and can add a{" "}
-                  <code className="font-mono">&lt;script&gt;</code> tag to it — the preview link won&apos;t load inline, but the redirect variant will still work for A/B testing.
+              {checkingFrameable && (
+                <p className="mt-1.5 text-xs text-slate-400 flex items-center gap-1.5">
+                  <Spinner size="sm" /> Checking URL…
                 </p>
+              )}
+              {!checkingFrameable && newVariantUrlFrameable === false && !newVariantUrlError && (
+                <div className="mt-1.5 text-xs text-amber-500 flex items-start gap-1.5 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
+                  <AlertTriangle size={12} className="flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-medium">This page blocks iframe embedding.</p>
+                    <p className="text-amber-400/80 mt-0.5">Make sure you own this domain and can add a <code className="font-mono">&lt;script&gt;</code> tag — the redirect variant will still work for A/B testing.</p>
+                  </div>
+                </div>
               )}
             </div>
           ) : (
@@ -4315,7 +4334,7 @@ export default function AnalyticsClient({
             >
               Cancel
             </Button>
-            <Button type="submit" loading={addingVariant}>
+            <Button type="submit" loading={addingVariant} disabled={checkingFrameable}>
               Add Variant
             </Button>
           </div>
