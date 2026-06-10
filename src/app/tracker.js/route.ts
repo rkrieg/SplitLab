@@ -121,6 +121,13 @@ function buildTrackerScript(appUrl: string): string {
     if (_scanBanner) { _scanBanner.setAttribute('style', style); return; }
     _scanBanner = document.createElement('div');
     _scanBanner.setAttribute('style', style);
+    // Delegate finish-scan clicks on the banner element itself — survives innerHTML replacements
+    _scanBanner.addEventListener('click', function(e) {
+      var t = e.target;
+      if (t && (t.id === 'sl-finish-scan' || (t.parentElement && t.parentElement.id === 'sl-finish-scan'))) {
+        finishScan();
+      }
+    });
     if (document.body) {
       document.body.appendChild(_scanBanner);
     } else {
@@ -139,14 +146,16 @@ function buildTrackerScript(appUrl: string): string {
     _scanBanner.innerHTML =
       '<div style="display:flex;align-items:center;gap:8px"><span style="font-size:15px">✦</span><span>Scanning your page...</span></div>' +
       stepLine + warnLine + btn;
-    document.getElementById('sl-finish-scan').onclick = finishScan;
   }
 
   function finishScan() {
     if (_scanObserver) { _scanObserver.disconnect(); _scanObserver = null; }
     _scanBanner.setAttribute('style', BANNER_BASE_STYLE);
-    _scanBanner.innerHTML = '<div style="display:flex;align-items:center;gap:8px"><span style="font-size:15px">✓</span><span>Scan complete — closing tab...</span></div>';
-    setTimeout(function() { window.close(); }, 3000);
+    _scanBanner.innerHTML = '<div style="display:flex;align-items:center;gap:8px"><span style="font-size:15px">✓</span><span>Scan complete — you can close this tab</span></div>';
+    // window.close() only works when tab was opened by script; hide banner as fallback
+    setTimeout(function() {
+      try { window.close(); } catch(e) {}
+    }, 3000);
   }
 
   function showScanBanner() {
@@ -175,17 +184,23 @@ function buildTrackerScript(appUrl: string): string {
     }, 5000);
   }
 
+  function inBanner(el) {
+    return !!(_scanBanner && _scanBanner.contains(el));
+  }
+
   function collectElements() {
     var elements = [];
 
     var forms = document.querySelectorAll("form");
     for (var i = 0; i < forms.length; i++) {
+      if (inBanner(forms[i])) continue;
       elements.push({ type: "form", id: forms[i].id || null, text: null });
     }
 
     var buttons = document.querySelectorAll("button, [role='button'], [role='switch'], input[type='submit'], input[type='button']");
     for (var j = 0; j < buttons.length; j++) {
       var btn = buttons[j];
+      if (inBanner(btn)) continue;
       elements.push({
         type: "button",
         id: btn.id || null,
@@ -196,6 +211,7 @@ function buildTrackerScript(appUrl: string): string {
     var checkboxes = document.querySelectorAll("input[type='checkbox']");
     for (var m = 0; m < checkboxes.length; m++) {
       var cb = checkboxes[m];
+      if (inBanner(cb)) continue;
       elements.push({
         type: "toggle",
         id: cb.id || null,
@@ -206,6 +222,7 @@ function buildTrackerScript(appUrl: string): string {
     var links = document.querySelectorAll("a");
     for (var k = 0; k < links.length; k++) {
       var link = links[k];
+      if (inBanner(link)) continue;
       var href = link.getAttribute("href") || "";
       if (!href || href.charAt(0) === "#" || href.indexOf("javascript:") === 0) continue;
       var ltype = href.indexOf("tel:") === 0 ? "call" : "link";
@@ -306,6 +323,39 @@ function buildTrackerScript(appUrl: string): string {
     });
 
     _scanObserver.observe(document.body, { childList: true, subtree: true });
+
+    // Also trigger on button clicks — catches CSS-toggle steppers where no DOM nodes
+    // are added (MutationObserver childList won't fire in that case)
+    var clickRescanTimer = null;
+    document.addEventListener('click', function(e) {
+      var t = e.target;
+      if (!t || inBanner(t)) return;
+      var isBtn = t.closest
+        ? t.closest("button, [role='button'], input[type='submit'], input[type='button']")
+        : (t.tagName === 'BUTTON' || t.tagName === 'INPUT');
+      if (!isBtn) return;
+      clearTimeout(clickRescanTimer);
+      clickRescanTimer = setTimeout(function() {
+        var all = collectElements();
+        var newEls = [];
+        for (var n = 0; n < all.length; n++) {
+          var e2 = all[n];
+          var key = e2.type + "|" + (e2.id || "") + "|" + (e2.text || "");
+          if (!_scannedKeys[key]) {
+            _scannedKeys[key] = true;
+            newEls.push(e2);
+          }
+        }
+        if (newEls.length === 0) return;
+        _scanStepCount++;
+        stepScanBanner(null);
+        postScanElements(vid, newEls, function() {
+          stepScanBanner(null);
+        }, function() {
+          stepScanBanner("Step " + _scanStepCount + " failed to save — navigate back to that step and try again");
+        });
+      }, 1000);
+    }, true);
   }
 
   // ─── Core tracking ─────────────────────────────────────────────────────────
@@ -329,10 +379,30 @@ function buildTrackerScript(appUrl: string): string {
 
   // ─── Form lead capture ──────────────────────────────────────────────────────
 
+  // Accumulates form field values across stepper steps so submit captures all steps' data
+  var _accumulatedFormData = {};
+
+  function snapshotVisibleFormFields() {
+    try {
+      var inputs = document.querySelectorAll("input[name], select[name], textarea[name]");
+      for (var i = 0; i < inputs.length; i++) {
+        var el = inputs[i];
+        if (!el.name) continue;
+        var t = (el.type || "").toLowerCase();
+        if (t === "password" || t === "hidden" || t === "submit" || t === "button" || t === "reset" || t === "file") continue;
+        if ((t === "checkbox" || t === "radio") && !el.checked) continue;
+        if (el.value) _accumulatedFormData[el.name] = el.value;
+      }
+    } catch(e) {}
+  }
+
   function captureFormLead(form) {
     if (!_ctx) return;
     try {
+      // Start with accumulated data from previous steps, then overlay current DOM fields
       var fields = {};
+      var k;
+      for (k in _accumulatedFormData) { if (_accumulatedFormData.hasOwnProperty(k)) fields[k] = _accumulatedFormData[k]; }
       var elements = form.elements;
       for (var i = 0; i < elements.length; i++) {
         var el = elements[i];
@@ -451,6 +521,8 @@ function buildTrackerScript(appUrl: string): string {
       // Check for button / switch clicks
       var btn = el.closest("button, [role='button'], [role='switch'], input[type='submit'], input[type='button']");
       if (btn) {
+        // Snapshot form values before potential step transition removes current fields
+        snapshotVisibleFormFields();
         track("conversion", null, { trigger: "button_click", text: (btn.textContent || btn.value || "").trim().slice(0, 50), id: btn.id || null });
         return;
       }
