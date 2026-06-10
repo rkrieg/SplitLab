@@ -1652,9 +1652,8 @@ export default function AnalyticsClient({
         if (variantEntry) {
           const resultTime = new Date(variantEntry.scanned_at).getTime();
           if (resultTime > scanStartedAt) {
+            // Keep polling — user may still be navigating stepper steps
             setScanResults(data.scan_results);
-            setScanning(false);
-            return;
           }
         }
       } catch {
