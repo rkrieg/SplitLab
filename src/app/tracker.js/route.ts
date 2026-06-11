@@ -597,7 +597,20 @@ function buildTrackerScript(appUrl: string): string {
       if (btn) {
         // Snapshot form values before potential step transition removes current fields
         snapshotVisibleFormFields();
-        track("conversion", null, { trigger: "button_click", text: (btn.textContent || btn.value || "").trim().slice(0, 50), id: btn.id || null });
+        var btnText = (btn.textContent || btn.value || "").trim();
+        // If button text looks like a final submit and we have accumulated data,
+        // send lead immediately — covers onclick-only forms with no network request
+        if (!_leadSent) {
+          var submitWords = /^(submit|send|get|book|schedule|contact|request|apply|sign up|register|subscribe|confirm|continue|finish|complete|done|go|start|claim|unlock|download|access)/i;
+          if (submitWords.test(btnText)) {
+            setTimeout(function() {
+              // Small delay so any sync handleSubmit logic runs first
+              // If fetch patch already sent it, _leadSent will be true — skip
+              captureFormLeadFromAccumulated();
+            }, 100);
+          }
+        }
+        track("conversion", null, { trigger: "button_click", text: btnText.slice(0, 50), id: btn.id || null });
         return;
       }
 
