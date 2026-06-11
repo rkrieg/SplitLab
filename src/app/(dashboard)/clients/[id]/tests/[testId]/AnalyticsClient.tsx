@@ -1636,10 +1636,10 @@ export default function AnalyticsClient({
     setScannedVariantName(targetVariant.name);
     setTab("settings");
 
-    // Poll for results (up to 30 s, every 2 s)
-    // Only accept results with scanned_at AFTER we opened the tab
+    // Poll every 2 s for up to 2 minutes to catch stepper form steps
     let attempts = 0;
-    const maxAttempts = 15;
+    const maxAttempts = 60;
+    let foundFirst = false;
     const poll = async () => {
       try {
         const res = await fetch(`/api/tests/${test.id}/scan-results`);
@@ -1652,8 +1652,8 @@ export default function AnalyticsClient({
         if (variantEntry) {
           const resultTime = new Date(variantEntry.scanned_at).getTime();
           if (resultTime > scanStartedAt) {
-            // Keep polling — user may still be navigating stepper steps
             setScanResults(data.scan_results);
+            foundFirst = true;
           }
         }
       } catch {
@@ -1664,12 +1664,34 @@ export default function AnalyticsClient({
         setTimeout(poll, 2000);
       } else {
         setScanning(false);
-        toast.error(
-          "Scan timed out. Make sure tracker.js is installed and the page loaded.",
-        );
+        // Only show error if we never got any results
+        if (!foundFirst) {
+          toast.error(
+            "Scan timed out. Make sure tracker.js is installed and the page loaded.",
+          );
+        }
       }
     };
-    setTimeout(poll, 3000); // give the page 3 s to load before first poll
+    setTimeout(poll, 3000);
+
+    // Re-fetch when user switches back to this tab after clicking "Finish Scanning"
+    const onVisibilityChange = async () => {
+      if (document.hidden) return;
+      try {
+        const res = await fetch(`/api/tests/${test.id}/scan-results`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const variantEntry = data.scan_results?.variants?.find(
+          (v: { variant_id: string }) => v.variant_id === variantId,
+        );
+        if (variantEntry) {
+          setScanResults(data.scan_results);
+          setScanning(false);
+        }
+      } catch { /* ignore */ }
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
   }
 
   async function enableAsGoal(el: {
