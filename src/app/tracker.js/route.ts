@@ -362,7 +362,7 @@ function buildTrackerScript(appUrl: string): string {
 
   function track(type, goalId, meta) {
     if (!_ctx) return;
-    var key = type + ":" + (goalId || "") + ":" + (meta && meta.trigger || "");
+    var key = type + ":" + (goalId || "") + ":" + (meta && meta.trigger || "") + ":" + (meta && meta.id || "") + ":" + (meta && meta.text || "");
     if (_sent[key]) return;
     _sent[key] = true;
 
