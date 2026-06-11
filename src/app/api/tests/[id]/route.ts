@@ -107,6 +107,17 @@ export async function PATCH(
 
     // Update variant fields (name, redirect_url, proxy_mode) if provided
     if (variant_updates) {
+      // Fetch current redirect_urls so we can detect URL changes
+      const variantIds = variant_updates.map((vu) => vu.id);
+      const { data: currentVariants } = await db
+        .from('test_variants')
+        .select('id, redirect_url')
+        .in('id', variantIds)
+        .eq('test_id', params.id);
+      const currentUrlMap = new Map((currentVariants ?? []).map((v) => [v.id, v.redirect_url]));
+
+      const urlChangedIds: string[] = [];
+
       for (const vu of variant_updates) {
         const updateFields: Record<string, unknown> = {};
         if (vu.name !== undefined) updateFields.name = vu.name;
@@ -119,6 +130,28 @@ export async function PATCH(
             .eq('id', vu.id)
             .eq('test_id', params.id);
           if (vuErr) return NextResponse.json({ error: vuErr.message }, { status: 500 });
+        }
+
+        // Track variants whose URL actually changed
+        if (
+          vu.redirect_url !== undefined &&
+          (vu.redirect_url ?? '') !== (currentUrlMap.get(vu.id) ?? '')
+        ) {
+          urlChangedIds.push(vu.id);
+        }
+      }
+
+      // Clear scan_results for any variant whose URL changed
+      if (urlChangedIds.length > 0) {
+        const { data: testRow } = await db
+          .from('tests')
+          .select('scan_results')
+          .eq('id', params.id)
+          .single();
+        const existingScans = testRow?.scan_results as { variants?: { variant_id: string }[] } | null;
+        if (existingScans?.variants?.some((v) => urlChangedIds.includes(v.variant_id))) {
+          const pruned = { variants: existingScans.variants.filter((v) => !urlChangedIds.includes(v.variant_id)) };
+          await db.from('tests').update({ scan_results: pruned }).eq('id', params.id);
         }
       }
     }

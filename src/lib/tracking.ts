@@ -62,7 +62,120 @@ export function buildTrackingSnippet(
     _SL.track('pageview');
   }
 
-  // Wire up conversion goals
+  // ─── Form lead capture helpers ──────────────────────────────────────────────
+
+  // Accumulates field values across stepper steps so submit captures all steps' data
+  var _accumulatedFormData = {};
+  var _leadSent = false;
+
+  function snapshotVisibleFormFields() {
+    try {
+      var inputs = document.querySelectorAll('input, select, textarea');
+      for (var i = 0; i < inputs.length; i++) {
+        var el = inputs[i];
+        var t = (el.type || '').toLowerCase();
+        if (t === 'password' || t === 'hidden' || t === 'submit' || t === 'button' || t === 'reset' || t === 'file') continue;
+        if ((t === 'checkbox' || t === 'radio') && !el.checked) continue;
+        var key = el.name || el.id || el.getAttribute('placeholder') || null;
+        if (key && el.value) _accumulatedFormData[key] = el.value;
+      }
+    } catch(e) {}
+  }
+
+  function sendFormLead(fields) {
+    try {
+      var sp = new URLSearchParams(window.location.search);
+      var utm = {};
+      ['utm_source','utm_medium','utm_content','utm_term','utm_campaign','gclid'].forEach(function(k) {
+        if (sp.get(k)) utm[k] = sp.get(k);
+      });
+      var payload = JSON.stringify({
+        testId: _SL.testId,
+        variantId: _SL.variantId,
+        visitorHash: _SL.visitorHash,
+        formFields: fields,
+        utm: utm
+      });
+      if (navigator.sendBeacon) {
+        try {
+          var blob = new Blob([payload], { type: 'application/json' });
+          if (navigator.sendBeacon(_SL.apiUrl + '/api/form-leads', blob)) return;
+        } catch(e) {}
+      }
+      var xhr = new XMLHttpRequest();
+      xhr.open('POST', _SL.apiUrl + '/api/form-leads', true);
+      xhr.withCredentials = false;
+      xhr.setRequestHeader('Content-Type', 'application/json');
+      xhr.send(payload);
+    } catch(e) {}
+  }
+
+  function captureFormLead(form) {
+    if (_leadSent) return;
+    _leadSent = true;
+    try {
+      // Start with accumulated data from previous stepper steps
+      var fields = {};
+      var k;
+      for (k in _accumulatedFormData) { if (_accumulatedFormData.hasOwnProperty(k)) fields[k] = _accumulatedFormData[k]; }
+      // Overlay current form's fields (name || id || placeholder as key)
+      var elements = form ? form.elements : [];
+      for (var i = 0; i < elements.length; i++) {
+        var el = elements[i];
+        var t = (el.type || '').toLowerCase();
+        if (t === 'password' || t === 'hidden' || t === 'submit' || t === 'button' || t === 'reset' || t === 'file') continue;
+        if ((t === 'checkbox' || t === 'radio') && !el.checked) continue;
+        var fkey = el.name || el.id || el.getAttribute('placeholder') || null;
+        if (fkey) fields[fkey] = el.value || '';
+      }
+      sendFormLead(fields);
+    } catch(e) {}
+  }
+
+  function captureFormLeadFromAccumulated() {
+    if (_leadSent) return;
+    var hasData = false;
+    for (var k in _accumulatedFormData) {
+      if (_accumulatedFormData.hasOwnProperty(k) && _accumulatedFormData[k]) { hasData = true; break; }
+    }
+    if (!hasData) return;
+    _leadSent = true;
+    sendFormLead(_accumulatedFormData);
+  }
+
+  function patchNetworkForJsSubmit() {
+    try {
+      var origOpen = XMLHttpRequest.prototype.open;
+      var origSend = XMLHttpRequest.prototype.send;
+      XMLHttpRequest.prototype.open = function(method, url) {
+        this._sl_method = method;
+        this._sl_url = url;
+        return origOpen.apply(this, arguments);
+      };
+      XMLHttpRequest.prototype.send = function() {
+        var method = (this._sl_method || '').toUpperCase();
+        var url = this._sl_url || '';
+        if (method === 'POST' && url.indexOf(_SL.apiUrl) !== 0 && url.indexOf('/api/') !== 0) {
+          captureFormLeadFromAccumulated();
+        }
+        return origSend.apply(this, arguments);
+      };
+      var origFetch = window.fetch;
+      window.fetch = function(input, init) {
+        try {
+          var method = (init && init.method || 'GET').toUpperCase();
+          var url = (typeof input === 'string' ? input : (input && input.url)) || '';
+          if (method === 'POST' && url.indexOf(_SL.apiUrl) !== 0 && url.indexOf('/api/') !== 0) {
+            captureFormLeadFromAccumulated();
+          }
+        } catch(e) {}
+        return origFetch.apply(this, arguments);
+      };
+    } catch(e) {}
+  }
+
+  // ─── Wire up conversion goals ────────────────────────────────────────────────
+
   function checkUrlGoals() {
     var url = window.location.href;
     var pathname = window.location.pathname + window.location.search;
@@ -113,55 +226,12 @@ export function buildTrackingSnippet(
       return Array.from(document.querySelectorAll(selector));
     }
 
-    // Capture form fields and POST to /api/form-leads
-    function captureFormLead(form) {
-      try {
-        var fields = {};
-        var elements = form.elements;
-        for (var i = 0; i < elements.length; i++) {
-          var el = elements[i];
-          if (!el.name) continue;
-          var t = (el.type || '').toLowerCase();
-          if (t === 'password' || t === 'hidden' || t === 'submit' || t === 'button' || t === 'reset' || t === 'file') continue;
-          if ((t === 'checkbox' || t === 'radio') && !el.checked) continue;
-          fields[el.name] = el.value || '';
-        }
-        // Extract UTM params from current URL
-        var sp = new URLSearchParams(window.location.search);
-        var utm = {};
-        ['utm_source','utm_medium','utm_content','utm_term','utm_campaign','gclid'].forEach(function(k) {
-          if (sp.get(k)) utm[k] = sp.get(k);
-        });
-        var payload = JSON.stringify({
-          testId: _SL.testId,
-          variantId: _SL.variantId,
-          visitorHash: _SL.visitorHash,
-          formFields: fields,
-          utm: utm
-        });
-        if (navigator.sendBeacon) {
-          try {
-            var blob = new Blob([payload], { type: 'application/json' });
-            navigator.sendBeacon(_SL.apiUrl + '/api/form-leads', blob);
-            return;
-          } catch(e) {}
-        }
-        fetch(_SL.apiUrl + '/api/form-leads', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: payload,
-          keepalive: true
-        }).catch(function() {});
-      } catch(e) {}
-    }
-
     _SL.goals.forEach(function(goal) {
       if (goal.type === 'url_reached') {
         // handled above
       } else if (goal.type === 'form_submit') {
         resolveElements(goal.selector, 'form_submit').forEach(function(form) {
           form.addEventListener('submit', function(e) {
-            // Prevent browser navigation when form has no real action URL
             var action = form.getAttribute('action') || '';
             if (!action || action === '#') e.preventDefault();
             captureFormLead(form);
@@ -183,19 +253,44 @@ export function buildTrackingSnippet(
         });
       }
     });
+
+    // Global form submit — captures all forms (not just goal-targeted ones)
+    document.addEventListener('submit', function(e) {
+      var form = e.target;
+      _leadSent = true; // prevent JS-submit patch from double-sending
+      captureFormLead(form);
+    }, true);
+
+    // Global button click — snapshot fields for stepper + submit-keyword detection
+    document.addEventListener('click', function(e) {
+      var el = e.target;
+      if (!el || !el.closest) return;
+      var btn = el.closest("button, [role='button'], input[type='submit'], input[type='button']");
+      if (!btn) return;
+      snapshotVisibleFormFields();
+      if (!_leadSent) {
+        var btnText = (btn.textContent || btn.value || '').trim();
+        var submitWords = /^(submit|send|get|book|schedule|contact|request|apply|sign up|register|subscribe|confirm|continue|finish|complete|done|go|start|claim|unlock|download|access)/i;
+        if (submitWords.test(btnText)) {
+          setTimeout(function() { captureFormLeadFromAccumulated(); }, 100);
+        }
+      }
+    }, true);
+
+    patchNetworkForJsSubmit();
   }
 
   function registerFormFields() {
     try {
       var seen = {};
       var fields = [];
-      var inputs = document.querySelectorAll('input[name], select[name], textarea[name]');
+      var inputs = document.querySelectorAll('input, select, textarea');
       for (var ri = 0; ri < inputs.length; ri++) {
         var rel = inputs[ri];
-        var rname = rel.name;
-        if (!rname || seen[rname]) continue;
         var rt = (rel.type || '').toLowerCase();
         if (rt === 'password' || rt === 'hidden' || rt === 'submit' || rt === 'button' || rt === 'reset' || rt === 'file') continue;
+        var rname = rel.name || rel.id || rel.getAttribute('placeholder') || null;
+        if (!rname || seen[rname]) continue;
         seen[rname] = true;
         fields.push(rname);
       }

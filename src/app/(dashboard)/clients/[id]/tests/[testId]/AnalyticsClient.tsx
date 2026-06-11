@@ -351,6 +351,9 @@ export default function AnalyticsClient({
   const [deleteVariantId, setDeleteVariantId] = useState<string | null>(null);
   const [deletingVariant, setDeletingVariant] = useState(false);
 
+  // URL change confirmation (clears scan results)
+  const [urlChangeConfirmId, setUrlChangeConfirmId] = useState<string | null>(null);
+
   // Visitor cap
   const [visitorOverCap, setVisitorOverCap] = useState(false);
 
@@ -783,7 +786,7 @@ export default function AnalyticsClient({
     });
   }
 
-  async function saveVariant(variantId: string) {
+  async function saveVariant(variantId: string, skipUrlChangeConfirm = false) {
     const editedUrl = variantDraft.redirect_url.trim();
     if (editedUrl) {
       const duplicate = variants.find(
@@ -794,6 +797,18 @@ export default function AnalyticsClient({
         return;
       }
     }
+
+    // If URL changed and variant has scan results, confirm before proceeding
+    if (!skipUrlChangeConfirm) {
+      const current = variants.find((v) => v.id === variantId);
+      const urlChanged = current && editedUrl && (current.redirect_url ?? '').trim() !== editedUrl;
+      const hasScanResults = scanResults?.variants?.some((v) => v.variant_id === variantId);
+      if (urlChanged && hasScanResults) {
+        setUrlChangeConfirmId(variantId);
+        return;
+      }
+    }
+
     setSavingVariant(true);
     try {
       const res = await fetch(`/api/tests/${test.id}`, {
@@ -820,6 +835,14 @@ export default function AnalyticsClient({
       // Re-check tracker if this is a redirect variant (URL may have changed)
       if (variantDraft.redirect_url)
         autoCheckVariant(variantId, variantDraft.redirect_url);
+      // If URL changed and scan results were cleared server-side, reflect that in local state
+      if (skipUrlChangeConfirm) {
+        setScanResults((prev) => {
+          if (!prev) return prev;
+          const filtered = prev.variants.filter((v) => v.variant_id !== variantId);
+          return filtered.length > 0 ? { ...prev, variants: filtered } : null;
+        });
+      }
       toast.success("Variant updated");
       fetchAnalytics();
     } catch {
@@ -1636,10 +1659,10 @@ export default function AnalyticsClient({
     setScannedVariantName(targetVariant.name);
     setTab("settings");
 
-    // Poll for results (up to 30 s, every 2 s)
-    // Only accept results with scanned_at AFTER we opened the tab
+    // Poll every 2 s for up to 2 minutes to catch stepper form steps
     let attempts = 0;
-    const maxAttempts = 15;
+    const maxAttempts = 60;
+    let foundFirst = false;
     const poll = async () => {
       try {
         const res = await fetch(`/api/tests/${test.id}/scan-results`);
@@ -1653,8 +1676,7 @@ export default function AnalyticsClient({
           const resultTime = new Date(variantEntry.scanned_at).getTime();
           if (resultTime > scanStartedAt) {
             setScanResults(data.scan_results);
-            setScanning(false);
-            return;
+            foundFirst = true;
           }
         }
       } catch {
@@ -1665,12 +1687,34 @@ export default function AnalyticsClient({
         setTimeout(poll, 2000);
       } else {
         setScanning(false);
-        toast.error(
-          "Scan timed out. Make sure tracker.js is installed and the page loaded.",
-        );
+        // Only show error if we never got any results
+        if (!foundFirst) {
+          toast.error(
+            "Scan timed out. Make sure tracker.js is installed and the page loaded.",
+          );
+        }
       }
     };
-    setTimeout(poll, 3000); // give the page 3 s to load before first poll
+    setTimeout(poll, 3000);
+
+    // Re-fetch when user switches back to this tab after clicking "Finish Scanning"
+    const onVisibilityChange = async () => {
+      if (document.hidden) return;
+      try {
+        const res = await fetch(`/api/tests/${test.id}/scan-results`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const variantEntry = data.scan_results?.variants?.find(
+          (v: { variant_id: string }) => v.variant_id === variantId,
+        );
+        if (variantEntry) {
+          setScanResults(data.scan_results);
+          setScanning(false);
+        }
+      } catch { /* ignore */ }
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
   }
 
   async function enableAsGoal(el: {
@@ -4404,6 +4448,19 @@ export default function AnalyticsClient({
         title="Delete Variant"
         description="This will permanently delete the variant and its event data. Traffic weights will need to be adjusted."
         loading={deletingVariant}
+      />
+
+      <ConfirmDialog
+        open={!!urlChangeConfirmId}
+        onClose={() => setUrlChangeConfirmId(null)}
+        onConfirm={() => {
+          const id = urlChangeConfirmId!;
+          setUrlChangeConfirmId(null);
+          saveVariant(id, true);
+        }}
+        title="Change Variant URL?"
+        description="Changing the destination URL will clear all scanned elements for this variant. You'll need to re-scan the new page to set up goals and form tracking."
+        loading={savingVariant}
       />
 
       {/* Email Notifications Config Modal */}

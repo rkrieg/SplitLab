@@ -38,10 +38,19 @@ export async function POST(request: NextRequest) {
 
     if (clean.length === 0) return NextResponse.json({ ok: true }, { headers });
 
-    // Upsert — update fields list if variant already exists
+    // Read existing fields and merge — so step 2 fields don't wipe step 1 fields
+    const { data: existing } = await db
+      .from('variant_form_fields')
+      .select('fields')
+      .eq('variant_id', variantId)
+      .single();
+
+    const existingFields: string[] = Array.isArray(existing?.fields) ? existing.fields : [];
+    const merged = Array.from(new Set([...existingFields, ...clean])).slice(0, 100);
+
     await db
       .from('variant_form_fields')
-      .upsert({ variant_id: variantId, fields: clean, updated_at: new Date().toISOString() }, { onConflict: 'variant_id' });
+      .upsert({ variant_id: variantId, fields: merged, updated_at: new Date().toISOString() }, { onConflict: 'variant_id' });
 
     return NextResponse.json({ ok: true }, { headers });
   } catch (err) {

@@ -20,7 +20,7 @@ const elementSchema = z.object({
 
 const schema = z.object({
   vid: z.string().uuid(),
-  elements: z.array(elementSchema).max(200),
+  elements: z.array(elementSchema).max(500),
 });
 
 export async function POST(request: NextRequest) {
@@ -50,15 +50,26 @@ export async function POST(request: NextRequest) {
     const existing = test?.scan_results as { variants?: VariantScan[] } | null;
     const variantScans: VariantScan[] = existing?.variants ?? [];
 
+    // Merge incoming elements with existing ones for this variant (dedup by type+id+text)
+    const idx = variantScans.findIndex(v => v.variant_id === vid);
+    const existingElements: VariantScan['elements'] = idx >= 0 ? variantScans[idx].elements : [];
+
+    const seen = new Set(existingElements.map(e => `${e.type}|${e.id ?? ''}|${e.text ?? ''}`));
+    for (const el of elements) {
+      const key = `${el.type}|${el.id ?? ''}|${el.text ?? ''}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        existingElements.push(el);
+      }
+    }
+
     const newEntry: VariantScan = {
       variant_id: vid,
       variant_name: variant.name,
       scanned_at: new Date().toISOString(),
-      elements,
+      elements: existingElements,
     };
 
-    // Replace entry for this variant (or append if first time)
-    const idx = variantScans.findIndex(v => v.variant_id === vid);
     if (idx >= 0) {
       variantScans[idx] = newEntry;
     } else {
