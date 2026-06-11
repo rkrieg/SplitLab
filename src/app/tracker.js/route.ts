@@ -439,6 +439,79 @@ function buildTrackerScript(appUrl: string): string {
     } catch(e) {}
   }
 
+  // ─── JS-submit capture (divs with inputs, no <form> tag) ───────────────────
+
+  var _leadSent = false; // deduplicate — only send once per page session
+
+  function captureFormLeadFromAccumulated() {
+    if (!_ctx || _leadSent) return;
+    var hasData = false;
+    for (var k in _accumulatedFormData) {
+      if (_accumulatedFormData.hasOwnProperty(k) && _accumulatedFormData[k]) { hasData = true; break; }
+    }
+    if (!hasData) return;
+    _leadSent = true;
+
+    var sp = new URLSearchParams(window.location.search);
+    var utm = {};
+    ["utm_source","utm_medium","utm_content","utm_term","utm_campaign","gclid"].forEach(function(key) {
+      if (sp.get(key)) utm[key] = sp.get(key);
+    });
+    var payload = JSON.stringify({
+      testId: _ctx.tid,
+      variantId: _ctx.vid,
+      visitorHash: _ctx.vh,
+      formFields: _accumulatedFormData,
+      utm: utm
+    });
+    var FORM_LEADS_URL = API_BASE + "/api/form-leads";
+    try {
+      var blob = new Blob([payload], { type: "application/json" });
+      if (navigator.sendBeacon && navigator.sendBeacon(FORM_LEADS_URL, blob)) return;
+    } catch(e) {}
+    var xhr2 = new XMLHttpRequest();
+    xhr2.open("POST", FORM_LEADS_URL, true);
+    xhr2.withCredentials = false;
+    xhr2.setRequestHeader("Content-Type", "application/json");
+    xhr2.send(payload);
+  }
+
+  function patchNetworkForJsSubmit() {
+    if (!_ctx) return;
+    try {
+      // Patch XMLHttpRequest
+      var origOpen = XMLHttpRequest.prototype.open;
+      var origSend = XMLHttpRequest.prototype.send;
+      XMLHttpRequest.prototype.open = function(method, url) {
+        this._sl_method = method;
+        this._sl_url = url;
+        return origOpen.apply(this, arguments);
+      };
+      XMLHttpRequest.prototype.send = function() {
+        var method = (this._sl_method || "").toUpperCase();
+        var url = this._sl_url || "";
+        // Only intercept POST requests that are NOT going to our own API
+        if (method === "POST" && url.indexOf(API_BASE) !== 0 && url.indexOf("/api/") !== 0) {
+          captureFormLeadFromAccumulated();
+        }
+        return origSend.apply(this, arguments);
+      };
+
+      // Patch fetch
+      var origFetch = window.fetch;
+      window.fetch = function(input, init) {
+        try {
+          var method = (init && init.method || "GET").toUpperCase();
+          var url = (typeof input === "string" ? input : (input && input.url)) || "";
+          if (method === "POST" && url.indexOf(API_BASE) !== 0 && url.indexOf("/api/") !== 0) {
+            captureFormLeadFromAccumulated();
+          }
+        } catch(e) {}
+        return origFetch.apply(this, arguments);
+      };
+    } catch(e) {}
+  }
+
   // ─── Register form field names (for HubSpot mapping UI) ────────────────────
 
   var _registeredFields = {}; // module-scope: persists across stepper re-runs
@@ -503,6 +576,7 @@ function buildTrackerScript(appUrl: string): string {
 
     document.addEventListener("submit", function(e) {
       var form = e.target;
+      _leadSent = true; // prevent JS-submit patch from double-sending
       captureFormLead(form);
       track("conversion", null, { trigger: "form_submit", id: (form && form.id) || null });
     }, true);
@@ -663,6 +737,7 @@ function buildTrackerScript(appUrl: string): string {
       wireAutoConversions();
       registerFormFields();
       watchForNewFields();
+      patchNetworkForJsSubmit();
     }
     if (document.readyState === "loading") {
       document.addEventListener("DOMContentLoaded", onReady);
