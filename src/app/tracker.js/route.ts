@@ -384,14 +384,14 @@ function buildTrackerScript(appUrl: string): string {
 
   function snapshotVisibleFormFields() {
     try {
-      var inputs = document.querySelectorAll("input[name], select[name], textarea[name]");
+      var inputs = document.querySelectorAll("input, select, textarea");
       for (var i = 0; i < inputs.length; i++) {
         var el = inputs[i];
-        if (!el.name) continue;
         var t = (el.type || "").toLowerCase();
         if (t === "password" || t === "hidden" || t === "submit" || t === "button" || t === "reset" || t === "file") continue;
         if ((t === "checkbox" || t === "radio") && !el.checked) continue;
-        if (el.value) _accumulatedFormData[el.name] = el.value;
+        var key = el.name || el.id || el.getAttribute("placeholder") || null;
+        if (key && el.value) _accumulatedFormData[key] = el.value;
       }
     } catch(e) {}
   }
@@ -406,11 +406,11 @@ function buildTrackerScript(appUrl: string): string {
       var elements = form.elements;
       for (var i = 0; i < elements.length; i++) {
         var el = elements[i];
-        if (!el.name) continue;
         var t = (el.type || "").toLowerCase();
         if (t === "password" || t === "hidden" || t === "submit" || t === "button" || t === "reset" || t === "file") continue;
         if ((t === "checkbox" || t === "radio") && !el.checked) continue;
-        fields[el.name] = el.value || "";
+        var fkey = el.name || el.id || el.getAttribute("placeholder") || null;
+        if (fkey) fields[fkey] = el.value || "";
       }
       var sp = new URLSearchParams(window.location.search);
       var utm = {};
