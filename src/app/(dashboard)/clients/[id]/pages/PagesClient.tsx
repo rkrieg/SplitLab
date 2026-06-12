@@ -480,14 +480,6 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
                   <Spinner size="sm" /> Checking URL…
                 </p>
               )}
-              {!checkingCreateFrameable && destinationUrlFrameable === true && (
-                <p className="mt-1.5 text-xs text-green-500 flex items-center gap-1.5">
-                  <span>✓</span> This page supports embedding. SplitLab will proxy it through your domain.
-                </p>
-              )}
-              {!checkingCreateFrameable && destinationUrlFrameable === null && (
-                <p className="text-slate-400 dark:text-slate-500 text-xs mt-1">SplitLab will proxy this page through your domain so A/B tests run on your URL.</p>
-              )}
             </div>
           ) : (
             <div>
@@ -608,11 +600,6 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
               {checkingFrameable && (
                 <p className="mt-1.5 text-xs text-slate-400 flex items-center gap-1.5">
                   <Spinner size="sm" /> Checking URL…
-                </p>
-              )}
-              {!checkingFrameable && variantUrlFrameable === true && (
-                <p className="mt-1.5 text-xs text-green-500 flex items-center gap-1.5">
-                  <span>✓</span> This page supports embedding.
                 </p>
               )}
             </div>

@@ -2640,16 +2640,17 @@ export default function AnalyticsClient({
                                             redirect_url: e.target.value,
                                           });
                                           setEditUrlFrameable(null);
-                                          setCheckingFrameable(false);
+                                        }}
+                                        onBlur={async (e) => {
+                                          const url = e.target.value.trim();
+                                          if (url.startsWith('http')) {
+                                            const result = await checkFrameable(url, setEditUrlFrameable);
+                                            if (result === false) setVariantDraft((d) => ({ ...d, proxy_mode: false }));
+                                          }
                                         }}
                                         className="input-base text-sm font-mono"
                                         placeholder="https://..."
                                       />
-                                      {checkingFrameable && (
-                                        <p className="mt-1.5 text-xs text-slate-400 flex items-center gap-1.5">
-                                          <Spinner size="sm" /> Checking URL…
-                                        </p>
-                                      )}
                                     </div>
                                   )}
                                 </div>
@@ -2738,31 +2739,13 @@ export default function AnalyticsClient({
                                         <Trash2 size={12} /> Delete
                                       </button>
                                     )}
-                                    {variantDraft.redirect_url && editUrlFrameable === null ? (
-                                      <Button
-                                        size="sm"
-                                        loading={checkingFrameable}
-                                        onClick={async () => {
-                                          const url = variantDraft.redirect_url?.trim();
-                                          if (url) {
-                                            const result = await checkFrameable(url, setEditUrlFrameable);
-                                            if (result === false) {
-                                              setVariantDraft((d) => ({ ...d, proxy_mode: false }));
-                                            }
-                                          }
-                                        }}
-                                      >
-                                        Check Compatibility
-                                      </Button>
-                                    ) : (
                                       <Button
                                         size="sm"
                                         onClick={() => saveVariant(stat.variant.id)}
-                                        loading={savingVariant}
+                                        loading={savingVariant || checkingFrameable}
                                       >
                                         <Check size={12} /> Save
                                       </Button>
-                                    )}
                                   </div>
                                 </div>
                               </td>
@@ -4422,8 +4405,13 @@ export default function AnalyticsClient({
                 onChange={(e) => {
                   setNewVariantUrl(e.target.value);
                   setNewVariantUrlFrameable(null);
-                  setCheckingFrameable(false);
                   if (newVariantUrlError) setNewVariantUrlError("");
+                }}
+                onBlur={async (e) => {
+                  const trimmed = e.target.value.trim();
+                  if (trimmed.startsWith('http')) {
+                    await checkFrameable(trimmed, setNewVariantUrlFrameable);
+                  }
                 }}
                 className={`input-base font-mono text-sm ${newVariantUrlError ? "border-red-500 focus:ring-red-500" : ""}`}
                 placeholder="https://..."
@@ -4432,25 +4420,6 @@ export default function AnalyticsClient({
                 <p className="mt-1.5 text-xs text-red-500 flex items-center gap-1">
                   <AlertTriangle size={11} className="flex-shrink-0" />{" "}
                   {newVariantUrlError}
-                </p>
-              )}
-              {checkingFrameable && (
-                <p className="mt-1.5 text-xs text-slate-400 flex items-center gap-1.5">
-                  <Spinner size="sm" /> Checking URL…
-                </p>
-              )}
-              {!checkingFrameable && newVariantUrlFrameable === false && !newVariantUrlError && (
-                <div className="mt-1.5 text-xs text-amber-500 flex items-start gap-1.5 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
-                  <AlertTriangle size={12} className="flex-shrink-0 mt-0.5" />
-                  <div>
-                    <p className="font-medium">This page blocks iframe embedding.</p>
-                    <p className="text-amber-400/80 mt-0.5">It will be saved as a redirect variant. Make sure you own this domain and can add the tracker script for conversion tracking.</p>
-                  </div>
-                </div>
-              )}
-              {!checkingFrameable && newVariantUrlFrameable === true && !newVariantUrlError && (
-                <p className="mt-1.5 text-xs text-green-500 flex items-center gap-1.5">
-                  <span>✓</span> This page supports embedding.
                 </p>
               )}
             </div>
@@ -4508,25 +4477,9 @@ export default function AnalyticsClient({
             >
               Cancel
             </Button>
-            {newVariantMode === "url" && newVariantUrlFrameable === null ? (
-              <Button
-                type="button"
-                loading={checkingFrameable}
-                onClick={async () => {
-                  const trimmed = newVariantUrl.trim();
-                  if (!trimmed) { setNewVariantUrlError("Please enter a destination URL."); return; }
-                  try { new URL(trimmed); } catch { setNewVariantUrlError("Please enter a valid URL (e.g. https://example.com)."); return; }
-                  setNewVariantUrlError("");
-                  await checkFrameable(trimmed, setNewVariantUrlFrameable);
-                }}
-              >
-                Check Compatibility
-              </Button>
-            ) : (
-              <Button type="submit" loading={addingVariant}>
-                {newVariantUrlFrameable === false ? "Add as Redirect Variant" : "Add Variant"}
-              </Button>
-            )}
+            <Button type="submit" loading={addingVariant || checkingFrameable}>
+              Add Variant
+            </Button>
           </div>
         </form>
       </Modal>
