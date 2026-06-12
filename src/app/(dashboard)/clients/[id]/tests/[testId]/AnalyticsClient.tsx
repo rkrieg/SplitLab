@@ -1880,8 +1880,8 @@ export default function AnalyticsClient({
 
   const tabs: { key: Tab; label: string; icon: React.ReactNode }[] = [
     { key: "overview", label: "Overview", icon: <BarChart3 size={14} /> },
-    { key: "leads", label: "Leads", icon: <Users size={14} /> },
-    { key: "form-leads", label: "Form Leads", icon: <ClipboardList size={14} /> },
+    { key: "leads", label: "Conversions", icon: <Users size={14} /> },
+    { key: "form-leads", label: "Leads", icon: <ClipboardList size={14} /> },
     { key: "integrations", label: "Integrations", icon: <Plug2 size={14} /> },
     { key: "settings", label: "Settings", icon: <SettingsIcon size={14} /> },
   ];
