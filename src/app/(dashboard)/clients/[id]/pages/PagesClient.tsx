@@ -136,9 +136,6 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
         return;
       }
       const newTest = await res.json();
-      setTests((prev) => [newTest, ...prev]);
-      setCreateOpen(false);
-      resetCreateForm();
       toast.success('Page created');
       router.refresh();
     } catch {

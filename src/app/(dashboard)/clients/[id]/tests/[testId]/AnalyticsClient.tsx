@@ -946,6 +946,7 @@ export default function AnalyticsClient({
 
   async function handleAddVariant(e: React.FormEvent) {
     e.preventDefault();
+    let frameableResult = newVariantUrlFrameable;
     if (newVariantMode === "url") {
       const trimmed = newVariantUrl.trim();
       if (!trimmed) {
