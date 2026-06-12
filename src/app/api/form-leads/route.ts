@@ -173,13 +173,21 @@ async function handleHubSpot(
   const accessToken = await getValidAccessToken({ id: integration.id, config });
   if (!accessToken) return;
 
-  const fieldMappings = mapping.field_mappings as Record<string, string>;
+  const rawMappings = mapping.field_mappings as { fieldMappings?: Record<string, string>; form_guid?: string; portal_id?: string } | Record<string, string>;
+  // Support both new shape { fieldMappings, form_guid, portal_id } and legacy flat shape
+  const isNewShape = rawMappings && typeof rawMappings === 'object' && 'fieldMappings' in rawMappings;
+  const fieldMappings = isNewShape ? (rawMappings as { fieldMappings: Record<string, string> }).fieldMappings : rawMappings as Record<string, string>;
+  const formGuid = isNewShape ? (rawMappings as { form_guid?: string }).form_guid : null;
+  const portalId = isNewShape ? (rawMappings as { portal_id?: string }).portal_id : null;
+
   if (!fieldMappings || Object.keys(fieldMappings).length === 0) return;
 
   const result = await syncLeadToHubSpot({
     accessToken,
     fieldMappings,
     formFields: params.formFields,
+    portalId,
+    formGuid,
     systemData: { ...params.systemData, variantName },
   });
 

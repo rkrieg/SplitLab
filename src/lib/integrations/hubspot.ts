@@ -1,6 +1,7 @@
 import { db } from '@/lib/supabase-server';
 
 const HUBSPOT_API_BASE = 'https://api.hubapi.com';
+const HUBSPOT_FORMS_SUBMIT_BASE = 'https://api.hsforms.com';
 const HUBSPOT_TOKEN_URL = 'https://api.hubapi.com/oauth/v1/token';
 
 export interface HubSpotProperty {
@@ -15,6 +16,19 @@ export interface SyncResult {
   ok: boolean;
   contactId?: string;
   error?: string;
+}
+
+export interface HubSpotFormField {
+  name: string;
+  label: string;
+  fieldType: string;
+  required: boolean;
+}
+
+export interface HubSpotForm {
+  id: string;
+  name: string;
+  fields: HubSpotFormField[];
 }
 
 // System fields we always expose for mapping (from form_leads columns)
@@ -131,6 +145,43 @@ export async function fetchHubSpotProperties(accessToken: string): Promise<HubSp
     .sort((a, b) => a.label.localeCompare(b.label));
 }
 
+export async function fetchHubSpotForms(accessToken: string): Promise<HubSpotForm[]> {
+  const forms: HubSpotForm[] = [];
+  let after: string | undefined;
+
+  do {
+    const url = new URL(`${HUBSPOT_API_BASE}/marketing/v3/forms/`);
+    url.searchParams.set('limit', '50');
+    if (after) url.searchParams.set('after', after);
+
+    const res = await fetch(url.toString(), { headers: authHeaders(accessToken) });
+    if (!res.ok) throw new Error(`HubSpot forms fetch failed: ${res.status}`);
+
+    const data = await res.json() as {
+      results: {
+        id: string;
+        name: string;
+        fieldGroups?: { fields?: { name: string; label: string; fieldType: string; required?: boolean }[] }[];
+      }[];
+      paging?: { next?: { after: string } };
+    };
+
+    for (const form of data.results) {
+      const fields: HubSpotFormField[] = [];
+      for (const group of form.fieldGroups ?? []) {
+        for (const f of group.fields ?? []) {
+          fields.push({ name: f.name, label: f.label, fieldType: f.fieldType, required: f.required ?? false });
+        }
+      }
+      forms.push({ id: form.id, name: form.name, fields });
+    }
+
+    after = data.paging?.next?.after;
+  } while (after);
+
+  return forms.sort((a, b) => a.name.localeCompare(b.name));
+}
+
 function resolveSystemField(
   key: string,
   systemData: {
@@ -163,6 +214,8 @@ export async function syncLeadToHubSpot(params: {
   accessToken: string;
   fieldMappings: Record<string, string>;
   formFields: Record<string, string>;
+  portalId?: string | null;
+  formGuid?: string | null;
   systemData: {
     ip_address?: string | null;
     variantName?: string;
@@ -175,24 +228,53 @@ export async function syncLeadToHubSpot(params: {
     gclid?: string | null;
   };
 }): Promise<SyncResult> {
-  const { accessToken, fieldMappings, formFields, systemData } = params;
+  const { accessToken, fieldMappings, formFields, systemData, portalId, formGuid } = params;
 
-  const properties: Record<string, string> = {};
-
-  for (const [ourField, hubspotProp] of Object.entries(fieldMappings)) {
-    if (!hubspotProp || hubspotProp === '(-) Not mapped') continue;
-
+  // Build field values from mappings
+  const resolved: Record<string, string> = {};
+  for (const [ourField, hubspotField] of Object.entries(fieldMappings)) {
+    if (!hubspotField || hubspotField === '(-) Not mapped') continue;
     const isSystemField = SYSTEM_FIELDS.some(f => f.key === ourField);
     const value = isSystemField
       ? resolveSystemField(ourField, systemData)
       : (formFields[ourField] ?? null);
-
     if (value !== null && value !== '') {
-      properties[hubspotProp] = value;
+      resolved[hubspotField] = value;
     }
   }
 
-  if (!properties['email']) {
+  // Form-based submission (new flow)
+  if (portalId && formGuid) {
+    try {
+      const fields = Object.entries(resolved).map(([name, value]) => ({ name, value }));
+      if (fields.length === 0) return { ok: false, error: 'No fields mapped — cannot submit HubSpot form' };
+      const res = await fetch(
+        `${HUBSPOT_FORMS_SUBMIT_BASE}/submissions/v3/integration/secure/submit/${portalId}/${formGuid}`,
+        {
+          method: 'POST',
+          headers: authHeaders(accessToken),
+          body: JSON.stringify({
+            submittedAt: Date.now(),
+            fields,
+            context: {
+              ipAddress: systemData.ip_address ?? undefined,
+            },
+          }),
+        }
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { message?: string; errors?: { message: string }[] };
+        const msg = body.message || body.errors?.[0]?.message || `HTTP ${res.status}`;
+        return { ok: false, error: msg };
+      }
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: String(err) };
+    }
+  }
+
+  // Legacy contact upsert (fallback for mappings without form_guid)
+  if (!resolved['email']) {
     return { ok: false, error: 'No email field mapped — cannot upsert HubSpot contact' };
   }
 
@@ -203,16 +285,14 @@ export async function syncLeadToHubSpot(params: {
         method: 'POST',
         headers: authHeaders(accessToken),
         body: JSON.stringify({
-          inputs: [{ id: properties['email'], properties, idProperty: 'email' }],
+          inputs: [{ id: resolved['email'], properties: resolved, idProperty: 'email' }],
         }),
       }
     );
-
     if (!res.ok) {
       const body = await res.json().catch(() => ({})) as { message?: string };
       return { ok: false, error: body.message || `HTTP ${res.status}` };
     }
-
     const data = await res.json() as { results?: { id: string }[] };
     return { ok: true, contactId: data.results?.[0]?.id };
   } catch (err) {

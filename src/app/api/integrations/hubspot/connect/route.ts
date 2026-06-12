@@ -32,7 +32,7 @@ export async function GET(req: NextRequest) {
   const params = new URLSearchParams({
     client_id: clientId,
     redirect_uri: redirectUri,
-    scope: 'crm.objects.contacts.write crm.schemas.contacts.read',
+    scope: 'crm.objects.contacts.write crm.schemas.contacts.read forms',
     state,
   });
 
