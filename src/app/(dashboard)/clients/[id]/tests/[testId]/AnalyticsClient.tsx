@@ -829,6 +829,10 @@ export default function AnalyticsClient({
 
     setSavingVariant(true);
     try {
+      let proxyMode = variantDraft.proxy_mode;
+      if (variantDraft.redirect_url) {
+        proxyMode = await checkFrameable(variantDraft.redirect_url.trim());
+      }
       const res = await fetch(`/api/tests/${test.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -838,7 +842,7 @@ export default function AnalyticsClient({
               id: variantId,
               name: variantDraft.name,
               redirect_url: variantDraft.redirect_url || null,
-              proxy_mode: variantDraft.proxy_mode,
+              proxy_mode: proxyMode,
             },
           ],
         }),
@@ -971,8 +975,9 @@ export default function AnalyticsClient({
       const count = variants.length + 1;
       const weight = Math.floor(100 / count);
       const remainder = 100 - weight * count;
-      // Auto-use redirect mode if site blocks iframe embedding
-      const useProxyMode = frameableResult !== false;
+      const useProxyMode = newVariantMode === "url"
+        ? await checkFrameable(newVariantUrl.trim())
+        : true;
 
       const payload =
         newVariantMode === "html"
@@ -1081,20 +1086,14 @@ export default function AnalyticsClient({
     }
   }, [variantOverrides]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function checkFrameable(url: string, setter: (v: boolean | null) => void): Promise<boolean | null> {
-    if (!url.startsWith('http')) { setter(null); return null; }
-    setCheckingFrameable(true);
+  async function checkFrameable(url: string): Promise<boolean> {
+    if (!url.startsWith('http')) return true;
     try {
       const res = await fetch(`/api/check-frameable?url=${encodeURIComponent(url)}`);
       const data = await res.json();
-      const result: boolean | null = data.frameable ?? null;
-      setter(result);
-      return result;
+      return data.frameable !== false;
     } catch {
-      setter(null);
-      return null;
-    } finally {
-      setCheckingFrameable(false);
+      return true;
     }
   }
 
@@ -2639,26 +2638,10 @@ export default function AnalyticsClient({
                                             ...variantDraft,
                                             redirect_url: e.target.value,
                                           });
-                                          setEditUrlFrameable(null);
-                                          setCheckingFrameable(false);
                                         }}
                                         className="input-base text-sm font-mono"
                                         placeholder="https://..."
                                       />
-                                      {checkingFrameable && (
-                                        <p className="mt-1.5 text-xs text-slate-400 flex items-center gap-1.5">
-                                          <Spinner size="sm" /> Checking URL…
-                                        </p>
-                                      )}
-                                      {!checkingFrameable && editUrlFrameable === false && (
-                                        <div className="mt-1.5 text-xs text-amber-500 flex items-start gap-1.5 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
-                                          <AlertTriangle size={12} className="flex-shrink-0 mt-0.5" />
-                                          <div>
-                                            <p className="font-medium">This page blocks iframe embedding.</p>
-                                            <p className="text-amber-400/80 mt-0.5">Make sure you own this domain and can add a <code className="font-mono">&lt;script&gt;</code> tag — the redirect variant will still work for A/B testing.</p>
-                                          </div>
-                                        </div>
-                                      )}
                                     </div>
                                   )}
                                 </div>
@@ -2747,31 +2730,13 @@ export default function AnalyticsClient({
                                         <Trash2 size={12} /> Delete
                                       </button>
                                     )}
-                                    {variantDraft.redirect_url && editUrlFrameable === null ? (
-                                      <Button
-                                        size="sm"
-                                        loading={checkingFrameable}
-                                        onClick={async () => {
-                                          const url = variantDraft.redirect_url?.trim();
-                                          if (url) {
-                                            const result = await checkFrameable(url, setEditUrlFrameable);
-                                            if (result === false) {
-                                              setVariantDraft((d) => ({ ...d, proxy_mode: false }));
-                                            }
-                                          }
-                                        }}
-                                      >
-                                        Check Compatibility
-                                      </Button>
-                                    ) : (
                                       <Button
                                         size="sm"
                                         onClick={() => saveVariant(stat.variant.id)}
-                                        loading={savingVariant}
+                                        loading={savingVariant || checkingFrameable}
                                       >
                                         <Check size={12} /> Save
                                       </Button>
-                                    )}
                                   </div>
                                 </div>
                               </td>
@@ -4054,24 +4019,27 @@ export default function AnalyticsClient({
                     <div>
                       {/* Variant tabs */}
                       {scanResults.variants.length > 1 && (
-                        <div className="flex gap-0 mb-4 border-b border-slate-200 dark:border-slate-700 -mx-5 px-5 overflow-x-auto">
-                          {scanResults.variants.map((vs) => (
-                            <button
-                              key={vs.variant_id}
-                              type="button"
-                              onClick={() => setScanTab(vs.variant_id)}
-                              className={`px-4 py-2 text-xs font-medium border-b-2 transition-colors whitespace-nowrap flex items-center gap-1.5 ${
-                                vs.variant_id === activeId
-                                  ? "border-indigo-500 text-indigo-400"
-                                  : "border-transparent text-slate-500 hover:text-slate-300"
-                              }`}
-                            >
-                              {vs.variant_name}
-                              <span className={`text-xs ${vs.variant_id === activeId ? "text-indigo-400/60" : "text-slate-600"}`}>
-                                {vs.elements.length}
-                              </span>
-                            </button>
-                          ))}
+                        <div className="mb-4">
+                          <p className="text-xs text-slate-400 mb-2">Switch variants to set goals per page:</p>
+                          <div className="flex gap-0 border-b border-slate-200 dark:border-slate-700 -mx-5 px-5 overflow-x-auto">
+                            {scanResults.variants.map((vs) => (
+                              <button
+                                key={vs.variant_id}
+                                type="button"
+                                onClick={() => setScanTab(vs.variant_id)}
+                                className={`px-4 py-2 text-xs font-medium border-b-2 transition-colors whitespace-nowrap flex items-center gap-1.5 ${
+                                  vs.variant_id === activeId
+                                    ? "border-indigo-500 text-indigo-400"
+                                    : "border-transparent text-slate-500 hover:text-slate-300"
+                                }`}
+                              >
+                                {vs.variant_name}
+                                <span className={`text-xs ${vs.variant_id === activeId ? "text-indigo-400/60" : "text-slate-600"}`}>
+                                  {vs.elements.length}
+                                </span>
+                              </button>
+                            ))}
+                          </div>
                         </div>
                       )}
 
@@ -4121,11 +4089,17 @@ export default function AnalyticsClient({
                                 return (
                                   <div
                                     key={i}
-                                    className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700"
+                                    className={`flex items-center justify-between gap-3 px-3 py-2 rounded-lg border transition-colors ${
+                                      alreadyAdded
+                                        ? "bg-green-500/10 border-green-500/30"
+                                        : "bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700"
+                                    }`}
                                   >
                                     <div className="flex items-center gap-2 min-w-0">
-                                      {icon}
-                                      <span className="text-slate-700 dark:text-slate-300 text-sm truncate">
+                                      {alreadyAdded
+                                        ? <CheckCircle2 size={13} className="text-green-400 flex-shrink-0" />
+                                        : icon}
+                                      <span className={`text-sm truncate ${alreadyAdded ? "text-green-300 font-medium" : "text-slate-700 dark:text-slate-300"}`}>
                                         {label}
                                       </span>
                                       {el.id && (
@@ -4133,9 +4107,13 @@ export default function AnalyticsClient({
                                           #{el.id}
                                         </span>
                                       )}
-                                      <span className="text-slate-400 text-xs flex-shrink-0 capitalize">
-                                        {el.type.replace("_", " ")}
-                                      </span>
+                                      {alreadyAdded ? (
+                                        <span className="text-xs bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded font-medium flex-shrink-0">Goal</span>
+                                      ) : (
+                                        <span className="text-slate-400 text-xs flex-shrink-0 capitalize">
+                                          {el.type.replace("_", " ")}
+                                        </span>
+                                      )}
                                     </div>
                                     {alreadyAdded ? (
                                       <button
@@ -4417,8 +4395,6 @@ export default function AnalyticsClient({
                 value={newVariantUrl}
                 onChange={(e) => {
                   setNewVariantUrl(e.target.value);
-                  setNewVariantUrlFrameable(null);
-                  setCheckingFrameable(false);
                   if (newVariantUrlError) setNewVariantUrlError("");
                 }}
                 className={`input-base font-mono text-sm ${newVariantUrlError ? "border-red-500 focus:ring-red-500" : ""}`}
@@ -4428,25 +4404,6 @@ export default function AnalyticsClient({
                 <p className="mt-1.5 text-xs text-red-500 flex items-center gap-1">
                   <AlertTriangle size={11} className="flex-shrink-0" />{" "}
                   {newVariantUrlError}
-                </p>
-              )}
-              {checkingFrameable && (
-                <p className="mt-1.5 text-xs text-slate-400 flex items-center gap-1.5">
-                  <Spinner size="sm" /> Checking URL…
-                </p>
-              )}
-              {!checkingFrameable && newVariantUrlFrameable === false && !newVariantUrlError && (
-                <div className="mt-1.5 text-xs text-amber-500 flex items-start gap-1.5 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
-                  <AlertTriangle size={12} className="flex-shrink-0 mt-0.5" />
-                  <div>
-                    <p className="font-medium">This page blocks iframe embedding.</p>
-                    <p className="text-amber-400/80 mt-0.5">It will be saved as a redirect variant. Make sure you own this domain and can add the tracker script for conversion tracking.</p>
-                  </div>
-                </div>
-              )}
-              {!checkingFrameable && newVariantUrlFrameable === true && !newVariantUrlError && (
-                <p className="mt-1.5 text-xs text-green-500 flex items-center gap-1.5">
-                  <span>✓</span> This page supports embedding.
                 </p>
               )}
             </div>
@@ -4504,25 +4461,9 @@ export default function AnalyticsClient({
             >
               Cancel
             </Button>
-            {newVariantMode === "url" && newVariantUrlFrameable === null ? (
-              <Button
-                type="button"
-                loading={checkingFrameable}
-                onClick={async () => {
-                  const trimmed = newVariantUrl.trim();
-                  if (!trimmed) { setNewVariantUrlError("Please enter a destination URL."); return; }
-                  try { new URL(trimmed); } catch { setNewVariantUrlError("Please enter a valid URL (e.g. https://example.com)."); return; }
-                  setNewVariantUrlError("");
-                  await checkFrameable(trimmed, setNewVariantUrlFrameable);
-                }}
-              >
-                Check Compatibility
-              </Button>
-            ) : (
-              <Button type="submit" loading={addingVariant}>
-                {newVariantUrlFrameable === false ? "Add as Redirect Variant" : "Add Variant"}
-              </Button>
-            )}
+            <Button type="submit" loading={addingVariant}>
+              Add Variant
+            </Button>
           </div>
         </form>
       </Modal>
