@@ -1261,13 +1261,20 @@ export default function AnalyticsClient({
 
       if (hs) {
         setHsFormsLoading(true);
-        const formsRes = await fetch(`/api/workspaces/${workspaceId}/integrations/hubspot-forms`);
+        const [formsRes, propsRes] = await Promise.all([
+          fetch(`/api/workspaces/${workspaceId}/integrations/hubspot-forms`),
+          fetch(`/api/workspaces/${workspaceId}/integrations/hubspot-properties`),
+        ]);
         setHsFormsLoading(false);
         const formsData = await formsRes.json() as { forms?: HubSpotForm[]; error?: string };
         if (!formsRes.ok) {
           toast.error(`Failed to load HubSpot forms: ${formsData.error ?? 'Unknown error'}`);
         }
         setHsForms(formsData.forms ?? []);
+        if (propsRes.ok) {
+          const propsData = await propsRes.json() as { properties?: HubSpotProperty[] };
+          setHsProperties(propsData.properties ?? []);
+        }
 
         const m = mData.mappings?.find(x => x.workspace_integrations?.id === hs.id);
         const rawMapping = m?.field_mappings as { fieldMappings?: Record<string, string>; form_guid?: string; portal_id?: string } | Record<string, string> | null;
@@ -1281,6 +1288,7 @@ export default function AnalyticsClient({
           : { enabled: false, field_mappings: {}, form_guid: '', portal_id: '' }
         );
         if (formGuid) setHsSelectedFormId(formGuid);
+        else if (m && !isNewShape) setHsSelectedFormId('none');
       }
 
       if (em) {
@@ -1555,27 +1563,45 @@ export default function AnalyticsClient({
 
   async function saveTestMapping() {
     if (!hsIntegration) return;
-    if (!hsSelectedFormId) { toast.error('Please select a HubSpot form first'); return; }
-    if (!hsIntegration.hub_id) { toast.error('HubSpot portal ID missing — please reconnect HubSpot'); return; }
-    const selectedForm = hsForms.find(f => f.id === hsSelectedFormId);
+    if (!hsSelectedFormId) { toast.error('Please select a mapping mode first'); return; }
+
+    const isDirectContacts = hsSelectedFormId === 'none';
+    const selectedForm = isDirectContacts ? null : hsForms.find(f => f.id === hsSelectedFormId);
+
+    // For form-based flow, portal_id is required
+    if (!isDirectContacts && !hsIntegration.hub_id) {
+      toast.error('HubSpot portal ID missing — please reconnect HubSpot');
+      return;
+    }
+
     setSavingMapping(true);
     try {
+      const field_mappings = isDirectContacts
+        // Legacy flat shape → triggers contact upsert path
+        ? testMapping.field_mappings
+        // New shape → triggers form submission path
+        : {
+            fieldMappings: testMapping.field_mappings,
+            form_guid: hsSelectedFormId,
+            form_name: selectedForm?.name ?? '',
+            portal_id: hsIntegration.hub_id ?? '',
+          };
+
       const res = await fetch(`/api/tests/${test.id}/integrations`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           workspace_integration_id: hsIntegration.id,
           enabled: true,
-          field_mappings: {
-            fieldMappings: testMapping.field_mappings,
-            form_guid: hsSelectedFormId,
-            form_name: selectedForm?.name ?? '',
-            portal_id: hsIntegration.hub_id ?? '',
-          },
+          field_mappings,
         }),
       });
       if (!res.ok) { toast.error('Failed to save mapping'); return; }
-      setTestMapping(prev => ({ ...prev, form_guid: hsSelectedFormId, portal_id: hsIntegration.hub_id ?? '' }));
+      setTestMapping(prev => ({
+        ...prev,
+        form_guid: isDirectContacts ? '' : hsSelectedFormId,
+        portal_id: isDirectContacts ? '' : (hsIntegration.hub_id ?? ''),
+      }));
       toast.success('Mapping saved');
     } finally {
       setSavingMapping(false);
@@ -3412,12 +3438,6 @@ export default function AnalyticsClient({
                           <div className="w-5 h-5 rounded-full bg-orange-500/20 text-orange-400 flex items-center justify-center text-xs font-bold flex-shrink-0">1</div>
                           <p className="text-sm font-medium text-slate-700 dark:text-slate-200">Select a HubSpot Form</p>
                         </div>
-                        {hsForms.length === 0 ? (
-                          <div className="flex items-center gap-2 text-xs text-slate-400 italic">
-                            <AlertTriangle size={13} className="text-amber-400 flex-shrink-0" />
-                            No forms found in your HubSpot account. Create and publish a form in HubSpot first.
-                          </div>
-                        ) : (
                           <select
                             value={hsSelectedFormId}
                             onChange={e => {
@@ -3426,29 +3446,37 @@ export default function AnalyticsClient({
                             }}
                             className="input text-sm w-full"
                           >
-                            <option value="">— Choose a form —</option>
+                            <option value="">— Choose an option —</option>
+                            <option value="none">Map directly to HubSpot Contacts (no form)</option>
                             {hsForms.map(f => (
                               <option key={f.id} value={f.id}>{f.name}</option>
                             ))}
                           </select>
-                        )}
+                          {hsForms.length === 0 && (
+                            <p className="text-xs text-slate-400 mt-2 italic">No HubSpot forms found — you can still map directly to contacts above.</p>
+                          )}
                       </div>
 
-                      {/* Step 2 — Map fields once a form is selected */}
+                      {/* Step 2 — Map fields once a mode is selected */}
                       {hsSelectedFormId && (() => {
-                        const selectedForm = hsForms.find(f => f.id === hsSelectedFormId);
-                        if (!selectedForm) return null;
+                        const isDirectContacts = hsSelectedFormId === 'none';
+                        const selectedForm = isDirectContacts ? null : hsForms.find(f => f.id === hsSelectedFormId);
+                        if (!isDirectContacts && !selectedForm) return null;
+                        const destinationLabel = isDirectContacts ? 'HubSpot Contact Property' : 'HubSpot Form Field';
+                        const destinationOptions = isDirectContacts
+                          ? hsProperties.map(p => <option key={p.name} value={p.name}>{p.label} ({p.name})</option>)
+                          : selectedForm!.fields.map(f => <option key={f.name} value={f.name}>{f.label} ({f.name})</option>);
                         return (
                           <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 p-4 space-y-3">
                             <div className="flex items-center gap-2 mb-1">
                               <div className="w-5 h-5 rounded-full bg-orange-500/20 text-orange-400 flex items-center justify-center text-xs font-bold flex-shrink-0">2</div>
                               <p className="text-sm font-medium text-slate-700 dark:text-slate-200">Map Fields</p>
-                              <span className="text-xs text-slate-400 ml-1">→ <span className="text-indigo-400">{selectedForm.name}</span></span>
+                              {!isDirectContacts && <span className="text-xs text-slate-400 ml-1">→ <span className="text-indigo-400">{selectedForm!.name}</span></span>}
                             </div>
                             <div className="grid grid-cols-[1fr_32px_1fr_32px] gap-2 text-xs font-medium text-slate-500 uppercase tracking-wider">
                               <span>SplitLab Field</span>
                               <span />
-                              <span>HubSpot Form Field</span>
+                              <span>{destinationLabel}</span>
                               <span />
                             </div>
 
@@ -3465,9 +3493,7 @@ export default function AnalyticsClient({
                                   className="input text-xs py-1.5"
                                 >
                                   <option value="">(-) Not mapped</option>
-                                  {selectedForm.fields.map(f => (
-                                    <option key={f.name} value={f.name}>{f.label} ({f.name})</option>
-                                  ))}
+                                  {destinationOptions}
                                 </select>
                                 <span />
                               </div>
@@ -3483,7 +3509,7 @@ export default function AnalyticsClient({
                   )}
 
                   <div className="px-5 py-3 border-t border-slate-200 dark:border-slate-700 flex justify-end">
-                    <Button size="sm" onClick={saveTestMapping} loading={savingMapping} disabled={!hsSelectedFormId}>
+                    <Button size="sm" onClick={saveTestMapping} loading={savingMapping} disabled={!hsSelectedFormId || hsSelectedFormId === ''}>
                       <Check size={13} /> Save Changes
                     </Button>
                   </div>
