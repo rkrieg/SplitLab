@@ -1,0 +1,49 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
+import { db } from '@/lib/supabase-server';
+import { fetchHubSpotForms, getValidAccessToken } from '@/lib/integrations/hubspot';
+
+export const dynamic = 'force-dynamic';
+
+// GET /api/workspaces/[id]/integrations/hubspot-forms
+// Returns all HubSpot forms (id, name, fields) for the connected account
+export async function GET(
+  _req: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  const session = await getServerSession(authOptions);
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const { data: integration, error } = await db
+    .from('workspace_integrations')
+    .select('id, config')
+    .eq('workspace_id', params.id)
+    .eq('type', 'hubspot')
+    .eq('enabled', true)
+    .single();
+
+  if (error || !integration) {
+    return NextResponse.json({ error: 'HubSpot not connected' }, { status: 404 });
+  }
+
+  const config = integration.config as { access_token?: string; refresh_token?: string; expires_at?: string };
+  if (!config.access_token || !config.refresh_token || !config.expires_at) {
+    return NextResponse.json({ error: 'No access token found' }, { status: 400 });
+  }
+
+  const accessToken = await getValidAccessToken({
+    id: integration.id,
+    config: config as { access_token: string; refresh_token: string; expires_at: string },
+  });
+  if (!accessToken) {
+    return NextResponse.json({ error: 'Failed to obtain valid access token' }, { status: 401 });
+  }
+
+  try {
+    const forms = await fetchHubSpotForms(accessToken);
+    return NextResponse.json({ forms });
+  } catch (err) {
+    return NextResponse.json({ error: String(err) }, { status: 500 });
+  }
+}

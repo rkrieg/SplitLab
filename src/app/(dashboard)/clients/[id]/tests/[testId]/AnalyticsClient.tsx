@@ -160,10 +160,25 @@ interface HubSpotProperty {
   groupName: string;
 }
 
+interface HubSpotFormField {
+  name: string;
+  label: string;
+  fieldType: string;
+  required: boolean;
+}
+
+interface HubSpotForm {
+  id: string;
+  name: string;
+  fields: HubSpotFormField[];
+}
+
 interface TestMapping {
   id?: string;
   enabled: boolean;
   field_mappings: Record<string, string>;
+  form_guid?: string | null;
+  portal_id?: string | null;
   last_synced_at?: string | null;
   total_synced?: number;
   total_failed?: number;
@@ -417,10 +432,13 @@ export default function AnalyticsClient({
   const [flSearchInput, setFlSearchInput] = useState("");
 
   // Integrations
-  const [hsIntegration, setHsIntegration] = useState<{ id: string; enabled: boolean } | null>(null);
+  const [hsIntegration, setHsIntegration] = useState<{ id: string; enabled: boolean; hub_id?: string | null } | null>(null);
   const [hsDisconnecting, setHsDisconnecting] = useState(false);
   const [hsProperties, setHsProperties] = useState<HubSpotProperty[]>([]);
   const [hsPropsLoading, setHsPropsLoading] = useState(false);
+  const [hsForms, setHsForms] = useState<HubSpotForm[]>([]);
+  const [hsFormsLoading, setHsFormsLoading] = useState(false);
+  const [hsSelectedFormId, setHsSelectedFormId] = useState<string>('');
   const [integrationsLoaded, setIntegrationsLoaded] = useState(false);
   // Test-level mapping (one flat mapping for the whole test)
   const [testMapping, setTestMapping] = useState<TestMapping>({ enabled: true, field_mappings: {} });
@@ -1226,7 +1244,8 @@ export default function AnalyticsClient({
     try {
       const res = await fetch(`/api/workspaces/${workspaceId}/integrations`);
       const data = await res.json() as { integrations?: { id: string; type: string; enabled: boolean; config?: unknown }[] };
-      const hs = data.integrations?.find(i => i.type === 'hubspot') ?? null;
+      const hsRaw = data.integrations?.find(i => i.type === 'hubspot') ?? null;
+      const hs = hsRaw ? { id: hsRaw.id, enabled: hsRaw.enabled, hub_id: (hsRaw.config as { hub_id?: string } | null)?.hub_id ?? null } : null;
       const em = data.integrations?.find(i => i.type === 'email') ?? null;
       const whs = (data.integrations ?? []).filter(i => i.type === 'webhook') as WebhookRow[];
       setHsIntegration(hs);
@@ -1241,20 +1260,35 @@ export default function AnalyticsClient({
       const mData = await mRes.json() as { mappings?: { id?: string; enabled: boolean; field_mappings: unknown; last_synced_at?: string; total_synced?: number; total_failed?: number; workspace_integrations?: { id: string } }[] };
 
       if (hs) {
-        setHsPropsLoading(true);
-        const propsRes = await fetch(`/api/workspaces/${workspaceId}/integrations/hubspot-properties`);
-        setHsPropsLoading(false);
-        const propsData = await propsRes.json() as { properties?: HubSpotProperty[]; error?: string };
-        if (!propsRes.ok) {
-          toast.error(`Failed to load HubSpot properties: ${propsData.error ?? 'Unknown error'}`);
+        setHsFormsLoading(true);
+        const [formsRes, propsRes] = await Promise.all([
+          fetch(`/api/workspaces/${workspaceId}/integrations/hubspot-forms`),
+          fetch(`/api/workspaces/${workspaceId}/integrations/hubspot-properties`),
+        ]);
+        setHsFormsLoading(false);
+        const formsData = await formsRes.json() as { forms?: HubSpotForm[]; error?: string };
+        if (!formsRes.ok) {
+          toast.error(`Failed to load HubSpot forms: ${formsData.error ?? 'Unknown error'}`);
         }
-        setHsProperties(propsData.properties ?? []);
+        setHsForms(formsData.forms ?? []);
+        if (propsRes.ok) {
+          const propsData = await propsRes.json() as { properties?: HubSpotProperty[] };
+          setHsProperties(propsData.properties ?? []);
+        }
 
         const m = mData.mappings?.find(x => x.workspace_integrations?.id === hs.id);
+        const rawMapping = m?.field_mappings as { fieldMappings?: Record<string, string>; form_guid?: string; portal_id?: string } | Record<string, string> | null;
+        const isNewShape = rawMapping && 'fieldMappings' in rawMapping;
+        const fieldMappings = isNewShape ? (rawMapping as { fieldMappings: Record<string, string> }).fieldMappings : (rawMapping as Record<string, string> ?? {});
+        const formGuid = isNewShape ? (rawMapping as { form_guid?: string }).form_guid ?? '' : '';
+        const portalId = isNewShape ? (rawMapping as { portal_id?: string }).portal_id ?? '' : '';
+
         setTestMapping(m
-          ? { id: m.id, enabled: m.enabled, field_mappings: m.field_mappings as Record<string, string>, last_synced_at: m.last_synced_at, total_synced: m.total_synced, total_failed: m.total_failed }
-          : { enabled: false, field_mappings: {} }
+          ? { id: m.id, enabled: m.enabled, field_mappings: fieldMappings, form_guid: formGuid, portal_id: portalId, last_synced_at: m.last_synced_at, total_synced: m.total_synced, total_failed: m.total_failed }
+          : { enabled: false, field_mappings: {}, form_guid: '', portal_id: '' }
         );
+        if (formGuid) setHsSelectedFormId(formGuid);
+        else if (m && !isNewShape) setHsSelectedFormId('none');
       }
 
       if (em) {
@@ -1529,18 +1563,45 @@ export default function AnalyticsClient({
 
   async function saveTestMapping() {
     if (!hsIntegration) return;
+    if (!hsSelectedFormId) { toast.error('Please select a mapping mode first'); return; }
+
+    const isDirectContacts = hsSelectedFormId === 'none';
+    const selectedForm = isDirectContacts ? null : hsForms.find(f => f.id === hsSelectedFormId);
+
+    // For form-based flow, portal_id is required
+    if (!isDirectContacts && !hsIntegration.hub_id) {
+      toast.error('HubSpot portal ID missing — please reconnect HubSpot');
+      return;
+    }
+
     setSavingMapping(true);
     try {
+      const field_mappings = isDirectContacts
+        // Legacy flat shape → triggers contact upsert path
+        ? testMapping.field_mappings
+        // New shape → triggers form submission path
+        : {
+            fieldMappings: testMapping.field_mappings,
+            form_guid: hsSelectedFormId,
+            form_name: selectedForm?.name ?? '',
+            portal_id: hsIntegration.hub_id ?? '',
+          };
+
       const res = await fetch(`/api/tests/${test.id}/integrations`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           workspace_integration_id: hsIntegration.id,
           enabled: true,
-          field_mappings: testMapping.field_mappings,
+          field_mappings,
         }),
       });
       if (!res.ok) { toast.error('Failed to save mapping'); return; }
+      setTestMapping(prev => ({
+        ...prev,
+        form_guid: isDirectContacts ? '' : hsSelectedFormId,
+        portal_id: isDirectContacts ? '' : (hsIntegration.hub_id ?? ''),
+      }));
       toast.success('Mapping saved');
     } finally {
       setSavingMapping(false);
@@ -1845,8 +1906,8 @@ export default function AnalyticsClient({
 
   const tabs: { key: Tab; label: string; icon: React.ReactNode }[] = [
     { key: "overview", label: "Overview", icon: <BarChart3 size={14} /> },
-    { key: "leads", label: "Leads", icon: <Users size={14} /> },
-    { key: "form-leads", label: "Form Leads", icon: <ClipboardList size={14} /> },
+    { key: "leads", label: "Conversions", icon: <Users size={14} /> },
+    { key: "form-leads", label: "Leads", icon: <ClipboardList size={14} /> },
     { key: "integrations", label: "Integrations", icon: <Plug2 size={14} /> },
     { key: "settings", label: "Settings", icon: <SettingsIcon size={14} /> },
   ];
@@ -3365,98 +3426,123 @@ export default function AnalyticsClient({
                     )}
                   </div>
 
-                  {hsPropsLoading ? (
+                  {hsFormsLoading ? (
                     <div className="px-5 py-6 flex items-center gap-2 text-sm text-slate-400">
-                      <Loader2 size={14} className="animate-spin" /> Loading HubSpot properties…
+                      <Loader2 size={14} className="animate-spin" /> Loading HubSpot forms…
                     </div>
                   ) : (
-                    <div className="px-5 py-4 space-y-2">
-                      <div className="grid grid-cols-[1fr_32px_1fr_32px] gap-2 text-xs font-medium text-slate-500 uppercase tracking-wider mb-3">
-                        <span>SplitLab Field</span>
-                        <span />
-                        <span>HubSpot Property</span>
-                        <span />
-                      </div>
-
-                      {[
-                        { key: 'ip_address',   label: 'IP Address' },
-                        { key: 'variant',      label: 'Page Variant' },
-                        { key: 'submitted_at', label: 'Submission Date' },
-                        { key: 'utm_source',   label: 'UTM Source' },
-                        { key: 'utm_medium',   label: 'UTM Medium' },
-                        { key: 'utm_campaign', label: 'UTM Campaign' },
-                        { key: 'utm_content',  label: 'UTM Content' },
-                        { key: 'utm_term',     label: 'UTM Term' },
-                        { key: 'gclid',        label: 'GCLID' },
-                      ].map(sf => (
-                        <div key={sf.key} className="grid grid-cols-[1fr_32px_1fr_32px] gap-2 items-center">
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs px-2 py-1 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-mono">{sf.label}</span>
-                            <span className="text-xs text-slate-400 bg-slate-50 dark:bg-slate-800/50 px-1.5 py-0.5 rounded">system</span>
-                          </div>
-                          <ArrowRight size={13} className="text-orange-400 mx-auto" />
+                    <div className="px-5 py-5 space-y-5">
+                      {/* Step 1 — Select HubSpot Form */}
+                      <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 p-4">
+                        <div className="flex items-center gap-2 mb-3">
+                          <div className="w-5 h-5 rounded-full bg-orange-500/20 text-orange-400 flex items-center justify-center text-xs font-bold flex-shrink-0">1</div>
+                          <p className="text-sm font-medium text-slate-700 dark:text-slate-200">Select a HubSpot Form</p>
+                        </div>
                           <select
-                            value={testMapping.field_mappings[sf.key] ?? ''}
-                            onChange={e => updateMapping(sf.key, e.target.value)}
-                            className="input text-xs py-1.5"
+                            value={hsSelectedFormId}
+                            onChange={e => {
+                              setHsSelectedFormId(e.target.value);
+                              setTestMapping(prev => ({ ...prev, field_mappings: {} }));
+                            }}
+                            className="input text-sm w-full"
                           >
-                            <option value="">(-) Not mapped</option>
-                            {hsProperties.map(p => (
-                              <option key={p.name} value={p.name}>{p.label} ({p.name})</option>
+                            <option value="">— Choose an option —</option>
+                            <option value="none">Map directly to HubSpot Contacts (no form)</option>
+                            {hsForms.map(f => (
+                              <option key={f.id} value={f.id}>{f.name}</option>
                             ))}
                           </select>
-                          <span />
-                        </div>
-                      ))}
-
-                      {testFormKeys.length > 0 && (
-                        <div className="border-t border-slate-100 dark:border-slate-800 my-3" />
-                      )}
-
-                      {testFormKeys.map(fk => (
-                        <div key={fk} className="grid grid-cols-[1fr_32px_1fr_32px] gap-2 items-center">
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs px-2 py-1 rounded bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 font-mono">{fk}</span>
-                            <span className="text-xs text-slate-400 bg-slate-50 dark:bg-slate-800/50 px-1.5 py-0.5 rounded">form</span>
-                          </div>
-                          <ArrowRight size={13} className="text-orange-400 mx-auto" />
-                          <select
-                            value={testMapping.field_mappings[fk] ?? ''}
-                            onChange={e => updateMapping(fk, e.target.value)}
-                            className="input text-xs py-1.5"
-                          >
-                            <option value="">(-) Not mapped</option>
-                            {hsProperties.map(p => (
-                              <option key={p.name} value={p.name}>{p.label} ({p.name})</option>
-                            ))}
-                          </select>
-                          <button onClick={() => removeMapping(fk)} className="text-slate-300 hover:text-red-400 transition-colors">
-                            <X size={14} />
-                          </button>
-                        </div>
-                      ))}
-
-                      <div className="flex items-center gap-2 mt-4 pt-3 border-t border-slate-100 dark:border-slate-800">
-                        <input
-                          type="text"
-                          placeholder="+ Add another form field…"
-                          value={newFieldKey}
-                          onChange={e => setNewFieldKey(e.target.value)}
-                          onKeyDown={e => e.key === 'Enter' && addCustomFormField()}
-                          className="input text-xs py-1.5 flex-1"
-                        />
-                        <button
-                          onClick={() => addCustomFormField()}
-                          className="text-xs text-indigo-500 hover:text-indigo-400 transition-colors font-medium flex items-center gap-1"
-                        >
-                          <Plus size={13} /> Add field
-                        </button>
+                          {hsForms.length === 0 && (
+                            <p className="text-xs text-slate-400 mt-2 italic">No HubSpot forms found — you can still map directly to contacts above.</p>
+                          )}
                       </div>
+
+                      {/* Step 2 — Map fields once a mode is selected */}
+                      {hsSelectedFormId && (() => {
+                        const isDirectContacts = hsSelectedFormId === 'none';
+                        const selectedForm = isDirectContacts ? null : hsForms.find(f => f.id === hsSelectedFormId);
+                        if (!isDirectContacts && !selectedForm) return null;
+                        const destinationLabel = isDirectContacts ? 'HubSpot Contact Property' : 'HubSpot Form Field';
+                        const destinationOptions = isDirectContacts
+                          ? hsProperties.map(p => <option key={p.name} value={p.name}>{p.label} ({p.name})</option>)
+                          : selectedForm!.fields.map(f => <option key={f.name} value={f.name}>{f.label} ({f.name})</option>);
+                        return (
+                          <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 p-4 space-y-3">
+                            <div className="flex items-center gap-2 mb-1">
+                              <div className="w-5 h-5 rounded-full bg-orange-500/20 text-orange-400 flex items-center justify-center text-xs font-bold flex-shrink-0">2</div>
+                              <p className="text-sm font-medium text-slate-700 dark:text-slate-200">Map Fields</p>
+                              {!isDirectContacts && <span className="text-xs text-slate-400 ml-1">→ <span className="text-indigo-400">{selectedForm!.name}</span></span>}
+                            </div>
+                            <div className="grid grid-cols-[1fr_32px_1fr_32px] gap-2 text-xs font-medium text-slate-500 uppercase tracking-wider">
+                              <span>SplitLab Field</span>
+                              <span />
+                              <span>{destinationLabel}</span>
+                              <span />
+                            </div>
+
+                            {testFormKeys.map(fk => (
+                              <div key={fk} className="grid grid-cols-[1fr_32px_1fr_32px] gap-2 items-center">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs px-2 py-1 rounded bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 font-mono">{fk}</span>
+                                  <span className="text-xs text-slate-400 bg-slate-50 dark:bg-slate-800/50 px-1.5 py-0.5 rounded">form</span>
+                                </div>
+                                <ArrowRight size={13} className="text-orange-400 mx-auto" />
+                                <select
+                                  value={testMapping.field_mappings[fk] ?? ''}
+                                  onChange={e => updateMapping(fk, e.target.value)}
+                                  className="input text-xs py-1.5"
+                                >
+                                  <option value="">(-) Not mapped</option>
+                                  {destinationOptions}
+                                </select>
+                                <span />
+                              </div>
+                            ))}
+
+                            {testFormKeys.length === 0 && (
+                              <p className="text-xs text-slate-400 italic">No form fields detected yet. Submit the form on your landing page first.</p>
+                            )}
+
+                            {/* System fields */}
+                            <div className="border-t border-slate-200 dark:border-slate-700 pt-3 mt-1">
+                              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">System Fields</p>
+                              {[
+                                { key: 'ip_address', label: 'IP Address' },
+                                { key: 'variant', label: 'Page Variant' },
+                                { key: 'submitted_at', label: 'Submission Date' },
+                                { key: 'utm_source', label: 'UTM Source' },
+                                { key: 'utm_medium', label: 'UTM Medium' },
+                                { key: 'utm_campaign', label: 'UTM Campaign' },
+                                { key: 'utm_content', label: 'UTM Content' },
+                                { key: 'utm_term', label: 'UTM Term' },
+                                { key: 'gclid', label: 'GCLID' },
+                              ].map(sf => (
+                                <div key={sf.key} className="grid grid-cols-[1fr_32px_1fr_32px] gap-2 items-center mb-2">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-xs px-2 py-1 rounded bg-slate-100 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400 font-mono">{sf.label}</span>
+                                    <span className="text-xs text-slate-400 bg-slate-50 dark:bg-slate-800/50 px-1.5 py-0.5 rounded">system</span>
+                                  </div>
+                                  <ArrowRight size={13} className="text-orange-400 mx-auto" />
+                                  <select
+                                    value={testMapping.field_mappings[sf.key] ?? ''}
+                                    onChange={e => updateMapping(sf.key, e.target.value)}
+                                    className="input text-xs py-1.5"
+                                  >
+                                    <option value="">(-) Not mapped</option>
+                                    {destinationOptions}
+                                  </select>
+                                  <span />
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </div>
                   )}
 
                   <div className="px-5 py-3 border-t border-slate-200 dark:border-slate-700 flex justify-end">
-                    <Button size="sm" onClick={saveTestMapping} loading={savingMapping}>
+                    <Button size="sm" onClick={saveTestMapping} loading={savingMapping} disabled={!hsSelectedFormId || hsSelectedFormId === ''}>
                       <Check size={13} /> Save Changes
                     </Button>
                   </div>
