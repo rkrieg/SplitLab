@@ -4045,24 +4045,27 @@ export default function AnalyticsClient({
                     <div>
                       {/* Variant tabs */}
                       {scanResults.variants.length > 1 && (
-                        <div className="flex gap-0 mb-4 border-b border-slate-200 dark:border-slate-700 -mx-5 px-5 overflow-x-auto">
-                          {scanResults.variants.map((vs) => (
-                            <button
-                              key={vs.variant_id}
-                              type="button"
-                              onClick={() => setScanTab(vs.variant_id)}
-                              className={`px-4 py-2 text-xs font-medium border-b-2 transition-colors whitespace-nowrap flex items-center gap-1.5 ${
-                                vs.variant_id === activeId
-                                  ? "border-indigo-500 text-indigo-400"
-                                  : "border-transparent text-slate-500 hover:text-slate-300"
-                              }`}
-                            >
-                              {vs.variant_name}
-                              <span className={`text-xs ${vs.variant_id === activeId ? "text-indigo-400/60" : "text-slate-600"}`}>
-                                {vs.elements.length}
-                              </span>
-                            </button>
-                          ))}
+                        <div className="mb-4">
+                          <p className="text-xs text-slate-400 mb-2">Switch variants to set goals per page:</p>
+                          <div className="flex gap-0 border-b border-slate-200 dark:border-slate-700 -mx-5 px-5 overflow-x-auto">
+                            {scanResults.variants.map((vs) => (
+                              <button
+                                key={vs.variant_id}
+                                type="button"
+                                onClick={() => setScanTab(vs.variant_id)}
+                                className={`px-4 py-2 text-xs font-medium border-b-2 transition-colors whitespace-nowrap flex items-center gap-1.5 ${
+                                  vs.variant_id === activeId
+                                    ? "border-indigo-500 text-indigo-400"
+                                    : "border-transparent text-slate-500 hover:text-slate-300"
+                                }`}
+                              >
+                                {vs.variant_name}
+                                <span className={`text-xs ${vs.variant_id === activeId ? "text-indigo-400/60" : "text-slate-600"}`}>
+                                  {vs.elements.length}
+                                </span>
+                              </button>
+                            ))}
+                          </div>
                         </div>
                       )}
 
@@ -4112,11 +4115,17 @@ export default function AnalyticsClient({
                                 return (
                                   <div
                                     key={i}
-                                    className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700"
+                                    className={`flex items-center justify-between gap-3 px-3 py-2 rounded-lg border transition-colors ${
+                                      alreadyAdded
+                                        ? "bg-green-500/10 border-green-500/30"
+                                        : "bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700"
+                                    }`}
                                   >
                                     <div className="flex items-center gap-2 min-w-0">
-                                      {icon}
-                                      <span className="text-slate-700 dark:text-slate-300 text-sm truncate">
+                                      {alreadyAdded
+                                        ? <CheckCircle2 size={13} className="text-green-400 flex-shrink-0" />
+                                        : icon}
+                                      <span className={`text-sm truncate ${alreadyAdded ? "text-green-300 font-medium" : "text-slate-700 dark:text-slate-300"}`}>
                                         {label}
                                       </span>
                                       {el.id && (
@@ -4124,9 +4133,13 @@ export default function AnalyticsClient({
                                           #{el.id}
                                         </span>
                                       )}
-                                      <span className="text-slate-400 text-xs flex-shrink-0 capitalize">
-                                        {el.type.replace("_", " ")}
-                                      </span>
+                                      {alreadyAdded ? (
+                                        <span className="text-xs bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded font-medium flex-shrink-0">Goal</span>
+                                      ) : (
+                                        <span className="text-slate-400 text-xs flex-shrink-0 capitalize">
+                                          {el.type.replace("_", " ")}
+                                        </span>
+                                      )}
                                     </div>
                                     {alreadyAdded ? (
                                       <button
