@@ -3502,6 +3502,39 @@ export default function AnalyticsClient({
                             {testFormKeys.length === 0 && (
                               <p className="text-xs text-slate-400 italic">No form fields detected yet. Submit the form on your landing page first.</p>
                             )}
+
+                            {/* System fields */}
+                            <div className="border-t border-slate-200 dark:border-slate-700 pt-3 mt-1">
+                              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">System Fields</p>
+                              {[
+                                { key: 'ip_address', label: 'IP Address' },
+                                { key: 'variant', label: 'Page Variant' },
+                                { key: 'submitted_at', label: 'Submission Date' },
+                                { key: 'utm_source', label: 'UTM Source' },
+                                { key: 'utm_medium', label: 'UTM Medium' },
+                                { key: 'utm_campaign', label: 'UTM Campaign' },
+                                { key: 'utm_content', label: 'UTM Content' },
+                                { key: 'utm_term', label: 'UTM Term' },
+                                { key: 'gclid', label: 'GCLID' },
+                              ].map(sf => (
+                                <div key={sf.key} className="grid grid-cols-[1fr_32px_1fr_32px] gap-2 items-center mb-2">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-xs px-2 py-1 rounded bg-slate-100 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400 font-mono">{sf.label}</span>
+                                    <span className="text-xs text-slate-400 bg-slate-50 dark:bg-slate-800/50 px-1.5 py-0.5 rounded">system</span>
+                                  </div>
+                                  <ArrowRight size={13} className="text-orange-400 mx-auto" />
+                                  <select
+                                    value={testMapping.field_mappings[sf.key] ?? ''}
+                                    onChange={e => updateMapping(sf.key, e.target.value)}
+                                    className="input text-xs py-1.5"
+                                  >
+                                    <option value="">(-) Not mapped</option>
+                                    {destinationOptions}
+                                  </select>
+                                  <span />
+                                </div>
+                              ))}
+                            </div>
                           </div>
                         );
                       })()}
