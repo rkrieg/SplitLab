@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
 import {
   Plus, FileCode2, MoreHorizontal, Play, Pause, Check, Trash2,
-  Globe, Link2, ShieldCheck, ShieldX, Edit2, Sparkles, AlertTriangle,
+  Globe, Link2, ShieldCheck, ShieldX, Edit2, Sparkles,
 } from 'lucide-react';
 import Spinner from '@/components/ui/Spinner';
 import Modal from '@/components/ui/Modal';
@@ -480,15 +480,6 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
                   <Spinner size="sm" /> Checking URL…
                 </p>
               )}
-              {!checkingCreateFrameable && destinationUrlFrameable === false && (
-                <div className="mt-1.5 text-xs text-amber-500 flex items-start gap-1.5 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
-                  <AlertTriangle size={12} className="flex-shrink-0 mt-0.5" />
-                  <div>
-                    <p className="font-medium">This page blocks iframe embedding.</p>
-                    <p className="text-amber-400/80 mt-0.5">Make sure you own this domain and can add a <code className="font-mono">&lt;script&gt;</code> tag — SplitLab needs to inject tracking into your page.</p>
-                  </div>
-                </div>
-              )}
               {!checkingCreateFrameable && destinationUrlFrameable === true && (
                 <p className="mt-1.5 text-xs text-green-500 flex items-center gap-1.5">
                   <span>✓</span> This page supports embedding. SplitLab will proxy it through your domain.
@@ -618,15 +609,6 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
                 <p className="mt-1.5 text-xs text-slate-400 flex items-center gap-1.5">
                   <Spinner size="sm" /> Checking URL…
                 </p>
-              )}
-              {!checkingFrameable && variantUrlFrameable === false && (
-                <div className="mt-1.5 text-xs text-amber-500 flex items-start gap-1.5 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
-                  <AlertTriangle size={12} className="flex-shrink-0 mt-0.5" />
-                  <div>
-                    <p className="font-medium">This page blocks iframe embedding.</p>
-                    <p className="text-amber-400/80 mt-0.5">It will be saved as a redirect variant. Make sure you own this domain and can add the tracker script for conversion tracking.</p>
-                  </div>
-                </div>
               )}
               {!checkingFrameable && variantUrlFrameable === true && (
                 <p className="mt-1.5 text-xs text-green-500 flex items-center gap-1.5">

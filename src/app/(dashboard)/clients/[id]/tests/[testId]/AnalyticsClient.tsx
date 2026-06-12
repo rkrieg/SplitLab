@@ -2650,15 +2650,6 @@ export default function AnalyticsClient({
                                           <Spinner size="sm" /> Checking URL…
                                         </p>
                                       )}
-                                      {!checkingFrameable && editUrlFrameable === false && (
-                                        <div className="mt-1.5 text-xs text-amber-500 flex items-start gap-1.5 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
-                                          <AlertTriangle size={12} className="flex-shrink-0 mt-0.5" />
-                                          <div>
-                                            <p className="font-medium">This page blocks iframe embedding.</p>
-                                            <p className="text-amber-400/80 mt-0.5">Make sure you own this domain and can add a <code className="font-mono">&lt;script&gt;</code> tag — the redirect variant will still work for A/B testing.</p>
-                                          </div>
-                                        </div>
-                                      )}
                                     </div>
                                   )}
                                 </div>
