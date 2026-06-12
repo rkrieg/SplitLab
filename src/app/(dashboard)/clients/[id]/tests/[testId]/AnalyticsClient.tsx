@@ -829,6 +829,10 @@ export default function AnalyticsClient({
 
     setSavingVariant(true);
     try {
+      let proxyMode = variantDraft.proxy_mode;
+      if (variantDraft.redirect_url) {
+        proxyMode = await checkFrameable(variantDraft.redirect_url.trim());
+      }
       const res = await fetch(`/api/tests/${test.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -838,7 +842,7 @@ export default function AnalyticsClient({
               id: variantId,
               name: variantDraft.name,
               redirect_url: variantDraft.redirect_url || null,
-              proxy_mode: variantDraft.proxy_mode,
+              proxy_mode: proxyMode,
             },
           ],
         }),
@@ -942,7 +946,6 @@ export default function AnalyticsClient({
 
   async function handleAddVariant(e: React.FormEvent) {
     e.preventDefault();
-    let frameableResult = newVariantUrlFrameable;
     if (newVariantMode === "url") {
       const trimmed = newVariantUrl.trim();
       if (!trimmed) {
@@ -971,8 +974,9 @@ export default function AnalyticsClient({
       const count = variants.length + 1;
       const weight = Math.floor(100 / count);
       const remainder = 100 - weight * count;
-      // Auto-use redirect mode if site blocks iframe embedding
-      const useProxyMode = frameableResult !== false;
+      const useProxyMode = newVariantMode === "url"
+        ? await checkFrameable(newVariantUrl.trim())
+        : true;
 
       const payload =
         newVariantMode === "html"
@@ -1081,20 +1085,14 @@ export default function AnalyticsClient({
     }
   }, [variantOverrides]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function checkFrameable(url: string, setter: (v: boolean | null) => void): Promise<boolean | null> {
-    if (!url.startsWith('http')) { setter(null); return null; }
-    setCheckingFrameable(true);
+  async function checkFrameable(url: string): Promise<boolean> {
+    if (!url.startsWith('http')) return true;
     try {
       const res = await fetch(`/api/check-frameable?url=${encodeURIComponent(url)}`);
       const data = await res.json();
-      const result: boolean | null = data.frameable ?? null;
-      setter(result);
-      return result;
+      return data.frameable !== false;
     } catch {
-      setter(null);
-      return null;
-    } finally {
-      setCheckingFrameable(false);
+      return true;
     }
   }
 
@@ -2639,14 +2637,6 @@ export default function AnalyticsClient({
                                             ...variantDraft,
                                             redirect_url: e.target.value,
                                           });
-                                          setEditUrlFrameable(null);
-                                        }}
-                                        onBlur={async (e) => {
-                                          const url = e.target.value.trim();
-                                          if (url.startsWith('http')) {
-                                            const result = await checkFrameable(url, setEditUrlFrameable);
-                                            if (result === false) setVariantDraft((d) => ({ ...d, proxy_mode: false }));
-                                          }
                                         }}
                                         className="input-base text-sm font-mono"
                                         placeholder="https://..."
@@ -4404,14 +4394,7 @@ export default function AnalyticsClient({
                 value={newVariantUrl}
                 onChange={(e) => {
                   setNewVariantUrl(e.target.value);
-                  setNewVariantUrlFrameable(null);
                   if (newVariantUrlError) setNewVariantUrlError("");
-                }}
-                onBlur={async (e) => {
-                  const trimmed = e.target.value.trim();
-                  if (trimmed.startsWith('http')) {
-                    await checkFrameable(trimmed, setNewVariantUrlFrameable);
-                  }
                 }}
                 className={`input-base font-mono text-sm ${newVariantUrlError ? "border-red-500 focus:ring-red-500" : ""}`}
                 placeholder="https://..."
@@ -4477,7 +4460,7 @@ export default function AnalyticsClient({
             >
               Cancel
             </Button>
-            <Button type="submit" loading={addingVariant || checkingFrameable}>
+            <Button type="submit" loading={addingVariant}>
               Add Variant
             </Button>
           </div>

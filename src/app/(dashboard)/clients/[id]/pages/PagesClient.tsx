@@ -71,10 +71,6 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
   const [addVariantTestId, setAddVariantTestId] = useState<string | null>(null);
   const [variantName, setVariantName] = useState('');
   const [variantUrl, setVariantUrl] = useState('');
-  const [variantUrlFrameable, setVariantUrlFrameable] = useState<boolean | null>(null);
-  const [checkingFrameable, setCheckingFrameable] = useState(false);
-  const [destinationUrlFrameable, setDestinationUrlFrameable] = useState<boolean | null>(null);
-  const [checkingCreateFrameable, setCheckingCreateFrameable] = useState(false);
   const [variantWeight, setVariantWeight] = useState(50);
   const [addingVariant, setAddingVariant] = useState(false);
   const [variantMode, setVariantMode] = useState<'url' | 'html'>('url');
@@ -84,20 +80,14 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
   const [createPageError, setCreatePageError] = useState<{ message: string; isLimit: boolean } | null>(null);
   const [addVariantError, setAddVariantError] = useState<{ message: string; isLimit: boolean } | null>(null);
 
-  async function checkFrameable(url: string, setter: (v: boolean | null) => void): Promise<boolean | null> {
-    if (!url.startsWith('http')) { setter(null); return null; }
-    setCheckingFrameable(true);
+  async function checkFrameable(url: string): Promise<boolean> {
+    if (!url.startsWith('http')) return true;
     try {
       const res = await fetch(`/api/check-frameable?url=${encodeURIComponent(url)}`);
       const data = await res.json();
-      const result: boolean | null = data.frameable ?? null;
-      setter(result);
-      return result;
+      return data.frameable !== false;
     } catch {
-      setter(null);
-      return null;
-    } finally {
-      setCheckingFrameable(false);
+      return true;
     }
   }
 
@@ -121,6 +111,7 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
         });
       } else {
         const normalizedUrl = destinationUrl.match(/^https?:\/\//) ? destinationUrl : `https://${destinationUrl}`;
+        const proxyMode = await checkFrameable(normalizedUrl);
         res = await fetch(`/api/workspaces/${workspaceId}/tests`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -130,7 +121,7 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
             variants: [{
               name: 'Control',
               redirect_url: normalizedUrl,
-              proxy_mode: destinationUrlFrameable !== false,
+              proxy_mode: proxyMode,
               traffic_weight: 100,
               is_control: true,
             }],
@@ -161,8 +152,6 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
     setPageName('');
     setUrlPath('/');
     setDestinationUrl('');
-    setDestinationUrlFrameable(null);
-    setCheckingCreateFrameable(false);
     setCreateMode('url');
     setCreateHtml('');
     setCreatePageError(null);
@@ -233,8 +222,6 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
     const count = (test.test_variants ?? []).length;
     setVariantName(`Variant ${String.fromCharCode(65 + count)}`);
     setVariantUrl('');
-    setVariantUrlFrameable(null);
-    setCheckingFrameable(false);
     setVariantWeight(50);
     setVariantMode('url');
     setVariantHtml('');
@@ -246,9 +233,10 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
     if (!addVariantTestId) return;
     setAddingVariant(true);
     try {
+      const proxyMode = variantMode === 'url' ? await checkFrameable(variantUrl.trim()) : true;
       const payload = variantMode === 'html'
         ? { name: variantName, html_content: variantHtml, traffic_weight: variantWeight }
-        : { name: variantName, redirect_url: variantUrl, proxy_mode: variantUrlFrameable !== false, traffic_weight: variantWeight };
+        : { name: variantName, redirect_url: variantUrl, proxy_mode: proxyMode, traffic_weight: variantWeight };
       const res = await fetch(`/api/tests/${addVariantTestId}/variants`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -265,7 +253,6 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
       setTests((prev) => prev.map((t) => (t.id === addVariantTestId ? updated : t)));
       setAddVariantTestId(null);
       setAddVariantError(null);
-      setVariantUrlFrameable(null);
       toast.success('Variant added');
     } catch { toast.error('Unexpected error'); } finally { setAddingVariant(false); }
   }
@@ -470,16 +457,11 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
               <input
                 type="text"
                 value={destinationUrl}
-                onChange={(e) => { setDestinationUrl(e.target.value); setDestinationUrlFrameable(null); setCheckingCreateFrameable(false); }}
+                onChange={(e) => { setDestinationUrl(e.target.value); }}
                 className="input-base font-mono text-sm"
                 placeholder="https://yoursite.com/landing"
                 required
               />
-              {checkingCreateFrameable && (
-                <p className="mt-1.5 text-xs text-slate-400 flex items-center gap-1.5">
-                  <Spinner size="sm" /> Checking URL…
-                </p>
-              )}
             </div>
           ) : (
             <div>
@@ -516,28 +498,7 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
           )}
           <div className="flex justify-end gap-3 pt-2">
             <Button variant="secondary" type="button" onClick={() => { setCreateOpen(false); resetCreateForm(); }}>Cancel</Button>
-            {createMode === 'url' && destinationUrlFrameable === null ? (
-              <Button
-                type="button"
-                loading={checkingCreateFrameable}
-                onClick={async () => {
-                  const raw = destinationUrl.trim();
-                  if (!raw) return;
-                  const url = raw.match(/^https?:\/\//) ? raw : `https://${raw}`;
-                  setCheckingCreateFrameable(true);
-                  try {
-                    const r = await fetch(`/api/check-frameable?url=${encodeURIComponent(url)}`);
-                    const d = await r.json();
-                    setDestinationUrlFrameable(d.frameable ?? null);
-                  } catch { setDestinationUrlFrameable(null); }
-                  finally { setCheckingCreateFrameable(false); }
-                }}
-              >
-                Check Compatibility
-              </Button>
-            ) : (
-              <Button type="submit" loading={saving}>Create Page</Button>
-            )}
+            <Button type="submit" loading={saving}>Create Page</Button>
           </div>
         </form>
       </Modal>
@@ -561,7 +522,7 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
       </Modal>
 
       {/* Add Variant Modal */}
-      <Modal open={!!addVariantTestId} onClose={() => { setAddVariantTestId(null); setAddVariantError(null); setVariantUrlFrameable(null); setCheckingFrameable(false); }} title="Add Variant" size="sm">
+      <Modal open={!!addVariantTestId} onClose={() => { setAddVariantTestId(null); setAddVariantError(null); }} title="Add Variant" size="sm">
         <form onSubmit={handleAddVariant} className="space-y-4">
           {/* Mode toggle */}
           <div className="flex border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
@@ -592,16 +553,11 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
               <input
                 type="url"
                 value={variantUrl}
-                onChange={(e) => { setVariantUrl(e.target.value); setVariantUrlFrameable(null); setCheckingFrameable(false); }}
+                onChange={(e) => { setVariantUrl(e.target.value); }}
                 className="input-base font-mono text-sm"
                 placeholder="https://example.com/variant-b"
                 required
               />
-              {checkingFrameable && (
-                <p className="mt-1.5 text-xs text-slate-400 flex items-center gap-1.5">
-                  <Spinner size="sm" /> Checking URL…
-                </p>
-              )}
             </div>
           ) : (
             <div>
@@ -649,22 +605,7 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
           )}
           <div className="flex justify-end gap-3 pt-2">
             <Button variant="secondary" type="button" onClick={() => { setAddVariantTestId(null); setAddVariantError(null); }}>Cancel</Button>
-            {variantMode === 'url' && variantUrlFrameable === null ? (
-              <Button
-                type="button"
-                loading={checkingFrameable}
-                onClick={async () => {
-                  const u = variantUrl.trim();
-                  if (u) await checkFrameable(u, setVariantUrlFrameable);
-                }}
-              >
-                Check Compatibility
-              </Button>
-            ) : (
-              <Button type="submit" loading={addingVariant}>
-                {variantUrlFrameable === false ? 'Add as Redirect Variant' : 'Add Variant'}
-              </Button>
-            )}
+            <Button type="submit" loading={addingVariant}>Add Variant</Button>
           </div>
         </form>
       </Modal>
