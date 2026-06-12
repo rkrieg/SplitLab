@@ -3405,14 +3405,18 @@ export default function AnalyticsClient({
                       <Loader2 size={14} className="animate-spin" /> Loading HubSpot forms…
                     </div>
                   ) : (
-                    <div className="px-5 py-4 space-y-4">
+                    <div className="px-5 py-5 space-y-5">
                       {/* Step 1 — Select HubSpot Form */}
-                      <div>
-                        <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1.5 uppercase tracking-wider">
-                          Select HubSpot Form
-                        </label>
+                      <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 p-4">
+                        <div className="flex items-center gap-2 mb-3">
+                          <div className="w-5 h-5 rounded-full bg-orange-500/20 text-orange-400 flex items-center justify-center text-xs font-bold flex-shrink-0">1</div>
+                          <p className="text-sm font-medium text-slate-700 dark:text-slate-200">Select a HubSpot Form</p>
+                        </div>
                         {hsForms.length === 0 ? (
-                          <p className="text-xs text-slate-400 italic">No forms found in your HubSpot account.</p>
+                          <div className="flex items-center gap-2 text-xs text-slate-400 italic">
+                            <AlertTriangle size={13} className="text-amber-400 flex-shrink-0" />
+                            No forms found in your HubSpot account. Create and publish a form in HubSpot first.
+                          </div>
                         ) : (
                           <select
                             value={hsSelectedFormId}
@@ -3422,7 +3426,7 @@ export default function AnalyticsClient({
                             }}
                             className="input text-sm w-full"
                           >
-                            <option value="">— Select a form —</option>
+                            <option value="">— Choose a form —</option>
                             {hsForms.map(f => (
                               <option key={f.id} value={f.id}>{f.name}</option>
                             ))}
@@ -3435,8 +3439,13 @@ export default function AnalyticsClient({
                         const selectedForm = hsForms.find(f => f.id === hsSelectedFormId);
                         if (!selectedForm) return null;
                         return (
-                          <div className="space-y-2">
-                            <div className="grid grid-cols-[1fr_32px_1fr_32px] gap-2 text-xs font-medium text-slate-500 uppercase tracking-wider mb-1">
+                          <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 p-4 space-y-3">
+                            <div className="flex items-center gap-2 mb-1">
+                              <div className="w-5 h-5 rounded-full bg-orange-500/20 text-orange-400 flex items-center justify-center text-xs font-bold flex-shrink-0">2</div>
+                              <p className="text-sm font-medium text-slate-700 dark:text-slate-200">Map Fields</p>
+                              <span className="text-xs text-slate-400 ml-1">→ <span className="text-indigo-400">{selectedForm.name}</span></span>
+                            </div>
+                            <div className="grid grid-cols-[1fr_32px_1fr_32px] gap-2 text-xs font-medium text-slate-500 uppercase tracking-wider">
                               <span>SplitLab Field</span>
                               <span />
                               <span>HubSpot Form Field</span>
