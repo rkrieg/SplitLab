@@ -59,13 +59,13 @@ function buildTrackerScript(appUrl: string): string {
     try {
       var body = JSON.stringify(payload);
       if (navigator.sendBeacon) {
-        var blob = new Blob([body], { type: "application/json" });
+        var blob = new Blob([body], { type: "text/plain" });
         navigator.sendBeacon(EVENT_URL, blob);
       } else {
         var xhr = new XMLHttpRequest();
         xhr.open("POST", EVENT_URL, true);
         xhr.withCredentials = false;
-        xhr.setRequestHeader("Content-Type", "application/json");
+        xhr.setRequestHeader("Content-Type", "text/plain;charset=UTF-8");
         xhr.send(body);
       }
     } catch(e) {}
@@ -241,7 +241,7 @@ function buildTrackerScript(appUrl: string): string {
     var xhr = new XMLHttpRequest();
     xhr.open("POST", SCAN_URL, true);
     xhr.withCredentials = false;
-    xhr.setRequestHeader("Content-Type", "application/json");
+    xhr.setRequestHeader("Content-Type", "text/plain;charset=UTF-8");
     xhr.onload = function() {
       if (xhr.status >= 200 && xhr.status < 300) onSuccess();
       else onError();
@@ -427,14 +427,14 @@ function buildTrackerScript(appUrl: string): string {
       var FORM_LEADS_URL = API_BASE + "/api/form-leads";
       if (navigator.sendBeacon) {
         try {
-          var blob = new Blob([payload], { type: "application/json" });
+          var blob = new Blob([payload], { type: "text/plain" });
           if (navigator.sendBeacon(FORM_LEADS_URL, blob)) return;
         } catch(e) {}
       }
       var xhr = new XMLHttpRequest();
       xhr.open("POST", FORM_LEADS_URL, true);
       xhr.withCredentials = false;
-      xhr.setRequestHeader("Content-Type", "application/json");
+      xhr.setRequestHeader("Content-Type", "text/plain;charset=UTF-8");
       xhr.send(payload);
     } catch(e) {}
   }
@@ -466,13 +466,13 @@ function buildTrackerScript(appUrl: string): string {
     });
     var FORM_LEADS_URL = API_BASE + "/api/form-leads";
     try {
-      var blob = new Blob([payload], { type: "application/json" });
+      var blob = new Blob([payload], { type: "text/plain" });
       if (navigator.sendBeacon && navigator.sendBeacon(FORM_LEADS_URL, blob)) return;
     } catch(e) {}
     var xhr2 = new XMLHttpRequest();
     xhr2.open("POST", FORM_LEADS_URL, true);
     xhr2.withCredentials = false;
-    xhr2.setRequestHeader("Content-Type", "application/json");
+    xhr2.setRequestHeader("Content-Type", "text/plain;charset=UTF-8");
     xhr2.send(payload);
   }
 
@@ -535,7 +535,7 @@ function buildTrackerScript(appUrl: string): string {
       var xhr = new XMLHttpRequest();
       xhr.open("POST", REGISTER_FIELDS_URL, true);
       xhr.withCredentials = false;
-      xhr.setRequestHeader("Content-Type", "application/json");
+      xhr.setRequestHeader("Content-Type", "text/plain;charset=UTF-8");
       xhr.send(JSON.stringify({ variantId: _ctx.vid, fields: fields }));
     } catch(e) {}
   }
