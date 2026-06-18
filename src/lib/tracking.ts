@@ -257,9 +257,7 @@ export function buildTrackingSnippet(
 
     // Global form submit — captures all forms (not just goal-targeted ones)
     document.addEventListener('submit', function(e) {
-      var form = e.target;
-      _leadSent = true; // prevent JS-submit patch from double-sending
-      captureFormLead(form);
+      captureFormLead(e.target);
     }, true);
 
     // Global button click — snapshot fields for stepper + submit-keyword detection
