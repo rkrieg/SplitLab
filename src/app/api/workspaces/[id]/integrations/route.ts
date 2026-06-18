@@ -108,9 +108,15 @@ export async function DELETE(
   }
 
   if (type) {
+    // Preserve the row so child test_integration_mappings keep their foreign key reference.
+    // For OAuth integrations (hubspot), also wipe the stored tokens.
+    const updateData: Record<string, unknown> = { enabled: false };
+    if (type === 'hubspot') {
+      updateData.config = { access_token: null, refresh_token: null, expires_at: null, hub_id: null };
+    }
     const { error } = await db
       .from('workspace_integrations')
-      .delete()
+      .update(updateData)
       .eq('workspace_id', params.id)
       .eq('type', type);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });

@@ -269,7 +269,7 @@ export async function syncLeadToHubSpot(params: {
       }
       return { ok: true };
     } catch (err) {
-      return { ok: false, error: String(err) };
+      return { ok: false, error: `${String(err)} | cause: ${String((err as NodeJS.ErrnoException)?.cause ?? 'none')}` };
     }
   }
 
@@ -296,6 +296,6 @@ export async function syncLeadToHubSpot(params: {
     const data = await res.json() as { results?: { id: string }[] };
     return { ok: true, contactId: data.results?.[0]?.id };
   } catch (err) {
-    return { ok: false, error: String(err) };
+    return { ok: false, error: `${String(err)} | cause: ${String((err as NodeJS.ErrnoException)?.cause ?? 'none')}` };
   }
 }

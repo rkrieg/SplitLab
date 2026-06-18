@@ -1237,8 +1237,9 @@ export default function AnalyticsClient({
       const res = await fetch(`/api/workspaces/${workspaceId}/integrations`);
       const data = await res.json() as { integrations?: { id: string; type: string; enabled: boolean; config?: unknown }[] };
       const hsRaw = data.integrations?.find(i => i.type === 'hubspot') ?? null;
-      const hs = hsRaw ? { id: hsRaw.id, enabled: hsRaw.enabled, hub_id: (hsRaw.config as { hub_id?: string } | null)?.hub_id ?? null } : null;
-      const em = data.integrations?.find(i => i.type === 'email') ?? null;
+      const hs = (hsRaw && hsRaw.enabled) ? { id: hsRaw.id, enabled: hsRaw.enabled, hub_id: (hsRaw.config as { hub_id?: string } | null)?.hub_id ?? null } : null;
+      const emRaw = data.integrations?.find(i => i.type === 'email') ?? null;
+      const em = (emRaw && emRaw.enabled) ? emRaw : null;
       const whs = (data.integrations ?? []).filter(i => i.type === 'webhook') as WebhookRow[];
       setHsIntegration(hs);
       setEmailIntegration(em);
