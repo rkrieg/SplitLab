@@ -44,15 +44,16 @@ export function buildTrackingSnippet(
       });
       if (navigator.sendBeacon) {
         try {
-          var blob = new Blob([payload], { type: 'application/json' });
+          var blob = new Blob([payload], { type: 'text/plain' });
           navigator.sendBeacon(self.apiUrl + '/api/event', blob);
           return;
         } catch(e) {}
       }
       fetch(self.apiUrl + '/api/event', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: payload
+        headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+        body: payload,
+        keepalive: true
       }).catch(function() {});
     }
   };
@@ -98,14 +99,14 @@ export function buildTrackingSnippet(
       });
       if (navigator.sendBeacon) {
         try {
-          var blob = new Blob([payload], { type: 'application/json' });
+          var blob = new Blob([payload], { type: 'text/plain' });
           if (navigator.sendBeacon(_SL.apiUrl + '/api/form-leads', blob)) return;
         } catch(e) {}
       }
       var xhr = new XMLHttpRequest();
       xhr.open('POST', _SL.apiUrl + '/api/form-leads', true);
       xhr.withCredentials = false;
-      xhr.setRequestHeader('Content-Type', 'application/json');
+      xhr.setRequestHeader('Content-Type', 'text/plain;charset=UTF-8');
       xhr.send(payload);
     } catch(e) {}
   }
@@ -256,9 +257,7 @@ export function buildTrackingSnippet(
 
     // Global form submit — captures all forms (not just goal-targeted ones)
     document.addEventListener('submit', function(e) {
-      var form = e.target;
-      _leadSent = true; // prevent JS-submit patch from double-sending
-      captureFormLead(form);
+      captureFormLead(e.target);
     }, true);
 
     // Global button click — snapshot fields for stepper + submit-keyword detection
@@ -298,7 +297,7 @@ export function buildTrackingSnippet(
       var rxhr = new XMLHttpRequest();
       rxhr.open('POST', _SL.apiUrl + '/api/register-form-fields', true);
       rxhr.withCredentials = false;
-      rxhr.setRequestHeader('Content-Type', 'application/json');
+      rxhr.setRequestHeader('Content-Type', 'text/plain;charset=UTF-8');
       rxhr.send(JSON.stringify({ variantId: _SL.variantId, fields: fields }));
     } catch(e) {}
   }
@@ -424,7 +423,7 @@ export function buildScanScript(variantId: string, appUrl: string): string {
     try {
       var xhr = new XMLHttpRequest();
       xhr.open('POST', scanUrl, true);
-      xhr.setRequestHeader('Content-Type', 'application/json');
+      xhr.setRequestHeader('Content-Type', 'text/plain;charset=UTF-8');
       xhr.onload = function() {
         if (xhr.status >= 200 && xhr.status < 300 && scanBanner) {
           scanBanner.innerHTML = '<span style="font-size:15px">✓</span><span>Scan completed</span>';
