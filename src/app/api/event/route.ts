@@ -104,9 +104,10 @@ export async function POST(request: NextRequest) {
     if (data.type === 'conversion' && !goalId && data.metadata?.trigger) {
       const { data: goals } = await db
         .from('conversion_goals')
-        .select('id, type, selector')
+        .select('id, type, selector, variant_id')
         .eq('test_id', data.testId)
-        .eq('type', data.metadata.trigger as string);
+        .eq('type', data.metadata.trigger as string)
+        .or(`variant_id.is.null,variant_id.eq.${data.variantId}`);
 
       if (goals && goals.length > 0) {
         const metaId = (data.metadata?.id ?? null) as string | null;

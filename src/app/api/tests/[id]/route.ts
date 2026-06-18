@@ -12,6 +12,7 @@ const goalSchema = z.object({
   selector: z.string().max(500).nullable().optional(),
   url_pattern: z.string().max(500).nullable().optional(),
   is_primary: z.boolean(),
+  variant_id: z.string().uuid().nullable().optional(),
 });
 
 const weightSchema = z.object({
@@ -212,14 +213,14 @@ export async function PATCH(
         if (g.id) {
           // Existing goal — update in place, UUID preserved
           const { error: uErr } = await db.from('conversion_goals')
-            .update({ name: g.name, type: g.type, selector: g.selector || null, url_pattern: g.url_pattern || null, is_primary: g.is_primary })
+            .update({ name: g.name, type: g.type, selector: g.selector || null, url_pattern: g.url_pattern || null, is_primary: g.is_primary, variant_id: g.variant_id ?? null })
             .eq('id', g.id)
             .eq('test_id', params.id);
           if (uErr) return NextResponse.json({ error: uErr.message }, { status: 500 });
         } else {
           // New goal — insert with fresh UUID
           const { error: iErr } = await db.from('conversion_goals')
-            .insert({ test_id: params.id, name: g.name, type: g.type, selector: g.selector || null, url_pattern: g.url_pattern || null, is_primary: g.is_primary });
+            .insert({ test_id: params.id, name: g.name, type: g.type, selector: g.selector || null, url_pattern: g.url_pattern || null, is_primary: g.is_primary, variant_id: g.variant_id ?? null });
           if (iErr) return NextResponse.json({ error: iErr.message }, { status: 500 });
         }
       }

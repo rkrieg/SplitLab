@@ -96,6 +96,7 @@ interface Goal {
   selector: string | null;
   url_pattern: string | null;
   is_primary: boolean;
+  variant_id?: string | null;
 }
 
 interface VariantStat {
@@ -1772,7 +1773,7 @@ export default function AnalyticsClient({
     type: string;
     id: string | null;
     text: string | null;
-  }) {
+  }, variantId: string) {
     const goalTypeMap: Record<string, string> = {
       form: "form_submit",
       button: "button_click",
@@ -1798,6 +1799,7 @@ export default function AnalyticsClient({
       selector,
       url_pattern: null,
       is_primary: editGoals.length === 0,
+      variant_id: variantId,
     };
 
     const originalGoals = editGoals;
@@ -1816,6 +1818,7 @@ export default function AnalyticsClient({
             selector: g.selector || null,
             url_pattern: g.url_pattern || null,
             is_primary: g.is_primary,
+            variant_id: g.variant_id ?? null,
           })),
         }),
       });
@@ -1843,7 +1846,7 @@ export default function AnalyticsClient({
   async function removeGoalBySelector(el: {
     id: string | null;
     text: string | null;
-  }) {
+  }, variantId: string) {
     const matchSelector = el.id
       ? `id:${el.id}`
       : el.text
@@ -1852,7 +1855,9 @@ export default function AnalyticsClient({
     if (!matchSelector) return;
 
     const originalGoals = editGoals;
-    const updatedGoals = editGoals.filter((g) => g.selector !== matchSelector);
+    const updatedGoals = editGoals.filter(
+      (g) => !(g.selector === matchSelector && g.variant_id === variantId),
+    );
     if (updatedGoals.length === originalGoals.length) return; // nothing matched
     setEditGoals(updatedGoals);
 
@@ -1868,6 +1873,7 @@ export default function AnalyticsClient({
             selector: g.selector || null,
             url_pattern: g.url_pattern || null,
             is_primary: g.is_primary,
+            variant_id: g.variant_id ?? null,
           })),
         }),
       });
@@ -4072,6 +4078,7 @@ export default function AnalyticsClient({
                                     : el.type;
 
                                 const alreadyAdded = editGoals.some((g) => {
+                                  if (g.variant_id !== activeId) return false;
                                   if (el.id) return g.selector === `id:${el.id}`;
                                   if (el.text) return g.selector === `text:${el.text}`;
                                   return false;
@@ -4109,7 +4116,7 @@ export default function AnalyticsClient({
                                     {alreadyAdded ? (
                                       <button
                                         type="button"
-                                        onClick={() => removeGoalBySelector(el)}
+                                        onClick={() => removeGoalBySelector(el, activeId)}
                                         className="flex-shrink-0 flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-colors"
                                       >
                                         <X size={11} /> Remove
@@ -4117,7 +4124,7 @@ export default function AnalyticsClient({
                                     ) : (
                                       <button
                                         type="button"
-                                        onClick={() => enableAsGoal(el)}
+                                        onClick={() => enableAsGoal(el, activeId)}
                                         className="flex-shrink-0 text-xs px-2.5 py-1 rounded-lg border border-indigo-400/60 text-indigo-300 bg-indigo-500/15 hover:bg-indigo-500/30 font-medium transition-colors"
                                       >
                                         + Goal
