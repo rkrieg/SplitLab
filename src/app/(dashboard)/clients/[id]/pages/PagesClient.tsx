@@ -137,6 +137,8 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
       }
       const newTest = await res.json();
       toast.success('Page created');
+      setCreateOpen(false);
+      resetCreateForm();
       router.refresh();
     } catch {
       toast.error('Unexpected error');
