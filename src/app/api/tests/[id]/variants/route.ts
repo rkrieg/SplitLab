@@ -12,7 +12,7 @@ const addVariantSchema = z.object({
   redirect_url: z.string().url().nullable().optional(),
   html_content: z.string().optional(),
   proxy_mode: z.boolean().optional(),
-  traffic_weight: z.number().int().min(1).max(100),
+  traffic_weight: z.number().int().min(0).max(100),
 });
 
 export async function POST(
@@ -123,6 +123,22 @@ export async function POST(
     });
 
     if (varErr) return NextResponse.json({ error: varErr.message }, { status: 500 });
+
+    // Equalize weights across all variants now that a new one was added
+    const { data: allVariants } = await db
+      .from('test_variants')
+      .select('id')
+      .eq('test_id', params.id)
+      .order('created_at', { ascending: true });
+
+    if (allVariants && allVariants.length > 0) {
+      const equalWeight = Math.floor(100 / allVariants.length);
+      let rem = 100 - equalWeight * allVariants.length;
+      for (const v of allVariants) {
+        const w = equalWeight + (rem-- > 0 ? 1 : 0);
+        await db.from('test_variants').update({ traffic_weight: w }).eq('id', v.id);
+      }
+    }
 
     // Return full test with all variants
     const { data: fullTest } = await db

@@ -135,9 +135,15 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
         setCreatePageError({ message: msg, isLimit: !!err.limitError });
         return;
       }
-      const newTest = await res.json();
+      await res.json();
+      const listRes = await fetch(`/api/workspaces/${workspaceId}/tests`);
+      if (listRes.ok) {
+        const fresh = await listRes.json();
+        setTests(fresh);
+      }
       toast.success('Page created');
-      router.refresh();
+      setCreateOpen(false);
+      resetCreateForm();
     } catch {
       toast.error('Unexpected error');
     } finally {
