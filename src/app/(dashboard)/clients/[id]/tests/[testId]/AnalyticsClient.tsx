@@ -4578,7 +4578,7 @@ export default function AnalyticsClient({
                   Edit HTML — {htmlEditVariant.name}
                 </h3>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  Changes go live immediately after saving.
+                  Changes go live immediately after saving. SplitLab automatically tracks this page — no <code className="font-mono">tracker.js</code> tag needed.
                 </p>
               </div>
               <button
@@ -4610,10 +4610,10 @@ export default function AnalyticsClient({
                 disabled={savingHtml}
                 className="btn-secondary text-sm"
               >
-                Cancel
+                Close
               </button>
               <Button size="sm" onClick={saveHtml} loading={savingHtml}>
-                <Check size={13} /> Save HTML
+                <Check size={13} /> Save and Close
               </Button>
             </div>
           </div>

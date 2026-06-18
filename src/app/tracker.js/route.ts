@@ -1,3 +1,5 @@
+// used for "one case":
+// Redirect-URL variants with proxy mode OFF (plain 302 redirect to an external domain SplitLab doesn't serve)
 import { NextRequest, NextResponse } from 'next/server';
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://www.trysplitlab.com';
