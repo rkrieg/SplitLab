@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
 import {
   Plus, FileCode2, MoreHorizontal, Play, Pause, Check, Trash2,
-  Globe, Link2, ShieldCheck, ShieldX, Edit2, Sparkles,
+  Globe, Link2, ShieldCheck, ShieldX, Edit2, Sparkles, Info,
 } from 'lucide-react';
 import Spinner from '@/components/ui/Spinner';
 import Modal from '@/components/ui/Modal';
@@ -472,6 +472,10 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
                 required
               />
               <p className="text-slate-400 dark:text-slate-500 text-xs mt-1">Paste your full page HTML. SplitLab will host and serve it directly.</p>
+              <div className="flex items-start gap-2 rounded-lg bg-amber-500/10 border border-amber-500/20 px-3 py-2.5 text-xs text-amber-600 dark:text-amber-400 mt-2">
+                <Info size={13} className="flex-shrink-0 mt-px" />
+                <span>Tracking is already built in for this page — <strong>no need to add a <code className="font-mono">tracker.js</code> script tag.</strong></span>
+              </div>
             </div>
           )}
 
@@ -583,6 +587,10 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
                     }}
                   />
                 </label>
+              </div>
+              <div className="flex items-start gap-2 rounded-lg bg-amber-500/10 border border-amber-500/20 px-3 py-2.5 text-xs text-amber-600 dark:text-amber-400 mt-2">
+                <Info size={13} className="flex-shrink-0 mt-px" />
+                <span>Tracking is already built in for this page — <strong>no need to add a <code className="font-mono">tracker.js</code> script tag.</strong></span>
               </div>
             </div>
           )}

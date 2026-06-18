@@ -4438,6 +4438,10 @@ export default function AnalyticsClient({
                   />
                 </label>
               </div>
+              <div className="flex items-start gap-2 rounded-lg bg-amber-500/10 border border-amber-500/20 px-3 py-2.5 text-xs text-amber-600 dark:text-amber-400 mt-2">
+                <Info size={13} className="flex-shrink-0 mt-px" />
+                <span>Tracking is already built in for this page — <strong>no need to add a <code className="font-mono">tracker.js</code> script tag.</strong></span>
+              </div>
             </div>
           )}
 
@@ -4578,7 +4582,7 @@ export default function AnalyticsClient({
                   Edit HTML — {htmlEditVariant.name}
                 </h3>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  Changes go live immediately after saving. SplitLab automatically tracks this page — no <code className="font-mono">tracker.js</code> tag needed.
+                  Changes go live immediately after saving.
                 </p>
               </div>
               <button
@@ -4591,6 +4595,10 @@ export default function AnalyticsClient({
             </div>
 
             <div className="flex-1 overflow-auto min-h-0">
+              <div className="flex items-start gap-2 rounded-lg bg-amber-500/10 border border-amber-500/20 px-3 py-2.5 text-xs text-amber-600 dark:text-amber-400 m-4 mb-0">
+                <Info size={13} className="flex-shrink-0 mt-px" />
+                <span>Tracking is already built in for this page — <strong>no need to add a <code className="font-mono">tracker.js</code> script tag.</strong></span>
+              </div>
               {loadingHtml ? (
                 <div className="flex items-center justify-center h-64">
                   <Loader2 size={20} className="animate-spin text-slate-400" />
