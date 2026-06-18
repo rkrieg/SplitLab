@@ -1126,6 +1126,7 @@ export default function AnalyticsClient({
             selector: g.selector || null,
             url_pattern: g.url_pattern || null,
             is_primary: g.is_primary,
+            variant_id: g.variant_id ?? null,
           })),
         }),
       });
