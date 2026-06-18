@@ -1004,24 +1004,15 @@ export default function AnalyticsClient({
         setAddVariantError({ message: msg, isLimit: !!err.limitError });
         return;
       }
-      const updated = await res.json();
-
-      // Equalize weights
-      const allVariants = updated.test_variants || [];
-      const equalWeight = Math.floor(100 / allVariants.length);
-      const rem = 100 - equalWeight * allVariants.length;
-      const weights = allVariants.map((v: Variant, i: number) => ({
-        id: v.id,
-        traffic_weight: equalWeight + (i === 0 ? rem : 0),
-      }));
-
-      const wRes = await fetch(`/api/tests/${test.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ weights }),
-      });
-      const finalTest = wRes.ok ? await wRes.json() : updated;
+      const finalTest = await res.json();
       setTest(finalTest);
+      const updatedVariants: Variant[] = finalTest.test_variants ?? [];
+      setStats((prev) =>
+        prev.map((s) => {
+          const v = updatedVariants.find((u) => u.id === s.variant.id);
+          return v ? { ...s, variant: { ...s.variant, traffic_weight: v.traffic_weight } } : s;
+        }),
+      );
       // Auto-check tracker for the newly added redirect variant
       const previousIds = new Set(variants.map((v) => v.id));
       const newVariant = (finalTest.test_variants || []).find(
