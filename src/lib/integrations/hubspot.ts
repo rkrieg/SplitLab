@@ -65,9 +65,10 @@ async function fetchWithRetry(url: string, init: RequestInit, maxAttempts = 3): 
     try {
       return await fetch(url, init);
     } catch (err) {
-      const cause = (err as NodeJS.ErrnoException)?.cause as NodeJS.ErrnoException | undefined;
-      const isTransient = cause?.code === 'ECONNRESET' || cause?.code === 'ECONNREFUSED' || cause?.code === 'ETIMEDOUT';
-      if (!isTransient || attempt === maxAttempts) throw err;
+      // Any exception thrown by fetch() is a network-level failure (not an HTTP error).
+      // HTTP errors come back as a Response with !res.ok — they never throw.
+      // So retry on any thrown error: ECONNRESET, SocketError (UND_ERR_SOCKET), ETIMEDOUT, etc.
+      if (attempt === maxAttempts) throw err;
       lastErr = err;
       await new Promise(r => setTimeout(r, 500 * attempt));
     }
