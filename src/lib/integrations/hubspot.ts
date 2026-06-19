@@ -51,7 +51,31 @@ function authHeaders(accessToken: string) {
   };
 }
 
-// Refresh an expired access token using the refresh token
+// Retries fetch up to `maxAttempts` times on transient network errors (ECONNRESET, ECONNREFUSED, ETIMEDOUT).
+//
+// Why this exists:
+//   Vercel serverless functions occasionally get a network-level connection reset when
+//   making outbound HTTPS calls to api.hubapi.com (TLS handshake dropped mid-connect).
+//
+//   BROKEN (before): token expires → refresh fetch → ECONNRESET → returns null → sync silently skipped ❌
+//   FIXED  (after):  token expires → refresh fetch → ECONNRESET → wait 500ms → retry → succeeds → sync runs ✅
+async function fetchWithRetry(url: string, init: RequestInit, maxAttempts = 3): Promise<Response> {
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fetch(url, init);
+    } catch (err) {
+      const cause = (err as NodeJS.ErrnoException)?.cause as NodeJS.ErrnoException | undefined;
+      const isTransient = cause?.code === 'ECONNRESET' || cause?.code === 'ECONNREFUSED' || cause?.code === 'ETIMEDOUT';
+      if (!isTransient || attempt === maxAttempts) throw err;
+      lastErr = err;
+      await new Promise(r => setTimeout(r, 500 * attempt));
+    }
+  }
+  throw lastErr;
+}
+
+// Refresh an expired access token using the refresh token — retries on transient network errors via fetchWithRetry
 async function refreshAccessToken(integrationId: string, refreshToken: string): Promise<string | null> {
   const clientId = process.env.HUBSPOT_CLIENT_ID;
   const clientSecret = process.env.HUBSPOT_CLIENT_SECRET;
@@ -59,7 +83,7 @@ async function refreshAccessToken(integrationId: string, refreshToken: string): 
   if (!clientId || !clientSecret) return null;
 
   try {
-    const res = await fetch(HUBSPOT_TOKEN_URL, {
+    const res = await fetchWithRetry(HUBSPOT_TOKEN_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
@@ -248,7 +272,7 @@ export async function syncLeadToHubSpot(params: {
     try {
       const fields = Object.entries(resolved).map(([name, value]) => ({ name, value }));
       if (fields.length === 0) return { ok: false, error: 'No fields mapped — cannot submit HubSpot form' };
-      const res = await fetch(
+      const res = await fetchWithRetry(
         `${HUBSPOT_FORMS_SUBMIT_BASE}/submissions/v3/integration/secure/submit/${portalId}/${formGuid}`,
         {
           method: 'POST',
@@ -279,7 +303,7 @@ export async function syncLeadToHubSpot(params: {
   }
 
   try {
-    const res = await fetch(
+    const res = await fetchWithRetry(
       `${HUBSPOT_API_BASE}/crm/v3/objects/contacts/batch/upsert`,
       {
         method: 'POST',
