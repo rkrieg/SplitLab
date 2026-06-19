@@ -192,6 +192,7 @@ async function handleHubSpot(
   });
 
   if (result.ok) {
+    console.log('[hubspot-sync] ok — testId:', params);
     await db.rpc('increment_integration_synced', { p_mapping_id: mapping.id });
   } else {
     console.error('[hubspot-sync] failed:', result.error);
