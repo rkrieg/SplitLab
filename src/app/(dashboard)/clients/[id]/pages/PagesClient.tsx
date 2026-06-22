@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
 import {
   Plus, FileCode2, MoreHorizontal, Play, Pause, Check, Trash2,
-  Globe, Link2, ShieldCheck, ShieldX, Edit2, Sparkles, Info,
+  Globe, Link2, ShieldCheck, ShieldX, Edit2, Info,
 } from 'lucide-react';
 import Spinner from '@/components/ui/Spinner';
 import Modal from '@/components/ui/Modal';
@@ -294,12 +294,6 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
         <p className="text-slate-500 dark:text-slate-400 text-sm">{tests.length} page{tests.length !== 1 ? 's' : ''}</p>
         {canManage && (
           <div className="flex items-center gap-2">
-            {/* <Link
-              href={`/clients/${clientId}/tests/new/ai`}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm text-white bg-[#3D8BDA] hover:bg-[#3578c0] transition-colors"
-            >
-              <Sparkles size={16} /> Generate with AI
-            </Link> */}
             <Button onClick={() => setCreateOpen(true)}>
               <Plus size={16} /> New Page
             </Button>
