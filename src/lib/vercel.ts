@@ -145,10 +145,26 @@ export async function getDomainStatus(domain: string): Promise<DomainStatus> {
   }
 
   if (verifyRes.ok && (verifyData.domain?.verified === true || verifyData.verified === true)) {
+    // POST /verify confirms project ownership, not routing DNS — GET /config is ground truth
+    const health = await getDomainDnsHealth(domain);
+    if (health.misconfigured === true) {
+      return {
+        verified: false,
+        status: 'misconfigured',
+        message: health.message,
+      };
+    }
+    if (health.misconfigured === false) {
+      return {
+        verified: true,
+        status: 'valid',
+        message: 'Domain is verified and serving traffic.',
+      };
+    }
     return {
-      verified: true,
-      status: 'valid',
-      message: 'Domain is verified and serving traffic.',
+      verified: false,
+      status: 'pending_verification',
+      message: health.message || 'DNS verification pending — this can take a few minutes. Try again shortly.',
     };
   }
 
@@ -162,33 +178,27 @@ export async function getDomainStatus(domain: string): Promise<DomainStatus> {
     };
   }
 
-  // Step 2: Check DNS config — ground truth for whether DNS is correctly pointing to Vercel
-  const configRes = await fetch(
-    `${VERCEL_API_BASE}/v6/domains/${domain}/config`,
-    { method: 'GET', headers: headers() }
-  );
+  // Step 2: Fallback when POST /verify did not return verified:true (and no TXT branch matched).
+  // GET /config is ground truth for routing — if misconfigured:false we mark valid here (Path B).
+  // We may remove this path later: without POST verified:true, an unhandled verify error plus
+  // good DNS could theoretically false-green on obscure ownership edge cases (documented TXT
+  // codes return earlier as needs_txt). Path A (POST verified + config ok) is the strict path.
+  const health = await getDomainDnsHealth(domain);
 
-  if (configRes.ok) {
-    const config = await configRes.json();
+  if (health.misconfigured === false) {
+    return {
+      verified: true,
+      status: 'valid',
+      message: 'Domain is verified and serving traffic.',
+    };
+  }
 
-    if (config.misconfigured === false) {
-      return {
-        verified: true,
-        status: 'valid',
-        message: 'Domain is verified and serving traffic.',
-      };
-    }
-
-    if (config.misconfigured === true) {
-      const isCloudflareProxy = config.cnames?.some((c: string) => /cloudflare/.test(c));
-      return {
-        verified: false,
-        status: 'misconfigured',
-        message: isCloudflareProxy
-          ? 'Your domain is proxied through Cloudflare. Set the DNS record to "DNS only" (grey cloud) and try again.'
-          : 'DNS records not found or incorrect. Double-check the CNAME record and try again.',
-      };
-    }
+  if (health.misconfigured === true) {
+    return {
+      verified: false,
+      status: 'misconfigured',
+      message: health.message,
+    };
   }
 
   return {
@@ -196,4 +206,61 @@ export async function getDomainStatus(domain: string): Promise<DomainStatus> {
     status: 'pending_verification',
     message: 'DNS records detected. Verification pending — this can take a few minutes. Try again shortly.',
   };
+}
+
+/** Read-only DNS health check via GET /config — does NOT call POST /verify (no 50/hr quota). */
+export interface DomainDnsHealth {
+  misconfigured: boolean | null;
+  isCloudflareProxy: boolean;
+  message: string;
+}
+
+export async function getDomainDnsHealth(domain: string): Promise<DomainDnsHealth> {
+  try {
+    const configRes = await fetch(
+      `${VERCEL_API_BASE}/v6/domains/${domain}/config`,
+      { method: 'GET', headers: headers() }
+    );
+
+    if (!configRes.ok) {
+      return {
+        misconfigured: null,
+        isCloudflareProxy: false,
+        message: 'Could not check DNS status — try again shortly.',
+      };
+    }
+
+    const config = await configRes.json() as {
+      misconfigured?: boolean;
+      cnames?: string[];
+    };
+
+    const isCloudflareProxy = config.cnames?.some((c) => /cloudflare/.test(c)) ?? false;
+
+    if (config.misconfigured === false) {
+      return { misconfigured: false, isCloudflareProxy: false, message: '' };
+    }
+
+    if (config.misconfigured === true) {
+      return {
+        misconfigured: true,
+        isCloudflareProxy,
+        message: isCloudflareProxy
+          ? 'Your domain is proxied through Cloudflare. Set the DNS record to "DNS only" (grey cloud) and try again.'
+          : 'DNS records do not point to SplitLab. Add the DNS record below, then click Verify DNS.',
+      };
+    }
+
+    return {
+      misconfigured: null,
+      isCloudflareProxy: false,
+      message: 'Could not determine DNS status — try again shortly.',
+    };
+  } catch {
+    return {
+      misconfigured: null,
+      isCloudflareProxy: false,
+      message: 'Could not check DNS status — try again shortly.',
+    };
+  }
 }
