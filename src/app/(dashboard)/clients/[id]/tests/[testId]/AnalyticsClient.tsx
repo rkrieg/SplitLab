@@ -83,9 +83,6 @@ interface Variant {
   proxy_mode?: boolean;
   pages?: { id: string; name: string } | null;
   tracking_verified?: boolean | null;
-  is_ai_generated?: boolean;
-  variant_type?: string;
-  hosted_url?: string | null;
 }
 
 interface Goal {
@@ -2401,8 +2398,7 @@ export default function AnalyticsClient({
                                   />
                                 )}
                               </div>
-                              {stat.variant.variant_type !== "hosted" &&
-                                stat.variant.redirect_url &&
+                              {stat.variant.redirect_url &&
                                 !isEditing && (
                                   <p className="text-slate-500 text-xs font-mono truncate max-w-[250px] mt-0.5">
                                     {stat.variant.redirect_url}
