@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
-import { addDomainToVercel, removeDomainFromVercel, getDomainStatus } from '@/lib/vercel';
+import { addDomainToVercel, removeDomainFromVercel, getDomainStatus, getDomainDnsHealth } from '@/lib/vercel';
 import { resolveWorkspaceRole } from '@/lib/workspace-auth';
 import { PLAN_LIMITS } from '@/lib/plans';
 import { z } from 'zod';
@@ -23,7 +23,7 @@ const updateSchema = z.object({
 });
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: { id: string } }
 ) {
   const session = await getServerSession(authOptions);
@@ -40,7 +40,42 @@ export async function GET(
     .order('created_at', { ascending: false });
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json(data);
+
+  const syncDns = req.nextUrl.searchParams.get('syncDns') === '1';
+  if (!syncDns || !data?.length) {
+    return NextResponse.json(data);
+  }
+
+  // Passive health check: GET /config only (no POST /verify — does not burn 50/hr quota)
+  const dnsHealth: Record<string, { misconfigured: boolean; message: string }> = {};
+  const result = [...data];
+
+  for (const row of data) {
+    if (!row.verified) continue;
+
+    const health = await getDomainDnsHealth(row.domain);
+    if (health.misconfigured !== true) continue;
+
+    await db
+      .from('domains')
+      .update({ verified: false })
+      .eq('id', row.id);
+
+    const idx = result.findIndex((d) => d.id === row.id);
+    if (idx >= 0) {
+      result[idx] = { ...result[idx], verified: false };
+    }
+
+    // Prefer Vercel-derived message (e.g. Cloudflare proxy); stale-green fallback if empty
+    dnsHealth[row.id] = {
+      misconfigured: true,
+      message:
+        health.message ||
+        'DNS records no longer point to SplitLab. Re-add the DNS record below, then click Verify DNS.',
+    };
+  }
+
+  return NextResponse.json({ domains: result, dnsHealth });
 }
 
 export async function POST(
@@ -75,11 +110,14 @@ export async function POST(
         .from('domains')
         .update({ verified: true, verified_at: new Date().toISOString() })
         .eq('id', domain_id);
-    } else if (status.vercel_verification?.length) {
-      await db
-        .from('domains')
-        .update({ vercel_verification: status.vercel_verification })
-        .eq('id', domain_id);
+    } else {
+      const update: { verified: boolean; vercel_verification?: typeof status.vercel_verification } = {
+        verified: false,
+      };
+      if (status.vercel_verification?.length) {
+        update.vercel_verification = status.vercel_verification;
+      }
+      await db.from('domains').update(update).eq('id', domain_id);
     }
     return NextResponse.json({ verified: status.verified, status });
   }
