@@ -40,7 +40,6 @@ import {
   BarChart3,
   Users,
   Settings as SettingsIcon,
-  Sparkles,
   ScanLine,
   Phone,
   MousePointerClick,
@@ -2376,11 +2375,7 @@ export default function AnalyticsClient({
                                     control
                                   </span>
                                 )}
-                                {stat.variant.is_ai_generated && (
-                                  <span className="inline-flex items-center gap-1 badge bg-[#3D8BDA]/10 text-[#3D8BDA] border border-[#3D8BDA]/20 text-[10px]">
-                                    <Sparkles size={9} /> AI Generated
-                                  </span>
-                                )}
+
                                 {stat.isWinner && (
                                   <Trophy
                                     size={13}
@@ -2388,13 +2383,6 @@ export default function AnalyticsClient({
                                   />
                                 )}
                               </div>
-                              {stat.variant.variant_type === "hosted" &&
-                                stat.variant.hosted_url &&
-                                !isEditing && (
-                                  <p className="text-slate-500 text-xs font-mono truncate max-w-[250px] mt-0.5">
-                                    {stat.variant.hosted_url}
-                                  </p>
-                                )}
                               {stat.variant.variant_type !== "hosted" &&
                                 stat.variant.redirect_url &&
                                 !isEditing && (

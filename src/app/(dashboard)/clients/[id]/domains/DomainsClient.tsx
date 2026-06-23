@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import toast from 'react-hot-toast';
 import {
   Plus, Globe, CheckCircle, XCircle, Copy, AlertCircle,
@@ -60,6 +60,55 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
   const [showDnsId, setShowDnsId] = useState<string | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [dnsChecking, setDnsChecking] = useState(false);
+
+  // Passive DNS health check on load — GET /config only, no POST /verify
+  useEffect(() => {
+    if (!workspaceId) return;
+    let cancelled = false;
+
+    (async () => {
+      setDnsChecking(true);
+      try {
+        const res = await fetch(`/api/workspaces/${workspaceId}/domains?syncDns=1`);
+        if (!res.ok || cancelled) return;
+
+        const data = await res.json() as
+          | Domain[]
+          | { domains: Domain[]; dnsHealth?: Record<string, { misconfigured: boolean; message: string }> };
+
+        if (Array.isArray(data)) {
+          if (!cancelled) setDomains(data);
+          return;
+        }
+
+        if (!data.domains || cancelled) return;
+        setDomains(data.domains);
+
+        if (data.dnsHealth) {
+          for (const [id, health] of Object.entries(data.dnsHealth)) {
+            if (health.misconfigured) {
+              setVerifyStatus((prev) => ({ ...prev, [id]: 'misconfigured' }));
+              setVerifyMessage((prev) => ({ ...prev, [id]: health.message }));
+            }
+          }
+          const brokenCount = Object.keys(data.dnsHealth).length;
+          if (brokenCount > 0) {
+            toast.error(
+              `${brokenCount} domain${brokenCount > 1 ? 's' : ''} no longer point to SplitLab — update DNS and click Verify DNS.`,
+              { duration: 6000 }
+            );
+          }
+        }
+      } catch {
+        // keep SSR state on failure
+      } finally {
+        if (!cancelled) setDnsChecking(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [workspaceId]);
 
   // ─── Helpers ────────────────────────────────────────────────────────────
 
@@ -159,13 +208,16 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
         setVerifyMessage(prev => ({ ...prev, [domainId]: '' }));
         setVerifyTxtRecords(prev => { const n = { ...prev }; delete n[domainId]; return n; });
         toast.success('Domain verified successfully!');
-      } else if (statusStr === 'needs_txt') {
-        setVerifyTxtRecords(prev => ({ ...prev, [domainId]: result.status?.vercel_verification || [] }));
-        setVerifyMessage(prev => ({ ...prev, [domainId]: result.status?.message || 'Add the TXT record below, then click Verify DNS again.' }));
-      } else if (statusStr === 'misconfigured') {
-        setVerifyMessage(prev => ({ ...prev, [domainId]: "DNS records not found. Make sure you've added the CNAME record at your registrar and try again." }));
       } else {
-        setVerifyMessage(prev => ({ ...prev, [domainId]: 'DNS not yet propagated — this can take up to 48 hours. Try again later.' }));
+        setDomains(prev => prev.map(d => d.id === domainId ? { ...d, verified: false } : d));
+        if (statusStr === 'needs_txt') {
+          setVerifyTxtRecords(prev => ({ ...prev, [domainId]: result.status?.vercel_verification || [] }));
+          setVerifyMessage(prev => ({ ...prev, [domainId]: result.status?.message || 'Add the TXT record below, then click Verify DNS again.' }));
+        } else if (statusStr === 'misconfigured') {
+          setVerifyMessage(prev => ({ ...prev, [domainId]: result.status?.message || "DNS records not found. Add the DNS record below at your registrar, then click Verify DNS again." }));
+        } else {
+          setVerifyMessage(prev => ({ ...prev, [domainId]: result.status?.message || 'DNS not yet propagated — this can take up to 48 hours. Try again later.' }));
+        }
       }
     } catch { toast.error('Failed to check domain verification'); } finally { setVerifying(null); }
   }
@@ -481,6 +533,7 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
           <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Custom Domain{domains.length > 1 ? 's' : ''}</h2>
           <p className="text-slate-500 dark:text-slate-400 text-sm mt-0.5">
             Route A/B test traffic through your client&apos;s own URL.
+            {dnsChecking && <span className="text-slate-400 dark:text-slate-500"> · Checking DNS…</span>}
           </p>
         </div>
         {canManage && (
