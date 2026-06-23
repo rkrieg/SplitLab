@@ -1,10 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { waitUntil } from '@vercel/functions';
 import { db } from '@/lib/supabase-server';
 import { syncLeadToHubSpot, getValidAccessToken } from '@/lib/integrations/hubspot';
 import { sendLeadNotificationEmail, type EmailConfig } from '@/lib/integrations/email';
 import { fireWebhook, type WebhookConfig, type WebhookFieldMappings } from '@/lib/integrations/webhook';
 
 export const dynamic = 'force-dynamic';
+
+// Next.js route segment config — picked up automatically by the build, not called/imported
+// anywhere. Sets the hard timeout for this route's serverless function specifically.
+// Hard timeout for this invocation, including the waitUntil-kept-alive background dispatch below.
+// If still running when this hits, Vercel kills it mid-execution regardless of what it's doing —
+// worst case here (expired HubSpot token refresh + retries, then form-submit retries) can stack
+// up to ~10-12s, so 60s leaves comfortable headroom without holding instances open unnecessarily.
+export const maxDuration = 60;
 
 export async function POST(request: NextRequest) {
   let body: Record<string, unknown>;
@@ -68,8 +77,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Failed to save lead' }, { status: 500 });
   }
 
-  // Fire-and-forget integration dispatching — does not block the response
-  dispatchIntegrationsBackground({
+  // Without waitUntil, Vercel can freeze this invocation the instant the response below
+  // is sent — sometimes mid-fetch to HubSpot — and the dispatch never runs to completion.
+  // waitUntil keeps the function alive in the background until the promise settles, without
+  // delaying the response itself.
+  waitUntil(dispatchIntegrationsBackground({
     testId,
     testName: test.name,
     workspaceId: test.workspace_id,
@@ -85,7 +97,7 @@ export async function POST(request: NextRequest) {
       utm_term:     utm?.utm_term ?? null,
       gclid:        utm?.gclid ?? null,
     },
-  });
+  }));
 
   return NextResponse.json({ ok: true });
 }
