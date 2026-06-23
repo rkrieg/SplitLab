@@ -15,6 +15,7 @@
     "@sparticuz/chromium": "^143.0.4",
     "@supabase/supabase-js": "^2.39.3",
     "@uiw/react-codemirror": "^4.21.25",
+    "@vercel/functions": "^3.7.2",
     "autoprefixer": "^10.4.17",
     "bcryptjs": "^2.4.3",
     "clsx": "^2.1.0",
