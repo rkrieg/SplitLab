@@ -658,7 +658,16 @@ export default function AnalyticsClient({
         body: JSON.stringify({ [field]: value }),
       });
       if (!res.ok) {
-        toast.error("Failed to save");
+        const err = await res.json().catch(() => null);
+        const apiError = err?.error;
+        const msg =
+          typeof apiError === "string"
+            ? apiError
+            : Array.isArray(apiError) && apiError[0]?.message
+              ? String(apiError[0].message)
+              : "Failed to save";
+        toast.error(msg);
+        if (field === "url_path") setPathDraft(test.url_path);
         return;
       }
       const updated = await res.json();
@@ -668,8 +677,20 @@ export default function AnalyticsClient({
       if (field === "url_path") setEditingPath(false);
     } catch {
       toast.error("Failed to save");
+      if (field === "url_path") setPathDraft(test.url_path);
     } finally {
       setSavingField(false);
+    }
+  }
+
+  function commitPathSave() {
+    const path = pathDraft.trim() || "/";
+    if (path !== test.url_path){
+      saveField("url_path", path);
+    }
+    else {
+      setEditingPath(false);
+      setPathDraft(test.url_path);
     }
   }
 
@@ -1980,28 +2001,25 @@ export default function AnalyticsClient({
                       {domain}
                     </span>
                   )}
+                  <span className="text-slate-500 text-sm font-mono select-none">/</span>
                   <input
                     type="text"
-                    value={pathDraft}
-                    onChange={(e) => setPathDraft(e.target.value)}
+                    value={pathDraft === "/" ? "" : pathDraft.slice(1)}
+                    onChange={(e) => {
+                      const suffix = e.target.value.replace(/^\//, "");
+                      setPathDraft(suffix ? `/${suffix}` : "/");
+                    }}
                     className="input-base font-mono text-sm py-0.5 px-1.5 w-48"
                     autoFocus
                     disabled={savingField}
                     onKeyDown={(e) => {
-                      if (e.key === "Enter") saveField("url_path", pathDraft);
+                      if (e.key === "Enter") commitPathSave();
                       if (e.key === "Escape") {
                         setEditingPath(false);
                         setPathDraft(test.url_path);
                       }
                     }}
-                    onBlur={() => {
-                      if (pathDraft.trim() && pathDraft !== test.url_path)
-                        saveField("url_path", pathDraft);
-                      else {
-                        setEditingPath(false);
-                        setPathDraft(test.url_path);
-                      }
-                    }}
+                    onBlur={commitPathSave}
                   />
                 </div>
               ) : fullUrl ? (
