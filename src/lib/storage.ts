@@ -34,6 +34,16 @@ export async function uploadHtml(
 }
 
 /**
+ * Download HTML from storage by path using the service role key (works on private buckets).
+ */
+export async function downloadHtmlByPath(filePath: string): Promise<string> {
+  const client = getStorageClient();
+  const { data, error } = await client.storage.from(BUCKET).download(filePath);
+  if (error || !data) throw new Error(`Storage download failed: ${error?.message}`);
+  return data.text();
+}
+
+/**
  * Download HTML content from Supabase Storage by public URL.
  */
 export async function downloadHtml(url: string): Promise<string> {

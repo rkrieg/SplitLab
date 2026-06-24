@@ -1,0 +1,904 @@
+'use client';
+
+import { useState, useRef, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import {
+  Sparkles, Send, Globe, Copy, Check, ChevronLeft, Loader2,
+  Wand2, Layout, Palette, RefreshCw, Monitor, Smartphone,
+  ExternalLink, ThumbsUp, ThumbsDown, RotateCcw, MoreHorizontal,
+  Mic, Plus, ChevronDown, Download,
+} from 'lucide-react';
+import toast from 'react-hot-toast';
+import { cn } from '@/lib/utils';
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+type Vertical = 'lead_gen' | 'saas' | 'local';
+type Phase =
+  | 'prompt'
+  | 'questions'
+  | 'generating'
+  | 'building'
+  | 'editing'
+  | 'publishing'
+  | 'published';
+
+type ViewMode = 'desktop' | 'mobile';
+
+interface Message {
+  role: 'user' | 'assistant';
+  content: string;
+  isQuestions?: boolean;
+  questions?: string[];
+}
+
+interface InitialPage {
+  id: string;
+  name: string;
+  vertical: string;
+  schema_json: unknown;
+  conversation_json: { role: string; content: string }[] | null;
+  html_url: string;
+  is_published: boolean;
+  published_url: string | null;
+}
+
+interface Props {
+  workspaceId: string;
+  clientId: string;
+  clientName: string;
+  initialPage?: InitialPage | null;
+  backPath?: string;
+}
+
+const VERTICAL_LABELS: Record<Vertical, string> = {
+  lead_gen: 'Lead Gen',
+  saas: 'SaaS',
+  local: 'Local Services',
+};
+
+const BUILD_STEPS = [
+  'Analyzing prompt',
+  'Building structure',
+  'Writing content',
+  'Styling layout',
+  'Uploading page',
+];
+
+function setNestedValue(obj: Record<string, unknown>, path: string, value: unknown): Record<string, unknown> {
+  const keys = path.split('.');
+  const result = { ...obj };
+  let current: Record<string, unknown> = result;
+  for (let i = 0; i < keys.length - 1; i++) {
+    const key = keys[i];
+    const existing = current[key];
+    if (Array.isArray(existing)) {
+      current[key] = [...existing];
+    } else if (typeof existing === 'object' && existing !== null) {
+      current[key] = { ...(existing as Record<string, unknown>) };
+    } else {
+      current[key] = {};
+    }
+    current = current[key] as Record<string, unknown>;
+  }
+  current[keys[keys.length - 1]] = value;
+  return result;
+}
+
+// ── Component ─────────────────────────────────────────────────────────────────
+
+export default function AIBuilderClient({ workspaceId, clientId, clientName, initialPage, backPath }: Props) {
+  const router = useRouter();
+
+  const [phase, setPhase] = useState<Phase>('prompt');
+  const [pageName, setPageName] = useState('');
+  const [vertical, setVertical] = useState<Vertical>('lead_gen');
+  const [prompt, setPrompt] = useState('');
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [followUpInput, setFollowUpInput] = useState('');
+  const [buildStep, setBuildStep] = useState(0);
+  const [viewMode, setViewMode] = useState<ViewMode>('desktop');
+
+  const [pageId, setPageId] = useState<string | null>(null);
+  const [htmlUrl, setHtmlUrl] = useState<string | null>(null);
+  const [iframeSrc, setIframeSrc] = useState<string | null>(null);
+  const [iframeLoaded, setIframeLoaded] = useState(false);
+  const [schemaJson, setSchemaJson] = useState<unknown>(null);
+  const [conversationJson, setConversationJson] = useState<{ role: string; content: string }[]>([]);
+  const [publishedUrl, setPublishedUrl] = useState<string | null>(null);
+  const [urlCopied, setUrlCopied] = useState(false);
+  const [publishConfirmOpen, setPublishConfirmOpen] = useState(false);
+
+  const [pendingImageField, setPendingImageField] = useState<string | null>(null);
+  const [uploadingImage, setUploadingImage] = useState(false);
+
+  const [questions, setQuestions] = useState<string[]>([]);
+  const [answers, setAnswers] = useState<string[]>([]);
+
+  const schemaRef = useRef<unknown>(null);
+  const threadRef = useRef<HTMLDivElement>(null);
+  const followUpRef = useRef<HTMLTextAreaElement>(null);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+
+  // Restore state when resuming an existing page
+  useEffect(() => {
+    if (!initialPage) return;
+    setPageId(initialPage.id);
+    setPageName(initialPage.name);
+    setVertical(initialPage.vertical as Vertical);
+    setSchemaJson(initialPage.schema_json);
+    schemaRef.current = initialPage.schema_json;
+    const history = initialPage.conversation_json ?? [];
+    setConversationJson(history);
+    setHtmlUrl(initialPage.html_url);
+    if (initialPage.is_published && initialPage.published_url) {
+      setPublishedUrl(initialPage.published_url);
+      setPhase('published');
+    } else {
+      setPhase('editing');
+    }
+
+    // Reconstruct readable chat history from conversation_json
+    // Pairs: [user, assistant, user, assistant, ...]
+    // First pair = original prompt + schema generation
+    // Subsequent pairs = follow-up edits
+    const restored: Message[] = [];
+    for (let i = 0; i < history.length; i += 2) {
+      const userMsg = history[i];
+      const assistantMsg = history[i + 1];
+      if (!userMsg) break;
+      restored.push({ role: 'user', content: userMsg.content });
+      if (assistantMsg) {
+        const isFirst = i === 0;
+        restored.push({
+          role: 'assistant',
+          content: isFirst
+            ? `Got it! Built your ${VERTICAL_LABELS[initialPage.vertical as Vertical] ?? initialPage.vertical} page.`
+            : 'Done! The page has been updated.',
+        });
+      }
+    }
+    restored.push({ role: 'assistant', content: 'Welcome back. Click any text in the preview to edit, or ask me to make changes.' });
+    setMessages(restored);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Stable iframe src — points to preview route, refreshes when pageId changes or htmlUrl signals a content update
+  useEffect(() => {
+    if (!pageId) return;
+    setIframeSrc(`/api/pages/${pageId}/preview?t=${Date.now()}`);
+    setIframeLoaded(false);
+  }, [pageId, htmlUrl]);
+
+  // postMessage: field edits + image clicks
+  useEffect(() => {
+    if (!pageId) return;
+    const saveTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+    function handleMessage(e: MessageEvent) {
+      if (e.data?.type === 'sl_image_click') {
+        setPendingImageField(e.data.field as string);
+        imageInputRef.current?.click();
+        return;
+      }
+      if (e.data?.type !== 'sl_field_edit') return;
+      const { field, value } = e.data as { field: string; value: string };
+
+      const updated = setNestedValue(
+        (schemaRef.current as Record<string, unknown>) ?? {},
+        field,
+        value
+      );
+      schemaRef.current = updated;
+      setSchemaJson(updated);
+
+      const existing = saveTimers.get(field);
+      if (existing) clearTimeout(existing);
+      saveTimers.set(field, setTimeout(async () => {
+        const html = iframeRef.current?.contentDocument?.documentElement?.outerHTML ?? null;
+        await fetch(`/api/pages/${pageId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ schema_json: updated, html_content: html }),
+        });
+        saveTimers.delete(field);
+      }, 800));
+    }
+
+    window.addEventListener('message', handleMessage);
+    return () => {
+      window.removeEventListener('message', handleMessage);
+      saveTimers.forEach(t => clearTimeout(t));
+    };
+  }, [pageId]);
+
+  // Inject contentEditable after iframe loads
+  useEffect(() => {
+    if (!iframeLoaded || !iframeRef.current || phase !== 'editing') return;
+    const doc = iframeRef.current.contentDocument;
+    if (!doc) return;
+    const script = doc.createElement('script');
+    script.textContent = `
+      (function() {
+        var saveTimer;
+        document.querySelectorAll('[data-field]').forEach(function(el) {
+          if (el.tagName === 'IMG') {
+            el.style.cursor = 'pointer';
+            el.addEventListener('click', function() {
+              window.parent.postMessage({ type: 'sl_image_click', field: el.getAttribute('data-field') }, '*');
+            });
+            el.addEventListener('mouseenter', function() { el.style.outline = '2px solid #3D8BDA'; });
+            el.addEventListener('mouseleave', function() { el.style.outline = ''; });
+            return;
+          }
+          el.contentEditable = 'true';
+          el.style.outline = 'none';
+          el.style.cursor = 'text';
+          el.addEventListener('mouseenter', function() {
+            el.style.boxShadow = '0 0 0 2px rgba(61,139,218,0.5)';
+            el.style.borderRadius = '2px';
+          });
+          el.addEventListener('mouseleave', function() {
+            if (document.activeElement !== el) el.style.boxShadow = '';
+          });
+          el.addEventListener('focus', function() {
+            el.style.boxShadow = '0 0 0 2px #3D8BDA';
+          });
+          el.addEventListener('blur', function() {
+            el.style.boxShadow = '';
+            var field = el.getAttribute('data-field');
+            var value = el.innerText;
+            clearTimeout(saveTimer);
+            saveTimer = setTimeout(function() {
+              window.parent.postMessage({ type: 'sl_field_edit', field: field, value: value }, '*');
+            }, 400);
+          });
+        });
+      })();
+    `;
+    doc.body.appendChild(script);
+  }, [iframeLoaded, phase]);
+
+  // Auto-scroll chat
+  useEffect(() => {
+    if (threadRef.current) threadRef.current.scrollTop = threadRef.current.scrollHeight;
+  }, [messages, phase]);
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+
+  function addMessage(msg: Message) {
+    setMessages(prev => [...prev, msg]);
+  }
+
+  function animateBuildSteps() {
+    let step = 0;
+    setBuildStep(0);
+    const interval = setInterval(() => {
+      step++;
+      if (step >= BUILD_STEPS.length) clearInterval(interval);
+      else setBuildStep(step);
+    }, 900);
+    return () => clearInterval(interval);
+  }
+
+  // ── Generate → Build ──────────────────────────────────────────────────────
+
+  async function runGenerate(userPrompt: string, history: { role: string; content: string }[]) {
+    setPhase('generating');
+    const res = await fetch('/api/pages/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: userPrompt, vertical, conversation_json: history }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      toast.error(err.error || 'Generation failed');
+      setPhase(history.length > 0 ? 'questions' : 'prompt');
+      return;
+    }
+    const data = await res.json();
+    if (data.type === 'questions') {
+      setQuestions(data.questions);
+      setAnswers(new Array(data.questions.length).fill(''));
+      addMessage({ role: 'assistant', content: 'I have a few questions to build the best page for you:', isQuestions: true, questions: data.questions });
+      setPhase('questions');
+      return;
+    }
+    addMessage({ role: 'assistant', content: `Got it! Building your ${VERTICAL_LABELS[vertical]} page now…` });
+    const updatedHistory = [
+      ...history,
+      { role: 'user', content: userPrompt },
+      { role: 'assistant', content: JSON.stringify(data.schema) },
+    ];
+    setConversationJson(updatedHistory);
+    await runBuild(data.schema, updatedHistory);
+  }
+
+  async function savePage(payload: {
+    html_url: string; slug: string; schema: unknown; history: { role: string; content: string }[];
+  }): Promise<string | null> {
+    const createRes = await fetch('/api/pages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        workspace_id: workspaceId,
+        name: pageName || 'Untitled Page',
+        prompt, vertical,
+        schema_json: payload.schema,
+        conversation_json: payload.history,
+        html_url: payload.html_url,
+        slug: payload.slug,
+        source_type: 'ai_generated',
+      }),
+    });
+    if (!createRes.ok) {
+      const err = await createRes.json();
+      toast.error(err.error || 'Failed to save page');
+      return null;
+    }
+    const page = await createRes.json();
+    setPageId(page.id);
+    return page.id as string;
+  }
+
+  async function runBuild(schema: unknown, history: { role: string; content: string }[]) {
+    setPhase('building');
+    const cleanup = animateBuildSteps();
+    const res = await fetch('/api/pages/build', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ schema_json: schema }),
+    });
+    cleanup();
+    setBuildStep(BUILD_STEPS.length - 1);
+    if (!res.ok) {
+      const err = await res.json();
+      toast.error(err.error || 'Build failed');
+      setPhase('prompt');
+      return;
+    }
+    const { html_url, slug } = await res.json();
+
+    // html_url stored in DB; setHtmlUrl signals the preview useEffect to refresh
+    setHtmlUrl(html_url);
+    schemaRef.current = schema;
+    setSchemaJson(schema);
+    setPhase('editing');
+    addMessage({ role: 'assistant', content: 'Your page is ready! Click any text in the preview to edit it, or ask me to make changes.' });
+
+    // Save to DB then auto-publish (injects tracker + sets is_published + published_url)
+    const savedId = await savePage({ html_url, slug, schema, history });
+    if (savedId) {
+      await handlePublish(savedId);
+    } else {
+      toast(
+        (t) => (
+          <span className="flex items-center gap-2 text-sm">
+            Page built but not saved.
+            <button
+              className="font-semibold underline"
+              onClick={() => { toast.dismiss(t.id); savePage({ html_url, slug, schema, history }); }}
+            >
+              Retry
+            </button>
+          </span>
+        ),
+        { duration: Infinity }
+      );
+    }
+  }
+
+  async function handleGenerate(e: React.FormEvent) {
+    e.preventDefault();
+    if (!prompt.trim() || !pageName.trim()) return;
+    addMessage({ role: 'user', content: prompt });
+    await runGenerate(prompt, []);
+  }
+
+  async function handleAnswers(e: React.FormEvent) {
+    e.preventDefault();
+    const answersText = questions.map((q, i) => `${q}\n${answers[i] || '(no answer)'}`).join('\n\n');
+    addMessage({ role: 'user', content: answersText });
+    const history = [
+      { role: 'user', content: prompt },
+      { role: 'assistant', content: JSON.stringify({ type: 'questions', questions }) },
+      { role: 'user', content: answersText },
+    ];
+    await runGenerate(answersText, history);
+  }
+
+  async function handleSurpriseMe() {
+    addMessage({ role: 'user', content: 'Surprise me — just build the best default.' });
+    const history = [
+      { role: 'user', content: prompt },
+      { role: 'assistant', content: JSON.stringify({ type: 'questions', questions }) },
+    ];
+    await runGenerate('Surprise me — just build the best default.', history);
+  }
+
+  async function handleFollowUp(e: React.FormEvent) {
+    e.preventDefault();
+    if (!followUpInput.trim() || !pageId) return;
+    const instruction = followUpInput.trim();
+    setFollowUpInput('');
+    addMessage({ role: 'user', content: instruction });
+    setPhase('generating');
+    const res = await fetch(`/api/pages/${pageId}/follow-up`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: instruction, current_schema: schemaJson, conversation_json: conversationJson }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      toast.error(err.error || 'Edit failed');
+      setPhase('editing');
+      return;
+    }
+    const data = await res.json();
+    if (data.schema_json) { schemaRef.current = data.schema_json; setSchemaJson(data.schema_json); }
+    setHtmlUrl(data.html_url + `?t=${Date.now()}`);
+    addMessage({ role: 'assistant', content: 'Done! The page has been updated.' });
+    setConversationJson(prev => [
+      ...prev,
+      { role: 'user', content: instruction },
+      { role: 'assistant', content: JSON.stringify(data) },
+    ]);
+    setPhase('editing');
+  }
+
+  async function handleImageUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file || !pendingImageField || !pageId) return;
+    e.target.value = '';
+    const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/svg+xml'];
+    if (!allowed.includes(file.type)) { toast.error('Unsupported file type. Use JPEG, PNG, WebP, GIF, or SVG.'); return; }
+    if (file.size > 5 * 1024 * 1024) { toast.error('Image must be under 5MB.'); return; }
+    setUploadingImage(true);
+    addMessage({ role: 'user', content: `Uploading image for "${pendingImageField}"…` });
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('field_path', pendingImageField);
+    const res = await fetch(`/api/pages/${pageId}/upload-image`, { method: 'POST', body: formData });
+    setUploadingImage(false);
+    setPendingImageField(null);
+    if (!res.ok) { const err = await res.json(); toast.error(err.error || 'Image upload failed'); return; }
+    const { html_url } = await res.json();
+    setHtmlUrl(html_url + `?t=${Date.now()}`);
+    addMessage({ role: 'assistant', content: 'Image updated! The preview has been refreshed.' });
+  }
+
+  async function handlePublish(id?: string) {
+    const pid = id ?? pageId;
+    if (!pid) return;
+    setPhase('publishing');
+    const res = await fetch(`/api/pages/${pid}/publish`, { method: 'POST' });
+    if (!res.ok) {
+      const err = await res.json();
+      toast.error(err.error || 'Publish failed');
+      setPhase('editing');
+      return;
+    }
+    const { published_url } = await res.json();
+    setPublishedUrl(published_url);
+    setPhase('published');
+    addMessage({ role: 'assistant', content: `Your page is live! Copy the URL below and use it as a redirect variant in any test.` });
+  }
+
+  async function copyUrl() {
+    if (!publishedUrl) return;
+    await navigator.clipboard.writeText(publishedUrl);
+    setUrlCopied(true);
+    setTimeout(() => setUrlCopied(false), 2000);
+  }
+
+  const isLoading = phase === 'generating' || phase === 'building' || phase === 'publishing' || uploadingImage;
+  const showPreview = phase === 'editing' || phase === 'published';
+
+  return (
+    <div className="fixed inset-0 z-20 flex bg-slate-50 dark:bg-slate-900" style={{ left: '15rem' }}>
+      <input ref={imageInputRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/svg+xml" className="hidden" onChange={handleImageUpload} />
+
+      {/* ── Left chat panel ── */}
+      <div className="w-[380px] flex-shrink-0 flex flex-col bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800">
+
+        {/* Panel header */}
+        <div className="flex items-center gap-2 px-4 h-12 border-b border-slate-200 dark:border-slate-800 flex-shrink-0">
+          <button
+            onClick={() => router.push(backPath ?? `/clients/${clientId}/pages`)}
+            className="flex items-center gap-1 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors"
+          >
+            <ChevronLeft size={14} />
+            {clientName}
+          </button>
+          <span className="text-slate-300 dark:text-slate-700 text-xs">/</span>
+          <span className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+            <Sparkles size={12} className="text-indigo-600 dark:text-indigo-400" />
+            AI Generate
+          </span>
+        </div>
+
+        {/* Chat thread */}
+        <div ref={threadRef} className="flex-1 overflow-y-auto px-4 py-5 space-y-5">
+
+          {/* Welcome */}
+          {phase === 'prompt' && messages.length === 0 && (
+            <div className="text-center py-6">
+              <div className="w-11 h-11 rounded-2xl bg-indigo-50 dark:bg-indigo-600/10 border border-indigo-100 dark:border-indigo-600/20 flex items-center justify-center mx-auto mb-3">
+                <Wand2 size={20} className="text-indigo-600 dark:text-indigo-400" />
+              </div>
+              <p className="text-slate-700 dark:text-slate-200 font-medium text-sm mb-1">AI Page Builder</p>
+              <p className="text-slate-400 dark:text-slate-500 text-xs leading-relaxed">Describe your landing page and I'll generate it.</p>
+            </div>
+          )}
+
+          {/* Messages */}
+          {messages.map((msg, i) => (
+            <div key={i} className={cn('flex flex-col gap-1', msg.role === 'user' ? 'items-end' : 'items-start')}>
+              {msg.role === 'user' ? (
+                <div className="bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl rounded-tr-sm px-3.5 py-2.5 max-w-[88%]">
+                  <p className="text-sm text-slate-700 dark:text-slate-200 leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+                </div>
+              ) : (
+                <div className="max-w-[92%] space-y-1.5">
+                  <div className="flex items-start gap-2.5">
+                    <div className="w-6 h-6 rounded-full bg-indigo-50 dark:bg-indigo-600/15 border border-indigo-100 dark:border-indigo-600/25 flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <Sparkles size={11} className="text-indigo-600 dark:text-indigo-400" />
+                    </div>
+                    <div className="flex-1">
+                      {msg.isQuestions && msg.questions ? (
+                        <div>
+                          <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed mb-2">{msg.content}</p>
+                          <ul className="space-y-1.5">
+                            {msg.questions.map((q, qi) => (
+                              <li key={qi} className="text-xs text-slate-500 dark:text-slate-400 flex gap-1.5">
+                                <span className="text-indigo-600 dark:text-indigo-400 font-semibold flex-shrink-0">{qi + 1}.</span>
+                                {q}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : (
+                        <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">{msg.content}</p>
+                      )}
+                    </div>
+                  </div>
+                  {/* Message actions */}
+                  <div className="flex items-center gap-0.5 pl-8">
+                    <button className="p-1 text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 transition-colors"><RotateCcw size={12} /></button>
+                    <button className="p-1 text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 transition-colors"><ThumbsUp size={12} /></button>
+                    <button className="p-1 text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 transition-colors"><ThumbsDown size={12} /></button>
+                    <button
+                      className="p-1 text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 transition-colors"
+                      onClick={() => { navigator.clipboard.writeText(msg.content); toast.success('Copied'); }}
+                    >
+                      <Copy size={12} />
+                    </button>
+                    <button className="p-1 text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 transition-colors"><MoreHorizontal size={12} /></button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+
+          {/* Loading / build progress */}
+          {isLoading && (
+            <div className="flex items-start gap-2.5">
+              <div className="w-6 h-6 rounded-full bg-indigo-50 dark:bg-indigo-600/15 border border-indigo-100 dark:border-indigo-600/25 flex items-center justify-center flex-shrink-0 mt-0.5">
+                <Sparkles size={11} className="text-indigo-600 dark:text-indigo-400" />
+              </div>
+              <div className="flex-1 pt-0.5">
+                {phase === 'building' ? (
+                  <div className="space-y-2">
+                    {BUILD_STEPS.map((step, i) => (
+                      <div key={i} className={cn('flex items-center gap-2 text-xs transition-all', i <= buildStep ? 'text-slate-700 dark:text-slate-200' : 'text-slate-300 dark:text-slate-600')}>
+                        {i < buildStep ? (
+                          <Check size={11} className="text-green-500 flex-shrink-0" />
+                        ) : i === buildStep ? (
+                          <Loader2 size={11} className="animate-spin text-indigo-600 dark:text-indigo-400 flex-shrink-0" />
+                        ) : (
+                          <div className="w-[11px] h-[11px] rounded-full border border-slate-300 dark:border-slate-600 flex-shrink-0" />
+                        )}
+                        {step}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 text-xs text-slate-400 dark:text-slate-500">
+                    <Loader2 size={11} className="animate-spin text-indigo-600 dark:text-indigo-400" />
+                    {phase === 'publishing' ? 'Publishing…' : uploadingImage ? 'Uploading image…' : 'Thinking…'}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* ── Input area ── */}
+        <div className="p-3 border-t border-slate-200 dark:border-slate-800 flex-shrink-0">
+
+          {/* Initial prompt form */}
+          {phase === 'prompt' && (
+            <form onSubmit={handleGenerate} className="space-y-2.5">
+              <input
+                type="text"
+                value={pageName}
+                onChange={e => setPageName(e.target.value)}
+                className="input-base"
+                placeholder="Page name (e.g. Summer Campaign)"
+                required
+              />
+              <div className="flex gap-1.5">
+                {(Object.entries(VERTICAL_LABELS) as [Vertical, string][]).map(([v, label]) => (
+                  <button
+                    key={v}
+                    type="button"
+                    onClick={() => setVertical(v)}
+                    className={cn(
+                      'flex-1 py-1.5 text-[11px] font-medium rounded-lg border transition-colors',
+                      vertical === v
+                        ? 'bg-indigo-50 dark:bg-indigo-600/15 border-indigo-300 dark:border-indigo-600/40 text-indigo-600 dark:text-indigo-400'
+                        : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:border-slate-300 dark:hover:border-slate-600'
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <div className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl overflow-hidden focus-within:border-indigo-400 dark:focus-within:border-indigo-500 transition-colors">
+                <textarea
+                  value={prompt}
+                  onChange={e => setPrompt(e.target.value)}
+                  className="w-full bg-transparent px-3.5 pt-3 pb-2 text-sm text-slate-700 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none resize-none"
+                  placeholder="Describe your landing page…"
+                  rows={3}
+                  required
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); }
+                  }}
+                />
+                <div className="flex items-center justify-between px-3 pb-2.5">
+                  <button type="button" className="text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 transition-colors">
+                    <Plus size={16} />
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={!prompt.trim() || !pageName.trim()}
+                    className="w-7 h-7 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-30 disabled:cursor-not-allowed rounded-full flex items-center justify-center transition-colors"
+                  >
+                    <Send size={13} className="text-white" />
+                  </button>
+                </div>
+              </div>
+            </form>
+          )}
+
+          {/* Clarifying questions */}
+          {phase === 'questions' && (
+            <form onSubmit={handleAnswers} className="space-y-2.5">
+              {questions.map((q, i) => (
+                <div key={i}>
+                  <label className="block text-[11px] text-slate-500 dark:text-slate-400 mb-1 leading-relaxed">{q}</label>
+                  <input
+                    type="text"
+                    value={answers[i]}
+                    onChange={e => { const next = [...answers]; next[i] = e.target.value; setAnswers(next); }}
+                    className="input-base"
+                    placeholder="Your answer…"
+                  />
+                </div>
+              ))}
+              <div className="flex gap-2 pt-1">
+                <button type="button" onClick={handleSurpriseMe} className="flex-1 py-2 text-xs text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 border border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600 rounded-xl transition-colors">
+                  Surprise me
+                </button>
+                <button type="submit" className="flex-1 py-2 text-xs btn-primary rounded-xl justify-center">
+                  <Send size={11} /> Build page
+                </button>
+              </div>
+            </form>
+          )}
+
+          {/* Follow-up / editing input */}
+          {(phase === 'editing' || phase === 'published') && (
+            <form onSubmit={handleFollowUp}>
+              <div className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl overflow-hidden focus-within:border-indigo-400 dark:focus-within:border-indigo-500 transition-colors">
+                <textarea
+                  ref={followUpRef}
+                  value={followUpInput}
+                  onChange={e => setFollowUpInput(e.target.value)}
+                  disabled={phase === 'published' || isLoading}
+                  className="w-full bg-transparent px-3.5 pt-3 pb-2 text-sm text-slate-700 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none resize-none disabled:opacity-40"
+                  placeholder={phase === 'published' ? 'Page is published.' : 'Ask Splitlab…'}
+                  rows={2}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); }
+                  }}
+                />
+                <div className="flex items-center justify-between px-3 pb-2.5">
+                  <div className="flex items-center gap-0.5">
+                    <button type="button" className="p-1.5 text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 transition-colors">
+                      <Plus size={15} />
+                    </button>
+                    <button type="button" className="p-1.5 text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 transition-colors">
+                      <Mic size={14} />
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <button type="button" className="flex items-center gap-1 text-[11px] text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 transition-colors">
+                      Build <ChevronDown size={10} />
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={!followUpInput.trim() || phase === 'published' || isLoading}
+                      className="w-7 h-7 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-30 disabled:cursor-not-allowed rounded-full flex items-center justify-center transition-colors"
+                    >
+                      <Send size={12} className="text-white" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </form>
+          )}
+        </div>
+      </div>
+
+      {/* ── Right preview panel ── */}
+      <div className="flex-1 flex flex-col bg-slate-100 dark:bg-slate-950 overflow-hidden">
+
+        {/* Preview top bar */}
+        <div className="flex items-center justify-between px-4 h-12 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex-shrink-0">
+          {/* View mode toggle */}
+          <div className="flex items-center gap-0.5 bg-slate-100 dark:bg-slate-800 rounded-lg p-1 border border-slate-200 dark:border-slate-700">
+            <button
+              onClick={() => setViewMode('desktop')}
+              className={cn('p-1.5 rounded-md transition-colors', viewMode === 'desktop' ? 'bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200 shadow-sm' : 'text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300')}
+            >
+              <Monitor size={14} />
+            </button>
+            <button
+              onClick={() => setViewMode('mobile')}
+              className={cn('p-1.5 rounded-md transition-colors', viewMode === 'mobile' ? 'bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200 shadow-sm' : 'text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300')}
+            >
+              <Smartphone size={14} />
+            </button>
+          </div>
+
+          {/* Page name + refresh */}
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-slate-600 dark:text-slate-300 font-medium">{pageName || 'Homepage'}</span>
+            {showPreview && (
+              <button
+                onClick={() => pageId && setIframeSrc(`/api/pages/${pageId}/preview?t=${Date.now()}`)}
+                className="p-1 text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+              >
+                <RefreshCw size={13} />
+              </button>
+            )}
+          </div>
+
+          {/* External link + download + publish */}
+          <div className="flex items-center gap-2">
+            {showPreview && iframeSrc && (
+              <a href={iframeSrc} target="_blank" rel="noopener noreferrer" className="p-1.5 text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 transition-colors">
+                <ExternalLink size={14} />
+              </a>
+            )}
+            {showPreview && (
+              <button
+                onClick={() => {
+                  const html = iframeRef.current?.contentDocument?.documentElement?.outerHTML;
+                  if (!html) { toast.error('Preview not ready'); return; }
+                  const blob = new Blob([html], { type: 'text/html' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `${pageName || 'page'}.html`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                }}
+                className="p-1.5 text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+                title="Download HTML"
+              >
+                <Download size={14} />
+              </button>
+            )}
+            {phase === 'published' && publishedUrl ? (
+              <button
+                onClick={copyUrl}
+                className="flex items-center gap-1.5 text-xs bg-green-600 hover:bg-green-500 text-white px-3 py-1.5 rounded-full font-medium transition-colors"
+              >
+                {urlCopied ? <Check size={12} /> : <Copy size={12} />}
+                {urlCopied ? 'Copied!' : 'Copy URL'}
+              </button>
+            ) : (
+              <button
+                onClick={() => setPublishConfirmOpen(true)}
+                disabled={!showPreview || isLoading}
+                className="w-8 h-8 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed rounded-full flex items-center justify-center transition-colors shadow-md shadow-indigo-600/20"
+                title="Publish"
+              >
+                {phase === 'publishing' ? <Loader2 size={14} className="animate-spin text-white" /> : <Globe size={14} className="text-white" />}
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Preview content */}
+        <div className="flex-1 flex items-start justify-center overflow-auto p-5">
+          {showPreview && iframeSrc ? (
+            <div className={cn(
+              'relative bg-white rounded-xl overflow-hidden shadow-xl ring-1 ring-black/5 dark:ring-white/5 transition-all duration-300 h-full',
+              viewMode === 'mobile' ? 'w-[390px]' : 'w-full'
+            )}>
+              <iframe
+                ref={iframeRef}
+                src={iframeSrc}
+                className="w-full h-full border-0 transition-opacity duration-500"
+                style={{ opacity: iframeLoaded ? 1 : 0 }}
+                title="Page preview"
+                sandbox="allow-scripts allow-same-origin allow-forms"
+                onLoad={() => setIframeLoaded(true)}
+              />
+              {!iframeLoaded && (
+                <div className="absolute inset-0 bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
+                  <Loader2 size={20} className="animate-spin text-slate-400" />
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center h-full text-center">
+              {phase === 'building' ? (
+                <div className="space-y-3">
+                  <div className="w-14 h-14 rounded-2xl bg-indigo-50 dark:bg-indigo-600/10 border border-indigo-100 dark:border-indigo-600/20 flex items-center justify-center mx-auto">
+                    <Layout size={22} className="text-indigo-600 dark:text-indigo-400 animate-pulse" />
+                  </div>
+                  <p className="text-slate-600 dark:text-slate-300 font-medium text-sm">Building your page…</p>
+                  <p className="text-slate-400 dark:text-slate-500 text-xs">This takes about 15–30 seconds</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="w-14 h-14 rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex items-center justify-center mx-auto shadow-sm">
+                    <Palette size={22} className="text-slate-300 dark:text-slate-600" />
+                  </div>
+                  <p className="text-slate-400 dark:text-slate-500 font-medium text-sm">Preview will appear here</p>
+                  <p className="text-slate-300 dark:text-slate-600 text-xs">Describe your page to get started</p>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Publish confirm dialog */}
+      {publishConfirmOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setPublishConfirmOpen(false)}>
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl p-6 w-full max-w-sm mx-4 shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-5">
+              <h3 className="text-slate-900 dark:text-slate-100 font-semibold text-base">Publish</h3>
+              <span className="text-xs text-slate-400 border border-slate-200 dark:border-slate-700 rounded-md px-2 py-0.5 cursor-pointer hover:text-slate-600 dark:hover:text-slate-300 transition-colors">Docs</span>
+            </div>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mb-2">Your website URL</p>
+            <div className="flex items-center justify-between bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2.5 mb-3">
+              <span className="text-sm font-mono text-slate-500 dark:text-slate-400">
+                <span className="text-slate-900 dark:text-slate-100">www</span>.trysplitlab.com/pages/…
+              </span>
+            </div>
+            <button className="w-full flex items-center gap-2 text-sm text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 border border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600 rounded-xl px-3 py-2.5 mb-5 transition-colors">
+              <Plus size={14} /> Add custom domain
+            </button>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setPublishConfirmOpen(false)} className="btn-secondary text-sm rounded-xl">Cancel</button>
+              <button
+                onClick={() => { setPublishConfirmOpen(false); handlePublish(); }}
+                className="btn-primary text-sm rounded-xl"
+              >
+                Continue
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

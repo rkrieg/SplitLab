@@ -18,6 +18,7 @@ import {
   Moon,
   Globe,
   CreditCard,
+  Sparkles,
 } from 'lucide-react';
 import { cn, slugify } from '@/lib/utils';
 import { PLAN_LIMITS } from '@/lib/plans';
@@ -44,12 +45,13 @@ const globalNavItems = [
 
 function getClientNavItems(clientId: string, isViewer: boolean) {
   const items = [
-    { href: `/clients/${clientId}/pages`,    label: 'Pages',    icon: FileCode2 },
-    { href: `/clients/${clientId}/scripts`,  label: 'Scripts',  icon: Code2 },
-    { href: `/clients/${clientId}/domains`,  label: 'Domains',  icon: Globe },
-    { href: '/team',                         label: 'Team',     icon: Users },
-    { href: '/billing',                      label: 'Billing',  icon: CreditCard },
-    { href: `/clients/${clientId}/settings`, label: 'Settings', icon: Settings },
+    { href: `/clients/${clientId}/pages`,        label: 'Pages',       icon: FileCode2 },
+    { href: `/clients/${clientId}/ai-pages`,      label: 'AI Pages',    icon: Sparkles },
+    { href: `/clients/${clientId}/scripts`,      label: 'Scripts',     icon: Code2 },
+    { href: `/clients/${clientId}/domains`,      label: 'Domains',     icon: Globe },
+    { href: '/team',                             label: 'Team',        icon: Users },
+    { href: '/billing',                          label: 'Billing',     icon: CreditCard },
+    { href: `/clients/${clientId}/settings`,     label: 'Settings',    icon: Settings },
   ];
   return isViewer ? items.filter(i => i.href !== '/billing' && i.href !== '/team') : items;
 }
@@ -132,6 +134,10 @@ export default function Sidebar() {
 
   function isActive(href: string) {
     if (href === '/dashboard') return pathname === '/dashboard';
+    // Exact match for routes that are prefixes of others
+    if (href.endsWith('/pages') && !href.endsWith('/pages/new')) {
+      return pathname === href;
+    }
     return pathname.startsWith(href);
   }
 

@@ -10,7 +10,9 @@ const updateSchema = z.object({
   name: z.string().min(1).max(255).optional(),
   html_content: z.string().optional(),
   tags: z.array(z.string()).optional(),
-  status: z.enum(['active']).optional(),
+  status: z.enum(['active', 'draft', 'published']).optional(),
+  schema_json: z.record(z.unknown()).optional(),
+  conversation_json: z.array(z.unknown()).optional(),
 });
 
 export async function GET(
