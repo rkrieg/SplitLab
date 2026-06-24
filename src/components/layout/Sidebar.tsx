@@ -18,6 +18,7 @@ import {
   Moon,
   Globe,
   CreditCard,
+  Trash2,
 } from 'lucide-react';
 import { cn, slugify } from '@/lib/utils';
 import { PLAN_LIMITS } from '@/lib/plans';
@@ -69,6 +70,8 @@ export default function Sidebar() {
   const [creating, setCreating] = useState(false);
   const [createClientError, setCreateClientError] = useState<{ message: string; isLimit: boolean } | null>(null);
   const [navigating, setNavigating] = useState(false);
+  const [clientToDelete, setClientToDelete] = useState<Client | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => setMounted(true), []);
@@ -202,6 +205,31 @@ export default function Sidebar() {
     }
   }
 
+  async function handleDeleteClient() {
+    if (!clientToDelete) return;
+    setDeleting(true);
+    try {
+      const res = await fetch(`/api/clients/${clientToDelete.id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.error || 'Failed to delete client');
+        return;
+      }
+      const deletedId = clientToDelete.id;
+      setClients((prev) => prev.filter((c) => c.id !== deletedId));
+      toast.success(`Client "${clientToDelete.name}" deleted`);
+      setClientToDelete(null);
+      // If we were viewing the deleted client, navigate back to All Clients
+      if (selectedClientId === deletedId) {
+        router.push('/dashboard');
+      }
+    } catch {
+      toast.error('An unexpected error occurred');
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   return (
     <aside className="w-60 min-h-screen bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col">
       {/* Logo */}
@@ -254,20 +282,33 @@ export default function Sidebar() {
                 {/* Client list */}
                 <div className="max-h-48 overflow-y-auto">
                   {clients.map((client) => (
-                    <button
+                    <div
                       key={client.id}
-                      onClick={() => selectClient(client)}
                       className={cn(
-                        'w-full flex items-center gap-2 px-3 py-2 text-sm transition-colors',
+                        'group w-full flex items-center transition-colors',
                         selectedClientId === client.id
                           ? 'text-indigo-400 bg-indigo-600/10'
                           : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
                       )}
                     >
-                      <Building2 size={13} className="flex-shrink-0" />
-                      <span className="flex-1 text-left truncate">{client.name}</span>
-                      {selectedClientId === client.id && <Check size={13} className="text-indigo-400" />}
-                    </button>
+                      <button
+                        onClick={() => selectClient(client)}
+                        className="flex-1 min-w-0 flex items-center gap-2 pl-3 pr-1 py-2 text-sm"
+                      >
+                        <Building2 size={13} className="flex-shrink-0" />
+                        <span className="flex-1 text-left truncate">{client.name}</span>
+                        {selectedClientId === client.id && <Check size={13} className="text-indigo-400 flex-shrink-0" />}
+                      </button>
+                      {!isViewer && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setClientToDelete(client); }}
+                          title="Delete client"
+                          className="flex-shrink-0 p-2 mr-1 rounded text-slate-400 opacity-0 group-hover:opacity-100 hover:text-red-500 hover:bg-red-500/10 transition-all"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      )}
+                    </div>
                   ))}
                 </div>
 
@@ -423,6 +464,32 @@ export default function Sidebar() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Client Modal */}
+      {clientToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => !deleting && setClientToDelete(null)}>
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl p-6 w-full max-w-sm mx-4 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100 mb-2">Delete Client</h3>
+            <p className="text-sm text-slate-600 dark:text-slate-400 mb-1">
+              Are you sure you want to delete <span className="font-medium text-slate-900 dark:text-slate-100">{clientToDelete.name}</span>?
+            </p>
+            <p className="text-sm text-red-400 mb-5">
+              This permanently removes all workspaces, pages, tests, and data for this client. This cannot be undone.
+            </p>
+            <div className="flex justify-end gap-3">
+              <button type="button" onClick={() => setClientToDelete(null)} disabled={deleting} className="btn-secondary text-sm">Cancel</button>
+              <button
+                type="button"
+                onClick={handleDeleteClient}
+                disabled={deleting}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-medium transition-colors disabled:opacity-60"
+              >
+                {deleting ? <><Spinner />Deleting…</> : 'Delete Client'}
+              </button>
+            </div>
           </div>
         </div>
       )}
