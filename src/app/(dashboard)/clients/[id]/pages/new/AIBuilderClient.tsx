@@ -20,8 +20,7 @@ type Phase =
   | 'generating'
   | 'building'
   | 'editing'
-  | 'publishing'
-  | 'published';
+  | 'publishing';
 
 type ViewMode = 'desktop' | 'mobile';
 
@@ -134,10 +133,8 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
     setHtmlUrl(initialPage.html_url);
     if (initialPage.is_published && initialPage.published_url) {
       setPublishedUrl(initialPage.published_url);
-      setPhase('published');
-    } else {
-      setPhase('editing');
     }
+    setPhase('editing');
 
     // Reconstruct readable chat history from conversation_json
     // Pairs: [user, assistant, user, assistant, ...]
@@ -367,11 +364,8 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
     setPhase('editing');
     addMessage({ role: 'assistant', content: 'Your page is ready! Click any text in the preview to edit it, or ask me to make changes.' });
 
-    // Save to DB then auto-publish (injects tracker + sets is_published + published_url)
     const savedId = await savePage({ html_url, slug, schema, history });
-    if (savedId) {
-      await handlePublish(savedId);
-    } else {
+    if (!savedId) {
       toast(
         (t) => (
           <span className="flex items-center gap-2 text-sm">
@@ -480,9 +474,15 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
       return;
     }
     const { published_url } = await res.json();
+    const wasAlreadyPublished = !!publishedUrl;
     setPublishedUrl(published_url);
-    setPhase('published');
-    addMessage({ role: 'assistant', content: `Your page is live! Copy the URL below and use it as a redirect variant in any test.` });
+    setPhase('editing');
+    addMessage({
+      role: 'assistant',
+      content: wasAlreadyPublished
+        ? 'Your changes are live.'
+        : 'Your page is live! Copy the URL below and use it as a redirect variant in any test.',
+    });
   }
 
   async function copyUrl() {
@@ -493,7 +493,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
   }
 
   const isLoading = phase === 'generating' || phase === 'building' || phase === 'publishing' || uploadingImage;
-  const showPreview = phase === 'editing' || phase === 'published';
+  const showPreview = !!iframeSrc;
 
   return (
     <div className="fixed inset-0 z-20 flex bg-slate-50 dark:bg-slate-900" style={{ left: '15rem' }}>
@@ -700,16 +700,16 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
           )}
 
           {/* Follow-up / editing input */}
-          {(phase === 'editing' || phase === 'published') && (
+          {phase === 'editing' && (
             <form onSubmit={handleFollowUp}>
               <div className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl overflow-hidden focus-within:border-indigo-400 dark:focus-within:border-indigo-500 transition-colors">
                 <textarea
                   ref={followUpRef}
                   value={followUpInput}
                   onChange={e => setFollowUpInput(e.target.value)}
-                  disabled={phase === 'published' || isLoading}
+                  disabled={isLoading}
                   className="w-full bg-transparent px-3.5 pt-3 pb-2 text-sm text-slate-700 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none resize-none disabled:opacity-40"
-                  placeholder={phase === 'published' ? 'Page is published.' : 'Ask Splitlab…'}
+                  placeholder="Ask Splitlab…"
                   rows={2}
                   onKeyDown={e => {
                     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); }
@@ -730,7 +730,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
                     </button>
                     <button
                       type="submit"
-                      disabled={!followUpInput.trim() || phase === 'published' || isLoading}
+                      disabled={!followUpInput.trim() || isLoading}
                       className="w-7 h-7 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-30 disabled:cursor-not-allowed rounded-full flex items-center justify-center transition-colors"
                     >
                       <Send size={12} className="text-white" />
@@ -803,7 +803,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
                 <Download size={14} />
               </button>
             )}
-            {phase === 'published' && publishedUrl ? (
+            {publishedUrl && (
               <button
                 onClick={copyUrl}
                 className="flex items-center gap-1.5 text-xs bg-green-600 hover:bg-green-500 text-white px-3 py-1.5 rounded-full font-medium transition-colors"
@@ -811,16 +811,15 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
                 {urlCopied ? <Check size={12} /> : <Copy size={12} />}
                 {urlCopied ? 'Copied!' : 'Copy URL'}
               </button>
-            ) : (
-              <button
-                onClick={() => setPublishConfirmOpen(true)}
-                disabled={!showPreview || isLoading}
-                className="w-8 h-8 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed rounded-full flex items-center justify-center transition-colors shadow-md shadow-indigo-600/20"
-                title="Publish"
-              >
-                {phase === 'publishing' ? <Loader2 size={14} className="animate-spin text-white" /> : <Globe size={14} className="text-white" />}
-              </button>
             )}
+            <button
+              onClick={() => setPublishConfirmOpen(true)}
+              disabled={!showPreview || isLoading}
+              className="w-8 h-8 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed rounded-full flex items-center justify-center transition-colors shadow-md shadow-indigo-600/20"
+              title={publishedUrl ? 'Republish changes' : 'Publish'}
+            >
+              {phase === 'publishing' ? <Loader2 size={14} className="animate-spin text-white" /> : <Globe size={14} className="text-white" />}
+            </button>
           </div>
         </div>
 
@@ -875,7 +874,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setPublishConfirmOpen(false)}>
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl p-6 w-full max-w-sm mx-4 shadow-2xl" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-5">
-              <h3 className="text-slate-900 dark:text-slate-100 font-semibold text-base">Publish</h3>
+              <h3 className="text-slate-900 dark:text-slate-100 font-semibold text-base">{publishedUrl ? 'Republish' : 'Publish'}</h3>
               <span className="text-xs text-slate-400 border border-slate-200 dark:border-slate-700 rounded-md px-2 py-0.5 cursor-pointer hover:text-slate-600 dark:hover:text-slate-300 transition-colors">Docs</span>
             </div>
             <p className="text-xs text-slate-500 dark:text-slate-400 mb-2">Your website URL</p>
