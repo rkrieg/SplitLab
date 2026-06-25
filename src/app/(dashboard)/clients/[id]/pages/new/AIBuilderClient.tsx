@@ -591,15 +591,15 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
                   {/* Message actions */}
                   <div className="flex items-center gap-0.5 pl-8">
                     <button className="p-1 text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 transition-colors"><RotateCcw size={12} /></button>
-                    <button className="p-1 text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 transition-colors"><ThumbsUp size={12} /></button>
-                    <button className="p-1 text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 transition-colors"><ThumbsDown size={12} /></button>
+                    {/* <button className="p-1 text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 transition-colors"><ThumbsUp size={12} /></button> */}
+                    {/* <button className="p-1 text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 transition-colors"><ThumbsDown size={12} /></button> */}
                     <button
                       className="p-1 text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 transition-colors"
                       onClick={() => { navigator.clipboard.writeText(msg.content); toast.success('Copied'); }}
                     >
                       <Copy size={12} />
                     </button>
-                    <button className="p-1 text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 transition-colors"><MoreHorizontal size={12} /></button>
+                    {/* <button className="p-1 text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 transition-colors"><MoreHorizontal size={12} /></button> */}
                   </div>
                 </div>
               )}
@@ -745,14 +745,14 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
                     <button type="button" className="p-1.5 text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 transition-colors">
                       <Plus size={15} />
                     </button>
-                    <button type="button" className="p-1.5 text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 transition-colors">
+                    {/* <button type="button" className="p-1.5 text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 transition-colors">
                       <Mic size={14} />
-                    </button>
+                    </button> */}
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <button type="button" className="flex items-center gap-1 text-[11px] text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 transition-colors">
+                    {/* <button type="button" className="flex items-center gap-1 text-[11px] text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 transition-colors">
                       Build <ChevronDown size={10} />
-                    </button>
+                    </button> */}
                     <button
                       type="submit"
                       disabled={!followUpInput.trim() || isLoading}
