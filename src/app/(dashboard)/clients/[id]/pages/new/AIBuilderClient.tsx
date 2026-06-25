@@ -38,6 +38,7 @@ interface InitialPage {
   schema_json: unknown;
   conversation_json: { role: string; content: string }[] | null;
   html_url: string;
+  slug: string | null;
   is_published: boolean;
   published_url: string | null;
 }
@@ -61,7 +62,7 @@ const BUILD_STEPS = [
   'Building structure',
   'Writing content',
   'Styling layout',
-  'Uploading page',
+  'Saving page',
 ];
 
 function setNestedValue(obj: Record<string, unknown>, path: string, value: unknown): Record<string, unknown> {
@@ -99,6 +100,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
   const [viewMode, setViewMode] = useState<ViewMode>('desktop');
 
   const [pageId, setPageId] = useState<string | null>(null);
+  const [slug, setSlug] = useState<string | null>(null);
   const [htmlUrl, setHtmlUrl] = useState<string | null>(null);
   const [iframeSrc, setIframeSrc] = useState<string | null>(null);
   const [iframeLoaded, setIframeLoaded] = useState(false);
@@ -131,6 +133,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
     const history = initialPage.conversation_json ?? [];
     setConversationJson(history);
     setHtmlUrl(initialPage.html_url);
+    setSlug(initialPage.slug);
     if (initialPage.is_published && initialPage.published_url) {
       setPublishedUrl(initialPage.published_url);
     }
@@ -193,7 +196,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
       const existing = saveTimers.get(field);
       if (existing) clearTimeout(existing);
       saveTimers.set(field, setTimeout(async () => {
-        const html = iframeRef.current?.contentDocument?.documentElement?.outerHTML ?? null;
+        const html = getCleanHtml();
         await fetch(`/api/pages/${pageId}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
@@ -216,6 +219,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
     const doc = iframeRef.current.contentDocument;
     if (!doc) return;
     const script = doc.createElement('script');
+    script.setAttribute('data-sl-editor', 'true');
     script.textContent = `
       (function() {
         var saveTimer;
@@ -266,6 +270,26 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
 
   function addMessage(msg: Message) {
     setMessages(prev => [...prev, msg]);
+  }
+
+  // The live iframe DOM has editor-only mutations baked in (contentEditable,
+  // hover/focus outline styles, the injected editor <script>). Strip those
+  // before persisting or downloading so they never leak into the page real
+  // visitors see.
+  function getCleanHtml(): string | null {
+    const doc = iframeRef.current?.contentDocument;
+    if (!doc) return null;
+    const clone = doc.documentElement.cloneNode(true) as HTMLElement;
+    clone.querySelectorAll('[data-sl-editor]').forEach(el => el.remove());
+    clone.querySelectorAll('[data-field]').forEach((el) => {
+      el.removeAttribute('contenteditable');
+      const style = el as HTMLElement;
+      style.style.outline = '';
+      style.style.cursor = '';
+      style.style.boxShadow = '';
+      style.style.borderRadius = '';
+    });
+    return '<!DOCTYPE html>\n' + clone.outerHTML;
   }
 
   function animateBuildSteps() {
@@ -359,6 +383,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
 
     // html_url stored in DB; setHtmlUrl signals the preview useEffect to refresh
     setHtmlUrl(html_url);
+    setSlug(slug);
     schemaRef.current = schema;
     setSchemaJson(schema);
     setPhase('editing');
@@ -787,7 +812,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
             {showPreview && (
               <button
                 onClick={() => {
-                  const html = iframeRef.current?.contentDocument?.documentElement?.outerHTML;
+                  const html = getCleanHtml();
                   if (!html) { toast.error('Preview not ready'); return; }
                   const blob = new Blob([html], { type: 'text/html' });
                   const url = URL.createObjectURL(blob);
@@ -815,10 +840,10 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
             <button
               onClick={() => setPublishConfirmOpen(true)}
               disabled={!showPreview || isLoading}
-              className="w-8 h-8 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed rounded-full flex items-center justify-center transition-colors shadow-md shadow-indigo-600/20"
-              title={publishedUrl ? 'Republish changes' : 'Publish'}
+              className="flex items-center gap-1.5 text-xs bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white px-3 py-1.5 rounded-full font-medium transition-colors shadow-md shadow-indigo-600/20"
             >
-              {phase === 'publishing' ? <Loader2 size={14} className="animate-spin text-white" /> : <Globe size={14} className="text-white" />}
+              {phase === 'publishing' ? <Loader2 size={12} className="animate-spin" /> : <Globe size={12} />}
+              {publishedUrl ? 'Update' : 'Publish'}
             </button>
           </div>
         </div>
@@ -853,7 +878,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
                     <Layout size={22} className="text-indigo-600 dark:text-indigo-400 animate-pulse" />
                   </div>
                   <p className="text-slate-600 dark:text-slate-300 font-medium text-sm">Building your page…</p>
-                  <p className="text-slate-400 dark:text-slate-500 text-xs">This takes about 15–30 seconds</p>
+                  <p className="text-slate-400 dark:text-slate-500 text-xs">This may take a moment…</p>
                 </div>
               ) : (
                 <div className="space-y-3">
@@ -873,19 +898,15 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
       {publishConfirmOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setPublishConfirmOpen(false)}>
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl p-6 w-full max-w-sm mx-4 shadow-2xl" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-5">
+            <div className="mb-5">
               <h3 className="text-slate-900 dark:text-slate-100 font-semibold text-base">{publishedUrl ? 'Republish' : 'Publish'}</h3>
-              <span className="text-xs text-slate-400 border border-slate-200 dark:border-slate-700 rounded-md px-2 py-0.5 cursor-pointer hover:text-slate-600 dark:hover:text-slate-300 transition-colors">Docs</span>
             </div>
             <p className="text-xs text-slate-500 dark:text-slate-400 mb-2">Your website URL</p>
-            <div className="flex items-center justify-between bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2.5 mb-3">
-              <span className="text-sm font-mono text-slate-500 dark:text-slate-400">
-                <span className="text-slate-900 dark:text-slate-100">www</span>.trysplitlab.com/pages/…
+            <div className="flex items-center justify-between bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2.5 mb-5">
+              <span className="text-sm font-mono text-slate-500 dark:text-slate-400 truncate">
+                {(process.env.NEXT_PUBLIC_APP_URL || 'https://www.trysplitlab.com').replace(/^https?:\/\//, '')}/pages/{slug ?? '…'}
               </span>
             </div>
-            <button className="w-full flex items-center gap-2 text-sm text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 border border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600 rounded-xl px-3 py-2.5 mb-5 transition-colors">
-              <Plus size={14} /> Add custom domain
-            </button>
             <div className="flex justify-end gap-2">
               <button onClick={() => setPublishConfirmOpen(false)} className="btn-secondary text-sm rounded-xl">Cancel</button>
               <button

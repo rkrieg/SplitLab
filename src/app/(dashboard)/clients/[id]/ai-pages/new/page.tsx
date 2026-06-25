@@ -37,7 +37,7 @@ export default async function AIBuilderPage({ params, searchParams }: PageProps)
   if (searchParams.page_id) {
     const { data: page } = await db
       .from('pages')
-      .select('id, name, vertical, schema_json, conversation_json, html_url, html_content, is_published, published_url')
+      .select('id, name, vertical, schema_json, conversation_json, html_url, html_content, slug, is_published, published_url')
       .eq('id', searchParams.page_id)
       .eq('workspace_id', workspace.id)
       .single();
