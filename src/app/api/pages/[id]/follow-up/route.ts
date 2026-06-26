@@ -65,7 +65,9 @@ export async function POST(
 
     if (!html) return NextResponse.json({ error: 'Could not load current HTML' }, { status: 400 });
 
-    const userMessage = `Current schema:\n${JSON.stringify(schema, null, 2)}\n\nCurrent HTML:\n${html}\n\nInstruction: ${prompt}`;
+    const htmlForClaude = html.replace(/<script src="[^"]+\/tracker\.js"><\/script>/, '<!-- TRACKER_PLACEHOLDER -->');
+
+    const userMessage = `Current schema:\n${JSON.stringify(schema, null, 2)}\n\nCurrent HTML:\n${htmlForClaude}\n\nInstruction: ${prompt}`;
 
     const anthropic = getClient();
     const response = await anthropic.messages.create({
