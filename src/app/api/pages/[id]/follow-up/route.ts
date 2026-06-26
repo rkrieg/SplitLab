@@ -3,7 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { getClient } from '@/lib/claude';
-import { uploadHtml, fileNameFromUrl } from '@/lib/storage';
+import { uploadHtml, downloadHtmlByPath, fileNameFromUrl } from '@/lib/storage';
 import { resolveWorkspaceRole } from '@/lib/workspace-auth';
 
 const SYSTEM_PROMPT = `You are editing an existing landing page. The user will give you an instruction to modify the page.
@@ -56,7 +56,7 @@ export async function POST(
     }
 
     const schema = current_schema ?? page.schema_json;
-    const html = current_html ?? page.html_content ?? (page.html_url ? await fetch(page.html_url).then(r => r.text()) : null);
+    const html = current_html ?? page.html_content ?? (page.html_url ? await downloadHtmlByPath(fileNameFromUrl(page.html_url)) : null);
     const history: { role: 'user' | 'assistant'; content: string }[] = Array.isArray(conversation_json)
       ? conversation_json
       : Array.isArray(page.conversation_json)

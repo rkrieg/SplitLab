@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/supabase-server';
+import { downloadHtmlByPath, fileNameFromUrl } from '@/lib/storage';
 
 export async function GET(
   _req: NextRequest,
@@ -20,11 +21,11 @@ export async function GET(
   let html = page.html_content as string | null;
 
   if (!html) {
-    const res = await fetch(page.html_url);
-    if (!res.ok) {
+    try {
+      html = await downloadHtmlByPath(fileNameFromUrl(page.html_url));
+    } catch {
       return new NextResponse(notFoundHtml(), { status: 502, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
     }
-    html = await res.text();
   }
 
   return new NextResponse(html, {
