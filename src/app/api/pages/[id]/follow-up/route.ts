@@ -48,26 +48,46 @@ export async function POST(
   const wsRole = await resolveWorkspaceRole(page.workspace_id, session.user.id, session.user.role);
   if (!wsRole || wsRole === 'viewer') return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
+  if (!page.html_url && !page.html_content) {
+    return NextResponse.json({ error: 'Page has not been built yet' }, { status: 400 });
+  }
+
   try {
-    const { prompt, current_schema, current_html, conversation_json } = await request.json();
+    const { prompt, current_schema, current_html, image_urls } = await request.json();
 
     if (!prompt || typeof prompt !== 'string') {
       return NextResponse.json({ error: 'prompt is required' }, { status: 400 });
     }
 
+    if (image_urls !== undefined && (!Array.isArray(image_urls) || image_urls.length > 3)) {
+      return NextResponse.json({ error: 'image_urls must be an array of at most 3 URLs' }, { status: 400 });
+    }
+
     const schema = current_schema ?? page.schema_json;
     const html = current_html ?? page.html_content ?? (page.html_url ? await downloadHtmlByPath(fileNameFromUrl(page.html_url)) : null);
-    const history: { role: 'user' | 'assistant'; content: string }[] = Array.isArray(conversation_json)
-      ? conversation_json
-      : Array.isArray(page.conversation_json)
-      ? page.conversation_json
-      : [];
+    // Always read from DB — client state may not have image_urls persisted in history entries
+    const history: { role: 'user' | 'assistant'; content: string; image_urls?: string[] }[] =
+      Array.isArray(page.conversation_json) ? page.conversation_json : [];
 
     if (!html) return NextResponse.json({ error: 'Could not load current HTML' }, { status: 400 });
 
     const htmlForClaude = html.replace(/<script src="[^"]+\/tracker\.js"><\/script>/, '<!-- TRACKER_PLACEHOLDER -->');
 
-    const userMessage = `Current schema:\n${JSON.stringify(schema, null, 2)}\n\nCurrent HTML:\n${htmlForClaude}\n\nInstruction: ${prompt}`;
+    const urlNote = Array.isArray(image_urls) && image_urls.length > 0
+      ? `\n\nUse EXACTLY these image URLs in the HTML (do not invent or substitute any other URLs):\n${(image_urls as string[]).map((u, i) => `Image ${i + 1}: ${u}`).join('\n')}`
+      : '';
+    const textContent = `Current schema:\n${JSON.stringify(schema, null, 2)}\n\nCurrent HTML:\n${htmlForClaude}\n\nInstruction: ${prompt}${urlNote}`;
+
+    const userContent: Parameters<typeof anthropic.messages.create>[0]['messages'][number]['content'] =
+      Array.isArray(image_urls) && image_urls.length > 0
+        ? [
+            ...image_urls.map((url: string) => ({
+              type: 'image' as const,
+              source: { type: 'url' as const, url },
+            })),
+            { type: 'text' as const, text: textContent },
+          ]
+        : textContent;
 
     const anthropic = getClient();
     const response = await anthropic.messages.create({
@@ -75,8 +95,8 @@ export async function POST(
       max_tokens: 16000,
       system: SYSTEM_PROMPT,
       messages: [
-        ...history,
-        { role: 'user', content: userMessage },
+        ...history.map(({ role, content }) => ({ role, content })),
+        { role: 'user', content: userContent },
       ],
     });
 
@@ -105,10 +125,12 @@ export async function POST(
     const storagePath = fileNameFromUrl(page.html_url);
     const htmlUrl = await uploadHtml(storagePath, parsed.html);
 
-    // Append to conversation history
+    // Append to conversation history — include image_urls so they can be shown in chat on restore
+    const userEntry: Record<string, unknown> = { role: 'user', content: prompt };
+    if (Array.isArray(image_urls) && image_urls.length > 0) userEntry.image_urls = image_urls;
     const updatedConversation = [
       ...history,
-      { role: 'user', content: prompt },
+      userEntry,
       { role: 'assistant', content: JSON.stringify({ type: parsed.type, schema_json: parsed.schema_json ?? schema }) },
     ];
 

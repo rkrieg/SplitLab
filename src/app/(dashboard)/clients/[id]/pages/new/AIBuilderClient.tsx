@@ -26,6 +26,7 @@ type ViewMode = 'desktop' | 'mobile';
 interface Message {
   role: 'user' | 'assistant';
   content: string;
+  image_urls?: string[];
   isQuestions?: boolean;
   questions?: string[];
 }
@@ -35,8 +36,8 @@ interface InitialPage {
   name: string;
   vertical: string;
   schema_json: unknown;
-  conversation_json: { role: string; content: string }[] | null;
-  html_url: string;
+  conversation_json: { role: string; content: string; image_urls?: string[] }[] | null;
+  html_url: string | null;
   slug: string | null;
   is_published: boolean;
   published_url: string | null;
@@ -104,13 +105,17 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
   const [iframeSrc, setIframeSrc] = useState<string | null>(null);
   const [iframeLoaded, setIframeLoaded] = useState(false);
   const [schemaJson, setSchemaJson] = useState<unknown>(null);
-  const [conversationJson, setConversationJson] = useState<{ role: string; content: string }[]>([]);
+  const [conversationJson, setConversationJson] = useState<{ role: string; content: string; image_urls?: string[] }[]>([]);
   const [publishedUrl, setPublishedUrl] = useState<string | null>(null);
   const [urlCopied, setUrlCopied] = useState(false);
   const [publishConfirmOpen, setPublishConfirmOpen] = useState(false);
 
   const [pendingImageField, setPendingImageField] = useState<string | null>(null);
   const [uploadingImage, setUploadingImage] = useState(false);
+
+  // Chat image attachments (paste / file-picker)
+  const [chatImages, setChatImages] = useState<{ file: File; preview: string }[]>([]);
+  const chatImageInputRef = useRef<HTMLInputElement>(null);
 
   const [questions, setQuestions] = useState<string[]>([]);
   const [answers, setAnswers] = useState<string[]>([]);
@@ -121,12 +126,16 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
 
-  // Restore state when resuming an existing page
+  // Restore state from pre-created page
   useEffect(() => {
     if (!initialPage) return;
     setPageId(initialPage.id);
     setPageName(initialPage.name);
     setVertical(initialPage.vertical as Vertical);
+
+    // Fresh page (just created from modal) — no HTML yet, stay in prompt phase
+    if (!initialPage.html_url) return;
+
     setSchemaJson(initialPage.schema_json);
     schemaRef.current = initialPage.schema_json;
     const history = initialPage.conversation_json ?? [];
@@ -138,16 +147,14 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
     }
     setPhase('editing');
 
-    // Reconstruct readable chat history from conversation_json
-    // Pairs: [user, assistant, user, assistant, ...]
-    // First pair = original prompt + schema generation
-    // Subsequent pairs = follow-up edits
     const restored: Message[] = [];
     for (let i = 0; i < history.length; i += 2) {
       const userMsg = history[i];
       const assistantMsg = history[i + 1];
       if (!userMsg) break;
-      restored.push({ role: 'user', content: userMsg.content });
+      const userEntry: Message = { role: 'user', content: userMsg.content };
+      if (Array.isArray(userMsg.image_urls) && userMsg.image_urls.length > 0) userEntry.image_urls = userMsg.image_urls;
+      restored.push(userEntry);
       if (assistantMsg) {
         const isFirst = i === 0;
         restored.push({
@@ -163,9 +170,9 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Stable iframe src — points to preview route, refreshes when pageId changes or htmlUrl signals a content update
+  // Stable iframe src — points to preview route, refreshes when htmlUrl is available/changes
   useEffect(() => {
-    if (!pageId) return;
+    if (!pageId || !htmlUrl) return;
     setIframeSrc(`/api/pages/${pageId}/preview?t=${Date.now()}`);
     setIframeLoaded(false);
   }, [pageId, htmlUrl]);
@@ -304,7 +311,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
 
   // ── Generate → Build ──────────────────────────────────────────────────────
 
-  async function runGenerate(userPrompt: string, history: { role: string; content: string }[]) {
+  async function runGenerate(userPrompt: string, history: { role: string; content: string; image_urls?: string[] }[]) {
     setPhase('generating');
     const res = await fetch('/api/pages/generate', {
       method: 'POST',
@@ -335,40 +342,55 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
     await runBuild(data.schema, updatedHistory);
   }
 
-  async function savePage(payload: {
-    html_url: string; slug: string; schema: unknown; history: { role: string; content: string }[];
-  }): Promise<string | null> {
-    const createRes = await fetch('/api/pages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        workspace_id: workspaceId,
-        name: pageName || 'Untitled Page',
-        prompt, vertical,
-        schema_json: payload.schema,
-        conversation_json: payload.history,
-        html_url: payload.html_url,
-        slug: payload.slug,
-        source_type: 'ai_generated',
-      }),
-    });
-    if (!createRes.ok) {
-      const err = await createRes.json();
-      toast.error(err.error || 'Failed to save page');
-      return null;
-    }
-    const page = await createRes.json();
-    setPageId(page.id);
-    return page.id as string;
-  }
-
-  async function runBuild(schema: unknown, history: { role: string; content: string }[]) {
+  async function runBuild(schema: unknown, history: { role: string; content: string; image_urls?: string[] }[]) {
+    if (!pageId) return;
     setPhase('building');
     const cleanup = animateBuildSteps();
+
+    // Step 1: upload any attached images first
+    let image_urls: string[] = [];
+    if (chatImages.length > 0) {
+      const attachedImages = chatImages;
+      setChatImages([]);
+      try {
+        image_urls = await Promise.all(
+          attachedImages.map(async ({ file }) => {
+            const fd = new FormData();
+            fd.append('file', file);
+            const r = await fetch(`/api/pages/${pageId}/upload-chat-image`, { method: 'POST', body: fd });
+            if (!r.ok) { const err = await r.json(); throw new Error(err.error || 'Image upload failed'); }
+            const { url } = await r.json();
+            return url as string;
+          })
+        );
+        // Replace blob preview URLs with real URLs in the chat message, then revoke blobs
+        attachedImages.forEach(img => URL.revokeObjectURL(img.preview));
+        setMessages(prev => {
+          const updated = [...prev];
+          for (let i = updated.length - 1; i >= 0; i--) {
+            if (updated[i].role === 'user') {
+              updated[i] = { ...updated[i], image_urls };
+              break;
+            }
+          }
+          return updated;
+        });
+      } catch (err) {
+        cleanup();
+        toast.error(err instanceof Error ? err.message : 'Image upload failed');
+        setPhase('prompt');
+        return;
+      }
+    }
+
+    // Step 2: build HTML (pass image URLs so Claude embeds them directly)
     const res = await fetch('/api/pages/build', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ schema_json: schema }),
+      body: JSON.stringify({
+        schema_json: schema,
+        ...(image_urls.length > 0 ? { image_urls, user_prompt: prompt } : {}),
+      }),
     });
     cleanup();
     setBuildStep(BUILD_STEPS.length - 1);
@@ -380,37 +402,45 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
     }
     const { html_url, slug } = await res.json();
 
-    // html_url stored in DB; setHtmlUrl signals the preview useEffect to refresh
+    // Attach image_urls to the last user entry in history before saving
+    const historyWithImages = image_urls.length > 0
+      ? history.map((entry, i) =>
+          i === history.length - 2 && entry.role === 'user'
+            ? { ...entry, image_urls }
+            : entry
+        )
+      : history;
+
+    // Step 3: PATCH first so DB has html_url before preview route is hit
+    const patchRes = await fetch(`/api/pages/${pageId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        prompt,
+        slug,
+        html_url,
+        schema_json: schema,
+        conversation_json: historyWithImages,
+      }),
+    });
+    if (!patchRes.ok) {
+      toast('Page built but metadata not saved — edits may not persist.', { icon: '⚠️' });
+    }
+
+    // Now update state — triggers iframe load after DB is updated
     setHtmlUrl(html_url);
     setSlug(slug);
     schemaRef.current = schema;
     setSchemaJson(schema);
     setPhase('editing');
     addMessage({ role: 'assistant', content: 'Your page is ready! Click any text in the preview to edit it, or ask me to make changes.' });
-
-    const savedId = await savePage({ html_url, slug, schema, history });
-    if (!savedId) {
-      toast(
-        (t) => (
-          <span className="flex items-center gap-2 text-sm">
-            Page built but not saved.
-            <button
-              className="font-semibold underline"
-              onClick={() => { toast.dismiss(t.id); savePage({ html_url, slug, schema, history }); }}
-            >
-              Retry
-            </button>
-          </span>
-        ),
-        { duration: Infinity }
-      );
-    }
   }
 
   async function handleGenerate(e: React.FormEvent) {
     e.preventDefault();
     if (!prompt.trim() || !pageName.trim()) return;
-    addMessage({ role: 'user', content: prompt });
+    const previewUrls = chatImages.map(img => img.preview);
+    addMessage({ role: 'user', content: prompt, ...(previewUrls.length > 0 ? { image_urls: previewUrls } : {}) });
     await runGenerate(prompt, []);
   }
 
@@ -435,17 +465,98 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
     await runGenerate('Surprise me — just build the best default.', history);
   }
 
-  async function handleFollowUp(e: React.FormEvent) {
-    e.preventDefault();
-    if (!followUpInput.trim() || !pageId) return;
-    const instruction = followUpInput.trim();
-    setFollowUpInput('');
-    addMessage({ role: 'user', content: instruction });
+  function addChatImages(files: File[]) {
+    setChatImages(prev => {
+      const remaining = 3 - prev.length;
+      if (remaining <= 0) { toast.error('Maximum 3 images per message'); return prev; }
+      const toAdd = files.slice(0, remaining);
+      if (files.length > remaining) toast.error(`Only ${remaining} more image${remaining === 1 ? '' : 's'} allowed`);
+      return [
+        ...prev,
+        ...toAdd.map(f => ({ file: f, preview: URL.createObjectURL(f) })),
+      ];
+    });
+  }
+
+  function removeChatImage(index: number) {
+    setChatImages(prev => {
+      URL.revokeObjectURL(prev[index].preview);
+      return prev.filter((_, i) => i !== index);
+    });
+  }
+
+  function handleChatImagePaste(e: React.ClipboardEvent) {
+    const imageFiles = Array.from(e.clipboardData.items)
+      .filter(item => item.kind === 'file' && item.type.startsWith('image/'))
+      .map(item => item.getAsFile())
+      .filter((f): f is File => f !== null);
+    if (imageFiles.length > 0) {
+      e.preventDefault();
+      addChatImages(imageFiles);
+    }
+  }
+
+  function handleChatImagePicker(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? []);
+    if (files.length > 0) addChatImages(files);
+    e.target.value = '';
+  }
+
+  async function sendFollowUp(
+    instruction: string,
+    images: { file: File; preview: string }[],
+    pid: string,
+    silent = false
+  ) {
+    if (!silent) {
+      const previewUrls = images.map(img => img.preview);
+      addMessage({ role: 'user', content: instruction, ...(previewUrls.length > 0 ? { image_urls: previewUrls } : {}) });
+    }
     setPhase('generating');
-    const res = await fetch(`/api/pages/${pageId}/follow-up`, {
+
+    // Upload images and collect real URLs
+    let image_urls: string[] = [];
+    if (images.length > 0) {
+      try {
+        image_urls = await Promise.all(
+          images.map(async ({ file }) => {
+            const fd = new FormData();
+            fd.append('file', file);
+            const r = await fetch(`/api/pages/${pid}/upload-chat-image`, { method: 'POST', body: fd });
+            if (!r.ok) { const err = await r.json(); throw new Error(err.error || 'Image upload failed'); }
+            const { url } = await r.json();
+            return url as string;
+          })
+        );
+        // Replace blob preview URLs with real URLs, then revoke blobs
+        images.forEach(img => URL.revokeObjectURL(img.preview));
+        if (!silent) {
+          setMessages(prev => {
+            const updated = [...prev];
+            for (let i = updated.length - 1; i >= 0; i--) {
+              if (updated[i].role === 'user') {
+                updated[i] = { ...updated[i], image_urls };
+                break;
+              }
+            }
+            return updated;
+          });
+        }
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Image upload failed');
+        setPhase('editing');
+        return;
+      }
+    }
+
+    const res = await fetch(`/api/pages/${pid}/follow-up`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt: instruction, current_schema: schemaJson, conversation_json: conversationJson }),
+      body: JSON.stringify({
+        prompt: instruction,
+        current_schema: schemaRef.current,
+        ...(image_urls.length > 0 ? { image_urls } : {}),
+      }),
     });
     if (!res.ok) {
       const err = await res.json();
@@ -456,13 +567,25 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
     const data = await res.json();
     if (data.schema_json) { schemaRef.current = data.schema_json; setSchemaJson(data.schema_json); }
     setHtmlUrl(data.html_url + `?t=${Date.now()}`);
-    addMessage({ role: 'assistant', content: 'Done! The page has been updated.' });
+    if (!silent) {
+      addMessage({ role: 'assistant', content: 'Done! The page has been updated.' });
+    }
     setConversationJson(prev => [
       ...prev,
       { role: 'user', content: instruction },
       { role: 'assistant', content: JSON.stringify(data) },
     ]);
     setPhase('editing');
+  }
+
+  async function handleFollowUp(e: React.FormEvent) {
+    e.preventDefault();
+    if ((!followUpInput.trim() && chatImages.length === 0) || !pageId) return;
+    const instruction = followUpInput.trim() || 'Please incorporate these reference images into the page.';
+    const attachedImages = chatImages;
+    setFollowUpInput('');
+    setChatImages([]);
+    await sendFollowUp(instruction, attachedImages, pageId);
   }
 
   async function handleImageUpload(e: React.ChangeEvent<HTMLInputElement>) {
@@ -577,6 +700,13 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
             <div key={i} className={cn('flex flex-col gap-1', msg.role === 'user' ? 'items-end' : 'items-start')}>
               {msg.role === 'user' ? (
                 <div className="bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl rounded-tr-sm px-3.5 py-2.5 max-w-[88%]">
+                  {msg.image_urls && msg.image_urls.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mb-2">
+                      {msg.image_urls.map((url, idx) => (
+                        <img key={idx} src={url} alt="" className="h-20 w-20 object-cover rounded-lg border border-white/10" />
+                      ))}
+                    </div>
+                  )}
                   <p className="text-sm text-slate-700 dark:text-slate-200 leading-relaxed whitespace-pre-wrap">{msg.content}</p>
                 </div>
               ) : (
@@ -656,6 +786,14 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
 
         {/* ── Input area ── */}
         <div className="p-3 border-t border-slate-200 dark:border-slate-800 flex-shrink-0">
+          <input
+            ref={chatImageInputRef}
+            type="file"
+            accept="image/jpeg,image/png,image/webp,image/gif,image/svg+xml"
+            multiple
+            className="hidden"
+            onChange={handleChatImagePicker}
+          />
 
           {/* Initial prompt form */}
           {phase === 'prompt' && (
@@ -668,24 +806,30 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
                 placeholder="Page name (e.g. Summer Campaign)"
                 required
               />
-              <div className="flex gap-1.5">
-                {(Object.entries(VERTICAL_LABELS) as [Vertical, string][]).map(([v, label]) => (
-                  <button
-                    key={v}
-                    type="button"
-                    onClick={() => setVertical(v)}
-                    className={cn(
-                      'flex-1 py-1.5 text-[11px] font-medium rounded-lg border transition-colors',
-                      vertical === v
-                        ? 'bg-indigo-50 dark:bg-indigo-600/15 border-indigo-300 dark:border-indigo-600/40 text-indigo-600 dark:text-indigo-400'
-                        : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:border-slate-300 dark:hover:border-slate-600'
-                    )}
-                  >
-                    {label}
-                  </button>
-                ))}
+              <div className="flex items-center gap-1.5">
+                <span className="text-[11px] text-gray-500">Vertical:</span>
+                <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium bg-indigo-600/15 border border-indigo-600/30 text-indigo-400">
+                  {VERTICAL_LABELS[vertical] ?? vertical}
+                </span>
               </div>
               <div className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl overflow-hidden focus-within:border-indigo-400 dark:focus-within:border-indigo-500 transition-colors">
+                {chatImages.length > 0 && (
+                  <div className="flex items-center gap-2 px-3.5 pt-2.5 flex-wrap">
+                    {chatImages.map((img, i) => (
+                      <div key={i} className="relative group w-14 h-14 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700 shrink-0">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={img.preview} alt="" className="w-full h-full object-cover" />
+                        <button
+                          type="button"
+                          onClick={() => removeChatImage(i)}
+                          className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-xs font-bold"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 <textarea
                   value={prompt}
                   onChange={e => setPrompt(e.target.value)}
@@ -696,9 +840,16 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
                   onKeyDown={e => {
                     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); }
                   }}
+                  onPaste={handleChatImagePaste}
                 />
                 <div className="flex items-center justify-between px-3 pb-2.5">
-                  <button type="button" className="text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 transition-colors">
+                  <button
+                    type="button"
+                    disabled={chatImages.length >= 3}
+                    onClick={() => chatImageInputRef.current?.click()}
+                    className="text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                    title="Attach image (max 3)"
+                  >
                     <Plus size={16} />
                   </button>
                   <button
@@ -743,6 +894,24 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
           {phase === 'editing' && (
             <form onSubmit={handleFollowUp}>
               <div className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl overflow-hidden focus-within:border-indigo-400 dark:focus-within:border-indigo-500 transition-colors">
+                {/* Image thumbnails */}
+                {chatImages.length > 0 && (
+                  <div className="flex items-center gap-2 px-3.5 pt-2.5 flex-wrap">
+                    {chatImages.map((img, i) => (
+                      <div key={i} className="relative group w-14 h-14 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700 shrink-0">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={img.preview} alt="" className="w-full h-full object-cover" />
+                        <button
+                          type="button"
+                          onClick={() => removeChatImage(i)}
+                          className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-xs font-bold"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 <textarea
                   ref={followUpRef}
                   value={followUpInput}
@@ -754,23 +923,24 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
                   onKeyDown={e => {
                     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); }
                   }}
+                  onPaste={handleChatImagePaste}
                 />
                 <div className="flex items-center justify-between px-3 pb-2.5">
                   <div className="flex items-center gap-0.5">
-                    <button type="button" className="p-1.5 text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 transition-colors">
+                    <button
+                      type="button"
+                      disabled={isLoading || chatImages.length >= 3}
+                      onClick={() => chatImageInputRef.current?.click()}
+                      className="p-1.5 text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                      title="Attach image (max 3)"
+                    >
                       <Plus size={15} />
                     </button>
-                    {/* <button type="button" className="p-1.5 text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 transition-colors">
-                      <Mic size={14} />
-                    </button> */}
                   </div>
                   <div className="flex items-center gap-1.5">
-                    {/* <button type="button" className="flex items-center gap-1 text-[11px] text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 transition-colors">
-                      Build <ChevronDown size={10} />
-                    </button> */}
                     <button
                       type="submit"
-                      disabled={!followUpInput.trim() || isLoading}
+                      disabled={(!followUpInput.trim() && chatImages.length === 0) || isLoading}
                       className="w-7 h-7 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-30 disabled:cursor-not-allowed rounded-full flex items-center justify-center transition-colors"
                     >
                       <Send size={12} className="text-white" />

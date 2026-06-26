@@ -32,17 +32,16 @@ export default async function AIBuilderPage({ params, searchParams }: PageProps)
     .eq('id', params.id)
     .single();
 
-  // Resume mode: load existing page
-  let initialPage = null;
-  if (searchParams.page_id) {
-    const { data: page } = await db
-      .from('pages')
-      .select('id, name, vertical, schema_json, conversation_json, html_url, html_content, slug, is_published, published_url')
-      .eq('id', searchParams.page_id)
-      .eq('workspace_id', workspace.id)
-      .single();
-    initialPage = page ?? null;
-  }
+  if (!searchParams.page_id) redirect(`/clients/${params.id}/ai-pages`);
+
+  const { data: initialPage } = await db
+    .from('pages')
+    .select('id, name, vertical, schema_json, conversation_json, html_url, html_content, slug, is_published, published_url')
+    .eq('id', searchParams.page_id)
+    .eq('workspace_id', workspace.id)
+    .single();
+
+  if (!initialPage) notFound();
 
   return (
     <AIBuilderClient

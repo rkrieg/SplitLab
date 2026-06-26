@@ -2,19 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
-import { uploadHtml, fileNameFromUrl } from '@/lib/storage';
+import { uploadHtml, uploadImage, downloadHtmlByPath, fileNameFromUrl } from '@/lib/storage';
 import { resolveWorkspaceRole } from '@/lib/workspace-auth';
-import { createClient } from '@supabase/supabase-js';
-
-const BUCKET = process.env.SUPABASE_STORAGE_BUCKET || 'pages';
-
-function getStorageClient() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { autoRefreshToken: false, persistSession: false } }
-  );
-}
 
 function setNestedValue(obj: Record<string, unknown>, path: string, value: unknown): Record<string, unknown> {
   const keys = path.split('.');
@@ -68,29 +57,15 @@ export async function POST(
       return NextResponse.json({ error: 'Unsupported image type' }, { status: 400 });
     }
 
-    const MAX_SIZE = 5 * 1024 * 1024; // 5MB
-    if (file.size > MAX_SIZE) {
+    if (file.size > 5 * 1024 * 1024) {
       return NextResponse.json({ error: 'Image must be under 5MB' }, { status: 400 });
     }
 
-    // Upload image to pages/[page_id]/images/[fieldPath].[ext]
     const ext = file.name.split('.').pop() ?? 'jpg';
-    const safeField = fieldPath.replace(/[^a-z0-9._-]/gi, '_');
-    const imagePath = `pages/${params.id}/images/${safeField}.${ext}`;
-
-    const storage = getStorageClient();
     const arrayBuffer = await file.arrayBuffer();
-    const { error: uploadError } = await storage.storage
-      .from(BUCKET)
-      .upload(imagePath, arrayBuffer, {
-        contentType: file.type,
-        upsert: true,
-      });
 
-    if (uploadError) throw new Error(`Image upload failed: ${uploadError.message}`);
-
-    const { data: urlData } = storage.storage.from(BUCKET).getPublicUrl(imagePath);
-    const imageUrl = urlData.publicUrl;
+    // Upload image to public ai-pages-images bucket
+    const imageUrl = await uploadImage(params.id, arrayBuffer, file.type, ext);
 
     // Update schema_json with the new image URL at field_path
     const updatedSchema = setNestedValue(
@@ -99,29 +74,24 @@ export async function POST(
       imageUrl
     );
 
-    // Load and patch HTML — replace the src on the element with matching data-field
-    let html = page.html_content;
+    // Load current HTML via service role (private bucket)
+    let html: string | null = page.html_content;
     if (!html && page.html_url) {
-      const res = await fetch(page.html_url);
-      if (!res.ok) return NextResponse.json({ error: 'Could not load current HTML' }, { status: 500 });
-      html = await res.text();
+      html = await downloadHtmlByPath(fileNameFromUrl(page.html_url));
     }
 
     if (html) {
-      // Replace src/href on elements with data-field="<fieldPath>"
       const escapedField = fieldPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       html = html.replace(
         new RegExp(`(<img[^>]*data-field="${escapedField}"[^>]*\\s)src="[^"]*"`, 'g'),
         `$1src="${imageUrl}"`
       );
-      // Handle case where src comes before data-field
       html = html.replace(
         new RegExp(`(<img[^>]*\\s)src="[^"]*"([^>]*data-field="${escapedField}")`, 'g'),
         `$1src="${imageUrl}"$2`
       );
     }
 
-    // Re-upload HTML
     const storagePath = page.html_url ? fileNameFromUrl(page.html_url) : '';
     let htmlUrl = page.html_url;
     if (html && storagePath) {

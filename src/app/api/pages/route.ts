@@ -9,12 +9,15 @@ export async function POST(request: NextRequest) {
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   try {
-    const { workspace_id, name, prompt, vertical, schema_json, conversation_json, html_url, html_content, slug, published_url } =
-      await request.json();
+    const {
+      workspace_id, name, vertical,
+      prompt, schema_json, conversation_json,
+      html_url, html_content, slug,
+    } = await request.json();
 
-    if (!workspace_id || !name || !prompt || !vertical || !schema_json || !html_url) {
+    if (!workspace_id || !name || !vertical) {
       return NextResponse.json(
-        { error: 'workspace_id, name, prompt, vertical, schema_json, and html_url are required' },
+        { error: 'workspace_id, name, and vertical are required' },
         { status: 400 }
       );
     }
@@ -28,14 +31,13 @@ export async function POST(request: NextRequest) {
         workspace_id,
         name,
         slug: slug ?? crypto.randomUUID(),
-        prompt,
+        prompt: prompt ?? null,
         vertical,
-        schema_json,
+        schema_json: schema_json ?? null,
         conversation_json: conversation_json ?? [],
-        html_url,
+        html_url: html_url ?? null,
         html_content: typeof html_content === 'string' && html_content.length < 500_000 ? html_content : null,
         status: 'active',
-        published_url: published_url ?? null,
         source_type: 'ai_generated',
         created_by: session.user.id,
         version: 1,

@@ -25,6 +25,10 @@ export async function POST(
   const wsRole = await resolveWorkspaceRole(page.workspace_id, session.user.id, session.user.role);
   if (!wsRole || wsRole === 'viewer') return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
+  if (!page.html_url && !page.html_content) {
+    return NextResponse.json({ error: 'Page has not been built yet' }, { status: 400 });
+  }
+
   try {
     // Load current HTML — bucket is private, use service role client
     let html = page.html_content;

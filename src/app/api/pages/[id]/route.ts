@@ -2,13 +2,16 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
-import { uploadHtml, deleteHtmlFile, fileNameFromUrl } from '@/lib/storage';
+import { uploadHtml, deleteHtmlFile, deletePageImages, fileNameFromUrl } from '@/lib/storage';
 import { resolveWorkspaceRole } from '@/lib/workspace-auth';
 import { z } from 'zod';
 
 const updateSchema = z.object({
   name: z.string().min(1).max(255).optional(),
+  prompt: z.string().optional(),
   html_content: z.string().optional(),
+  html_url: z.string().url().optional(),
+  slug: z.string().optional(),
   tags: z.array(z.string()).optional(),
   status: z.enum(['active', 'archived']).optional(),
   schema_json: z.record(z.unknown()).optional(),
@@ -114,5 +117,8 @@ export async function DELETE(
 
   const { error } = await db.from('pages').delete().eq('id', params.id);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  try { await deletePageImages(params.id); } catch { /* ignore — bucket may be empty */ }
+
   return NextResponse.json({ ok: true });
 }

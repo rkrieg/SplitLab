@@ -107,7 +107,7 @@ Bug 3 — setSchemaJson is now a pure call. The setTimeout + fetch side effect r
 
 - [ ] **Add `pages` limit to `PLAN_LIMITS`** in `src/lib/plans.ts` — `free: 1, pro: 5, agency: 25, scale: Infinity`. Enforce in `POST /api/pages`.
 - [ ] **Access control** — manager+ can create/edit/delete/publish, viewer read-only. Use existing `resolveWorkspaceRole` pattern on all new routes.
-
+No workspace scoping or plan-limit enforcement on generate/build. Both call Claude with nothing but "is there a session" — no workspace_id, no role check, no tie to PLAN_LIMITS. Low data-leak risk (stateless, no DB I/O) but it's an open, unmetered Claude-spend endpoint for any authenticated user. docs/ai-todos.md already flags this as not-yet-done.
 ---
 
 ### Verification

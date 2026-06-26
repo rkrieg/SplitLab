@@ -1,10 +1,10 @@
 'use client';
 
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
-import { Plus, Sparkles, ExternalLink, Edit2, Globe, Trash2 } from 'lucide-react';
+import { Plus, Sparkles, ExternalLink, Edit2, Globe, Trash2, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import toast from 'react-hot-toast';
 
 interface AIPage {
   id: string;
@@ -19,6 +19,7 @@ interface AIPage {
 interface Props {
   pages: AIPage[];
   clientId: string;
+  workspaceId: string;
   canManage: boolean;
 }
 
@@ -34,13 +35,42 @@ const VERTICAL_COLORS: Record<string, string> = {
   local:    'bg-green-500/10 text-green-400 border-green-500/20',
 };
 
-export default function AIPagesClient({ pages: initialPages, clientId, canManage }: Props) {
+const VERTICALS = [
+  { value: 'lead_gen', label: 'Lead Gen' },
+  { value: 'saas',     label: 'SaaS' },
+  { value: 'local',    label: 'Local Services' },
+];
+
+export default function AIPagesClient({ pages: initialPages, clientId, workspaceId, canManage }: Props) {
   const router = useRouter();
   const [pages, setPages] = useState(initialPages);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
 
+  const [createOpen, setCreateOpen] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [newVertical, setNewVertical] = useState('lead_gen');
+  const [creating, setCreating] = useState(false);
+
   const pageToDelete = pages.find((p) => p.id === deleteId);
+
+  async function handleCreate() {
+    if (!newName.trim()) return;
+    setCreating(true);
+    try {
+      const res = await fetch('/api/pages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspace_id: workspaceId, name: newName.trim(), vertical: newVertical }),
+      });
+      if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Failed to create page'); }
+      const page = await res.json();
+      router.push(`/clients/${clientId}/ai-pages/new?page_id=${page.id}`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to create page');
+      setCreating(false);
+    }
+  }
 
   async function confirmDelete() {
     if (!deleteId) return;
@@ -51,7 +81,7 @@ export default function AIPagesClient({ pages: initialPages, clientId, canManage
       setPages((prev) => prev.filter((p) => p.id !== deleteId));
       setDeleteId(null);
     } catch {
-      alert('Failed to delete page. Please try again.');
+      toast.error('Failed to delete page. Please try again.');
     } finally {
       setDeleting(false);
     }
@@ -64,13 +94,13 @@ export default function AIPagesClient({ pages: initialPages, clientId, canManage
           <p className="text-sm text-gray-400">{pages.length} AI-generated page{pages.length !== 1 ? 's' : ''}</p>
         </div>
         {canManage && (
-          <Link
-            href={`/clients/${clientId}/pages/ai/create`}
+          <button
+            onClick={() => { setNewName(''); setNewVertical('lead_gen'); setCreateOpen(true); }}
             className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium transition-colors"
           >
             <Plus className="w-4 h-4" />
             Create New
-          </Link>
+          </button>
         )}
       </div>
 
@@ -82,13 +112,13 @@ export default function AIPagesClient({ pages: initialPages, clientId, canManage
           <p className="text-white font-medium mb-1">No AI pages yet</p>
           <p className="text-gray-400 text-sm mb-5">Generate your first landing page with AI</p>
           {canManage && (
-            <Link
-              href={`/clients/${clientId}/pages/ai/create`}
+            <button
+              onClick={() => { setNewName(''); setNewVertical('lead_gen'); setCreateOpen(true); }}
               className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium transition-colors"
             >
               <Plus className="w-4 h-4" />
               Create New
-            </Link>
+            </button>
           )}
         </div>
       ) : (
@@ -172,6 +202,60 @@ export default function AIPagesClient({ pages: initialPages, clientId, canManage
           </table>
         </div>
       )}
+
+      {/* Create modal */}
+      {createOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => !creating && setCreateOpen(false)}>
+          <div className="bg-slate-900 border border-white/10 rounded-xl p-6 w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
+            <h2 className="text-white font-semibold text-base mb-4">Create Page with AI</h2>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Page name</label>
+                <input
+                  type="text"
+                  value={newName}
+                  onChange={e => setNewName(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') handleCreate(); }}
+                  placeholder="e.g. Summer Campaign"
+                  autoFocus
+                  className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 transition-colors"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Vertical</label>
+                <select
+                  value={newVertical}
+                  onChange={e => setNewVertical(e.target.value)}
+                  className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500 transition-colors"
+                >
+                  {VERTICALS.map(v => (
+                    <option key={v.value} value={v.value} className="bg-slate-900">{v.label}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 mt-5">
+              <button
+                onClick={() => setCreateOpen(false)}
+                disabled={creating}
+                className="px-4 py-2 rounded-lg text-sm text-gray-300 bg-white/5 hover:bg-white/10 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleCreate}
+                disabled={creating || !newName.trim()}
+                className="px-4 py-2 rounded-lg text-sm text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 transition-colors flex items-center gap-2"
+              >
+                {creating && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                {creating ? 'Creating…' : 'Create'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete modal */}
       {deleteId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
           <div className="bg-slate-900 border border-white/10 rounded-xl p-6 w-full max-w-md shadow-2xl">
@@ -184,18 +268,10 @@ export default function AIPagesClient({ pages: initialPages, clientId, canManage
             )}
             {!pageToDelete?.is_published && <div className="mb-4" />}
             <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setDeleteId(null)}
-                disabled={deleting}
-                className="px-4 py-2 rounded-lg text-sm text-gray-300 bg-white/5 hover:bg-white/10 transition-colors"
-              >
+              <button onClick={() => setDeleteId(null)} disabled={deleting} className="px-4 py-2 rounded-lg text-sm text-gray-300 bg-white/5 hover:bg-white/10 transition-colors">
                 Cancel
               </button>
-              <button
-                onClick={confirmDelete}
-                disabled={deleting}
-                className="px-4 py-2 rounded-lg text-sm text-white bg-red-600 hover:bg-red-500 disabled:opacity-50 transition-colors"
-              >
+              <button onClick={confirmDelete} disabled={deleting} className="px-4 py-2 rounded-lg text-sm text-white bg-red-600 hover:bg-red-500 disabled:opacity-50 transition-colors">
                 {deleting ? 'Deleting…' : 'Delete'}
               </button>
             </div>

@@ -42,6 +42,7 @@ export default async function AIPagesPage({ params }: { params: { id: string } }
         <AIPagesClient
           pages={pages ?? []}
           clientId={params.id}
+          workspaceId={workspace.id}
           canManage={wsRole !== 'viewer'}
         />
       </div>

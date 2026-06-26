@@ -43,23 +43,35 @@ export async function POST(request: NextRequest) {
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   try {
-    const { schema_json, slug } = await request.json();
+    const { schema_json, slug, image_urls, user_prompt } = await request.json();
 
     if (!schema_json || typeof schema_json !== 'object') {
       return NextResponse.json({ error: 'schema_json is required' }, { status: 400 });
     }
+
+    const hasImages = Array.isArray(image_urls) && image_urls.length > 0;
+    const urlList = hasImages
+      ? `\n\nThe user has provided ${image_urls.length} image(s). Embed them directly in the HTML using EXACTLY these URLs (do not use any other URLs):\n${(image_urls as string[]).map((u: string, i: number) => `Image ${i + 1}: ${u}`).join('\n')}${user_prompt ? `\n\nOriginal user request: ${user_prompt}` : ''}`
+      : '';
+
+    const textContent = `Build the landing page for this schema:\n\n${JSON.stringify(schema_json, null, 2)}${urlList}`;
+
+    const userContent = hasImages
+      ? [
+          ...(image_urls as string[]).map((url: string) => ({
+            type: 'image' as const,
+            source: { type: 'url' as const, url },
+          })),
+          { type: 'text' as const, text: textContent },
+        ]
+      : textContent;
 
     const anthropic = getClient();
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-5',
       max_tokens: 8192,
       system: SYSTEM_PROMPT,
-      messages: [
-        {
-          role: 'user',
-          content: `Build the landing page for this schema:\n\n${JSON.stringify(schema_json, null, 2)}`,
-        },
-      ],
+      messages: [{ role: 'user', content: userContent }],
     });
 
     const block = response.content[0];
