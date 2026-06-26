@@ -14,7 +14,7 @@ export async function GET(
     .single();
 
   if (!page) {
-    return new NextResponse('Page not found', { status: 404, headers: { 'Content-Type': 'text/plain' } });
+    return new NextResponse(notFoundHtml(), { status: 404, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
   }
 
   let html = page.html_content as string | null;
@@ -22,7 +22,7 @@ export async function GET(
   if (!html) {
     const res = await fetch(page.html_url);
     if (!res.ok) {
-      return new NextResponse('Failed to load page', { status: 502, headers: { 'Content-Type': 'text/plain' } });
+      return new NextResponse(notFoundHtml(), { status: 502, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
     }
     html = await res.text();
   }
@@ -31,7 +31,19 @@ export async function GET(
     status: 200,
     headers: {
       'Content-Type': 'text/html; charset=utf-8',
-      'Cache-Control': 'public, max-age=60, stale-while-revalidate=300',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
     },
   });
+}
+
+function notFoundHtml() {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><title>Not Found</title>
+<style>body{font-family:sans-serif;background:#0f172a;color:#f8fafc;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}
+.box{text-align:center}.code{font-size:4rem;font-weight:700;color:#3D8BDA}h1{margin:.5rem 0}p{color:#94a3b8}</style>
+</head>
+<body><div class="box"><div class="code">404</div><h1>Page Not Found</h1>
+<p>This page doesn't exist or has been unpublished.</p></div></body>
+</html>`;
 }

@@ -5,8 +5,7 @@ import { useRouter } from 'next/navigation';
 import {
   Sparkles, Send, Globe, Copy, Check, ChevronLeft, Loader2,
   Wand2, Layout, Palette, RefreshCw, Monitor, Smartphone,
-  ExternalLink, ThumbsUp, ThumbsDown, RotateCcw, MoreHorizontal,
-  Mic, Plus, ChevronDown, Download,
+  ExternalLink, RotateCcw, Plus, Download,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { cn } from '@/lib/utils';
@@ -517,6 +516,22 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
     setTimeout(() => setUrlCopied(false), 2000);
   }
 
+  const [isUnpublishing, setIsUnpublishing] = useState(false);
+
+  async function handleUnpublish() {
+    if (!pageId) return;
+    setIsUnpublishing(true);
+    const res = await fetch(`/api/pages/${pageId}/unpublish`, { method: 'POST' });
+    setIsUnpublishing(false);
+    if (!res.ok) {
+      const err = await res.json();
+      toast.error(err.error || 'Unpublish failed');
+      return;
+    }
+    setPublishedUrl(null);
+    addMessage({ role: 'assistant', content: 'Page unpublished. It will return a 404 until you publish again.' });
+  }
+
   const isLoading = phase === 'generating' || phase === 'building' || phase === 'publishing' || uploadingImage;
   const showPreview = !!iframeSrc;
 
@@ -805,8 +820,15 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
           {/* External link + download + publish */}
           <div className="flex items-center gap-2">
             {showPreview && iframeSrc && (
-              <a href={iframeSrc} target="_blank" rel="noopener noreferrer" className="p-1.5 text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 transition-colors">
-                <ExternalLink size={14} />
+              <a
+                href={iframeSrc}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1.5 text-xs text-slate-400 dark:text-slate-500 hover:text-indigo-500 dark:hover:text-indigo-400 transition-colors font-mono"
+                title="Open preview"
+              >
+                <span>Preview URL</span>
+                <ExternalLink size={13} className="shrink-0" />
               </a>
             )}
             {showPreview && (
@@ -828,14 +850,39 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
                 <Download size={14} />
               </button>
             )}
-            {publishedUrl && (
-              <button
-                onClick={copyUrl}
-                className="flex items-center gap-1.5 text-xs bg-green-600 hover:bg-green-500 text-white px-3 py-1.5 rounded-full font-medium transition-colors"
+            {slug && (
+              <a
+                href={phase === 'publishing' || isUnpublishing ? undefined : `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.trysplitlab.com'}/pages/${slug}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-disabled={phase === 'publishing' || isUnpublishing}
+                className={cn(
+                  'flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full font-medium transition-colors text-white',
+                  phase === 'publishing' || isUnpublishing
+                    ? 'bg-slate-700 opacity-40 cursor-not-allowed pointer-events-none'
+                    : 'bg-slate-700 hover:bg-slate-600'
+                )}
               >
-                {urlCopied ? <Check size={12} /> : <Copy size={12} />}
-                {urlCopied ? 'Copied!' : 'Copy URL'}
-              </button>
+                <ExternalLink size={12} />
+                Visit
+              </a>
+            )}
+            {publishedUrl && (
+              <>
+                <button
+                  onClick={copyUrl}
+                  className="flex items-center gap-1.5 text-xs bg-green-600 hover:bg-green-500 text-white px-3 py-1.5 rounded-full font-medium transition-colors"
+                >
+                  {urlCopied ? <Check size={12} /> : <Copy size={12} />}
+                  {urlCopied ? 'Copied!' : 'Copy URL'}
+                </button>
+                <button
+                  onClick={handleUnpublish}
+                  className="flex items-center gap-1.5 text-xs bg-red-600 hover:bg-red-500 text-white px-3 py-1.5 rounded-full font-medium transition-colors"
+                >
+                  Unpublish
+                </button>
+              </>
             )}
             <button
               onClick={() => setPublishConfirmOpen(true)}
