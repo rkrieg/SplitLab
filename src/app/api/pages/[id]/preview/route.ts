@@ -10,7 +10,7 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   const session = await getServerSession(authOptions);
-  if (!session) return new NextResponse('Unauthorized', { status: 401 });
+  if (!session) return new NextResponse(errorHtml('401', 'Unauthorized', 'You must be logged in to view this page.'), { status: 401, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
 
   const { data: page } = await db
     .from('pages')
@@ -18,10 +18,10 @@ export async function GET(
     .eq('id', params.id)
     .single();
 
-  if (!page) return new NextResponse('Not found', { status: 404 });
+  if (!page) return new NextResponse(errorHtml('404', 'Not Found', 'This page does not exist.'), { status: 404, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
 
   const wsRole = await resolveWorkspaceRole(page.workspace_id, session.user.id, session.user.role);
-  if (!wsRole) return new NextResponse('Forbidden', { status: 403 });
+  if (!wsRole) return new NextResponse(errorHtml('403', 'Access Denied', "You don't have permission to view this page."), { status: 403, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
 
   try {
     let html = page.html_content as string | null;
@@ -36,6 +36,20 @@ export async function GET(
       headers: { 'Content-Type': 'text/html; charset=utf-8' },
     });
   } catch {
-    return new NextResponse('Failed to load preview', { status: 502 });
+    return new NextResponse(errorHtml('502', 'Failed to Load', 'Could not load the preview. Please try again.'), { status: 502, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
   }
+}
+
+function errorHtml(code: string, title: string, message: string) {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><title>${title}</title>
+<style>
+  body{font-family:sans-serif;background:#0f172a;color:#f8fafc;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}
+  .box{text-align:center}.code{font-size:4rem;font-weight:700;color:#3D8BDA}
+  h1{margin:.5rem 0;font-size:1.25rem}p{color:#94a3b8;font-size:.875rem}
+</style>
+</head>
+<body><div class="box"><div class="code">${code}</div><h1>${title}</h1><p>${message}</p></div></body>
+</html>`;
 }

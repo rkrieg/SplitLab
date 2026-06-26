@@ -28,7 +28,11 @@ export async function GET(
     .eq('id', params.id)
     .single();
 
-  if (error) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  if (error || !data) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+
+  const wsRole = await resolveWorkspaceRole(data.workspace_id, session.user.id, session.user.role);
+  if (!wsRole) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+
   return NextResponse.json(data);
 }
 
