@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Preview — minimal_editorial</title>
+<style>
+  @keyframes meFadeUp { from { opacity:0; transform:translateY(14px); } to { opacity:1; transform:translateY(0); } }
+  .me-hero { background:#FAFAF7; color:#1A1A1A; padding:120px 8vw 100px; display:grid; grid-template-columns:1.1fr 0.9fr; gap:60px; align-items:center; }
+  .me-hero .eyebrow { font:13px/1 -apple-system,system-ui,sans-serif; letter-spacing:.18em; text-transform:uppercase; color:#C9A876; margin-bottom:24px; opacity:0; animation:meFadeUp .8s ease forwards; animation-delay:.05s; }
+  .me-hero h1 { font:64px/1.05 "Playfair Display",Georgia,serif; font-weight:500; margin:0 0 28px; max-width:11ch; opacity:0; animation:meFadeUp .8s ease forwards; animation-delay:.15s; }
+  .me-hero p { font:18px/1.6 -apple-system,system-ui,sans-serif; color:#6B6B63; max-width:34ch; margin:0 0 36px; opacity:0; animation:meFadeUp .8s ease forwards; animation-delay:.3s; }
+  .me-hero .cta { display:inline-block; font:14px -apple-system,system-ui,sans-serif; letter-spacing:.04em; color:#1A1A1A; text-decoration:none; padding-bottom:6px; border-bottom:1px solid #1A1A1A; transition:border-color .2s,color .2s; opacity:0; animation:meFadeUp .8s ease forwards; animation-delay:.45s; }
+  .me-hero .cta:hover { border-color:#C9A876; color:#C9A876; }
+  .me-hero .visual { aspect-ratio:4/5; background:linear-gradient(160deg,#EFEAE0,#DCD3C2); opacity:0; animation:meFadeUp 1s ease forwards; animation-delay:.2s; }
+  .me-benefits { background:#FAFAF7; padding:0 8vw 120px; border-top:1px solid #E4DFD3; }
+  .me-benefits .row { display:grid; grid-template-columns:repeat(3,1fr); gap:48px; padding-top:64px; }
+  .me-benefits .item { border-top:1px solid #1A1A1A; padding-top:20px; opacity:0; animation:meFadeUp .7s ease forwards; }
+  .me-benefits .item:nth-child(1) { animation-delay:.1s; }
+  .me-benefits .item:nth-child(2) { animation-delay:.2s; }
+  .me-benefits .item:nth-child(3) { animation-delay:.3s; }
+  .me-benefits .item .num { font:13px -apple-system,system-ui,sans-serif; color:#C9A876; letter-spacing:.1em; }
+  .me-benefits .item h3 { font:22px/1.3 "Playfair Display",Georgia,serif; font-weight:500; margin:14px 0 10px; }
+  .me-benefits .item p { font:15px/1.6 -apple-system,system-ui,sans-serif; color:#6B6B63; margin:0; }
+  body { margin:0; }
+</style>
+</head>
+<body>
+<section class="me-hero">
+  <div>
+    <div class="eyebrow">Est. 2019 — Atelier Studio</div>
+    <h1>Considered design, made for the long term.</h1>
+    <p>We partner with a small number of clients each year to build brands that don't need a redesign in eighteen months.</p>
+    <a class="cta" href="#contact">Start a project &nbsp;&rarr;</a>
+  </div>
+  <div class="visual"></div>
+</section>
+<section class="me-benefits">
+  <div class="row">
+    <div class="item"><div class="num">01</div><h3>Strategy first</h3><p>Every engagement starts with a positioning document, not a moodboard.</p></div>
+    <div class="item"><div class="num">02</div><h3>Small by design</h3><p>Four clients at a time, so nothing ships half-finished.</p></div>
+    <div class="item"><div class="num">03</div><h3>Built to last</h3><p>Systems your team can run without us in the room.</p></div>
+  </div>
+</section>
+</body>
+</html>

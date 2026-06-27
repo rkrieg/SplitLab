@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Preview — playful_funky</title>
+<style>
+  @keyframes pfPop { from { opacity:0; transform:translateY(20px) scale(.9); } to { opacity:1; transform:translateY(0) scale(1); } }
+  @keyframes pfFloat { 0%,100% { transform:translateY(0) rotate(0deg); } 50% { transform:translateY(-10px) rotate(3deg); } }
+  .pf-hero { background:#FFF8F0; color:#2B2B2B; padding:100px 6vw; text-align:center; position:relative; }
+  .pf-hero .blob { position:absolute; top:60px; right:8vw; width:280px; height:280px; background:#FFE066; border-radius:42% 58% 65% 35%/45% 45% 55% 55%; z-index:0; opacity:.7; animation:pfFloat 6s ease-in-out infinite; }
+  .pf-hero .inner { position:relative; z-index:1; }
+  .pf-hero h1 { font:58px/1.1 "Poppins",sans-serif; font-weight:700; max-width:16ch; margin:0 auto 20px; opacity:0; animation:pfPop .6s cubic-bezier(.34,1.56,.64,1) forwards; animation-delay:.1s; }
+  .pf-hero h1 .hl { color:#FF6F91; }
+  .pf-hero p { font:18px/1.6 "Poppins",sans-serif; color:#5C5C5C; max-width:38ch; margin:0 auto 32px; opacity:0; animation:pfPop .6s cubic-bezier(.34,1.56,.64,1) forwards; animation-delay:.25s; }
+  .pf-hero .cta { background:#FF6F91; color:#fff; font:16px "Poppins",sans-serif; font-weight:600; border:none; padding:16px 34px; border-radius:999px; cursor:pointer; box-shadow:0 6px 0 #D94F72; transition:transform .12s; opacity:0; animation:pfPop .6s cubic-bezier(.34,1.56,.64,1) forwards; animation-delay:.4s; }
+  .pf-hero .cta:hover { transform:translateY(2px); box-shadow:0 4px 0 #D94F72; }
+  .pf-testimonials { background:#FFF8F0; padding:40px 6vw 100px; }
+  .pf-testimonials .row { display:flex; gap:28px; justify-content:center; flex-wrap:wrap; }
+  .pf-testimonials .note { width:260px; padding:24px; border-radius:18px; font:15px/1.6 "Poppins",sans-serif; transform:rotate(-3deg); opacity:0; animation:pfPop .5s cubic-bezier(.34,1.56,.64,1) forwards; transition:transform .2s; }
+  .pf-testimonials .note:nth-child(1) { animation-delay:.1s; }
+  .pf-testimonials .note:nth-child(2) { transform:rotate(2deg); animation-delay:.2s; }
+  .pf-testimonials .note:nth-child(3) { transform:rotate(-1deg); animation-delay:.3s; }
+  .pf-testimonials .note:hover { transform:translateY(-5px) rotate(0deg); }
+  .pf-testimonials .note.mint { background:#E3F6EC; }
+  .pf-testimonials .note.pink { background:#FFE7EC; }
+  .pf-testimonials .note.yellow { background:#FFF3CF; }
+  .pf-testimonials .name { font-weight:700; margin-top:12px; display:block; }
+  body { margin:0; }
+</style>
+</head>
+<body>
+<section class="pf-hero">
+  <div class="blob"></div>
+  <div class="inner">
+    <h1>Meal planning that doesn't feel like <span class="hl">homework</span>.</h1>
+    <p>Tell us what's in your fridge. We'll tell you what's for dinner.</p>
+    <button class="cta">Plan My Week &#127881;</button>
+  </div>
+</section>
+<section class="pf-testimonials">
+  <div class="row">
+    <div class="note mint">"I haven't opened a delivery app in three weeks."<span class="name">— Priya</span></div>
+    <div class="note pink">"My fridge has never been this organized, honestly."<span class="name">— Theo</span></div>
+    <div class="note yellow">"Cooking five nights a week and actually enjoying it??"<span class="name">— Aisha</span></div>
+  </div>
+</section>
+</body>
+</html>

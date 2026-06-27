@@ -2,6 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getClient } from '@/lib/claude';
+import { VERTICAL_VALUES } from '@/lib/ai-page-verticals';
+import { SECTION_VOCABULARY, VERTICAL_PRIORITY_HINTS } from '@/lib/ai-page-vocabulary';
+import { resolveWorkspaceRole } from '@/lib/workspace-auth';
+
+const SECTION_TYPES_BLOCK = SECTION_VOCABULARY
+  .map(s => `- ${s.schemaExample}\n  Use when: ${s.whenToUse}`)
+  .join('\n');
 
 const SYSTEM_PROMPT = `You are an AI landing page builder. Your job is to either ask clarifying questions or generate a page schema — never both, never anything else.
 
@@ -22,7 +29,7 @@ Maximum 1 round of questions, maximum 3 questions per round.
 
 ## Schema structure
 {
-  "vertical": "legal" | "saas" | "local" | "ecommerce" | "other",
+  "vertical": "<short free-text description of the inferred business type, e.g. 'boutique skincare ecommerce' or 'B2B compliance SaaS'>",
   "hero": {
     "headline": "...",
     "subhead": "...",
@@ -36,40 +43,36 @@ Maximum 1 round of questions, maximum 3 questions per round.
   }
 }
 
-## Section types (use only these)
-- { "type": "benefits", "headline": "...", "items": ["...", "..."] }
-- { "type": "social_proof", "headline": "...", "testimonials": [{ "name": "...", "quote": "..." }] }
-- { "type": "pricing", "headline": "...", "tiers": [{ "name": "...", "price": "...", "features": ["..."] }] }
-- { "type": "form", "headline": "...", "fields": ["name", "email", "phone"], "submit_text": "..." }
-- { "type": "faq", "headline": "...", "items": [{ "q": "...", "a": "..." }] }
-- { "type": "team", "headline": "...", "members": [{ "name": "...", "role": "...", "bio": "..." }] }
-- { "type": "video", "headline": "...", "video_url": null, "caption": "..." }
+## Section types (available moves — pick a varied combination per page, not the same 4-5 every time)
+${SECTION_TYPES_BLOCK}
 
 ## Content rules
 - Write real, compelling copy based on the business. No placeholders, no lorem ipsum.
-- The user has pre-selected a vertical — treat it as a strong structural bias but refine based on prompt context.
-- Default section sets:
-  - lead_gen: hero, benefits, social_proof, form, footer
-  - saas: hero, benefits, pricing, faq, footer
-  - local: hero, benefits, form, footer`;
+- The user has pre-selected a vertical — treat it as a bias toward certain section types (see the per-vertical hint appended below), not a fixed template. Refine based on the specific prompt.
+- Pick 4-7 sections beyond hero/footer. More variety across pages is better than defaulting to the same shape every time.`;
 
 export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   try {
-    const { prompt, vertical, conversation_json } = await request.json();
+    const { prompt, vertical, conversation_json, workspace_id } = await request.json();
+
+    if (!workspace_id || typeof workspace_id !== 'string') {
+      return NextResponse.json({ error: 'workspace_id is required' }, { status: 400 });
+    }
+    const wsRole = await resolveWorkspaceRole(workspace_id, session.user.id, session.user.role);
+    if (!wsRole || wsRole === 'viewer') return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
     if (!prompt || typeof prompt !== 'string') {
       return NextResponse.json({ error: 'prompt is required' }, { status: 400 });
     }
 
-    const validVerticals = ['lead_gen', 'saas', 'local'] as const;
-    type Vertical = typeof validVerticals[number];
-    const selectedVertical: Vertical | null = validVerticals.includes(vertical) ? vertical : null;
+    const selectedVertical: string | null = VERTICAL_VALUES.includes(vertical) ? vertical : null;
+    const priorityHint = selectedVertical ? VERTICAL_PRIORITY_HINTS[selectedVertical] : null;
 
     const systemPrompt = selectedVertical
-      ? `${SYSTEM_PROMPT}\n\nThe user selected vertical: ${selectedVertical}. Use this as the primary structural bias.`
+      ? `${SYSTEM_PROMPT}\n\nThe user selected vertical: ${selectedVertical}.${priorityHint ? ` ${priorityHint}` : ''}`
       : SYSTEM_PROMPT;
 
     const history: { role: 'user' | 'assistant'; content: string }[] = Array.isArray(conversation_json)

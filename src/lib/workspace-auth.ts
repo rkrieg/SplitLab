@@ -34,8 +34,11 @@ export async function resolveWorkspaceRole(
   userId: string,
   userRole: string
 ): Promise<'manager' | 'viewer' | null> {
+  // CHECK 1 — Is this person SplitLab staff (admin)? This is stored on their
+  // own account and has nothing to do with the workspace. Admins always pass.
   if (userRole === 'admin') return 'manager';
 
+  // CHECK 2 — Find out which CLIENT owns this workspace.
   const { data: workspace } = await db
     .from('workspaces')
     .select('client_id')
@@ -43,6 +46,7 @@ export async function resolveWorkspaceRole(
     .single();
 
   if (workspace) {
+    // CHECK 3 — Did THIS user create that client themselves (are they the owner)?
     const { data: owned } = await db
       .from('clients')
       .select('id')
@@ -50,9 +54,13 @@ export async function resolveWorkspaceRole(
       .eq('owner_id', userId)
       .single();
 
+    // They made it themselves — full access, done.
     if (owned) return 'manager';
   }
 
+  // CHECK 4 — Not admin, not the owner. Was this user specifically invited
+  // to this exact workspace? Look for a row matching BOTH this workspace AND
+  // this user — not just "is this user a member of something somewhere."
   const { data: member } = await db
     .from('workspace_members')
     .select('role')
@@ -60,5 +68,8 @@ export async function resolveWorkspaceRole(
     .eq('user_id', userId)
     .single();
 
+  // If invited, return whatever role they were given ('manager' or 'viewer').
+  // If none of the 4 checks matched at all, return null — this user has no
+  // relationship to this workspace whatsoever.
   return (member?.role as 'manager' | 'viewer') ?? null;
 }

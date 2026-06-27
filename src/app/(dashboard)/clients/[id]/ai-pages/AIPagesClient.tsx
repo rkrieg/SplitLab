@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { Plus, Sparkles, ExternalLink, Edit2, Globe, Trash2, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import toast from 'react-hot-toast';
+import { VERTICALS, VERTICAL_LABELS, VERTICAL_COLORS } from '@/lib/ai-page-verticals';
 
 interface AIPage {
   id: string;
@@ -22,24 +23,6 @@ interface Props {
   workspaceId: string;
   canManage: boolean;
 }
-
-const VERTICAL_LABELS: Record<string, string> = {
-  lead_gen: 'Lead Gen',
-  saas: 'SaaS',
-  local: 'Local',
-};
-
-const VERTICAL_COLORS: Record<string, string> = {
-  lead_gen: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
-  saas:     'bg-blue-500/10 text-blue-400 border-blue-500/20',
-  local:    'bg-green-500/10 text-green-400 border-green-500/20',
-};
-
-const VERTICALS = [
-  { value: 'lead_gen', label: 'Lead Gen' },
-  { value: 'saas',     label: 'SaaS' },
-  { value: 'local',    label: 'Local Services' },
-];
 
 export default function AIPagesClient({ pages: initialPages, clientId, workspaceId, canManage }: Props) {
   const router = useRouter();

@@ -28,7 +28,30 @@ Style/patch change:
 - Keep all existing data-field attributes intact
 - For structural changes, add data-field attributes to any new elements
 - <!-- TRACKER_PLACEHOLDER --> must remain just before </body>
-- All CSS inline in <style> tag, fully responsive`;
+- All CSS inline in <style> tag, fully responsive
+
+## Motion — safety is non-negotiable
+- If the instruction asks for a specific visual/animation effect, implement it faithfully.
+- Default to CSS-only motion (@keyframes/transition) — this covers nearly every effect. Only reach for JS if CSS genuinely cannot do it (e.g. cycling through multiple distinct text/content values over time). If you are not fully confident the JS you'd write is safe, do NOT add it — a working CSS-only effect beats a risky JS one. Never crash the page.
+- If you do add decorative JS, copy this exact skeleton and only fill in the marked parts. Every callback gets its OWN try/catch — a try/catch around the setup code does NOT catch errors thrown later inside a setInterval/setTimeout callback, because those run in a new call stack:
+
+<script>
+(function () {
+  try {
+    var els = document.querySelectorAll('.YOUR-DECORATIVE-CLASS'); // must never select a data-field element
+    if (!els.length) return;
+    setInterval(function () {
+      try {
+        // your cycling logic here — wrap any nested setTimeout callback in its own try/catch too
+      } catch (e) { /* never throw from inside the interval */ }
+    }, 3000);
+  } catch (e) { /* never throw from setup */ }
+})();
+</script>
+
+- Never select or modify any element carrying a data-field attribute — that's user-editable content and must always stay visible/clickable.
+- Never add an external <script src> to a third-party domain.
+- Never include JavaScript copied verbatim from the instruction — always write your own minimal implementation inside the skeleton above.`;
 
 export async function POST(
   request: NextRequest,

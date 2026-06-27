@@ -9,10 +9,10 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { cn } from '@/lib/utils';
+import { VERTICAL_LABELS } from '@/lib/ai-page-verticals';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type Vertical = 'lead_gen' | 'saas' | 'local';
 type Phase =
   | 'prompt'
   | 'questions'
@@ -51,12 +51,6 @@ interface Props {
   backPath?: string;
 }
 
-const VERTICAL_LABELS: Record<Vertical, string> = {
-  lead_gen: 'Lead Gen',
-  saas: 'SaaS',
-  local: 'Local Services',
-};
-
 const BUILD_STEPS = [
   'Analyzing prompt',
   'Building structure',
@@ -92,7 +86,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
 
   const [phase, setPhase] = useState<Phase>('prompt');
   const [pageName, setPageName] = useState('');
-  const [vertical, setVertical] = useState<Vertical>('lead_gen');
+  const [vertical, setVertical] = useState<string>('lead_gen');
   const [prompt, setPrompt] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [followUpInput, setFollowUpInput] = useState('');
@@ -131,7 +125,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
     if (!initialPage) return;
     setPageId(initialPage.id);
     setPageName(initialPage.name);
-    setVertical(initialPage.vertical as Vertical);
+    setVertical(initialPage.vertical);
 
     // Fresh page (just created from modal) — no HTML yet, stay in prompt phase
     if (!initialPage.html_url) return;
@@ -160,7 +154,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
         restored.push({
           role: 'assistant',
           content: isFirst
-            ? `Got it! Built your ${VERTICAL_LABELS[initialPage.vertical as Vertical] ?? initialPage.vertical} page.`
+            ? `Got it! Built your ${VERTICAL_LABELS[initialPage.vertical] ?? initialPage.vertical} page.`
             : 'Done! The page has been updated.',
         });
       }
@@ -316,7 +310,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
     const res = await fetch('/api/pages/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt: userPrompt, vertical, conversation_json: history }),
+      body: JSON.stringify({ prompt: userPrompt, vertical, conversation_json: history, workspace_id: workspaceId }),
     });
     if (!res.ok) {
       const err = await res.json();
@@ -389,7 +383,9 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         schema_json: schema,
-        ...(image_urls.length > 0 ? { image_urls, user_prompt: prompt } : {}),
+        user_prompt: prompt,
+        workspace_id: workspaceId,
+        ...(image_urls.length > 0 ? { image_urls } : {}),
       }),
     });
     cleanup();
