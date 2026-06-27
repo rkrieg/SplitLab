@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { getClient } from '@/lib/claude';
+import { askAI } from '@/lib/ai-client';
 import { VERTICAL_VALUES } from '@/lib/ai-page-verticals';
 import { SECTION_VOCABULARY, VERTICAL_PRIORITY_HINTS } from '@/lib/ai-page-vocabulary';
 import { resolveWorkspaceRole } from '@/lib/workspace-auth';
@@ -84,29 +84,18 @@ export async function POST(request: NextRequest) {
       { role: 'user', content: prompt },
     ];
 
-    const anthropic = getClient();
-    const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-5',
-      max_tokens: 4096,
-      system: systemPrompt,
-      messages,
-    });
-
-    const block = response.content[0];
-    if (block.type !== 'text') {
-      return NextResponse.json({ error: 'Unexpected response from Claude' }, { status: 500 });
-    }
+    const text = await askAI({ system: systemPrompt, messages, maxTokens: 4096 });
 
     let parsed: { type: 'questions' | 'schema'; questions?: string[]; schema?: unknown };
     try {
-      const raw = block.text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+      const raw = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
       parsed = JSON.parse(raw);
     } catch {
-      return NextResponse.json({ error: 'Claude returned invalid JSON', raw: block.text }, { status: 500 });
+      return NextResponse.json({ error: 'AI provider returned invalid JSON', raw: text }, { status: 500 });
     }
 
     if (parsed.type !== 'questions' && parsed.type !== 'schema') {
-      return NextResponse.json({ error: 'Unexpected response shape', raw: block.text }, { status: 500 });
+      return NextResponse.json({ error: 'Unexpected response shape', raw: text }, { status: 500 });
     }
 
     return NextResponse.json(parsed);

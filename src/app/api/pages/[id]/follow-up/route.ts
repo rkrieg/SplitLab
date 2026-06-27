@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
-import { getClient } from '@/lib/claude';
+import { askAI, type AIContent, type AIContentBlock } from '@/lib/ai-client';
 import { uploadHtml, downloadHtmlByPath, fileNameFromUrl } from '@/lib/storage';
 import { resolveWorkspaceRole } from '@/lib/workspace-auth';
 
@@ -94,41 +94,33 @@ export async function POST(
 
     if (!html) return NextResponse.json({ error: 'Could not load current HTML' }, { status: 400 });
 
-    const htmlForClaude = html.replace(/<script src="[^"]+\/tracker\.js"><\/script>/, '<!-- TRACKER_PLACEHOLDER -->');
+    const htmlForModel = html.replace(/<script src="[^"]+\/tracker\.js"><\/script>/, '<!-- TRACKER_PLACEHOLDER -->');
 
     const urlNote = Array.isArray(image_urls) && image_urls.length > 0
       ? `\n\nUse EXACTLY these image URLs in the HTML (do not invent or substitute any other URLs):\n${(image_urls as string[]).map((u, i) => `Image ${i + 1}: ${u}`).join('\n')}`
       : '';
-    const textContent = `Current schema:\n${JSON.stringify(schema, null, 2)}\n\nCurrent HTML:\n${htmlForClaude}\n\nInstruction: ${prompt}${urlNote}`;
+    const textContent = `Current schema:\n${JSON.stringify(schema, null, 2)}\n\nCurrent HTML:\n${htmlForModel}\n\nInstruction: ${prompt}${urlNote}`;
 
-    const userContent: Parameters<typeof anthropic.messages.create>[0]['messages'][number]['content'] =
+    const userContent: AIContent =
       Array.isArray(image_urls) && image_urls.length > 0
         ? [
-            ...image_urls.map((url: string) => ({
-              type: 'image' as const,
-              source: { type: 'url' as const, url },
-            })),
-            { type: 'text' as const, text: textContent },
+            ...image_urls.map((url: string): AIContentBlock => ({ type: 'image', url })),
+            { type: 'text', text: textContent },
           ]
         : textContent;
 
-    const anthropic = getClient();
-    const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-5',
-      max_tokens: 16000,
+    // Prior turns are replayed as plain text only — past image attachments
+    // aren't re-sent as vision blocks here, only the current turn's images are.
+    const text = await askAI({
       system: SYSTEM_PROMPT,
       messages: [
         ...history.map(({ role, content }) => ({ role, content })),
-        { role: 'user', content: userContent },
+        { role: 'user' as const, content: userContent },
       ],
+      maxTokens: 16000,
     });
 
-    const block = response.content[0];
-    if (block.type !== 'text') {
-      return NextResponse.json({ error: 'Unexpected response from Claude' }, { status: 500 });
-    }
-
-    let raw = block.text.trim();
+    let raw = text.trim();
     if (raw.startsWith('```')) {
       raw = raw.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
     }
@@ -137,11 +129,11 @@ export async function POST(
     try {
       parsed = JSON.parse(raw);
     } catch {
-      return NextResponse.json({ error: 'Claude returned invalid JSON', raw: raw.slice(0, 500) }, { status: 500 });
+      return NextResponse.json({ error: 'AI provider returned invalid JSON', raw: raw.slice(0, 500) }, { status: 500 });
     }
 
     if (!parsed.html || (!parsed.html.startsWith('<!DOCTYPE') && !parsed.html.startsWith('<html'))) {
-      return NextResponse.json({ error: 'Claude returned invalid HTML' }, { status: 500 });
+      return NextResponse.json({ error: 'AI provider returned invalid HTML' }, { status: 500 });
     }
 
     // Re-upload HTML to the same storage path

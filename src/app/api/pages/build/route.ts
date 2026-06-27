@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { getClient } from '@/lib/claude';
+import { askAI, type AIContent, type AIContentBlock } from '@/lib/ai-client';
 import { uploadHtml } from '@/lib/storage';
 import { STYLE_EXEMPLARS, type StyleTag } from '@/lib/ai-page-exemplars';
 import { resolveWorkspaceRole } from '@/lib/workspace-auth';
@@ -88,31 +88,26 @@ If a schema field for an image is null or missing, use a CSS gradient background
  * null and the caller proceeds without a style reference.
  */
 async function getDesignBrief(
-  anthropic: ReturnType<typeof getClient>,
   schema: unknown,
   userPrompt: string | undefined,
   imageUrls: string[]
 ): Promise<{ styleTag: StyleTag; brief: Record<string, string> } | null> {
   try {
     const briefText = `Business schema:\n${JSON.stringify(schema, null, 2)}${userPrompt ? `\n\nOriginal user request: ${userPrompt}` : ''}`;
-    const briefContent = imageUrls.length > 0
+    const briefContent: AIContent = imageUrls.length > 0
       ? [
-          ...imageUrls.map((url) => ({ type: 'image' as const, source: { type: 'url' as const, url } })),
-          { type: 'text' as const, text: briefText },
+          ...imageUrls.map((url): AIContentBlock => ({ type: 'image', url })),
+          { type: 'text', text: briefText },
         ]
       : briefText;
 
-    const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-5',
-      max_tokens: 400,
+    const text = await askAI({
       system: DESIGN_BRIEF_SYSTEM_PROMPT,
       messages: [{ role: 'user', content: briefContent }],
+      maxTokens: 400,
     });
 
-    const block = response.content[0];
-    if (block.type !== 'text') return null;
-
-    let raw = block.text.trim();
+    let raw = text.trim();
     if (raw.startsWith('```')) {
       raw = raw.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
     }
@@ -122,6 +117,8 @@ async function getDesignBrief(
 
     return { styleTag: parsed.style_tag as StyleTag, brief: parsed };
   } catch (err) {
+    // Design-brief failure must never block the actual page build — log and
+    // fall through so the caller proceeds without a style reference.
     console.error('[pages/build] design-brief step failed, continuing without style reference', err);
     return null;
   }
@@ -155,10 +152,7 @@ export async function POST(request: NextRequest) {
       ? `\n\nOriginal user request: ${user_prompt}`
       : '';
 
-    const anthropic = getClient();
-
     const designBrief = await getDesignBrief(
-      anthropic,
       schema_json,
       typeof user_prompt === 'string' ? user_prompt : undefined,
       hasImages ? (image_urls as string[]) : []
@@ -173,37 +167,28 @@ export async function POST(request: NextRequest) {
 
     const textContent = `Build the landing page for this schema:\n\n${JSON.stringify(schema_json, null, 2)}${imageList}${styleReferenceNote}${promptNote}`;
 
-    const userContent = hasImages
+    const userContent: AIContent = hasImages
       ? [
-          ...(image_urls as string[]).map((url: string) => ({
-            type: 'image' as const,
-            source: { type: 'url' as const, url },
-          })),
-          { type: 'text' as const, text: textContent },
+          ...(image_urls as string[]).map((url): AIContentBlock => ({ type: 'image', url })),
+          { type: 'text', text: textContent },
         ]
       : textContent;
 
-    const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-5',
-      max_tokens: 8192,
+    const text = await askAI({
       system: SYSTEM_PROMPT,
       messages: [{ role: 'user', content: userContent }],
+      maxTokens: 8192,
     });
 
-    const block = response.content[0];
-    if (block.type !== 'text') {
-      return NextResponse.json({ error: 'Unexpected response from Claude' }, { status: 500 });
-    }
+    let html = text.trim();
 
-    let html = block.text.trim();
-
-    // Strip markdown fences Claude occasionally wraps output in despite instructions
+    // Strip markdown fences the model occasionally wraps output in despite instructions
     if (html.startsWith('```')) {
       html = html.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
     }
 
     if (!html.startsWith('<!DOCTYPE') && !html.startsWith('<html')) {
-      return NextResponse.json({ error: 'Claude returned invalid HTML', raw: html.slice(0, 500) }, { status: 500 });
+      return NextResponse.json({ error: 'AI provider returned invalid HTML', raw: html.slice(0, 500) }, { status: 500 });
     }
 
     const pageSlug = slug ?? crypto.randomUUID();
