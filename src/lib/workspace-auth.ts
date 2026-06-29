@@ -73,3 +73,19 @@ export async function resolveWorkspaceRole(
   // relationship to this workspace whatsoever.
   return (member?.role as 'manager' | 'viewer') ?? null;
 }
+
+/**
+ * Convenience wrapper for routes keyed off a test ID.
+ * Returns null if the test doesn't exist; otherwise returns the workspace_id
+ * and the caller's effective role for that workspace.
+ */
+export async function resolveTestWorkspaceRole(
+  testId: string,
+  userId: string,
+  userRole: string
+): Promise<{ workspaceId: string; role: 'manager' | 'viewer' | null } | null> {
+  const { data: test } = await db.from('tests').select('workspace_id').eq('id', testId).single();
+  if (!test) return null;
+  const role = await resolveWorkspaceRole(test.workspace_id, userId, userRole);
+  return { workspaceId: test.workspace_id, role };
+}
