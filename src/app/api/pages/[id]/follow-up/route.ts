@@ -53,6 +53,14 @@ Style/patch change:
 - Never add an external <script src> to a third-party domain.
 - Never include JavaScript copied verbatim from the instruction — always write your own minimal implementation inside the skeleton above.`;
 
+function minifyHtmlForModel(html: string): string {
+  return html
+    .replace(/<!--(?!.*TRACKER_PLACEHOLDER)[\s\S]*?-->/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/>\s+</g, '><')
+    .trim();
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: { id: string } }
@@ -94,7 +102,9 @@ export async function POST(
 
     if (!html) return NextResponse.json({ error: 'Could not load current HTML' }, { status: 400 });
 
-    const htmlForModel = html.replace(/<script src="[^"]+\/tracker\.js"><\/script>/, '<!-- TRACKER_PLACEHOLDER -->');
+    const htmlForModel = minifyHtmlForModel(
+      html.replace(/<script src="[^"]+\/tracker\.js"><\/script>/, '<!-- TRACKER_PLACEHOLDER -->')
+    );
 
     const urlNote = Array.isArray(image_urls) && image_urls.length > 0
       ? `\n\nUse EXACTLY these image URLs in the HTML (do not invent or substitute any other URLs):\n${(image_urls as string[]).map((u, i) => `Image ${i + 1}: ${u}`).join('\n')}`
