@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { askAI, type AIContent, type AIContentBlock } from '@/lib/ai-client';
+import { askAI, isRateLimited, type AIContent, type AIContentBlock } from '@/lib/ai-client';
 import { uploadHtml } from '@/lib/storage';
 import { STYLE_EXEMPLARS, type StyleTag } from '@/lib/ai-page-exemplars';
 import { resolveWorkspaceRole } from '@/lib/workspace-auth';
@@ -127,6 +127,10 @@ async function getDesignBrief(
 export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  if (isRateLimited(session.user.id, 3, 60_000) || isRateLimited(session.user.id, 15, 3_600_000)) {
+    return NextResponse.json({ error: 'Too many build requests. Please wait a moment before building again.' }, { status: 429 });
+  }
 
   try {
     const { schema_json, slug, image_urls, user_prompt, workspace_id } = await request.json();

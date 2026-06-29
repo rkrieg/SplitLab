@@ -139,6 +139,23 @@ async function askOpenAICompatible(options: AskAIOptions): Promise<string> {
   return text;
 }
 
+const _rateLimitLog = new Map<string, number[]>();
+
+/**
+ * Returns true if the user has exceeded the allowed call rate.
+ * Uses an in-memory sliding window — resets on server restart.
+ */
+export function isRateLimited(userId: string, maxCalls: number, windowMs: number): boolean {
+  const now = Date.now();
+  const recent = (_rateLimitLog.get(userId) ?? []).filter(t => now - t < windowMs);
+  if (recent.length >= maxCalls) {
+    _rateLimitLog.set(userId, recent);
+    return true;
+  }
+  _rateLimitLog.set(userId, [...recent, now]);
+  return false;
+}
+
 /**
  * Single entry point every AI page-builder route calls instead of touching
  * a provider SDK directly. Which provider actually runs is decided by

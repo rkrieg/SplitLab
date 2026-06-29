@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { askAI } from '@/lib/ai-client';
+import { askAI, isRateLimited } from '@/lib/ai-client';
 import { VERTICAL_VALUES } from '@/lib/ai-page-verticals';
 import { SECTION_VOCABULARY, VERTICAL_PRIORITY_HINTS } from '@/lib/ai-page-vocabulary';
 import { resolveWorkspaceRole } from '@/lib/workspace-auth';
@@ -54,6 +54,10 @@ ${SECTION_TYPES_BLOCK}
 export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  if (isRateLimited(session.user.id, 3, 60_000) || isRateLimited(session.user.id, 15, 3_600_000)) {
+    return NextResponse.json({ error: 'Too many page generation requests. Please wait a moment before starting a new page.' }, { status: 429 });
+  }
 
   try {
     const { prompt, vertical, conversation_json, workspace_id } = await request.json();
