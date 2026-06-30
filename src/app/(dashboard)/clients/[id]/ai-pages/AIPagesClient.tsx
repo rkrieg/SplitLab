@@ -2,7 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
-import { Plus, Sparkles, ExternalLink, Edit2, Globe, Trash2, Loader2 } from 'lucide-react';
+import { Plus, Sparkles, ExternalLink, Edit2, Globe, Trash2, Loader2, Lock, ArrowRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import toast from 'react-hot-toast';
 import { VERTICALS, VERTICAL_LABELS, VERTICAL_COLORS } from '@/lib/ai-page-verticals';
@@ -22,14 +22,55 @@ interface Props {
   clientId: string;
   workspaceId: string;
   canManage: boolean;
+  canUseAI: boolean;
 }
 
-export default function AIPagesClient({ pages: initialPages, clientId, workspaceId, canManage }: Props) {
+function UpgradeModal({ onClose }: { onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
+      <div
+        className="bg-slate-900 border border-white/10 rounded-2xl p-7 w-full max-w-sm shadow-2xl"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="w-12 h-12 rounded-xl bg-indigo-500/15 border border-indigo-500/25 flex items-center justify-center mb-5">
+          <Lock size={22} className="text-indigo-400" />
+        </div>
+        <h3 className="text-white font-semibold text-base mb-2">
+          AI Page Builder requires an upgrade
+        </h3>
+        <p className="text-gray-400 text-sm leading-relaxed mb-1">
+          This feature is only available on the{' '}
+          <strong className="text-white">Agency</strong> and{' '}
+          <strong className="text-white">Scale</strong> plans.
+        </p>
+        <p className="text-gray-500 text-sm leading-relaxed mb-6">
+          Upgrade to generate landing pages with AI, edit them through chat, and publish them as A/B test variants in seconds.
+        </p>
+        <a
+          href="/billing"
+          className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold transition-colors shadow-lg shadow-indigo-600/20"
+        >
+          Upgrade Plan
+          <ArrowRight size={15} />
+        </a>
+        <button
+          onClick={onClose}
+          className="w-full mt-3 py-2 text-sm text-gray-500 hover:text-gray-300 transition-colors"
+        >
+          Maybe later
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export default function AIPagesClient({ pages: initialPages, clientId, workspaceId, canManage, canUseAI }: Props) {
   const router = useRouter();
   const [pages, setPages] = useState(initialPages);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
 
+  const [upgradeOpen, setUpgradeOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [newName, setNewName] = useState('');
   const [newVertical, setNewVertical] = useState('lead_gen');
@@ -37,8 +78,20 @@ export default function AIPagesClient({ pages: initialPages, clientId, workspace
 
   const pageToDelete = pages.find((p) => p.id === deleteId);
 
+  function openCreate() {
+    if (!canUseAI) { setUpgradeOpen(true); return; }
+    setNewName('');
+    setNewVertical('lead_gen');
+    setCreateOpen(true);
+  }
+
+  function openEditor(pageId: string) {
+    if (!canUseAI) { setUpgradeOpen(true); return; }
+    router.push(`/clients/${clientId}/ai-pages/new?page_id=${pageId}`);
+  }
+
   async function handleCreate() {
-    if (!newName.trim()) return;
+    if (!newName.trim() || !canUseAI) return;
     setCreating(true);
     try {
       const res = await fetch('/api/pages', {
@@ -78,7 +131,7 @@ export default function AIPagesClient({ pages: initialPages, clientId, workspace
         </div>
         {canManage && (
           <button
-            onClick={() => { setNewName(''); setNewVertical('lead_gen'); setCreateOpen(true); }}
+            onClick={openCreate}
             className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium transition-colors"
           >
             <Plus className="w-4 h-4" />
@@ -96,7 +149,7 @@ export default function AIPagesClient({ pages: initialPages, clientId, workspace
           <p className="text-gray-400 text-sm mb-5">Generate your first landing page with AI</p>
           {canManage && (
             <button
-              onClick={() => { setNewName(''); setNewVertical('lead_gen'); setCreateOpen(true); }}
+              onClick={openCreate}
               className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium transition-colors"
             >
               <Plus className="w-4 h-4" />
@@ -163,7 +216,7 @@ export default function AIPagesClient({ pages: initialPages, clientId, workspace
                   <td className="px-5 py-3.5">
                     <div className="flex items-center gap-2">
                       <button
-                        onClick={() => router.push(`/clients/${clientId}/ai-pages/new?page_id=${page.id}`)}
+                        onClick={() => openEditor(page.id)}
                         className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-white/5 hover:bg-white/10 text-gray-300 transition-colors"
                       >
                         <Edit2 className="w-3 h-3" />
@@ -186,7 +239,10 @@ export default function AIPagesClient({ pages: initialPages, clientId, workspace
         </div>
       )}
 
-      {/* Create modal */}
+      {/* Upgrade modal — shown when canUseAI=false and user tries to create or edit */}
+      {upgradeOpen && <UpgradeModal onClose={() => setUpgradeOpen(false)} />}
+
+      {/* Create modal — only reachable when canUseAI=true */}
       {createOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => !creating && setCreateOpen(false)}>
           <div className="bg-slate-900 border border-white/10 rounded-xl p-6 w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>

@@ -3,6 +3,7 @@ import { redirect, notFound } from 'next/navigation';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { resolveWorkspaceRole } from '@/lib/workspace-auth';
+import { PLAN_LIMITS } from '@/lib/plans';
 import AIBuilderClient from '../../pages/new/AIBuilderClient';
 
 interface PageProps {
@@ -28,9 +29,15 @@ export default async function AIBuilderPage({ params, searchParams }: PageProps)
 
   const { data: client } = await db
     .from('clients')
-    .select('name')
+    .select('name, owner_id')
     .eq('id', params.id)
     .single();
+
+  // Resolve the workspace owner's plan — invited managers use the owner's plan, not their own
+  const ownerId = client?.owner_id ?? session.user.id;
+  const { data: ownerRow } = await db.from('users').select('plan').eq('id', ownerId).single();
+  const ownerPlan = ownerRow?.plan ?? 'free';
+  const canUseAI = session.user.role === 'admin' || (PLAN_LIMITS[ownerPlan]?.aiPages ?? false);
 
   if (!searchParams.page_id) redirect(`/clients/${params.id}/ai-pages`);
 
@@ -50,6 +57,7 @@ export default async function AIBuilderPage({ params, searchParams }: PageProps)
       clientName={client?.name ?? 'Client'}
       initialPage={initialPage}
       backPath={`/clients/${params.id}/ai-pages`}
+      canUseAI={canUseAI}
     />
   );
 }

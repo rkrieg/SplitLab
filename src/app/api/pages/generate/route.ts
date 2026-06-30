@@ -4,7 +4,8 @@ import { authOptions } from '@/lib/auth';
 import { askAI, isRateLimited } from '@/lib/ai-client';
 import { VERTICAL_VALUES } from '@/lib/ai-page-verticals';
 import { SECTION_VOCABULARY, VERTICAL_PRIORITY_HINTS } from '@/lib/ai-page-vocabulary';
-import { resolveWorkspaceRole } from '@/lib/workspace-auth';
+import { resolveWorkspaceRole, resolveOwnerPlan } from '@/lib/workspace-auth';
+import { PLAN_LIMITS } from '@/lib/plans';
 import { extractUrls, fetchCompetitorContent } from '@/lib/ai-competitor-fetch';
 
 const SECTION_TYPES_BLOCK = SECTION_VOCABULARY
@@ -56,10 +57,6 @@ export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  if (isRateLimited(session.user.id, 3, 60_000) || isRateLimited(session.user.id, 15, 3_600_000)) {
-    return NextResponse.json({ error: 'Too many page generation requests. Please wait a moment before starting a new page.' }, { status: 429 });
-  }
-
   try {
     const { prompt, vertical, conversation_json, workspace_id } = await request.json();
 
@@ -68,6 +65,21 @@ export async function POST(request: NextRequest) {
     }
     const wsRole = await resolveWorkspaceRole(workspace_id, session.user.id, session.user.role);
     if (!wsRole || wsRole === 'viewer') return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+
+    // Plan gate — check owner's plan before consuming a rate-limit slot
+    if (session.user.role !== 'admin') {
+      const ownerPlan = await resolveOwnerPlan(workspace_id);
+      if (!PLAN_LIMITS[ownerPlan]?.aiPages) {
+        return NextResponse.json(
+          { error: 'AI page generation requires an Agency or Scale plan. Please upgrade to use this feature.', limitError: true },
+          { status: 403 }
+        );
+      }
+    }
+
+    if (isRateLimited(session.user.id, 3, 60_000) || isRateLimited(session.user.id, 15, 3_600_000)) {
+      return NextResponse.json({ error: 'Too many page generation requests. Please wait a moment before starting a new page.' }, { status: 429 });
+    }
 
     if (!prompt || typeof prompt !== 'string') {
       return NextResponse.json({ error: 'prompt is required' }, { status: 400 });

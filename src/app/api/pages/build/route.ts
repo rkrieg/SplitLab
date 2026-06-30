@@ -6,7 +6,8 @@ import { uploadHtml } from '@/lib/storage';
 import { STYLE_EXEMPLARS, type StyleTag } from '@/lib/ai-page-exemplars';
 import { buildFontLibraryBlock } from '@/lib/ai-page-fonts';
 import { buildIconLibraryBlock } from '@/lib/ai-page-icons';
-import { resolveWorkspaceRole } from '@/lib/workspace-auth';
+import { resolveWorkspaceRole, resolveOwnerPlan } from '@/lib/workspace-auth';
+import { PLAN_LIMITS } from '@/lib/plans';
 
 const DESIGN_BRIEF_SYSTEM_PROMPT = `You are a design-direction classifier for an AI landing page builder. Given a business schema and the user's original request, produce a short creative brief that will guide the HTML/CSS generation step that runs after you.
 
@@ -431,6 +432,17 @@ export async function POST(request: NextRequest) {
     }
     const wsRole = await resolveWorkspaceRole(workspace_id, session.user.id, session.user.role);
     if (!wsRole || wsRole === 'viewer') return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+
+    // Plan gate — check owner's plan before consuming a rate-limit slot
+    if (session.user.role !== 'admin') {
+      const ownerPlan = await resolveOwnerPlan(workspace_id);
+      if (!PLAN_LIMITS[ownerPlan]?.aiPages) {
+        return NextResponse.json(
+          { error: 'AI page generation requires an Agency or Scale plan. Please upgrade to use this feature.', limitError: true },
+          { status: 403 }
+        );
+      }
+    }
 
     if (!schema_json || typeof schema_json !== 'object') {
       return NextResponse.json({ error: 'schema_json is required' }, { status: 400 });

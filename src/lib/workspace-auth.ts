@@ -75,6 +75,40 @@ export async function resolveWorkspaceRole(
 }
 
 /**
+ * Resolves the plan of the account owner for a given workspace.
+ * Always traces workspace → client → owner → users.plan so that invited
+ * managers (whose own plan row is 'free') are correctly evaluated against
+ * the workspace owner's plan — the same pattern used by the domains gate.
+ *
+ * Returns 'free' as a safe fallback on any lookup failure.
+ */
+export async function resolveOwnerPlan(workspaceId: string): Promise<string> {
+  const { data: ws } = await db
+    .from('workspaces')
+    .select('client_id')
+    .eq('id', workspaceId)
+    .single();
+
+  if (!ws) return 'free';
+
+  const { data: client } = await db
+    .from('clients')
+    .select('owner_id')
+    .eq('id', ws.client_id)
+    .single();
+
+  if (!client?.owner_id) return 'free';
+
+  const { data: owner } = await db
+    .from('users')
+    .select('plan')
+    .eq('id', client.owner_id)
+    .single();
+
+  return owner?.plan ?? 'free';
+}
+
+/**
  * Convenience wrapper for routes keyed off a test ID.
  * Returns null if the test doesn't exist; otherwise returns the workspace_id
  * and the caller's effective role for that workspace.

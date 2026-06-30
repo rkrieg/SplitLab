@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import {
   Sparkles, Send, Globe, Copy, Check, ChevronLeft, Loader2,
   Wand2, Layout, Palette, RefreshCw, Monitor, Smartphone,
-  ExternalLink, RotateCcw, Plus, Download,
+  ExternalLink, RotateCcw, Plus, Download, Lock, ArrowRight,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { cn } from '@/lib/utils';
@@ -50,6 +50,7 @@ interface Props {
   clientName: string;
   initialPage?: InitialPage | null;
   backPath?: string;
+  canUseAI?: boolean;
 }
 
 const BUILD_STEPS = [
@@ -135,8 +136,42 @@ function hasUnfilledPlaceholders(text: string): boolean {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function AIBuilderClient({ workspaceId, clientId, clientName, initialPage, backPath }: Props) {
+export default function AIBuilderClient({ workspaceId, clientId, clientName, initialPage, backPath, canUseAI = true }: Props) {
   const router = useRouter();
+
+  if (!canUseAI) {
+    return (
+      <div className="fixed inset-0 z-20 flex items-center justify-center bg-slate-50 dark:bg-slate-900" style={{ left: '15rem' }}>
+        <div className="flex flex-col items-center text-center max-w-md px-6">
+          <div className="w-16 h-16 rounded-2xl bg-indigo-50 dark:bg-indigo-600/10 border border-indigo-100 dark:border-indigo-600/20 flex items-center justify-center mb-5">
+            <Lock size={26} className="text-indigo-500 dark:text-indigo-400" />
+          </div>
+          <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100 mb-2">
+            AI Page Builder is not available on your plan
+          </h2>
+          <p className="text-sm text-slate-500 dark:text-slate-400 leading-relaxed mb-2">
+            AI website generation is available on the <strong className="text-slate-700 dark:text-slate-300">Agency</strong> and <strong className="text-slate-700 dark:text-slate-300">Scale</strong> plans.
+          </p>
+          <p className="text-sm text-slate-400 dark:text-slate-500 leading-relaxed mb-8">
+            Upgrade to generate landing pages with AI, edit them with chat, and publish them directly as A/B test variants.
+          </p>
+          <a
+            href="/billing"
+            className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold transition-colors shadow-lg shadow-indigo-600/25"
+          >
+            Upgrade Plan
+            <ArrowRight size={15} />
+          </a>
+          <button
+            onClick={() => router.push(backPath ?? `/clients/${clientId}/pages`)}
+            className="mt-4 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+          >
+            ← Back to pages
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   const [phase, setPhase] = useState<Phase>('prompt');
   const [pageName, setPageName] = useState('');
