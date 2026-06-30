@@ -272,7 +272,7 @@ CSS for the scroll transition on .site-nav:
 
 ### Nav anti-patterns — never do these
 - NEVER use position: fixed for the nav — use position: sticky to avoid content offset issues
-- NEVER use a Font Awesome icon for the hamburger — always use the 3-span CSS bar pattern above
+- NEVER use a Font Awesome icon for the default hamburger — it cannot animate into an X. Use the 3-span CSS bar pattern unless the user explicitly requests a different icon style
 - NEVER toggle the mobile menu with display none/block — always use the opacity + transform slide animation
 - NEVER make the nav taller than 72px on desktop
 - NEVER put more than one CTA button in the nav
