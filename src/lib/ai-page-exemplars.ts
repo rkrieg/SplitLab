@@ -36,7 +36,10 @@ export type StyleTag =
   | 'corporate_trust'
   | 'playful_funky'
   | 'luxury_premium'
-  | 'technical_dark';
+  | 'technical_dark'
+  | 'warm_clinical'
+  | 'friendly_local'
+  | 'warm_authority';
 
 export interface StyleExemplar {
   label: string;
@@ -269,6 +272,36 @@ export const STYLE_EXEMPLARS: Record<StyleTag, StyleExemplar> = {
   <p class="q">"It's the only gift I've given that made my mother cry. Twice — once unwrapping it, once finding the maker's signature."</p>
   <div class="by">— A Private Client, London</div>
 </section>`.trim(),
+  },
+
+  warm_clinical: {
+    label: 'Warm / Clinical',
+    mood: 'Clean, human, and reassuring. Feels like a trusted practitioner — approachable without being casual, professional without being cold.',
+    palette: { background: '#F9FAFB', text: '#1A2332', accent: '#0EA5A0' },
+    typography: { headline: '"DM Sans", sans-serif', body: '"Inter", system-ui, sans-serif' },
+    layoutNotes: 'Generous whitespace, soft teal or sage accents, rounded cards, human photography placeholders, trust badges prominent near CTAs.',
+    motionStyle: 'Gentle — soft fade-up at ~600ms, no bounce or overshoot. Motion should feel calm and reassuring, never energetic.',
+    htmlSnippet: '',
+  },
+
+  friendly_local: {
+    label: 'Friendly / Local',
+    mood: 'Warm, community-rooted, and approachable. Feels like a real person, not a corporation. Trustworthy through personality, not formality.',
+    palette: { background: '#FFFBF5', text: '#2C1810', accent: '#E8650A' },
+    typography: { headline: '"Poppins", sans-serif', body: '"Inter", system-ui, sans-serif' },
+    layoutNotes: 'Warm amber/terracotta accents, rounded corners, friendly photography, clear contact info above fold, Google Maps embed or service area mention.',
+    motionStyle: 'Warm and simple — gentle fade-up, no complexity. The page should feel welcoming, not slick.',
+    htmlSnippet: '',
+  },
+
+  warm_authority: {
+    label: 'Warm / Authority',
+    mood: 'Trustworthy and expert, but human and approachable. Feels like a knowledgeable mentor, not a faceless institution. Confidence through clarity.',
+    palette: { background: '#FAFAF7', text: '#1C2B3A', accent: '#2563EB' },
+    typography: { headline: '"Fraunces", serif', body: '"DM Sans", sans-serif' },
+    layoutNotes: 'Editorial serif headlines for authority, clean sans body for readability, credential badges and testimonials prominent, warm but structured layout.',
+    motionStyle: 'Measured — smooth fade-up at ~650ms, slight stagger on lists and cards. Purposeful, not flashy.',
+    htmlSnippet: '',
   },
 
   technical_dark: {

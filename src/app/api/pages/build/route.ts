@@ -13,7 +13,7 @@ const DESIGN_BRIEF_SYSTEM_PROMPT = `You are a design-direction classifier for an
 Return JSON only. No explanation, no markdown fences.
 
 {
-  "style_tag": "minimal_editorial" | "bold_maximalist" | "corporate_trust" | "playful_funky" | "luxury_premium" | "technical_dark",
+  "style_tag": "minimal_editorial" | "bold_maximalist" | "corporate_trust" | "playful_funky" | "luxury_premium" | "technical_dark" | "warm_clinical" | "friendly_local" | "warm_authority",
   "palette_direction": "specific color direction for THIS business — 1 sentence, not generic",
   "layout_rhythm": "specific layout/spacing direction for THIS business — 1 sentence",
   "copy_tone": "specific tone-of-voice direction for THIS business — 1 sentence",
@@ -22,7 +22,17 @@ Return JSON only. No explanation, no markdown fences.
 
 ## How to pick style_tag
 - If the user's request uses explicit style words ("funky", "sleek", "minimal", "corporate", "luxury", "techy", "bold", "playful", etc.), map to the closest tag.
-- Otherwise infer from the business itself (e.g. a law firm leans corporate_trust, a sneaker drop leans bold_maximalist, a dev tool leans technical_dark, a skincare brand leans minimal_editorial or luxury_premium).
+- Otherwise infer from the business vertical using these mappings as a strong default:
+  - Healthcare, wellness, therapy, mental health, medical clinics, nutrition → warm_clinical
+  - Local services, tradespeople, community businesses, nonprofits, charities → friendly_local
+  - Education, online courses, coaching, real estate, financial advisory → warm_authority
+  - Law firms, enterprise SaaS, compliance, HR software, B2B → corporate_trust
+  - Dev tools, AI products, technical B2B, APIs, infrastructure → technical_dark
+  - Luxury goods, premium hospitality, fine dining, high fashion, jewellery → luxury_premium
+  - Gyms, fitness, streetwear, supplements, sports, events, lead gen, info products → bold_maximalist
+  - Consumer apps, food delivery, e-learning for students, children products → playful_funky
+  - Design studios, portfolios, boutique retail, artisan food & beverage → minimal_editorial
+  - Hospitality & travel: use luxury_premium for upscale hotels/resorts, bold_maximalist for adventure/budget travel
 - Never default to the same tag regardless of business — vary based on what's actually being built.`;
 
 const FONT_LIBRARY_BLOCK = buildFontLibraryBlock();
@@ -254,6 +264,9 @@ const AESTHETIC_REFERENCES: Record<StyleTag, string> = {
   technical_dark: 'Think Linear.app, Vercel, Railway, Planetscale — dark canvas, precise monospace accents, hairline borders, accent glow on key elements',
   bold_maximalist: 'Think Supreme, Nike SNKRS drops, Monzo — high contrast, oversized type, color-blocked sections, zero subtlety',
   playful_funky: 'Think Duolingo, Notion for students, Calm — rounded shapes, pastel or vibrant accents, bouncy motion, warm and human copy',
+  warm_clinical: 'Think Headspace, One Medical, Hims/Hers, Noom — clean light backgrounds, soft teal or sage accent, human photography, reassuring copy that never feels cold or sterile',
+  friendly_local: 'Think a well-designed local bakery, neighbourhood gym, or family law office — warm amber or terracotta accents, approachable rounded type, feels like a real person runs it, not a corporation',
+  warm_authority: 'Think MasterClass, Khan Academy, Compass Real Estate — editorial serif headlines for credibility, clean body text, credential badges, testimonials from real people, confident but never intimidating',
 };
 
 /**
