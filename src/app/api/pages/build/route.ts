@@ -230,6 +230,9 @@ Examples:
 - Forms must be styled and functional (HTML only — no JS submission logic needed)
 - CTAs must be prominent with hover states and a visible active/pressed state
 
+## Placeholder fields
+If the user prompt contains bracket-style placeholder text like [firm name], [city], [your result], or [practice area] — the user forgot to fill them in. Do NOT echo the bracket text into the HTML. Instead, invent a realistic, specific value that fits the business context (e.g. [firm name] → "Caldwell & Associates", [city] → "Austin, TX", [your result] → "$2.4M recovered"). The page must always read like real, live content.
+
 ## Image fallbacks
 If a schema field for an image is null or missing, use a CSS gradient background instead. Never use placeholder image URLs.
 

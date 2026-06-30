@@ -10,6 +10,7 @@ import {
 import toast from 'react-hot-toast';
 import { cn } from '@/lib/utils';
 import { VERTICAL_LABELS } from '@/lib/ai-page-verticals';
+import { SAMPLE_PROMPTS } from '@/lib/ai-page-sample-prompts';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -77,6 +78,59 @@ function setNestedValue(obj: Record<string, unknown>, path: string, value: unkno
   }
   current[keys[keys.length - 1]] = value;
   return result;
+}
+
+// ── Sample prompt chip ────────────────────────────────────────────────────────
+
+function renderPromptWithHighlights(text: string) {
+  const parts = text.split(/(\[[^\]]+\])/g);
+  return parts.map((part, i) =>
+    /^\[.+\]$/.test(part)
+      ? <strong key={i} className="text-indigo-400 font-semibold not-italic">{part}</strong>
+      : <span key={i}>{part}</span>
+  );
+}
+
+function SamplePromptChip({ vertical, onUse }: { vertical: string; onUse: (prompt: string) => void }) {
+  const samplePrompt = SAMPLE_PROMPTS[vertical] ?? SAMPLE_PROMPTS['other'];
+  const [hovered, setHovered] = useState(false);
+
+  return (
+    <div
+      className="relative flex justify-end"
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      <button
+        type="button"
+        onClick={() => onUse(samplePrompt)}
+        className="inline-flex items-center gap-1 text-[11px] text-indigo-400 hover:text-indigo-300 transition-colors"
+      >
+        <Sparkles size={10} />
+        Try an example
+      </button>
+
+      {hovered && (
+        <>
+          {/* Transparent bridge covers the 8px gap between button and tooltip so mouseleave never fires mid-transit */}
+          <div className="absolute bottom-full right-0 h-2 w-72 z-50" />
+          <div className="absolute bottom-full right-0 mb-2 w-72 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-50 overflow-hidden">
+            <div className="flex items-center justify-between px-3 py-2 border-b border-slate-700">
+              <span className="text-[10px] font-medium text-slate-400 uppercase tracking-wider">Sample prompt</span>
+              {/* <span className="text-[10px] text-indigo-400">Click to use</span> */}
+            </div>
+            <p className="px-3 py-2.5 text-[11px] text-slate-300 leading-relaxed whitespace-pre-wrap max-h-56 overflow-y-auto">
+              {renderPromptWithHighlights(samplePrompt)}
+            </p>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function hasUnfilledPlaceholders(text: string): boolean {
+  return /\[[^\]]+\]/.test(text);
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -435,6 +489,10 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
   async function handleGenerate(e: React.FormEvent) {
     e.preventDefault();
     if (!prompt.trim() || !pageName.trim()) return;
+    if (hasUnfilledPlaceholders(prompt)) {
+      toast.error('Please fill in the highlighted [placeholder] fields before building.');
+      return;
+    }
     const previewUrls = chatImages.map(img => img.preview);
     addMessage({ role: 'user', content: prompt, ...(previewUrls.length > 0 ? { image_urls: previewUrls } : {}) });
     await runGenerate(prompt, []);
@@ -808,6 +866,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
                   {VERTICAL_LABELS[vertical] ?? vertical}
                 </span>
               </div>
+              <SamplePromptChip vertical={vertical} onUse={p => setPrompt(p)} />
               <div className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl overflow-hidden focus-within:border-indigo-400 dark:focus-within:border-indigo-500 transition-colors">
                 {chatImages.length > 0 && (
                   <div className="flex items-center gap-2 px-3.5 pt-2.5 flex-wrap">
