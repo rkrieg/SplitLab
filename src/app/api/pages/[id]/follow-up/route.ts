@@ -5,6 +5,7 @@ import { db } from '@/lib/supabase-server';
 import { askAI, isRateLimited, type AIContent, type AIContentBlock } from '@/lib/ai-client';
 import { uploadHtml, downloadHtmlByPath, fileNameFromUrl } from '@/lib/storage';
 import { resolveWorkspaceRole } from '@/lib/workspace-auth';
+import { extractUrls, fetchCompetitorContent } from '@/lib/ai-competitor-fetch';
 
 const SYSTEM_PROMPT = `You are editing an existing landing page. The user will give you an instruction to modify the page.
 
@@ -110,10 +111,17 @@ export async function POST(
       html.replace(/<script src="[^"]+\/tracker\.js"><\/script>/, '<!-- TRACKER_PLACEHOLDER -->')
     );
 
+    // Fetch competitor site(s) if the instruction contains URLs
+    const mentionedUrls = extractUrls(prompt);
+    const competitorContext = mentionedUrls.length > 0 ? await fetchCompetitorContent(mentionedUrls) : null;
+
     const urlNote = Array.isArray(image_urls) && image_urls.length > 0
       ? `\n\nUse EXACTLY these image URLs in the HTML (do not invent or substitute any other URLs):\n${(image_urls as string[]).map((u, i) => `Image ${i + 1}: ${u}`).join('\n')}`
       : '';
-    const textContent = `Current schema:\n${JSON.stringify(schema, null, 2)}\n\nCurrent HTML:\n${htmlForModel}\n\nInstruction: ${prompt}${urlNote}`;
+    const competitorNote = competitorContext
+      ? `\n\n## Reference site analysis\nThe user referenced a site for style inspiration. Use this to inform the visual changes — keep all existing content but update the design direction accordingly:\n${competitorContext}`
+      : '';
+    const textContent = `Current schema:\n${JSON.stringify(schema, null, 2)}\n\nCurrent HTML:\n${htmlForModel}\n\nInstruction: ${prompt}${urlNote}${competitorNote}`;
 
     const userContent: AIContent =
       Array.isArray(image_urls) && image_urls.length > 0
@@ -179,6 +187,7 @@ export async function POST(
 
     const result: Record<string, unknown> = { html_url: htmlUrl };
     if (parsed.type === 'structural') result.schema_json = parsed.schema_json;
+    if (mentionedUrls.length > 0 && !competitorContext) result.competitor_fetch_failed = true;
 
     return NextResponse.json(result);
   } catch (err) {

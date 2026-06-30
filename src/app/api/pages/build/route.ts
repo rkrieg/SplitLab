@@ -304,6 +304,37 @@ If a schema field for an image is null or missing, use a CSS gradient background
 ## Motion — safety is non-negotiable
 - Default to CSS-only motion: @keyframes/transition for entrance fades, hover states, and any continuous decorative loop (e.g. a floating shape or badge). This covers nearly every effect, including rotating/orbiting visuals.
 - Only reach for JS if CSS genuinely cannot do it (e.g. cycling through multiple distinct text/content values over time). If you are not fully confident the JS you'd write is safe, do NOT add it — a working CSS-only effect beats a risky JS one. Never crash the page.
+
+## Scroll-reveal — CRITICAL rule (most common cause of invisible content)
+NEVER use the .reveal / .in-view pattern (opacity: 0 on an element, waiting for a JS class to make it visible). If you write that CSS but forget the IntersectionObserver script, every section below the hero will be permanently invisible — a blank page.
+
+The safe alternative — CSS animation with animation-fill-mode: both:
+- Use @keyframes fade-up { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+- Apply to elements as: animation: fade-up 0.6s cubic-bezier(0.4,0,0.2,1) both;
+- Stagger with animation-delay: 0.1s, 0.2s, 0.3s etc.
+- animation-fill-mode: both means the element starts at opacity: 0 before the animation fires AND stays at opacity: 1 after — no JS needed, no invisible content risk.
+- For sections further down the page, use longer delays or simply skip the entrance animation entirely — visible content is always better than an elegant animation that breaks.
+
+If you genuinely want scroll-triggered reveals, you MUST include the IntersectionObserver script alongside the CSS. Never write .reveal { opacity: 0 } without the observer. The approved skeleton:
+
+<script>
+(function () {
+  try {
+    var els = document.querySelectorAll('.reveal');
+    if (!els.length) return;
+    var io = new IntersectionObserver(function (entries) {
+      try {
+        entries.forEach(function (entry) {
+          try {
+            if (entry.isIntersecting) { entry.target.classList.add('in-view'); io.unobserve(entry.target); }
+          } catch (e) {}
+        });
+      } catch (e) {}
+    }, { threshold: 0.12 });
+    els.forEach(function (el) { try { io.observe(el); } catch (e) {} });
+  } catch (e) {}
+})();
+</script>
 - If you do add decorative JS, copy this exact skeleton and only fill in the marked parts. Every callback gets its OWN try/catch — a try/catch around the setup code does NOT catch errors thrown later inside a setInterval/setTimeout callback, because those run in a new call stack:
 
 <script>
@@ -346,10 +377,14 @@ const AESTHETIC_REFERENCES: Record<StyleTag, string> = {
 async function getDesignBrief(
   schema: unknown,
   userPrompt: string | undefined,
-  imageUrls: string[]
+  imageUrls: string[],
+  competitorContext?: string,
 ): Promise<{ styleTag: StyleTag; brief: Record<string, string> } | null> {
   try {
-    const briefText = `Business schema:\n${JSON.stringify(schema, null, 2)}${userPrompt ? `\n\nOriginal user request: ${userPrompt}` : ''}`;
+    const competitorHint = competitorContext
+      ? `\n\nReference site analysis (use to inform style_tag selection):\n${competitorContext}`
+      : '';
+    const briefText = `Business schema:\n${JSON.stringify(schema, null, 2)}${userPrompt ? `\n\nOriginal user request: ${userPrompt}` : ''}${competitorHint}`;
     const briefContent: AIContent = imageUrls.length > 0
       ? [
           ...imageUrls.map((url): AIContentBlock => ({ type: 'image', url })),
@@ -389,7 +424,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const { schema_json, slug, image_urls, user_prompt, workspace_id } = await request.json();
+    const { schema_json, slug, image_urls, user_prompt, workspace_id, competitor_context } = await request.json();
 
     if (!workspace_id || typeof workspace_id !== 'string') {
       return NextResponse.json({ error: 'workspace_id is required' }, { status: 400 });
@@ -412,10 +447,15 @@ export async function POST(request: NextRequest) {
       ? `\n\nOriginal user request: ${user_prompt}`
       : '';
 
+    const competitorNote = typeof competitor_context === 'string' && competitor_context.trim()
+      ? `\n\n## Reference site analysis\nThe user provided a competitor/reference site. Use this to inform the visual style, layout patterns, and section structure — but all content must come from the schema, not copied from the reference:\n${competitor_context}`
+      : '';
+
     const designBrief = await getDesignBrief(
       schema_json,
       typeof user_prompt === 'string' ? user_prompt : undefined,
-      hasImages ? (image_urls as string[]) : []
+      hasImages ? (image_urls as string[]) : [],
+      typeof competitor_context === 'string' ? competitor_context : undefined,
     );
 
     let styleReferenceNote = '';
@@ -427,7 +467,7 @@ export async function POST(request: NextRequest) {
       styleReferenceNote = `\n\n## Style reference\nStyle: ${exemplar.label} — ${exemplar.mood}\nPalette direction: ${b.palette_direction ?? ''}\nLayout rhythm: ${b.layout_rhythm ?? ''}\nCopy tone: ${b.copy_tone ?? ''}\nMotion style: ${b.motion_style ?? exemplar.motionStyle}\nAesthetic target: ${AESTHETIC_REFERENCES[designBrief.styleTag] ?? ''}`;
     }
 
-    const textContent = `Build the landing page for this schema:\n\n${JSON.stringify(schema_json, null, 2)}${imageList}${styleReferenceNote}${promptNote}`;
+    const textContent = `Build the landing page for this schema:\n\n${JSON.stringify(schema_json, null, 2)}${imageList}${styleReferenceNote}${competitorNote}${promptNote}`;
 
     const userContent: AIContent = hasImages
       ? [

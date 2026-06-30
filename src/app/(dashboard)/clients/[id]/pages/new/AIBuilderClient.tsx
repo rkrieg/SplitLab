@@ -167,6 +167,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
 
   const [questions, setQuestions] = useState<string[]>([]);
   const [answers, setAnswers] = useState<string[]>([]);
+  const [competitorContext, setCompetitorContext] = useState<string | null>(null);
 
   const schemaRef = useRef<unknown>(null);
   const threadRef = useRef<HTMLDivElement>(null);
@@ -373,6 +374,13 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
       return;
     }
     const data = await res.json();
+
+    if (data.competitor_fetch_failed) {
+      toast("Couldn't access that site — building from your description instead. Try attaching a screenshot for better results.", { icon: '⚠️' });
+    } else if (data.competitor_context) {
+      setCompetitorContext(data.competitor_context);
+    }
+
     if (data.type === 'questions') {
       setQuestions(data.questions);
       setAnswers(new Array(data.questions.length).fill(''));
@@ -387,10 +395,10 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
       { role: 'assistant', content: JSON.stringify(data.schema) },
     ];
     setConversationJson(updatedHistory);
-    await runBuild(data.schema, updatedHistory);
+    await runBuild(data.schema, updatedHistory, data.competitor_context ?? null);
   }
 
-  async function runBuild(schema: unknown, history: { role: string; content: string; image_urls?: string[] }[]) {
+  async function runBuild(schema: unknown, history: { role: string; content: string; image_urls?: string[] }[], passedCompetitorContext?: string | null) {
     if (!pageId) return;
     setPhase('building');
     const cleanup = animateBuildSteps();
@@ -440,6 +448,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
         user_prompt: prompt,
         workspace_id: workspaceId,
         ...(image_urls.length > 0 ? { image_urls } : {}),
+        ...(passedCompetitorContext ? { competitor_context: passedCompetitorContext } : {}),
       }),
     });
     cleanup();
@@ -619,6 +628,9 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
       return;
     }
     const data = await res.json();
+    if (data.competitor_fetch_failed) {
+      toast("Couldn't access that site — applying changes from your description instead. Try attaching a screenshot for better results.", { icon: '⚠️' });
+    }
     if (data.schema_json) { schemaRef.current = data.schema_json; setSchemaJson(data.schema_json); }
     setHtmlUrl(data.html_url + `?t=${Date.now()}`);
     if (!silent) {
@@ -867,6 +879,12 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
                 </span>
               </div>
               <SamplePromptChip vertical={vertical} onUse={p => setPrompt(p)} />
+              {/https?:\/\/[^\s]+/i.test(prompt) && (
+                <div className="flex items-center gap-1.5 text-[11px] text-indigo-400">
+                  <Globe size={11} />
+                  <span>We&apos;ll reference that site for inspiration</span>
+                </div>
+              )}
               <div className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl overflow-hidden focus-within:border-indigo-400 dark:focus-within:border-indigo-500 transition-colors">
                 {chatImages.length > 0 && (
                   <div className="flex items-center gap-2 px-3.5 pt-2.5 flex-wrap">

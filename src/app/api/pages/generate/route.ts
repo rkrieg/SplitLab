@@ -5,6 +5,7 @@ import { askAI, isRateLimited } from '@/lib/ai-client';
 import { VERTICAL_VALUES } from '@/lib/ai-page-verticals';
 import { SECTION_VOCABULARY, VERTICAL_PRIORITY_HINTS } from '@/lib/ai-page-vocabulary';
 import { resolveWorkspaceRole } from '@/lib/workspace-auth';
+import { extractUrls, fetchCompetitorContent } from '@/lib/ai-competitor-fetch';
 
 const SECTION_TYPES_BLOCK = SECTION_VOCABULARY
   .map(s => `- ${s.schemaExample}\n  Use when: ${s.whenToUse}`)
@@ -83,9 +84,17 @@ export async function POST(request: NextRequest) {
       ? conversation_json
       : [];
 
+    // Fetch competitor site(s) if the prompt contains URLs
+    const urls = extractUrls(prompt);
+    const competitorContext = urls.length > 0 ? await fetchCompetitorContent(urls) : null;
+
+    const competitorNote = competitorContext
+      ? `\n\n## Competitor/reference site analysis\nThe user referenced the following site(s): ${urls.join(', ')}\n\nHere is what was found:\n${competitorContext}\n\nUse this as inspiration for section structure, layout patterns, and tone — but populate all content with the user's own business details from their prompt. Never copy competitor copy verbatim.`
+      : '';
+
     const messages: { role: 'user' | 'assistant'; content: string }[] = [
       ...history,
-      { role: 'user', content: prompt },
+      { role: 'user', content: prompt + competitorNote },
     ];
 
     const text = await askAI({ system: systemPrompt, messages, maxTokens: 4096 });
@@ -102,7 +111,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unexpected response shape', raw: text }, { status: 500 });
     }
 
-    return NextResponse.json(parsed);
+    // Surface competitor context to the client so it can be forwarded to /build
+    // and flag when URLs were detected but the fetch returned nothing (bot block etc.)
+    return NextResponse.json({
+      ...parsed,
+      competitor_context: competitorContext ?? undefined,
+      competitor_fetch_failed: urls.length > 0 && !competitorContext,
+    });
   } catch (err) {
     console.error('[pages/generate]', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
