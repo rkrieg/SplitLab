@@ -212,6 +212,71 @@ TEAM section — pick one:
 - Never use transition: all on elements with layout properties — be explicit (transform, box-shadow, color, opacity, border-color)
 - Active/pressed state on buttons: transform: translateY(0), box-shadow reduces — makes buttons feel physical
 
+## Navigation — mandatory rules for every page
+
+### Structure
+- Logo left, nav links center or right, one CTA button far right — this is the only acceptable desktop layout
+- Maximum 5-6 nav links. If the schema has more, hide the least important ones or collapse into a More item
+- Nav must be sticky: position: sticky; top: 0; z-index: 1000
+- Desktop nav starts fully transparent on load. On scroll, apply a background treatment that suits the page style — frosted glass (backdrop-filter: blur(14px)) works well on most styles, but a solid var(--bg-surface) or a dark overlay is fine too if it fits the aesthetic. Wire this via the safe JS scroll listener below
+- Add a subtle bottom border on scroll: border-bottom: 1px solid var(--border)
+- Nav CTA button must match the page primary button exactly — same accent color, same border-radius, same font weight
+
+### Mobile drawer — CSS-only checkbox pattern (mandatory, no JS)
+Use the checkbox hack. Nav HTML structure must be:
+- input[type=checkbox][id=nav-toggle][class=nav-toggle-input] — hidden, drives open/close state
+- label[for=nav-toggle][class=nav-hamburger][aria-label=Toggle menu] containing exactly 3 empty span elements — the 3 bars
+- div.nav-menu containing the nav links and CTA — the slide-down drawer on mobile
+- Wrap all of the above in a div.nav-inner inside nav.site-nav
+
+### Hamburger — 3 CSS bars that morph into X (mandatory)
+The 3 span elements inside .nav-hamburger form the hamburger icon. Style rules:
+- Each span: display: block; width: 22px; height: 2px; background: var(--text); border-radius: 2px; transform-origin: center; transition: transform 280ms cubic-bezier(0.4,0,0.2,1), opacity 200ms ease
+- .nav-hamburger: display: none on desktop; on mobile (max-width: 768px): display: flex; flex-direction: column; gap: 5px; width: 32px; height: 32px; cursor: pointer; z-index: 1001; align-items: center; justify-content: center
+- .nav-toggle-input: always display: none
+
+X morph on :checked (sibling combinator — input must come BEFORE label in DOM):
+- .nav-toggle-input:checked ~ .nav-hamburger span:nth-child(1): transform: translateY(7px) rotate(45deg)
+- .nav-toggle-input:checked ~ .nav-hamburger span:nth-child(2): opacity: 0; transform: scaleX(0)
+- .nav-toggle-input:checked ~ .nav-hamburger span:nth-child(3): transform: translateY(-7px) rotate(-45deg)
+
+Mobile menu open state:
+- Default: transform: translateY(-8px); opacity: 0; pointer-events: none; transition: transform 260ms cubic-bezier(0.4,0,0.2,1), opacity 220ms ease
+- .nav-toggle-input:checked ~ .nav-menu: transform: translateY(0); opacity: 1; pointer-events: all
+
+Mobile menu layout at max-width: 768px — position: fixed; top: 60px; left: 0; right: 0; background: var(--bg-surface); backdrop-filter: blur(16px); border-bottom: 1px solid var(--border); display: flex; flex-direction: column; align-items: center; padding: 16px 0 24px
+
+### Scroll transparency — safe JS listener (mandatory)
+Add this script block before </body> (nav element MUST have class site-nav):
+
+<script>
+(function () {
+  try {
+    var nav = document.querySelector('.site-nav');
+    if (!nav) return;
+    function onScroll() {
+      try {
+        if (window.scrollY > 10) { nav.classList.add('nav-scrolled'); }
+        else { nav.classList.remove('nav-scrolled'); }
+      } catch (e) {}
+    }
+    window.addEventListener('scroll', onScroll, { passive: true });
+    onScroll();
+  } catch (e) {}
+})();
+</script>
+
+CSS for the scroll transition on .site-nav:
+- Default: background: transparent; border-bottom: 1px solid transparent; transition: background 300ms ease, border-color 300ms ease, backdrop-filter 300ms ease
+- .nav-scrolled: background: var(--bg-surface); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border-bottom: 1px solid var(--border)
+
+### Nav anti-patterns — never do these
+- NEVER use position: fixed for the nav — use position: sticky to avoid content offset issues
+- NEVER use a Font Awesome icon for the hamburger — always use the 3-span CSS bar pattern above
+- NEVER toggle the mobile menu with display none/block — always use the opacity + transform slide animation
+- NEVER make the nav taller than 72px on desktop
+- NEVER put more than one CTA button in the nav
+
 ## data-field attributes
 Every piece of editable text or image must have a data-field attribute matching its schema key.
 Examples:
