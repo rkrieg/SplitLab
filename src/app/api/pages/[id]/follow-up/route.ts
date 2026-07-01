@@ -25,6 +25,16 @@ Structural change:
 Style/patch change:
 {"type":"style","html":"<!DOCTYPE html>...full patched HTML..."}
 
+## Attached images — determine role from instruction intent
+When the user attaches one or more images, decide their role by reading the full instruction:
+- If the instruction is about something being wrong, broken, misaligned, or needs fixing on the CURRENT page → the image is a reference screenshot showing the problem. Use it to diagnose the exact CSS/layout issue and fix only that. Never embed it in the page HTML.
+- If the instruction asks you to add, place, use, include, or display the image somewhere on the page → the image is content to embed. Insert it in the appropriate section using the provided URL.
+- If both purposes appear in one instruction (e.g. "use photo A on hero and fix this alignment issue in photo B") → handle each image accordingly.
+When in doubt, ask yourself: is the user pointing at a problem, or handing you an asset? Let the instruction answer that.
+
+## Surgical change rule — CRITICAL for style/patch
+Make the MINIMUM edit required. Do NOT restructure, reorganize, or rebuild any section. Change only the specific property, value, or element the instruction targets.
+
 ## HTML rules (apply to both types)
 - Return the complete HTML document every time — never a partial snippet
 - Keep all existing data-field attributes intact
@@ -53,7 +63,9 @@ Style/patch change:
 
 - Never select or modify any element carrying a data-field attribute — that's user-editable content and must always stay visible/clickable.
 - Never add an external <script src> to a third-party domain.
-- Never include JavaScript copied verbatim from the instruction — always write your own minimal implementation inside the skeleton above.`;
+- Never include JavaScript copied verbatim from the instruction — always write your own minimal implementation inside the skeleton above.
+
+IMPORTANT: Your response must begin with { and end with }. Do not write any explanation, reasoning, or commentary before or after the JSON. Any text outside the JSON object will break the parser.`;
 
 // Applied when the follow-up instruction contains a competitor URL — overrides palette/style
 // inference with exact replication rules. All shared HTML rules above stay identical.
@@ -149,22 +161,26 @@ export async function POST(
 
     const hasCompetitorContext = (competitorContext?.screenshots?.length ?? 0) > 0 || !!competitorContext?.cssTokens;
 
-    const urlNote = Array.isArray(image_urls) && image_urls.length > 0
-      ? `\n\nUse EXACTLY these image URLs in the HTML (do not invent or substitute any other URLs):\n${(image_urls as string[]).map((u, i) => `Image ${i + 1}: ${u}`).join('\n')}`
-      : '';
     const competitorTokenNote = competitorContext?.cssTokens
       ? `## Competitor CSS token block — use these EXACT values\n${competitorContext.cssTokens}\n\n`
       : '';
-    const textContent = `${competitorTokenNote}Current schema:\n${JSON.stringify(schema, null, 2)}\n\nCurrent HTML:\n${htmlForModel}\n\nInstruction: ${prompt}${urlNote}`;
+    const textContent = `${competitorTokenNote}Current schema:\n${JSON.stringify(schema, null, 2)}\n\nCurrent HTML:\n${htmlForModel}\n\nInstruction: ${prompt}`;
+
+    const hasUserImages = Array.isArray(image_urls) && image_urls.length > 0;
 
     const userContent: AIContent = [
-      // Competitor screenshots — all chunks in order so Claude sees the full page
+      // Competitor screenshots first — all chunks in order so Claude sees the reference site
       ...(competitorContext?.screenshots ?? []).map(data => ({ type: 'image_base64' as const, data, mediaType: 'image/jpeg' })),
-      // User-attached images for this turn
-      ...(Array.isArray(image_urls) && image_urls.length > 0
-        ? image_urls.map((url: string): AIContentBlock => ({ type: 'image', url }))
-        : []),
+      // Instruction + current HTML — Claude reads the instruction BEFORE seeing user images
+      // so it can correctly determine each image's role (bug reference vs. content asset)
       { type: 'text' as const, text: textContent },
+      // User-attached images come AFTER the instruction text with an explicit role label
+      ...(hasUserImages
+        ? [
+            { type: 'text' as const, text: 'User-attached image(s) — apply the "Attached images" rule from the system prompt to determine whether each is a bug reference screenshot or a content asset to embed:' },
+            ...(image_urls as string[]).map((url): AIContentBlock => ({ type: 'image', url })),
+          ]
+        : []),
     ];
 
     const systemPrompt = hasCompetitorContext ? COMPETITOR_SYSTEM_PROMPT : SYSTEM_PROMPT;
@@ -181,9 +197,13 @@ export async function POST(
     });
 
     let raw = text.trim();
+    // Strip markdown fences
     if (raw.startsWith('```')) {
       raw = raw.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
     }
+    // Strip any leading prose before the JSON object (Claude sometimes explains before returning JSON)
+    const jsonStart = raw.indexOf('{');
+    if (jsonStart > 0) raw = raw.slice(jsonStart);
 
     let parsed: { type: 'structural' | 'style'; schema_json?: unknown; html: string };
     try {
