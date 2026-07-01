@@ -10,8 +10,6 @@ export async function GET() {
 
   const html = page?.html_content as string | null;
 
-  // Find all src/href/url() references to spot environment-specific URLs
-  const urls = html?.match(/(src|href|url\()["'\s]*([^"'\s)]+)/g)?.slice(0, 30) ?? [];
-
-  return NextResponse.json({ urls });
+  // Return first 3000 chars so we can see the nav/logo section
+  return NextResponse.json({ snippet: html?.slice(0, 3000) });
 }
