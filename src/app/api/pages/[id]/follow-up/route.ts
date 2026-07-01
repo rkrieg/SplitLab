@@ -6,7 +6,7 @@ import { askAI, isRateLimited, type AIContent, type AIContentBlock } from '@/lib
 import { uploadHtml, downloadHtmlByPath, fileNameFromUrl } from '@/lib/storage';
 import { resolveWorkspaceRole, resolveOwnerPlan } from '@/lib/workspace-auth';
 import { PLAN_LIMITS } from '@/lib/plans';
-import { extractUrls, fetchCompetitorContent } from '@/lib/ai-competitor-fetch';
+import { extractUrls, scrapeCompetitorUrl } from '@/lib/ai-competitor-scrape';
 
 const SYSTEM_PROMPT = `You are editing an existing landing page. The user will give you an instruction to modify the page.
 
@@ -54,6 +54,26 @@ Style/patch change:
 - Never select or modify any element carrying a data-field attribute — that's user-editable content and must always stay visible/clickable.
 - Never add an external <script src> to a third-party domain.
 - Never include JavaScript copied verbatim from the instruction — always write your own minimal implementation inside the skeleton above.`;
+
+// Applied when the follow-up instruction contains a competitor URL — overrides palette/style
+// inference with exact replication rules. All shared HTML rules above stay identical.
+const COMPETITOR_SYSTEM_PROMPT = SYSTEM_PROMPT + `
+
+## Competitor reference — STRICT replication rules (OVERRIDES ALL palette, font, and style inference above)
+
+You have been given a competitor/reference site as a full-page screenshot AND a CSS token block.
+These two inputs have different jobs — follow this division strictly:
+
+### CSS TOKEN BLOCK = single source of truth for ALL colors and typography
+- Copy every hex code VERBATIM into :root — do NOT adjust, lighten, darken, or "harmonize" them
+- Copy every font family VERBATIM — do NOT substitute with a similar font or a system font
+- The token block beats everything: it beats any inferred style and what you think looks good
+- NEVER derive colors visually from the screenshot — JPEG compression shifts colors. The token block has the real values.
+
+### SCREENSHOT = single source of truth for LAYOUT and STRUCTURE only
+- Use the screenshot to understand: section order, grid columns, card shapes, spacing density, hero layout type, border radii feel, visual weight distribution
+- Build EVERY section visible in the screenshot top to bottom
+- Do NOT use the screenshot for color decisions — trust the token block exclusively`;
 
 function minifyHtmlForModel(html: string): string {
   return html
@@ -125,33 +145,39 @@ export async function POST(
 
     // Fetch competitor site(s) if the instruction contains URLs
     const mentionedUrls = extractUrls(prompt);
-    const competitorContext = mentionedUrls.length > 0 ? await fetchCompetitorContent(mentionedUrls) : null;
+    const competitorContext = mentionedUrls.length > 0 ? await scrapeCompetitorUrl(mentionedUrls[0]) : null;
+
+    const hasCompetitorContext = (competitorContext?.screenshots?.length ?? 0) > 0 || !!competitorContext?.cssTokens;
 
     const urlNote = Array.isArray(image_urls) && image_urls.length > 0
       ? `\n\nUse EXACTLY these image URLs in the HTML (do not invent or substitute any other URLs):\n${(image_urls as string[]).map((u, i) => `Image ${i + 1}: ${u}`).join('\n')}`
       : '';
-    const competitorNote = competitorContext
-      ? `\n\n## Reference site analysis\nThe user referenced a site for style inspiration. Use this to inform the visual changes — keep all existing content but update the design direction accordingly:\n${competitorContext}`
+    const competitorTokenNote = competitorContext?.cssTokens
+      ? `## Competitor CSS token block — use these EXACT values\n${competitorContext.cssTokens}\n\n`
       : '';
-    const textContent = `Current schema:\n${JSON.stringify(schema, null, 2)}\n\nCurrent HTML:\n${htmlForModel}\n\nInstruction: ${prompt}${urlNote}${competitorNote}`;
+    const textContent = `${competitorTokenNote}Current schema:\n${JSON.stringify(schema, null, 2)}\n\nCurrent HTML:\n${htmlForModel}\n\nInstruction: ${prompt}${urlNote}`;
 
-    const userContent: AIContent =
-      Array.isArray(image_urls) && image_urls.length > 0
-        ? [
-            ...image_urls.map((url: string): AIContentBlock => ({ type: 'image', url })),
-            { type: 'text', text: textContent },
-          ]
-        : textContent;
+    const userContent: AIContent = [
+      // Competitor screenshots — all chunks in order so Claude sees the full page
+      ...(competitorContext?.screenshots ?? []).map(data => ({ type: 'image_base64' as const, data, mediaType: 'image/jpeg' })),
+      // User-attached images for this turn
+      ...(Array.isArray(image_urls) && image_urls.length > 0
+        ? image_urls.map((url: string): AIContentBlock => ({ type: 'image', url }))
+        : []),
+      { type: 'text' as const, text: textContent },
+    ];
+
+    const systemPrompt = hasCompetitorContext ? COMPETITOR_SYSTEM_PROMPT : SYSTEM_PROMPT;
 
     // Prior turns are replayed as plain text only — past image attachments
     // aren't re-sent as vision blocks here, only the current turn's images are.
     const text = await askAI({
-      system: SYSTEM_PROMPT,
+      system: systemPrompt,
       messages: [
         ...history.map(({ role, content }) => ({ role, content })),
         { role: 'user' as const, content: userContent },
       ],
-      maxTokens: 16000,
+      maxTokens: 32000,
     });
 
     let raw = text.trim();

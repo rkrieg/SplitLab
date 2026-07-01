@@ -6,7 +6,7 @@ import { VERTICAL_VALUES } from '@/lib/ai-page-verticals';
 import { SECTION_VOCABULARY, VERTICAL_PRIORITY_HINTS } from '@/lib/ai-page-vocabulary';
 import { resolveWorkspaceRole, resolveOwnerPlan } from '@/lib/workspace-auth';
 import { PLAN_LIMITS } from '@/lib/plans';
-import { extractUrls, fetchCompetitorContent } from '@/lib/ai-competitor-fetch';
+import { extractUrls, scrapeCompetitorUrl } from '@/lib/ai-competitor-scrape';
 
 const SECTION_TYPES_BLOCK = SECTION_VOCABULARY
   .map(s => `- ${s.schemaExample}\n  Use when: ${s.whenToUse}`)
@@ -96,12 +96,19 @@ export async function POST(request: NextRequest) {
       ? conversation_json
       : [];
 
-    // Fetch competitor site(s) if the prompt contains URLs
+    // Scrape competitor site if the prompt contains a URL — must complete BEFORE schema generation
+    // so the schema reflects the competitor's actual section count and order.
     const urls = extractUrls(prompt);
-    const competitorContext = urls.length > 0 ? await fetchCompetitorContent(urls) : null;
+    const competitorContext = urls.length > 0 ? await scrapeCompetitorUrl(urls[0]) : null;
+
+    if (competitorContext) {
+      console.log('[competitor] cssTokens:\n', competitorContext.cssTokens || '(empty)');
+      console.log('[competitor] pageContent length:', competitorContext.pageContent?.length ?? 0);
+      console.log('[competitor] screenshots count:', competitorContext.screenshots?.length ?? 0);
+    }
 
     const competitorNote = competitorContext
-      ? `\n\n## Competitor/reference site analysis\nThe user referenced the following site(s): ${urls.join(', ')}\n\nHere is what was found:\n${competitorContext}\n\nUse this as inspiration for section structure, layout patterns, and tone — but populate all content with the user's own business details from their prompt. Never copy competitor copy verbatim.`
+      ? `\n\n## Reference site context — MANDATORY\nThe user wants a page that closely replicates: ${urls[0]}\n\n${competitorContext.cssTokens ? `CSS token analysis:\n${competitorContext.cssTokens}\n\n` : ''}${competitorContext.pageContent ? `Reference site HTML (use to extract real copy, nav links, headlines, CTAs, section structure):\n${competitorContext.pageContent}\n\n` : ''}CRITICAL SCHEMA RULES when a reference site is provided:\n- Read the HTML above and extract the REAL headline text, subheadline, CTA button text, nav links, feature titles, testimonial copy — use the actual words from the site, not invented placeholders\n- Extract EVERY section visible on the reference site and include it in the schema\n- Match the SECTION ORDER exactly from the SECTION ORDER list above\n- Match the section TYPES exactly (if reference has Stats, Testimonials, Pricing, FAQ — include all of them)\n- Do NOT collapse or omit sections — a reference site with 8 sections must produce a schema with 8 sections\n- Replicate the nav link labels exactly as they appear on the reference site\n- Use the reference site's actual CTA button text, not generic "Get Started"`
       : '';
 
     const messages: { role: 'user' | 'assistant'; content: string }[] = [
@@ -109,7 +116,9 @@ export async function POST(request: NextRequest) {
       { role: 'user', content: prompt + competitorNote },
     ];
 
-    const text = await askAI({ system: systemPrompt, messages, maxTokens: 4096 });
+    // Screenshot is NOT passed here — schema generation doesn't need vision. It is returned
+    // to the client and forwarded to /build where Claude uses it as a visual reference.
+    const text = await askAI({ system: systemPrompt, messages, maxTokens: 8192 });
 
     let parsed: { type: 'questions' | 'schema'; questions?: string[]; schema?: unknown };
     try {
@@ -123,12 +132,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unexpected response shape', raw: text }, { status: 500 });
     }
 
-    // Surface competitor context to the client so it can be forwarded to /build
-    // and flag when URLs were detected but the fetch returned nothing (bot block etc.)
+    if (parsed.type === 'schema') {
+      const s = parsed.schema as Record<string, unknown>;
+      const sections = Array.isArray(s.sections) ? s.sections as Array<{type?: string}> : [];
+      console.log('[generate] schema section types:', sections.map(sec => sec.type).join(' → '));
+      console.log('[generate] hero headline:', (s.hero as Record<string, unknown>)?.headline);
+    }
+
     return NextResponse.json({
       ...parsed,
-      competitor_context: competitorContext ?? undefined,
-      competitor_fetch_failed: urls.length > 0 && !competitorContext,
+      ...(competitorContext?.screenshots?.length ? { competitor_screenshots: competitorContext.screenshots } : {}),
+      ...(competitorContext?.cssTokens ? { competitor_css_tokens: competitorContext.cssTokens } : {}),
+      ...(competitorContext?.pageContent ? { competitor_page_content: competitorContext.pageContent } : {}),
     });
   } catch (err) {
     console.error('[pages/generate]', err);

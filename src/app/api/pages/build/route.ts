@@ -112,6 +112,12 @@ Your :root must always include ALL of these:
 
 Never hardcode any of these values outside :root. Every element references a CSS variable — consistency is non-negotiable.
 
+## Hero height — mandatory rule
+- Hero section must fit within one viewport height: use min-height: 100vh with display: flex; align-items: center
+- NEVER let the hero content overflow so the user must scroll to see the CTA or subheadline
+- If content is dense, reduce padding — never push the CTA below the fold
+- On mobile (max-width: 768px): min-height: auto; padding: 80px 24px 60px — never use 100vh on mobile hero
+
 ## Hero layout — choose based on business type, never default to centered single-column
 Pick the layout that best fits the business — vary it, don't always pick the same one:
 
@@ -292,6 +298,7 @@ Examples:
 ## Design rules
 - Fully responsive — mobile-first, works on all screen sizes
 - Follow the "Style reference" block below for palette, typography, and mood. Never default to the same dark/generic aesthetic regardless of business type — a wedding photographer and an enterprise SaaS dashboard must not look like the same template with different words swapped in. If no style reference is provided, choose a palette and mood that genuinely fits the business described in the schema.
+- If a competitor CSS token block is provided, it appears at the top of the user message — treat it as the definitive palette and layout source.
 - Use CSS gradients as background fallbacks for any image fields with null values
 - Forms must be styled and functional (HTML only — no JS submission logic needed)
 - CTAs must be prominent with hover states and a visible active/pressed state
@@ -357,6 +364,41 @@ If you genuinely want scroll-triggered reveals, you MUST include the Intersectio
 - Never include JavaScript copied verbatim from the user's request — always write your own minimal implementation inside the skeleton above.
 - If the "Original user request" describes a specific visual/animation effect, implement it faithfully rather than defaulting to generic motion.`;
 
+// Used when a competitor URL was provided — appends override rules after all shared HTML rules.
+// The shared rules (nav, motion, scroll-reveal, data-field, :root architecture) are identical.
+// Only palette/style inference is overridden: use EXACT values from the competitor token block.
+const COMPETITOR_SYSTEM_PROMPT = SYSTEM_PROMPT + `
+
+## Competitor reference — STRICT replication rules (OVERRIDES ALL palette, font, and style inference above)
+
+You have been given a competitor/reference site as a full-page screenshot AND a CSS token block.
+These two inputs have different jobs — follow this division strictly:
+
+### CSS TOKEN BLOCK = single source of truth for ALL colors and typography
+- Copy every hex code VERBATIM into :root — do NOT adjust, lighten, darken, or "harmonize" them
+- Copy every font family VERBATIM — do NOT substitute with a similar font or a system font
+- The token block beats everything: it beats the style reference, the color system rules above, and what you think looks good
+- If the token block says --bg: #F4F1EC, that is the background. If it says --accent: #C8A96E, that is the CTA color.
+- NEVER derive colors visually from the screenshot — JPEG compression shifts colors. The token block has the real values.
+
+### SCREENSHOT = single source of truth for LAYOUT and STRUCTURE only
+- Use the screenshot to understand: section order, grid columns, card shapes, spacing density, hero layout type, whether sections are full-bleed or contained, border radii feel (sharp vs rounded), visual weight distribution
+- Build EVERY section visible in the screenshot — scroll the full page mentally and replicate each section top to bottom
+- Match the hero layout type exactly (split two-column, centered, full-bleed image, etc.)
+- Match card grid columns (2-col, 3-col, bento, etc.) as seen in the screenshot
+- Do NOT use the screenshot for color decisions — trust the token block exclusively
+
+### Section completeness — non-negotiable
+- Count every visible section in the screenshot and build ALL of them
+- Do not stop early. If the screenshot shows Nav → Hero → Features → Stats → Testimonials → Pricing → FAQ → CTA → Footer, build all 10.
+- Each section must have real structure (correct grid/flex layout), not a collapsed or placeholder version
+
+### Final check before outputting
+- Are :root colors from the token block? ✓
+- Are font families from the token block? ✓
+- Does section count match the screenshot? ✓
+- Does layout structure (grids, columns, hero type) match the screenshot? ✓`;
+
 const AESTHETIC_REFERENCES: Record<StyleTag, string> = {
   corporate_trust: 'Think Stripe, Rippling, Gusto — structured, trustworthy, premium sans-serif with a strong typographic hierarchy',
   luxury_premium: 'Think Bottega Veneta, Rolls-Royce, The Row — extreme restraint, gold or neutral accents, generous whitespace, serif elegance',
@@ -379,13 +421,9 @@ async function getDesignBrief(
   schema: unknown,
   userPrompt: string | undefined,
   imageUrls: string[],
-  competitorContext?: string,
 ): Promise<{ styleTag: StyleTag; brief: Record<string, string> } | null> {
   try {
-    const competitorHint = competitorContext
-      ? `\n\nReference site analysis (use to inform style_tag selection):\n${competitorContext}`
-      : '';
-    const briefText = `Business schema:\n${JSON.stringify(schema, null, 2)}${userPrompt ? `\n\nOriginal user request: ${userPrompt}` : ''}${competitorHint}`;
+    const briefText = `Business schema:\n${JSON.stringify(schema, null, 2)}${userPrompt ? `\n\nOriginal user request: ${userPrompt}` : ''}`;
     const briefContent: AIContent = imageUrls.length > 0
       ? [
           ...imageUrls.map((url): AIContentBlock => ({ type: 'image', url })),
@@ -425,7 +463,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const { schema_json, slug, image_urls, user_prompt, workspace_id, competitor_context } = await request.json();
+    const { schema_json, slug, image_urls, user_prompt, workspace_id, competitor_screenshots, competitor_css_tokens, competitor_page_content } = await request.json();
 
     if (!workspace_id || typeof workspace_id !== 'string') {
       return NextResponse.json({ error: 'workspace_id is required' }, { status: 400 });
@@ -459,39 +497,49 @@ export async function POST(request: NextRequest) {
       ? `\n\nOriginal user request: ${user_prompt}`
       : '';
 
-    const competitorNote = typeof competitor_context === 'string' && competitor_context.trim()
-      ? `\n\n## Reference site analysis\nThe user provided a competitor/reference site. Use this to inform the visual style, layout patterns, and section structure — but all content must come from the schema, not copied from the reference:\n${competitor_context}`
+    const screenshotList: string[] = Array.isArray(competitor_screenshots) ? competitor_screenshots as string[] : [];
+    const hasCompetitorContext = screenshotList.length > 0
+      || typeof competitor_css_tokens === 'string' && competitor_css_tokens.length > 0;
+
+    const competitorTokenNote = typeof competitor_css_tokens === 'string' && competitor_css_tokens.trim()
+      ? `## Competitor CSS token block — use these EXACT values\n${competitor_css_tokens}\n\n`
       : '';
 
-    const designBrief = await getDesignBrief(
+    const competitorContentNote = typeof competitor_page_content === 'string' && competitor_page_content.trim()
+      ? `## Competitor page HTML — extract real copy, nav links, section structure and layout from this\nUse the actual text, headings, CTA labels, nav items, and section order visible in this HTML. Do not invent generic copy.\n${competitor_page_content}\n\n`
+      : '';
+
+    // Skip design brief when competitor context exists — the CSS token block already defines
+    // the exact palette and the brief would generate a conflicting palette direction.
+    const designBrief = hasCompetitorContext ? null : await getDesignBrief(
       schema_json,
       typeof user_prompt === 'string' ? user_prompt : undefined,
       hasImages ? (image_urls as string[]) : [],
-      typeof competitor_context === 'string' ? competitor_context : undefined,
     );
 
     let styleReferenceNote = '';
     if (designBrief) {
       const exemplar = STYLE_EXEMPLARS[designBrief.styleTag];
       const b = designBrief.brief;
-      // htmlSnippet removed from prompt — font library + type scale + layout rules in SYSTEM_PROMPT
-      // replace the design-level calibration. Snippet kept in ai-page-exemplars.ts for reference.
       styleReferenceNote = `\n\n## Style reference\nStyle: ${exemplar.label} — ${exemplar.mood}\nPalette direction: ${b.palette_direction ?? ''}\nLayout rhythm: ${b.layout_rhythm ?? ''}\nCopy tone: ${b.copy_tone ?? ''}\nMotion style: ${b.motion_style ?? exemplar.motionStyle}\nAesthetic target: ${AESTHETIC_REFERENCES[designBrief.styleTag] ?? ''}`;
     }
 
-    const textContent = `Build the landing page for this schema:\n\n${JSON.stringify(schema_json, null, 2)}${imageList}${styleReferenceNote}${competitorNote}${promptNote}`;
+    const textContent = `${competitorTokenNote}${competitorContentNote}Build the landing page for this schema:\n\n${JSON.stringify(schema_json, null, 2)}${imageList}${styleReferenceNote}${promptNote}`;
 
-    const userContent: AIContent = hasImages
-      ? [
-          ...(image_urls as string[]).map((url): AIContentBlock => ({ type: 'image', url })),
-          { type: 'text', text: textContent },
-        ]
-      : textContent;
+    const userContent: AIContent = [
+      // Competitor screenshots first — all chunks in order so Claude sees the full page
+      ...screenshotList.map(data => ({ type: 'image_base64' as const, data, mediaType: 'image/jpeg' })),
+      // User-attached images
+      ...(hasImages ? (image_urls as string[]).map((url): AIContentBlock => ({ type: 'image', url })) : []),
+      { type: 'text' as const, text: textContent },
+    ];
+
+    const systemPrompt = hasCompetitorContext ? COMPETITOR_SYSTEM_PROMPT : SYSTEM_PROMPT;
 
     const text = await askAI({
-      system: SYSTEM_PROMPT,
+      system: systemPrompt,
       messages: [{ role: 'user', content: userContent }],
-      maxTokens: 16000,
+      maxTokens: 32000,
     });
 
     let html = text.trim();

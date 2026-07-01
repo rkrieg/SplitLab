@@ -202,7 +202,9 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
 
   const [questions, setQuestions] = useState<string[]>([]);
   const [answers, setAnswers] = useState<string[]>([]);
-  const [competitorContext, setCompetitorContext] = useState<string | null>(null);
+  const [competitorScreenshots, setCompetitorScreenshots] = useState<string[] | null>(null);
+  const [competitorCssTokens, setCompetitorCssTokens] = useState<string | null>(null);
+  const [competitorPageContent, setCompetitorPageContent] = useState<string | null>(null);
 
   const schemaRef = useRef<unknown>(null);
   const threadRef = useRef<HTMLDivElement>(null);
@@ -410,11 +412,16 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
     }
     const data = await res.json();
 
-    if (data.competitor_fetch_failed) {
-      toast("Couldn't access that site — building from your description instead. Try attaching a screenshot for better results.", { icon: '⚠️' });
-    } else if (data.competitor_context) {
-      setCompetitorContext(data.competitor_context);
-    }
+    // Store competitor context for questions round trip (state persists across re-renders)
+    if (data.competitor_screenshots) setCompetitorScreenshots(data.competitor_screenshots as string[]);
+    if (data.competitor_css_tokens) setCompetitorCssTokens(data.competitor_css_tokens);
+    if (data.competitor_page_content) setCompetitorPageContent(data.competitor_page_content);
+
+    // Capture competitor data directly from response — React setState is async so reading
+    // state immediately after set would still return the old null values.
+    const freshCompetitorScreenshots = (data.competitor_screenshots as string[]) ?? null;
+    const freshCompetitorCssTokens = (data.competitor_css_tokens as string) ?? null;
+    const freshCompetitorPageContent = (data.competitor_page_content as string) ?? null;
 
     if (data.type === 'questions') {
       setQuestions(data.questions);
@@ -430,10 +437,10 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
       { role: 'assistant', content: JSON.stringify(data.schema) },
     ];
     setConversationJson(updatedHistory);
-    await runBuild(data.schema, updatedHistory, data.competitor_context ?? null);
+    await runBuild(data.schema, updatedHistory, freshCompetitorScreenshots, freshCompetitorCssTokens, freshCompetitorPageContent);
   }
 
-  async function runBuild(schema: unknown, history: { role: string; content: string; image_urls?: string[] }[], passedCompetitorContext?: string | null) {
+  async function runBuild(schema: unknown, history: { role: string; content: string; image_urls?: string[] }[], freshScreenshots?: string[] | null, freshCssTokens?: string | null, freshPageContent?: string | null) {
     if (!pageId) return;
     setPhase('building');
     const cleanup = animateBuildSteps();
@@ -483,7 +490,9 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
         user_prompt: prompt,
         workspace_id: workspaceId,
         ...(image_urls.length > 0 ? { image_urls } : {}),
-        ...(passedCompetitorContext ? { competitor_context: passedCompetitorContext } : {}),
+        ...((freshScreenshots ?? competitorScreenshots)?.length ? { competitor_screenshots: freshScreenshots ?? competitorScreenshots } : {}),
+        ...(((freshCssTokens ?? competitorCssTokens)) ? { competitor_css_tokens: freshCssTokens ?? competitorCssTokens } : {}),
+        ...(((freshPageContent ?? competitorPageContent)) ? { competitor_page_content: freshPageContent ?? competitorPageContent } : {}),
       }),
     });
     cleanup();
@@ -664,7 +673,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
     }
     const data = await res.json();
     if (data.competitor_fetch_failed) {
-      toast("Couldn't access that site — applying changes from your description instead. Try attaching a screenshot for better results.", { icon: '⚠️' });
+      toast("Couldn't access that site — building from your description instead.", { icon: '⚠️' });
     }
     if (data.schema_json) { schemaRef.current = data.schema_json; setSchemaJson(data.schema_json); }
     setHtmlUrl(data.html_url + `?t=${Date.now()}`);
@@ -877,7 +886,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
                 ) : (
                   <div className="flex items-center gap-2 text-xs text-slate-400 dark:text-slate-500">
                     <Loader2 size={11} className="animate-spin text-indigo-600 dark:text-indigo-400" />
-                    {phase === 'publishing' ? 'Publishing…' : uploadingImage ? 'Uploading image…' : 'Thinking…'}
+                    {phase === 'publishing' ? 'Publishing…' : uploadingImage ? 'Uploading image…' : phase === 'generating' && /https?:\/\/[^\s]+/i.test(prompt) ? 'Fetching reference site…' : 'Thinking…'}
                   </div>
                 )}
               </div>

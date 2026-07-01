@@ -9,7 +9,8 @@ import OpenAI from 'openai';
  */
 export type AIContentBlock =
   | { type: 'text'; text: string }
-  | { type: 'image'; url: string };
+  | { type: 'image'; url: string }
+  | { type: 'image_base64'; data: string; mediaType: string };
 
 export type AIContent = string | AIContentBlock[];
 
@@ -66,20 +67,20 @@ function getOpenAICompatibleClient(): OpenAI {
 
 function toAnthropicContent(content: AIContent): string | Anthropic.Messages.ContentBlockParam[] {
   if (typeof content === 'string') return content;
-  return content.map((block) =>
-    block.type === 'text'
-      ? { type: 'text' as const, text: block.text }
-      : { type: 'image' as const, source: { type: 'url' as const, url: block.url } }
-  );
+  return content.map((block) => {
+    if (block.type === 'text') return { type: 'text' as const, text: block.text };
+    if (block.type === 'image_base64') return { type: 'image' as const, source: { type: 'base64' as const, media_type: block.mediaType as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp', data: block.data } };
+    return { type: 'image' as const, source: { type: 'url' as const, url: block.url } };
+  });
 }
 
 function toOpenAIContent(content: AIContent): string | Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }> {
   if (typeof content === 'string') return content;
-  return content.map((block) =>
-    block.type === 'text'
-      ? { type: 'text' as const, text: block.text }
-      : { type: 'image_url' as const, image_url: { url: block.url } }
-  );
+  return content.map((block) => {
+    if (block.type === 'text') return { type: 'text' as const, text: block.text };
+    if (block.type === 'image_base64') return { type: 'image_url' as const, image_url: { url: `data:${block.mediaType};base64,${block.data}` } };
+    return { type: 'image_url' as const, image_url: { url: block.url } };
+  });
 }
 
 async function askAnthropic(options: AskAIOptions): Promise<string> {
@@ -103,6 +104,9 @@ async function askAnthropic(options: AskAIOptions): Promise<string> {
   });
 
   const response = await stream.finalMessage();
+  const { input_tokens, output_tokens } = response.usage;
+  console.log(`[AI tokens] input=${input_tokens} output=${output_tokens} total=${input_tokens + output_tokens} model=${model} maxTokens=${options.maxTokens}`);
+
   const block = response.content[0];
   if (block.type !== 'text') {
     throw new Error(`Unexpected response block type from Anthropic: ${block.type}`);
