@@ -35,7 +35,7 @@ export const SECTION_VOCABULARY: SectionPattern[] = [
     type: 'social_proof',
     description: 'Customer testimonials with name/quote.',
     whenToUse: 'Almost every page, once there is at least implied customer history.',
-    schemaExample: '{ "type": "social_proof", "headline": "...", "testimonials": [{ "name": "...", "quote": "..." }] }',
+    schemaExample: '{ "type": "social_proof", "headline": "...", "testimonials": [{ "name": "...", "quote": "...", "image_prompt": "professional headshot, [gender/ethnicity], warm smile, neutral background, professional photography, high resolution", "image_placement": "card" }] }',
   },
   {
     type: 'case_study',
@@ -113,13 +113,13 @@ export const SECTION_VOCABULARY: SectionPattern[] = [
     type: 'gallery',
     description: 'Image/portfolio grid.',
     whenToUse: 'Local services, agencies, ecommerce — anything where visual proof of work matters more than text.',
-    schemaExample: '{ "type": "gallery", "headline": "...", "images": ["...", "..."] }',
+    schemaExample: '{ "type": "gallery", "headline": "...", "images": [{ "image_prompt": "..., professional photography, high resolution", "image_placement": "card" }] }',
   },
   {
     type: 'team',
     description: 'Team member bios with name/role/short bio.',
     whenToUse: 'Service businesses, agencies, local businesses where the people are part of the trust signal.',
-    schemaExample: '{ "type": "team", "headline": "...", "members": [{ "name": "...", "role": "...", "bio": "..." }] }',
+    schemaExample: '{ "type": "team", "headline": "...", "members": [{ "name": "...", "role": "...", "bio": "...", "image_prompt": "professional headshot, [description], professional photography, high resolution", "image_placement": "card" }] }',
   },
   {
     type: 'video',
@@ -161,13 +161,13 @@ export const SECTION_VOCABULARY: SectionPattern[] = [
     type: 'product_showcase',
     description: 'Grid of sellable products — image, name, price, short CTA per item.',
     whenToUse: 'ecommerce — the product-equivalent of feature_grid, but items carry a price and a buy/add-to-cart style CTA.',
-    schemaExample: '{ "type": "product_showcase", "headline": "...", "products": [{ "name": "...", "price": "...", "image": null, "cta_text": "..." }] }',
+    schemaExample: '{ "type": "product_showcase", "headline": "...", "products": [{ "name": "...", "price": "...", "image": null, "cta_text": "...", "image_prompt": "product photo of [product name], clean white background, professional product photography, high resolution", "image_placement": "card" }] }',
   },
   {
     type: 'reviews_ratings',
     description: 'Aggregate star rating plus short reviews, distinct from generic testimonial quotes — reviewer name, star count, optionally a verified-buyer badge.',
     whenToUse: 'ecommerce — shoppers expect star ratings and review counts, not just quotes.',
-    schemaExample: '{ "type": "reviews_ratings", "average_rating": 4.8, "review_count": 0, "reviews": [{ "name": "...", "stars": 5, "quote": "..." }] }',
+    schemaExample: '{ "type": "reviews_ratings", "average_rating": 4.8, "review_count": 0, "reviews": [{ "name": "...", "stars": 5, "quote": "...", "image_prompt": "professional headshot, [gender/age], warm smile, neutral background, professional photography, high resolution", "image_placement": "card" }] }',
   },
   {
     type: 'shipping_trust',
@@ -179,7 +179,7 @@ export const SECTION_VOCABULARY: SectionPattern[] = [
     type: 'ugc_gallery',
     description: 'Customer photo grid — real people using/wearing/displaying the product, distinct from a generic portfolio gallery.',
     whenToUse: 'ecommerce brands where social proof through real customer photos matters (apparel, beauty, home goods).',
-    schemaExample: '{ "type": "ugc_gallery", "headline": "...", "images": ["...", "..."] }',
+    schemaExample: '{ "type": "ugc_gallery", "headline": "...", "images": [{ "image_prompt": "real customer using/wearing [product], candid lifestyle photo, natural light, professional photography, high resolution", "image_placement": "card" }] }',
   },
   {
     type: 'bundle_offer',

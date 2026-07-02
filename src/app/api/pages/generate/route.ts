@@ -51,7 +51,58 @@ ${SECTION_TYPES_BLOCK}
 ## Content rules
 - Write real, compelling copy based on the business. No placeholders, no lorem ipsum.
 - The user has pre-selected a vertical — treat it as a bias toward certain section types (see the per-vertical hint appended below), not a fixed template. Refine based on the specific prompt.
-- Pick 4-7 sections beyond hero/footer. More variety across pages is better than defaulting to the same shape every time.`;
+- Pick 4-7 sections beyond hero/footer. More variety across pages is better than defaulting to the same shape every time.
+
+## Image prompts — add image_prompt + image_placement to sections that need real photos
+
+For sections that benefit from real photography, add these two fields directly on the section object (or on each item in an array). The build step will generate real DALL-E 3 images from these prompts and inject them into the HTML.
+
+### WHERE to add image_prompt (follow this strictly)
+| Section | Rule |
+|---|---|
+| hero | Always — one image_prompt on the hero object |
+| gallery / ugc_gallery | One image_prompt per item — make each item an object { "image_prompt": "...", "image_placement": "card" } |
+| team | One image_prompt per member object |
+| social_proof testimonials | One image_prompt per testimonial object (headshot) |
+| reviews_ratings reviews | One image_prompt per review object (headshot) |
+| product_showcase products | One image_prompt per product object (product photo) |
+| about / case_study | One image_prompt on the section if a real photo would help |
+| nav / stats / pricing / faq / footer / comparison / logo_wall / guarantee / urgency_banner | NEVER |
+
+Maximum 8 total image_prompts across the entire schema. Priority order: hero first, gallery items, team/testimonials, other sections.
+
+### image_placement values (use exactly one)
+- "background" — the image covers the full section as a CSS background
+- "right-column" — <img> in a two-column layout, image on the right
+- "left-column" — <img> in a two-column layout, image on the left
+- "full-width" — full-width <img> spanning the section
+- "card" — per-item thumbnail in a card grid (team, testimonials, portfolio, products)
+
+### WHAT to write in image_prompt — be hyper-specific
+- Pull details from the business (location, niche, product type, industry, style)
+- Match tone: luxury → "elegant, high-end, dramatic lighting", startup → "modern, minimal, bright, airy"
+- ❌ Too vague: "a team of people" ✅ Specific: "4-person fintech startup team, casual open office, natural window light, diverse, smiling"
+- For competitor URL prompts: infer image TYPE from the reference HTML (photo vs illustration vs screenshot) and match the visual style (dark/light, minimal/rich, corporate/playful)
+- Always end with: ", professional photography, high resolution"
+- For hero images: also include the business setting or environment
+
+### Schema example with image_prompts
+{
+  "hero": {
+    "headline": "...",
+    "image_prompt": "luxury dental clinic waiting area, warm lighting, modern design, plants, professional photography, high resolution",
+    "image_placement": "right-column"
+  },
+  "sections": [
+    {
+      "type": "team",
+      "headline": "Meet the Team",
+      "members": [
+        { "name": "Dr. Sarah Chen", "role": "Lead Dentist", "bio": "...", "image_prompt": "professional headshot, female Asian dentist, white coat, warm smile, clean clinic background, professional photography, high resolution", "image_placement": "card" }
+      ]
+    }
+  ]
+}`;
 
 export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);

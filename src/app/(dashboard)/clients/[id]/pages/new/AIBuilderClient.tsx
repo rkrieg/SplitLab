@@ -56,6 +56,7 @@ interface Props {
 const BUILD_STEPS = [
   'Analyzing prompt',
   'Building structure',
+  'Generating images',
   'Writing content',
   'Styling layout',
   'Saving page',
@@ -503,7 +504,8 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
       setPhase('prompt');
       return;
     }
-    const { html_url, slug } = await res.json();
+    const buildResult = await res.json();
+    const { html_url, slug, schema_json: enrichedSchema } = buildResult;
 
     // Attach image_urls to the last user entry in history before saving
     const historyWithImages = image_urls.length > 0
@@ -522,7 +524,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
         prompt,
         slug,
         html_url,
-        schema_json: schema,
+        schema_json: enrichedSchema ?? schema,
         conversation_json: historyWithImages,
       }),
     });
@@ -533,8 +535,9 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
     // Now update state — triggers iframe load after DB is updated
     setHtmlUrl(html_url);
     setSlug(slug);
-    schemaRef.current = schema;
-    setSchemaJson(schema);
+    const finalSchema = enrichedSchema ?? schema;
+    schemaRef.current = finalSchema;
+    setSchemaJson(finalSchema);
     setPhase('editing');
     addMessage({ role: 'assistant', content: 'Your page is ready! Click any text in the preview to edit it, or ask me to make changes.' });
   }

@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
+import { uploadImage } from '@/lib/storage';
 
 /**
  * Provider-agnostic content shape used by every AI page-builder route.
@@ -43,26 +44,21 @@ function getAnthropicClient(): Anthropic {
   return anthropicClient;
 }
 
-let openaiClient: OpenAI | null = null;
-function getOpenAICompatibleClient(): OpenAI {
-  if (!openaiClient) {
-    // This adapter is provider-agnostic — it works with any backend that
-    // speaks the OpenAI wire format (Gemini, Groq, Together, Ollama, vLLM,
-    // OpenRouter, OpenAI's own API, ...), all selected purely by AI_BASE_URL.
-    // OpenAI's own API is the ONLY one that can leave AI_BASE_URL unset, and only
-    // because the `openai` npm package itself happens to default to
-    // https://api.openai.com/v1 when no baseURL is given — that's a quirk of
-    // the package, not special treatment on our end. Every other provider
-    // (including Gemini, via https://generativelanguage.googleapis.com/v1beta/openai/)
-    // must set AI_BASE_URL explicitly since nothing else has a built-in default.
-    const baseURL = process.env.AI_BASE_URL?.trim() || undefined;
-    // Local providers (e.g. Ollama) don't check the key at all — any
-    // non-empty string works. Every hosted provider (OpenAI's own API, Gemini,
-    // Groq, Together, OpenRouter, etc.) needs a real key here.
-    const apiKey = process.env.AI_API_KEY?.trim() || 'not-needed';
-    openaiClient = new OpenAI({ apiKey, baseURL });
+// Dead code — OpenAI-compatible text adapter (AI_PROVIDER=openai-compatible).
+// AI_PROVIDER is not set in production so this path is never reached.
+// Kept for future use if we ever want to test with a local Ollama or similar.
+// let openaiTextClient: OpenAI | null = null;
+// function getOpenAICompatibleClient(): OpenAI { ... }
+
+let openaiImageClient: OpenAI | null = null;
+function getOpenAIImageClient(): OpenAI {
+  if (!openaiImageClient) {
+    const apiKey = process.env.OPENAI_API_KEY?.trim();
+    if (!apiKey) throw new Error('OPENAI_API_KEY environment variable is not set');
+    openaiImageClient = new OpenAI({ apiKey });
+    console.log('[getOpenAIImageClient] key prefix:', apiKey.slice(0, 12), '| baseURL:', openaiImageClient.baseURL);
   }
-  return openaiClient;
+  return openaiImageClient;
 }
 
 function toAnthropicContent(content: AIContent): string | Anthropic.Messages.ContentBlockParam[] {
@@ -74,14 +70,6 @@ function toAnthropicContent(content: AIContent): string | Anthropic.Messages.Con
   });
 }
 
-function toOpenAIContent(content: AIContent): string | Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }> {
-  if (typeof content === 'string') return content;
-  return content.map((block) => {
-    if (block.type === 'text') return { type: 'text' as const, text: block.text };
-    if (block.type === 'image_base64') return { type: 'image_url' as const, image_url: { url: `data:${block.mediaType};base64,${block.data}` } };
-    return { type: 'image_url' as const, image_url: { url: block.url } };
-  });
-}
 
 async function askAnthropic(options: AskAIOptions): Promise<string> {
   const anthropic = getAnthropicClient();
@@ -114,33 +102,84 @@ async function askAnthropic(options: AskAIOptions): Promise<string> {
   return block.text;
 }
 
-async function askOpenAICompatible(options: AskAIOptions): Promise<string> {
-  const openai = getOpenAICompatibleClient();
-  const model = options.model ?? process.env.AI_MODEL?.trim();
-  if (!model) {
-    throw new Error('AI_MODEL environment variable is not set (required when AI_PROVIDER is not "anthropic")');
-  }
+/**
+ * Walks a schema object, collects every node that has an image_prompt field
+ * (up to 8), calls DALL-E 3 for each in parallel, uploads the result to
+ * Supabase Storage, and injects generated_image_url back onto the same node.
+ * Failures per image are swallowed — one bad DALL-E call never fails the build.
+ */
+export async function generatePageImages(
+  schema: Record<string, unknown>,
+  pageSlug: string,
+): Promise<Record<string, unknown>> {
+  const jobs: Array<{ obj: Record<string, unknown>; prompt: string }> = [];
 
-  // Chat Completions has no separate system-prompt field — it's a
-  // role:"system" entry placed ahead of the conversation history.
-  // Cast needed because TS can't verify a single mapped object with a
-  // union-typed `role` field structurally matches OpenAI's discriminated
-  // ChatCompletionMessageParam union — safe here since our app never puts
-  // image content on an assistant-role history entry.
-  const response = await openai.chat.completions.create({
-    model,
-    max_tokens: options.maxTokens,
-    messages: [
-      { role: 'system', content: options.system },
-      ...options.messages.map((m) => ({ role: m.role, content: toOpenAIContent(m.content) })),
-    ] as OpenAI.Chat.Completions.ChatCompletionMessageParam[],
-  });
-
-  const text = response.choices[0]?.message?.content;
-  if (!text) {
-    throw new Error('Unexpected empty response from OpenAI-compatible provider');
+  function collect(node: unknown) {
+    if (!node || typeof node !== 'object') return;
+    if (Array.isArray(node)) { node.forEach(collect); return; }
+    const o = node as Record<string, unknown>;
+    if (typeof o.image_prompt === 'string' && o.image_prompt && !o.generated_image_url) {
+      jobs.push({ obj: o, prompt: o.image_prompt });
+    }
+    Object.values(o).forEach(collect);
   }
-  return text;
+  collect(schema);
+
+  const capped = jobs.slice(0, 8);
+  console.log(`[generatePageImages] generating ${capped.length} image(s) for page ${pageSlug}`);
+
+  await Promise.all(
+    capped.map(async ({ obj, prompt }) => {
+      try {
+        const openai = getOpenAIImageClient();
+        const result = await openai.images.generate({
+          model: 'gpt-image-1',
+          prompt,
+          n: 1,
+          size: '1024x1024',
+          quality: 'low',
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        } as any);
+
+        const item = result.data?.[0] as Record<string, unknown> | undefined;
+        if (!item) return;
+
+        let buffer: ArrayBuffer;
+        let mimeType = 'image/png';
+        let ext = 'png';
+
+        if (typeof item.url === 'string') {
+          // URL response — fetch buffer immediately (URLs expire in ~1hr)
+          const imgRes = await fetch(item.url);
+          if (!imgRes.ok) return;
+          buffer = await imgRes.arrayBuffer();
+          const ct = imgRes.headers.get('content-type') ?? '';
+          if (ct.includes('webp')) { mimeType = 'image/webp'; ext = 'webp'; }
+          else if (ct.includes('jpeg') || ct.includes('jpg')) { mimeType = 'image/jpeg'; ext = 'jpg'; }
+        } else if (typeof item.b64_json === 'string') {
+          // Base64 response
+          const bytes = Buffer.from(item.b64_json, 'base64');
+          buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+        } else {
+          return;
+        }
+
+        const publicUrl = await uploadImage(pageSlug, buffer, mimeType, ext);
+        obj.generated_image_url = publicUrl;
+        console.log(`[generatePageImages] uploaded image for prompt: "${prompt.slice(0, 60)}…"`);
+      } catch (err) {
+        const e = err as Record<string, unknown>;
+        console.error('[generatePageImages] image failed, skipping:', {
+          message: (err as Error).message,
+          status: e.status,
+          type: e.type,
+          code: e.code,
+        });
+      }
+    }),
+  );
+
+  return schema;
 }
 
 const _rateLimitLog = new Map<string, number[]>();
@@ -167,5 +206,8 @@ export function isRateLimited(userId: string, maxCalls: number, windowMs: number
  * change only; callers never need to change.
  */
 export async function askAI(options: AskAIOptions): Promise<string> {
-  return PROVIDER === 'anthropic' ? askAnthropic(options) : askOpenAICompatible(options);
+  if (PROVIDER !== 'anthropic') {
+    throw new Error(`AI_PROVIDER="${PROVIDER}" is not supported. Only "anthropic" is active in production.`);
+  }
+  return askAnthropic(options);
 }

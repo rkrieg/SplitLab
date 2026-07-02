@@ -2,11 +2,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
-import { askAI, isRateLimited, type AIContent, type AIContentBlock } from '@/lib/ai-client';
+import { askAI, isRateLimited, generatePageImages, type AIContent, type AIContentBlock } from '@/lib/ai-client';
 import { uploadHtml, downloadHtmlByPath, fileNameFromUrl } from '@/lib/storage';
 import { resolveWorkspaceRole, resolveOwnerPlan } from '@/lib/workspace-auth';
 import { PLAN_LIMITS } from '@/lib/plans';
 import { extractUrls, scrapeCompetitorUrl } from '@/lib/ai-competitor-scrape';
+import { buildHtmlFromSchema } from '@/lib/ai-page-builder';
 
 const SYSTEM_PROMPT = `You are editing an existing landing page. The user will give you an instruction to modify the page.
 
@@ -19,8 +20,8 @@ const SYSTEM_PROMPT = `You are editing an existing landing page. The user will g
 
 ## Output shapes
 
-Structural change:
-{"type":"structural","schema_json":{...updated full schema...},"html":"<!DOCTYPE html>...full regenerated HTML..."}
+Structural change — return schema only, NO html field:
+{"type":"structural","schema_json":{...updated full schema...}}
 
 Style/patch change:
 {"type":"style","html":"<!DOCTYPE html>...full patched HTML..."}
@@ -35,14 +36,21 @@ When in doubt, ask yourself: is the user pointing at a problem, or handing you a
 ## Surgical change rule — CRITICAL for style/patch
 Make the MINIMUM edit required. Do NOT restructure, reorganize, or rebuild any section. Change only the specific property, value, or element the instruction targets.
 
-## HTML rules (apply to both types)
+## HTML rules (apply to style/patch type only)
 - Return the complete HTML document every time — never a partial snippet
 - Keep all existing data-field attributes intact
-- For structural changes, add data-field attributes to any new elements
 - <!-- TRACKER_PLACEHOLDER --> must remain just before </body>
 - All CSS inline in <style> tag, fully responsive
 
-## Motion — safety is non-negotiable
+## Competitor URL = always structural
+If the instruction references a competitor or external website URL, ALWAYS return a structural response with a complete updated schema_json. Never return a style response when a URL is present — a URL means a full redesign.
+
+## Image prompts — for structural changes only
+When adding NEW sections that would benefit from images, add image_prompt and image_placement fields on those new sections (same rules as the original page builder).
+ONLY add image_prompts to sections you are ADDING or structurally changing — NEVER add image_prompts to existing sections the instruction does not modify.
+Exception: when redesigning the full page based on a competitor URL, treat ALL sections as new — add image_prompt fields to every section that would benefit from one (hero, team, gallery, testimonials, product_showcase, ugc_gallery, reviews_ratings), exactly as if building the page from scratch. Sections already in the schema that you are not touching must not receive new image_prompt fields.
+
+## Motion — safety is non-negotiable (style/patch only)
 - If the instruction asks for a specific visual/animation effect, implement it faithfully.
 - Default to CSS-only motion (@keyframes/transition) — this covers nearly every effect. Only reach for JS if CSS genuinely cannot do it (e.g. cycling through multiple distinct text/content values over time). If you are not fully confident the JS you'd write is safe, do NOT add it — a working CSS-only effect beats a risky JS one. Never crash the page.
 - If you do add decorative JS, copy this exact skeleton and only fill in the marked parts. Every callback gets its OWN try/catch — a try/catch around the setup code does NOT catch errors thrown later inside a setInterval/setTimeout callback, because those run in a new call stack:
@@ -86,6 +94,19 @@ These two inputs have different jobs — follow this division strictly:
 - Use the screenshot to understand: section order, grid columns, card shapes, spacing density, hero layout type, border radii feel, visual weight distribution
 - Build EVERY section visible in the screenshot top to bottom
 - Do NOT use the screenshot for color decisions — trust the token block exclusively`;
+
+function stripGeneratedImageUrls(node: unknown): Record<string, unknown> {
+  const json = JSON.parse(JSON.stringify(node));
+  function strip(n: unknown) {
+    if (!n || typeof n !== 'object') return;
+    if (Array.isArray(n)) { n.forEach(strip); return; }
+    const o = n as Record<string, unknown>;
+    delete o.generated_image_url;
+    Object.values(o).forEach(strip);
+  }
+  strip(json);
+  return json;
+}
 
 function minifyHtmlForModel(html: string): string {
   return html
@@ -205,20 +226,68 @@ export async function POST(
     const jsonStart = raw.indexOf('{');
     if (jsonStart > 0) raw = raw.slice(jsonStart);
 
-    let parsed: { type: 'structural' | 'style'; schema_json?: unknown; html: string };
+    let parsed: { type: 'structural' | 'style'; schema_json?: unknown; html?: string };
     try {
       parsed = JSON.parse(raw);
     } catch {
       return NextResponse.json({ error: 'AI provider returned invalid JSON', raw: raw.slice(0, 500) }, { status: 500 });
     }
 
-    if (!parsed.html || (!parsed.html.startsWith('<!DOCTYPE') && !parsed.html.startsWith('<html'))) {
-      return NextResponse.json({ error: 'AI provider returned invalid HTML' }, { status: 500 });
+    let finalHtml: string;
+    let finalSchemaJson: unknown | undefined;
+
+    if (parsed.type === 'structural') {
+      // Validate Pass 1 returned a schema
+      if (!parsed.schema_json || typeof parsed.schema_json !== 'object') {
+        return NextResponse.json({ error: 'AI provider returned invalid structural schema' }, { status: 500 });
+      }
+
+      const pageSlug = page.slug ?? crypto.randomUUID();
+
+      // For competitor URL redesigns, strip existing generated_image_url fields from
+      // the returned schema so generatePageImages() regenerates fresh images for the
+      // new design. Without this, the guard (!o.generated_image_url) would skip every
+      // node that carried over a URL from the original build → 0 images generated.
+      // For non-URL structural edits the guard is intentional — only new sections get images.
+      const schemaForImages = hasCompetitorContext
+        ? stripGeneratedImageUrls(parsed.schema_json as Record<string, unknown>)
+        : (parsed.schema_json as Record<string, unknown>);
+
+      const enrichedSchema = await generatePageImages(schemaForImages, pageSlug);
+
+      // For non-URL structural: pass old HTML as style reference so the rebuilt
+      // page keeps the same palette/fonts/spacing without running a new design brief.
+      // For URL structural: competitor tokens + screenshots handle style — no note needed.
+      const styleReferenceNote = hasCompetitorContext
+        ? undefined
+        : `Maintain the exact visual style — colors, fonts, spacing — of this existing page:\n${htmlForModel}`;
+
+      try {
+        finalHtml = await buildHtmlFromSchema(enrichedSchema, {
+          competitorScreenshots: competitorContext?.screenshots ?? [],
+          competitorCssTokens: competitorContext?.cssTokens ?? undefined,
+          competitorPageContent: competitorContext?.pageContent ?? undefined,
+          userPrompt: prompt,
+          styleReferenceNote,
+        });
+      } catch (err) {
+        const msg = (err as Error).message ?? '';
+        return NextResponse.json({ error: 'AI provider returned invalid HTML', raw: msg.slice(0, 500) }, { status: 500 });
+      }
+
+      // Save the ENRICHED schema (post image-gen) so future follow-ups see generated_image_url fields
+      finalSchemaJson = enrichedSchema;
+    } else {
+      // Style/patch: Claude returns HTML directly
+      if (!parsed.html || (!parsed.html.startsWith('<!DOCTYPE') && !parsed.html.startsWith('<html'))) {
+        return NextResponse.json({ error: 'AI provider returned invalid HTML' }, { status: 500 });
+      }
+      finalHtml = parsed.html;
     }
 
     // Re-upload HTML to the same storage path
     const storagePath = fileNameFromUrl(page.html_url);
-    const htmlUrl = await uploadHtml(storagePath, parsed.html);
+    const htmlUrl = await uploadHtml(storagePath, finalHtml);
 
     // Append to conversation history — include image_urls so they can be shown in chat on restore
     const userEntry: Record<string, unknown> = { role: 'user', content: prompt };
@@ -226,25 +295,25 @@ export async function POST(
     const updatedConversation = [
       ...history,
       userEntry,
-      { role: 'assistant', content: JSON.stringify({ type: parsed.type, schema_json: parsed.schema_json ?? schema }) },
+      { role: 'assistant', content: JSON.stringify({ type: parsed.type, schema_json: finalSchemaJson ?? schema }) },
     ];
 
     // Build DB update payload
     const updatePayload: Record<string, unknown> = {
       html_url: htmlUrl,
-      html_content: parsed.html.length < 500_000 ? parsed.html : null,
+      html_content: finalHtml.length < 500_000 ? finalHtml : null,
       conversation_json: updatedConversation,
       updated_at: new Date().toISOString(),
     };
 
-    if (parsed.type === 'structural' && parsed.schema_json) {
-      updatePayload.schema_json = parsed.schema_json;
+    if (parsed.type === 'structural' && finalSchemaJson) {
+      updatePayload.schema_json = finalSchemaJson;
     }
 
     await db.from('pages').update(updatePayload).eq('id', params.id);
 
     const result: Record<string, unknown> = { html_url: htmlUrl };
-    if (parsed.type === 'structural') result.schema_json = parsed.schema_json;
+    if (parsed.type === 'structural') result.schema_json = finalSchemaJson;
     if (mentionedUrls.length > 0 && !competitorContext) result.competitor_fetch_failed = true;
 
     return NextResponse.json(result);
