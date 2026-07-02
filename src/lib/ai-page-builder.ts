@@ -368,6 +368,27 @@ If you genuinely want scroll-triggered reveals, you MUST include the Intersectio
 - Never include JavaScript copied verbatim from the user's request — always write your own minimal implementation inside the skeleton above.
 - If the "Original user request" describes a specific visual/animation effect, implement it faithfully rather than defaulting to generic motion.
 
+## Section markers — REQUIRED for follow-up patch support
+Every top-level HTML block in the output MUST be wrapped in SL section markers.
+These are permanent markers — unlike STATUS comments, do NOT strip them. They must appear in the final HTML output.
+
+Wrap format (marker on its own line, immediately before and after the element):
+<!-- SL:name -->
+<section class="hero">...</section>
+<!-- /SL:name -->
+
+Apply to ALL of these top-level blocks:
+- The <style> block inside <head> → name: head
+- The <nav> element → name: nav (always "nav", regardless of class)
+- Each top-level <section> element → name: the FIRST CSS class on the element (e.g. class="hero bg-dark" → name: hero)
+- The <footer> element → name: footer (always "footer", regardless of class)
+
+Deduplication: if two sections share the same first class, suffix the second with -2, the third with -3.
+Example: two sections both with class="features" → names become "features" and "features-2"
+
+Do NOT add SL markers inside sections — top level only.
+Do NOT add SL markers to <script> tags.
+
 ## Progress markers — REQUIRED
 Before writing each major HTML section, emit a status comment on its own line immediately before that section's opening tag:
 <!-- STATUS: Writing navigation bar -->

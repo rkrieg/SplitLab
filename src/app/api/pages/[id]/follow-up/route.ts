@@ -16,9 +16,10 @@ export const maxDuration = 300;
 const SYSTEM_PROMPT = `You are editing an existing landing page. The user will give you an instruction to modify the page.
 
 ## Your job
-1. Decide if the change is structural or a style/content patch.
-   - Structural: adds, removes, or reorders sections (the schema changes)
-   - Style/patch: changes text copy, colors, fonts, spacing, button labels, images (schema shape stays the same)
+1. Classify the change into one of three types:
+   - structural: adds, removes, or reorders sections (the schema changes)
+   - patch: changes text copy, colors, fonts, spacing, button labels, or styles within 1–3 existing sections (schema shape stays the same, HTML has <!-- SL: --> markers)
+   - style: same as patch but touches 4+ sections, or the HTML has no <!-- SL: --> markers
 
 2. Return JSON only. No explanation, no markdown fences, no extra text.
 
@@ -27,10 +28,27 @@ const SYSTEM_PROMPT = `You are editing an existing landing page. The user will g
 Structural change — return schema only, NO html field:
 {"thinking":"One sentence describing what you are about to do","type":"structural","schema_json":{...updated full schema...}}
 
-Style/patch change:
-{"thinking":"One sentence describing what you are about to change","type":"style","html":"<!DOCTYPE html>...full patched HTML..."}
+Localized patch — use ONLY when the HTML contains <!-- SL:name --> markers AND the change touches 1–3 existing sections:
+{"thinking":"One sentence describing what you are about to change","type":"patch","sections":[{"name":"hero","html":"<section class=\"hero\">...complete updated section HTML...</section>"},{"name":"head","html":"<style>:root{--accent:#0000ff;...all other variables unchanged...}</style>"}]}
+
+Full HTML rewrite — use when patch is not applicable (no SL markers, or 4+ sections change):
+{"thinking":"One sentence describing what you are about to change","type":"style","html":"<!DOCTYPE html>...complete updated HTML with SL markers..."}
 
 The "thinking" field must always be FIRST in the object so it appears immediately in the stream.
+
+## Patch rules (type:patch only)
+- Each section in the sections array must have "name" (matching an existing <!-- SL:name --> marker) and "html" (the complete updated HTML for that element — do NOT include the <!-- SL: --> markers themselves in the html value)
+- For CSS variable / color / font changes: patch the "head" section only (update :root variables). Do NOT touch individual section HTML for pure CSS variable changes.
+- For text, layout, or content changes within a section: return that section's complete updated outer element
+- Return ALL variables in :root when patching head — never return a partial :root block
+- Do NOT use type:patch if the HTML sent to you has no <!-- SL: --> markers — use type:style instead
+
+## Style rules (type:style only)
+- Return the complete HTML document — never a partial snippet
+- The returned HTML MUST include <!-- SL:name --> section markers around every top-level block (nav, each section, footer, and the style block in head) — same rules as the initial build
+- Keep all existing data-field attributes intact
+- <!-- TRACKER_PLACEHOLDER --> must remain just before </body>
+- All CSS inline in <style> tag, fully responsive
 
 ## Attached images — determine role from instruction intent
 When the user attaches one or more images, decide their role by reading the full instruction:
@@ -39,24 +57,18 @@ When the user attaches one or more images, decide their role by reading the full
 - If both purposes appear in one instruction (e.g. "use photo A on hero and fix this alignment issue in photo B") → handle each image accordingly.
 When in doubt, ask yourself: is the user pointing at a problem, or handing you an asset? Let the instruction answer that.
 
-## Surgical change rule — CRITICAL for style/patch
+## Surgical change rule — CRITICAL for patch and style
 Make the MINIMUM edit required. Do NOT restructure, reorganize, or rebuild any section. Change only the specific property, value, or element the instruction targets.
 
-## HTML rules (apply to style/patch type only)
-- Return the complete HTML document every time — never a partial snippet
-- Keep all existing data-field attributes intact
-- <!-- TRACKER_PLACEHOLDER --> must remain just before </body>
-- All CSS inline in <style> tag, fully responsive
-
 ## Competitor URL = always structural
-If the instruction references a competitor or external website URL, ALWAYS return a structural response with a complete updated schema_json. Never return a style response when a URL is present — a URL means a full redesign.
+If the instruction references a competitor or external website URL, ALWAYS return a structural response with a complete updated schema_json. Never return a patch or style response when a URL is present — a URL means a full redesign.
 
 ## Image prompts — for structural changes only
 When adding NEW sections that would benefit from images, add image_prompt and image_placement fields on those new sections (same rules as the original page builder).
 ONLY add image_prompts to sections you are ADDING or structurally changing — NEVER add image_prompts to existing sections the instruction does not modify.
 Exception: when redesigning the full page based on a competitor URL, treat ALL sections as new — add image_prompt fields to every section that would benefit from one (hero, team, gallery, testimonials, product_showcase, ugc_gallery, reviews_ratings), exactly as if building the page from scratch. Sections already in the schema that you are not touching must not receive new image_prompt fields.
 
-## Motion — safety is non-negotiable (style/patch only)
+## Motion — safety is non-negotiable (patch and style only)
 - If the instruction asks for a specific visual/animation effect, implement it faithfully.
 - Default to CSS-only motion (@keyframes/transition) — this covers nearly every effect. Only reach for JS if CSS genuinely cannot do it (e.g. cycling through multiple distinct text/content values over time). If you are not fully confident the JS you'd write is safe, do NOT add it — a working CSS-only effect beats a risky JS one. Never crash the page.
 - If you do add decorative JS, copy this exact skeleton and only fill in the marked parts. Every callback gets its OWN try/catch — a try/catch around the setup code does NOT catch errors thrown later inside a setInterval/setTimeout callback, because those run in a new call stack:
@@ -116,10 +128,36 @@ function stripGeneratedImageUrls(node: unknown): Record<string, unknown> {
 
 function minifyHtmlForModel(html: string): string {
   return html
-    .replace(/<!--(?!.*TRACKER_PLACEHOLDER)[\s\S]*?-->/g, '')
+    // Preserve SL section markers and TRACKER_PLACEHOLDER — strip everything else
+    .replace(/<!--(?!\s*\/?SL:)(?!.*TRACKER_PLACEHOLDER)[\s\S]*?-->/g, '')
     .replace(/\s{2,}/g, ' ')
     .replace(/>\s+</g, '><')
     .trim();
+}
+
+function applyPatch(
+  originalHtml: string,
+  sections: Array<{ name: string; html?: string }>,
+): string {
+  let html = originalHtml;
+  for (const section of sections) {
+    if (!section.name || !section.html) continue;
+    // Sanitize name to prevent regex injection
+    const safeName = section.name.replace(/[^a-zA-Z0-9_-]/g, '');
+    if (!safeName) continue;
+    const markerRe = new RegExp(
+      `<!-- SL:${safeName} -->[\\s\\S]*?<!-- /SL:${safeName} -->`,
+      'g',
+    );
+    if (markerRe.test(html)) {
+      html = html.replace(
+        markerRe,
+        `<!-- SL:${safeName} -->\n${section.html.trim()}\n<!-- /SL:${safeName} -->`,
+      );
+    }
+    // If no marker found, skip silently — old page or wrong section name
+  }
+  return html;
 }
 
 function countImagePrompts(node: unknown): number {
@@ -287,7 +325,13 @@ export async function POST(
       const jsonStart = raw.indexOf('{');
       if (jsonStart > 0) raw = raw.slice(jsonStart);
 
-      let parsed: { thinking?: string; type: 'structural' | 'style'; schema_json?: unknown; html?: string };
+      let parsed: {
+        thinking?: string;
+        type: 'structural' | 'style' | 'patch';
+        schema_json?: unknown;
+        html?: string;
+        sections?: Array<{ name: string; html?: string }>;
+      };
       try {
         parsed = JSON.parse(raw);
       } catch {
@@ -359,8 +403,17 @@ export async function POST(
         }
 
         finalSchemaJson = enrichedSchema;
+      } else if (parsed.type === 'patch') {
+        // Patch — apply changed sections onto stored HTML
+        if (!parsed.sections || !Array.isArray(parsed.sections) || parsed.sections.length === 0) {
+          sendSSE(controller, { type: 'error', message: 'AI provider returned invalid patch' });
+          closeSSE(controller);
+          return;
+        }
+        sendSSE(controller, { type: 'status', message: 'Applying patch...' });
+        finalHtml = applyPatch(html, parsed.sections);
       } else {
-        // Style/patch — Claude returns HTML directly
+        // Style — Claude returns complete HTML directly
         if (!parsed.html || (!parsed.html.startsWith('<!DOCTYPE') && !parsed.html.startsWith('<html'))) {
           sendSSE(controller, { type: 'error', message: 'AI provider returned invalid HTML' });
           closeSSE(controller);
