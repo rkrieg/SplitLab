@@ -2,12 +2,16 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
-import { askAI, isRateLimited, generatePageImages, type AIContent, type AIContentBlock } from '@/lib/ai-client';
+import { askAIStream, isRateLimited, generatePageImages, type AIContent, type AIContentBlock } from '@/lib/ai-client';
 import { uploadHtml, downloadHtmlByPath, fileNameFromUrl } from '@/lib/storage';
 import { resolveWorkspaceRole, resolveOwnerPlan } from '@/lib/workspace-auth';
 import { PLAN_LIMITS } from '@/lib/plans';
 import { extractUrls, scrapeCompetitorUrl } from '@/lib/ai-competitor-scrape';
 import { buildHtmlFromSchema } from '@/lib/ai-page-builder';
+import { createSSEStream, sendSSE, closeSSE, SSE_HEADERS, type SSEEvent } from '@/lib/sse';
+
+export const dynamic = 'force-dynamic';
+export const maxDuration = 300;
 
 const SYSTEM_PROMPT = `You are editing an existing landing page. The user will give you an instruction to modify the page.
 
@@ -21,10 +25,12 @@ const SYSTEM_PROMPT = `You are editing an existing landing page. The user will g
 ## Output shapes
 
 Structural change — return schema only, NO html field:
-{"type":"structural","schema_json":{...updated full schema...}}
+{"thinking":"One sentence describing what you are about to do","type":"structural","schema_json":{...updated full schema...}}
 
 Style/patch change:
-{"type":"style","html":"<!DOCTYPE html>...full patched HTML..."}
+{"thinking":"One sentence describing what you are about to change","type":"style","html":"<!DOCTYPE html>...full patched HTML..."}
+
+The "thinking" field must always be FIRST in the object so it appears immediately in the stream.
 
 ## Attached images — determine role from instruction intent
 When the user attaches one or more images, decide their role by reading the full instruction:
@@ -116,10 +122,24 @@ function minifyHtmlForModel(html: string): string {
     .trim();
 }
 
+function countImagePrompts(node: unknown): number {
+  if (!node || typeof node !== 'object') return 0;
+  if (Array.isArray(node)) {
+    return (node as unknown[]).reduce((sum: number, item) => sum + countImagePrompts(item), 0);
+  }
+  const obj = node as Record<string, unknown>;
+  let count = 0;
+  if (typeof obj.image_prompt === 'string' && obj.image_prompt && !obj.generated_image_url) count++;
+  for (const val of Object.values(obj)) count += countImagePrompts(val);
+  return Math.min(count, 8);
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  // ── Pre-stream validation (can still return NextResponse.json) ─────────────
+
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
@@ -134,7 +154,6 @@ export async function POST(
   const wsRole = await resolveWorkspaceRole(page.workspace_id, session.user.id, session.user.role);
   if (!wsRole || wsRole === 'viewer') return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
-  // Plan gate — before rate limiter so blocked users don't consume a slot
   if (session.user.role !== 'admin') {
     const ownerPlan = await resolveOwnerPlan(page.workspace_id);
     if (!PLAN_LIMITS[ownerPlan]?.aiPages) {
@@ -153,172 +172,245 @@ export async function POST(
     return NextResponse.json({ error: 'Page has not been built yet' }, { status: 400 });
   }
 
+  // Parse body
+  let prompt: string, current_schema: unknown, current_html: string | undefined, image_urls: string[] | undefined;
   try {
-    const { prompt, current_schema, current_html, image_urls } = await request.json();
-
-    if (!prompt || typeof prompt !== 'string') {
-      return NextResponse.json({ error: 'prompt is required' }, { status: 400 });
-    }
-
-    if (image_urls !== undefined && (!Array.isArray(image_urls) || image_urls.length > 3)) {
-      return NextResponse.json({ error: 'image_urls must be an array of at most 3 URLs' }, { status: 400 });
-    }
-
-    const schema = current_schema ?? page.schema_json;
-    const html = current_html ?? page.html_content ?? (page.html_url ? await downloadHtmlByPath(fileNameFromUrl(page.html_url)) : null);
-    // Always read from DB — client state may not have image_urls persisted in history entries
-    const history: { role: 'user' | 'assistant'; content: string; image_urls?: string[] }[] =
-      Array.isArray(page.conversation_json) ? page.conversation_json : [];
-
-    if (!html) return NextResponse.json({ error: 'Could not load current HTML' }, { status: 400 });
-
-    const htmlForModel = minifyHtmlForModel(
-      html.replace(/<script src="[^"]+\/tracker\.js"><\/script>/, '<!-- TRACKER_PLACEHOLDER -->')
-    );
-
-    // Fetch competitor site(s) if the instruction contains URLs
-    const mentionedUrls = extractUrls(prompt);
-    const competitorContext = mentionedUrls.length > 0 ? await scrapeCompetitorUrl(mentionedUrls[0]) : null;
-
-    const hasCompetitorContext = (competitorContext?.screenshots?.length ?? 0) > 0 || !!competitorContext?.cssTokens;
-
-    const competitorTokenNote = competitorContext?.cssTokens
-      ? `## Competitor CSS token block — use these EXACT values\n${competitorContext.cssTokens}\n\n`
-      : '';
-    const textContent = `${competitorTokenNote}Current schema:\n${JSON.stringify(schema, null, 2)}\n\nCurrent HTML:\n${htmlForModel}\n\nInstruction: ${prompt}`;
-
-    const hasUserImages = Array.isArray(image_urls) && image_urls.length > 0;
-
-    const userContent: AIContent = [
-      // Competitor screenshots first — all chunks in order so Claude sees the reference site
-      ...(competitorContext?.screenshots ?? []).map(data => ({ type: 'image_base64' as const, data, mediaType: 'image/jpeg' })),
-      // Instruction + current HTML — Claude reads the instruction BEFORE seeing user images
-      // so it can correctly determine each image's role (bug reference vs. content asset)
-      { type: 'text' as const, text: textContent },
-      // User-attached images come AFTER the instruction text with an explicit role label
-      ...(hasUserImages
-        ? [
-            { type: 'text' as const, text: 'User-attached image(s) — apply the "Attached images" rule from the system prompt to determine whether each is a bug reference screenshot or a content asset to embed:' },
-            ...(image_urls as string[]).map((url): AIContentBlock => ({ type: 'image', url })),
-          ]
-        : []),
-    ];
-
-    const systemPrompt = hasCompetitorContext ? COMPETITOR_SYSTEM_PROMPT : SYSTEM_PROMPT;
-
-    // Prior turns are replayed as plain text only — past image attachments
-    // aren't re-sent as vision blocks here, only the current turn's images are.
-    const text = await askAI({
-      system: systemPrompt,
-      messages: [
-        ...history.map(({ role, content }) => ({ role, content })),
-        { role: 'user' as const, content: userContent },
-      ],
-      maxTokens: 32000,
-    });
-
-    let raw = text.trim();
-    // Strip markdown fences
-    if (raw.startsWith('```')) {
-      raw = raw.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
-    }
-    // Strip any leading prose before the JSON object (Claude sometimes explains before returning JSON)
-    const jsonStart = raw.indexOf('{');
-    if (jsonStart > 0) raw = raw.slice(jsonStart);
-
-    let parsed: { type: 'structural' | 'style'; schema_json?: unknown; html?: string };
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      return NextResponse.json({ error: 'AI provider returned invalid JSON', raw: raw.slice(0, 500) }, { status: 500 });
-    }
-
-    let finalHtml: string;
-    let finalSchemaJson: unknown | undefined;
-
-    if (parsed.type === 'structural') {
-      // Validate Pass 1 returned a schema
-      if (!parsed.schema_json || typeof parsed.schema_json !== 'object') {
-        return NextResponse.json({ error: 'AI provider returned invalid structural schema' }, { status: 500 });
-      }
-
-      const pageSlug = page.slug ?? crypto.randomUUID();
-
-      // For competitor URL redesigns, strip existing generated_image_url fields from
-      // the returned schema so generatePageImages() regenerates fresh images for the
-      // new design. Without this, the guard (!o.generated_image_url) would skip every
-      // node that carried over a URL from the original build → 0 images generated.
-      // For non-URL structural edits the guard is intentional — only new sections get images.
-      const schemaForImages = hasCompetitorContext
-        ? stripGeneratedImageUrls(parsed.schema_json as Record<string, unknown>)
-        : (parsed.schema_json as Record<string, unknown>);
-
-      const enrichedSchema = await generatePageImages(schemaForImages, pageSlug);
-
-      // For non-URL structural: pass old HTML as style reference so the rebuilt
-      // page keeps the same palette/fonts/spacing without running a new design brief.
-      // For URL structural: competitor tokens + screenshots handle style — no note needed.
-      const styleReferenceNote = hasCompetitorContext
-        ? undefined
-        : `Maintain the exact visual style — colors, fonts, spacing — of this existing page:\n${htmlForModel}`;
-
-      try {
-        finalHtml = await buildHtmlFromSchema(enrichedSchema, {
-          competitorScreenshots: competitorContext?.screenshots ?? [],
-          competitorCssTokens: competitorContext?.cssTokens ?? undefined,
-          competitorPageContent: competitorContext?.pageContent ?? undefined,
-          userPrompt: prompt,
-          styleReferenceNote,
-        });
-      } catch (err) {
-        const msg = (err as Error).message ?? '';
-        return NextResponse.json({ error: 'AI provider returned invalid HTML', raw: msg.slice(0, 500) }, { status: 500 });
-      }
-
-      // Save the ENRICHED schema (post image-gen) so future follow-ups see generated_image_url fields
-      finalSchemaJson = enrichedSchema;
-    } else {
-      // Style/patch: Claude returns HTML directly
-      if (!parsed.html || (!parsed.html.startsWith('<!DOCTYPE') && !parsed.html.startsWith('<html'))) {
-        return NextResponse.json({ error: 'AI provider returned invalid HTML' }, { status: 500 });
-      }
-      finalHtml = parsed.html;
-    }
-
-    // Re-upload HTML to the same storage path
-    const storagePath = fileNameFromUrl(page.html_url);
-    const htmlUrl = await uploadHtml(storagePath, finalHtml);
-
-    // Append to conversation history — include image_urls so they can be shown in chat on restore
-    const userEntry: Record<string, unknown> = { role: 'user', content: prompt };
-    if (Array.isArray(image_urls) && image_urls.length > 0) userEntry.image_urls = image_urls;
-    const updatedConversation = [
-      ...history,
-      userEntry,
-      { role: 'assistant', content: JSON.stringify({ type: parsed.type, schema_json: finalSchemaJson ?? schema }) },
-    ];
-
-    // Build DB update payload
-    const updatePayload: Record<string, unknown> = {
-      html_url: htmlUrl,
-      html_content: finalHtml.length < 500_000 ? finalHtml : null,
-      conversation_json: updatedConversation,
-      updated_at: new Date().toISOString(),
-    };
-
-    if (parsed.type === 'structural' && finalSchemaJson) {
-      updatePayload.schema_json = finalSchemaJson;
-    }
-
-    await db.from('pages').update(updatePayload).eq('id', params.id);
-
-    const result: Record<string, unknown> = { html_url: htmlUrl };
-    if (parsed.type === 'structural') result.schema_json = finalSchemaJson;
-    if (mentionedUrls.length > 0 && !competitorContext) result.competitor_fetch_failed = true;
-
-    return NextResponse.json(result);
-  } catch (err) {
-    console.error('[pages/follow-up]', err);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    const body = await request.json();
+    prompt = body.prompt;
+    current_schema = body.current_schema;
+    current_html = body.current_html;
+    image_urls = body.image_urls;
+  } catch {
+    return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
   }
+
+  if (!prompt || typeof prompt !== 'string') {
+    return NextResponse.json({ error: 'prompt is required' }, { status: 400 });
+  }
+  if (image_urls !== undefined && (!Array.isArray(image_urls) || image_urls.length > 3)) {
+    return NextResponse.json({ error: 'image_urls must be an array of at most 3 URLs' }, { status: 400 });
+  }
+
+  // Load current HTML before opening the stream so failures are clean 4xx responses
+  const schema = current_schema ?? page.schema_json;
+  const html = current_html ?? page.html_content ?? (page.html_url ? await downloadHtmlByPath(fileNameFromUrl(page.html_url)) : null);
+  if (!html) return NextResponse.json({ error: 'Could not load current HTML' }, { status: 400 });
+
+  // Prepare synchronous data
+  const history: { role: 'user' | 'assistant'; content: string; image_urls?: string[] }[] =
+    Array.isArray(page.conversation_json) ? page.conversation_json : [];
+  const htmlForModel = minifyHtmlForModel(
+    html.replace(/<script src="[^"]+\/tracker\.js"><\/script>/, '<!-- TRACKER_PLACEHOLDER -->')
+  );
+  const mentionedUrls = extractUrls(prompt);
+  const hasUserImages = Array.isArray(image_urls) && image_urls.length > 0;
+
+  // ── Open SSE stream — no NextResponse.json after this point ───────────────
+
+  const { stream, controller } = createSSEStream();
+  const response = new Response(stream, { headers: SSE_HEADERS });
+
+  void (async () => {
+    try {
+      // Competitor scrape
+      let competitorContext: Awaited<ReturnType<typeof scrapeCompetitorUrl>> | null = null;
+      if (mentionedUrls.length > 0) {
+        let hostname = mentionedUrls[0];
+        try { hostname = new URL(mentionedUrls[0]).hostname; } catch { /* keep raw */ }
+        sendSSE(controller, { type: 'status', message: `Fetching ${hostname}...` });
+        competitorContext = await scrapeCompetitorUrl(mentionedUrls[0]);
+      }
+
+      if (request.signal.aborted) { closeSSE(controller); return; }
+
+      const hasCompetitorContext =
+        (competitorContext?.screenshots?.length ?? 0) > 0 || !!competitorContext?.cssTokens;
+
+      // Emit status before Pass 1
+      sendSSE(controller, {
+        type: 'status',
+        message: mentionedUrls.length > 0 ? 'Analyzing design...' : 'Applying changes...',
+      });
+
+      // Build Pass 1 message content
+      const competitorTokenNote = competitorContext?.cssTokens
+        ? `## Competitor CSS token block — use these EXACT values\n${competitorContext.cssTokens}\n\n`
+        : '';
+      const textContent = `${competitorTokenNote}Current schema:\n${JSON.stringify(schema, null, 2)}\n\nCurrent HTML:\n${htmlForModel}\n\nInstruction: ${prompt}`;
+
+      const userContent: AIContent = [
+        ...(competitorContext?.screenshots ?? []).map(data => ({ type: 'image_base64' as const, data, mediaType: 'image/jpeg' })),
+        { type: 'text' as const, text: textContent },
+        ...(hasUserImages
+          ? [
+              { type: 'text' as const, text: 'User-attached image(s) — apply the "Attached images" rule from the system prompt to determine whether each is a bug reference screenshot or a content asset to embed:' },
+              ...(image_urls as string[]).map((url): AIContentBlock => ({ type: 'image', url })),
+            ]
+          : []),
+      ];
+
+      const systemPrompt = hasCompetitorContext ? COMPETITOR_SYSTEM_PROMPT : SYSTEM_PROMPT;
+
+      // Pass 1: stream to extract thinking field from the first ~50 tokens
+      let pass1Buffer = '';
+      let thinkingEmitted = false;
+      const thinkingRegex = /"thinking"\s*:\s*"((?:[^"\\]|\\.)*)"/;
+
+      const pass1Text = await askAIStream(
+        {
+          system: systemPrompt,
+          messages: [
+            ...history.map(({ role, content }) => ({ role, content })),
+            { role: 'user' as const, content: userContent },
+          ],
+          maxTokens: 32000,
+        },
+        (chunk) => {
+          pass1Buffer += chunk;
+          if (!thinkingEmitted) {
+            const match = thinkingRegex.exec(pass1Buffer);
+            if (match) {
+              sendSSE(controller, { type: 'thinking', message: match[1] });
+              thinkingEmitted = true;
+            }
+          }
+        }
+      );
+
+      if (request.signal.aborted) { closeSSE(controller); return; }
+
+      // Parse Pass 1 result
+      let raw = pass1Text.trim();
+      if (raw.startsWith('```')) {
+        raw = raw.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
+      }
+      const jsonStart = raw.indexOf('{');
+      if (jsonStart > 0) raw = raw.slice(jsonStart);
+
+      let parsed: { thinking?: string; type: 'structural' | 'style'; schema_json?: unknown; html?: string };
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        sendSSE(controller, { type: 'error', message: 'AI provider returned invalid JSON' });
+        closeSSE(controller);
+        return;
+      }
+
+      let finalHtml: string;
+      let finalSchemaJson: unknown | undefined;
+
+      if (parsed.type === 'structural') {
+        if (!parsed.schema_json || typeof parsed.schema_json !== 'object') {
+          sendSSE(controller, { type: 'error', message: 'AI provider returned invalid structural schema' });
+          closeSSE(controller);
+          return;
+        }
+
+        const pageSlug = page.slug ?? crypto.randomUUID();
+
+        const schemaForImages = hasCompetitorContext
+          ? stripGeneratedImageUrls(parsed.schema_json as Record<string, unknown>)
+          : (parsed.schema_json as Record<string, unknown>);
+
+        const imageCount = countImagePrompts(schemaForImages);
+        if (imageCount > 0) {
+          sendSSE(controller, {
+            type: 'status',
+            message: `Generating ${imageCount} image${imageCount !== 1 ? 's' : ''}...`,
+          });
+        }
+
+        const enrichedSchema = await generatePageImages(schemaForImages, pageSlug, (url) => {
+          sendSSE(controller, { type: 'image_ready', url });
+        });
+
+        if (request.signal.aborted) { closeSSE(controller); return; }
+
+        const styleReferenceNote = hasCompetitorContext
+          ? undefined
+          : `Maintain the exact visual style — colors, fonts, spacing — of this existing page:\n${htmlForModel}`;
+
+        sendSSE(controller, { type: 'status', message: 'Building HTML...' });
+
+        let statusBuffer = '';
+        try {
+          finalHtml = await buildHtmlFromSchema(enrichedSchema, {
+            competitorScreenshots: competitorContext?.screenshots ?? [],
+            competitorCssTokens: competitorContext?.cssTokens ?? undefined,
+            competitorPageContent: competitorContext?.pageContent ?? undefined,
+            userPrompt: prompt,
+            styleReferenceNote,
+            onChunk: (chunk) => {
+              statusBuffer += chunk;
+              statusBuffer = statusBuffer.replace(
+                /<!--\s*STATUS:\s*([^>]*?)-->/g,
+                (_full, msg: string) => {
+                  sendSSE(controller, { type: 'section_status', message: msg.trim() });
+                  return '';
+                }
+              );
+              if (statusBuffer.length > 200) statusBuffer = statusBuffer.slice(-100);
+            },
+          });
+        } catch (err) {
+          sendSSE(controller, { type: 'error', message: 'AI provider returned invalid HTML' });
+          closeSSE(controller);
+          return;
+        }
+
+        finalSchemaJson = enrichedSchema;
+      } else {
+        // Style/patch — Claude returns HTML directly
+        if (!parsed.html || (!parsed.html.startsWith('<!DOCTYPE') && !parsed.html.startsWith('<html'))) {
+          sendSSE(controller, { type: 'error', message: 'AI provider returned invalid HTML' });
+          closeSSE(controller);
+          return;
+        }
+        finalHtml = parsed.html;
+      }
+
+      // Strip STATUS comments before upload
+      finalHtml = finalHtml.replace(/<!--\s*STATUS:[^>]*-->/g, '');
+
+      // Upload
+      const storagePath = fileNameFromUrl(page.html_url);
+      const htmlUrl = await uploadHtml(storagePath, finalHtml);
+
+      // Save conversation
+      const userEntry: Record<string, unknown> = { role: 'user', content: prompt };
+      if (Array.isArray(image_urls) && image_urls.length > 0) userEntry.image_urls = image_urls;
+      const updatedConversation = [
+        ...history,
+        userEntry,
+        { role: 'assistant', content: JSON.stringify({ type: parsed.type, schema_json: finalSchemaJson ?? schema }) },
+      ];
+
+      const updatePayload: Record<string, unknown> = {
+        html_url: htmlUrl,
+        html_content: finalHtml.length < 500_000 ? finalHtml : null,
+        conversation_json: updatedConversation,
+        updated_at: new Date().toISOString(),
+      };
+      if (parsed.type === 'structural' && finalSchemaJson) {
+        updatePayload.schema_json = finalSchemaJson;
+      }
+
+      await db.from('pages').update(updatePayload).eq('id', params.id);
+
+      const doneEvent: SSEEvent = {
+        type: 'done',
+        html_url: htmlUrl,
+        ...(finalSchemaJson ? { schema_json: finalSchemaJson } : {}),
+        ...(mentionedUrls.length > 0 && !competitorContext ? { competitor_fetch_failed: true } : {}),
+      };
+      sendSSE(controller, doneEvent);
+      closeSSE(controller);
+    } catch (err) {
+      console.error('[pages/follow-up]', err);
+      sendSSE(controller, { type: 'error', message: 'Internal server error' });
+      closeSSE(controller);
+    }
+  })();
+
+  return response;
 }

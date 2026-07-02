@@ -102,6 +102,35 @@ async function askAnthropic(options: AskAIOptions): Promise<string> {
   return block.text;
 }
 
+async function askAnthropicStream(options: AskAIOptions, onChunk: (text: string) => void): Promise<string> {
+  const anthropic = getAnthropicClient();
+  const model = options.model ?? process.env.ANTHROPIC_MODEL?.trim() ?? 'claude-sonnet-4-6';
+
+  const stream = anthropic.messages.stream({
+    model,
+    max_tokens: options.maxTokens,
+    system: [{ type: 'text', text: options.system, cache_control: { type: 'ephemeral' } }],
+    messages: options.messages.map((m) => ({ role: m.role, content: toAnthropicContent(m.content) })),
+  });
+
+  let fullText = '';
+  for await (const event of stream) {
+    if (
+      event.type === 'content_block_delta' &&
+      event.delta.type === 'text_delta'
+    ) {
+      onChunk(event.delta.text);
+      fullText += event.delta.text;
+    }
+  }
+
+  const response = await stream.finalMessage();
+  const { input_tokens, output_tokens } = response.usage;
+  console.log(`[AI tokens stream] input=${input_tokens} output=${output_tokens} total=${input_tokens + output_tokens} model=${model} maxTokens=${options.maxTokens}`);
+
+  return fullText;
+}
+
 /**
  * Walks a schema object, collects every node that has an image_prompt field
  * (up to 8), calls DALL-E 3 for each in parallel, uploads the result to
@@ -111,6 +140,7 @@ async function askAnthropic(options: AskAIOptions): Promise<string> {
 export async function generatePageImages(
   schema: Record<string, unknown>,
   pageSlug: string,
+  onImageReady?: (url: string) => void,
 ): Promise<Record<string, unknown>> {
   const jobs: Array<{ obj: Record<string, unknown>; prompt: string }> = [];
 
@@ -166,6 +196,7 @@ export async function generatePageImages(
 
         const publicUrl = await uploadImage(pageSlug, buffer, mimeType, ext);
         obj.generated_image_url = publicUrl;
+        onImageReady?.(publicUrl);
         console.log(`[generatePageImages] uploaded image for prompt: "${prompt.slice(0, 60)}…"`);
       } catch (err) {
         const e = err as Record<string, unknown>;
@@ -210,4 +241,18 @@ export async function askAI(options: AskAIOptions): Promise<string> {
     throw new Error(`AI_PROVIDER="${PROVIDER}" is not supported. Only "anthropic" is active in production.`);
   }
   return askAnthropic(options);
+}
+
+/**
+ * Streaming variant of askAI. Calls onChunk for each text_delta token as it
+ * arrives, then returns the full accumulated text. Does not modify askAI().
+ */
+export async function askAIStream(
+  options: AskAIOptions,
+  onChunk: (text: string) => void,
+): Promise<string> {
+  if (PROVIDER !== 'anthropic') {
+    throw new Error(`AI_PROVIDER="${PROVIDER}" is not supported. Only "anthropic" is active in production.`);
+  }
+  return askAnthropicStream(options, onChunk);
 }

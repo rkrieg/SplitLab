@@ -1,4 +1,4 @@
-import { askAI, type AIContent, type AIContentBlock } from '@/lib/ai-client';
+import { askAI, askAIStream, type AIContent, type AIContentBlock } from '@/lib/ai-client';
 import { STYLE_EXEMPLARS, type StyleTag } from '@/lib/ai-page-exemplars';
 import { buildFontLibraryBlock } from '@/lib/ai-page-fonts';
 import { buildIconLibraryBlock } from '@/lib/ai-page-icons';
@@ -366,7 +366,21 @@ If you genuinely want scroll-triggered reveals, you MUST include the Intersectio
 - Never select or modify any element carrying a data-field attribute — that's user-editable content and must always stay visible/clickable.
 - Never add an external <script src> to a third-party domain.
 - Never include JavaScript copied verbatim from the user's request — always write your own minimal implementation inside the skeleton above.
-- If the "Original user request" describes a specific visual/animation effect, implement it faithfully rather than defaulting to generic motion.`;
+- If the "Original user request" describes a specific visual/animation effect, implement it faithfully rather than defaulting to generic motion.
+
+## Progress markers — REQUIRED
+Before writing each major HTML section, emit a status comment on its own line immediately before that section's opening tag:
+<!-- STATUS: Writing navigation bar -->
+<nav class="site-nav">...
+<!-- STATUS: Building hero section -->
+<section class="hero">...
+
+Rules:
+- Only between top-level HTML blocks, NEVER inside <style> or <script> tags
+- Use plain natural language: "Writing X", "Building X", "Adding X"
+- One marker per section, not per element
+- No angle brackets, quotes, or special characters inside the message
+- Allowed sections: navigation bar, hero section, features grid, pricing section, testimonials, team section, blog grid, gallery, contact form, footer`;
 
 // Applied when a competitor URL was provided — appends override rules after all shared HTML rules.
 export const COMPETITOR_SYSTEM_PROMPT = SYSTEM_PROMPT + `
@@ -463,6 +477,12 @@ export interface BuildHtmlOptions {
    * URL follow-up structural: omit — competitor CSS tokens + hasCompetitorContext handle it.
    */
   styleReferenceNote?: string;
+  /**
+   * Called for each text token as Claude streams the HTML. Used by SSE routes
+   * to detect <!-- STATUS: ... --> markers in real time and emit section_status
+   * events to the frontend. When absent, falls back to non-streaming askAI().
+   */
+  onChunk?: (chunk: string) => void;
 }
 
 /**
@@ -543,11 +563,15 @@ export async function buildHtmlFromSchema(
 
   const systemPrompt = hasCompetitorContext ? COMPETITOR_SYSTEM_PROMPT : SYSTEM_PROMPT;
 
-  const text = await askAI({
+  const aiOptions = {
     system: systemPrompt,
-    messages: [{ role: 'user', content: userContent }],
+    messages: [{ role: 'user' as const, content: userContent }],
     maxTokens: 32000,
-  });
+  };
+
+  const text = options.onChunk
+    ? await askAIStream(aiOptions, options.onChunk)
+    : await askAI(aiOptions);
 
   let html = text.trim();
   if (html.startsWith('```')) {

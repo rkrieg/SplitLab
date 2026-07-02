@@ -11,6 +11,8 @@ import toast from 'react-hot-toast';
 import { cn } from '@/lib/utils';
 import { VERTICAL_LABELS } from '@/lib/ai-page-verticals';
 import { SAMPLE_PROMPTS } from '@/lib/ai-page-sample-prompts';
+import { readSSEStream, type SSEEvent } from '@/lib/use-sse-stream';
+import { LiveProgressPanel } from '@/components/ai/LiveProgressPanel';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -53,14 +55,6 @@ interface Props {
   canUseAI?: boolean;
 }
 
-const BUILD_STEPS = [
-  'Analyzing prompt',
-  'Building structure',
-  'Generating images',
-  'Writing content',
-  'Styling layout',
-  'Saving page',
-];
 
 function setNestedValue(obj: Record<string, unknown>, path: string, value: unknown): Record<string, unknown> {
   const keys = path.split('.');
@@ -180,7 +174,8 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
   const [prompt, setPrompt] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [followUpInput, setFollowUpInput] = useState('');
-  const [buildStep, setBuildStep] = useState(0);
+  const [buildEvents, setBuildEvents] = useState<SSEEvent[]>([]);
+  const [followUpEvents, setFollowUpEvents] = useState<SSEEvent[] | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>('desktop');
 
   const [pageId, setPageId] = useState<string | null>(null);
@@ -385,17 +380,6 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
     return '<!DOCTYPE html>\n' + clone.outerHTML;
   }
 
-  function animateBuildSteps() {
-    let step = 0;
-    setBuildStep(0);
-    const interval = setInterval(() => {
-      step++;
-      if (step >= BUILD_STEPS.length) clearInterval(interval);
-      else setBuildStep(step);
-    }, 900);
-    return () => clearInterval(interval);
-  }
-
   // ── Generate → Build ──────────────────────────────────────────────────────
 
   async function runGenerate(userPrompt: string, history: { role: string; content: string; image_urls?: string[] }[]) {
@@ -444,7 +428,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
   async function runBuild(schema: unknown, history: { role: string; content: string; image_urls?: string[] }[], freshScreenshots?: string[] | null, freshCssTokens?: string | null, freshPageContent?: string | null) {
     if (!pageId) return;
     setPhase('building');
-    const cleanup = animateBuildSteps();
+    setBuildEvents([]);
 
     // Step 1: upload any attached images first
     let image_urls: string[] = [];
@@ -462,7 +446,6 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
             return url as string;
           })
         );
-        // Replace blob preview URLs with real URLs in the chat message, then revoke blobs
         attachedImages.forEach(img => URL.revokeObjectURL(img.preview));
         setMessages(prev => {
           const updated = [...prev];
@@ -475,14 +458,13 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
           return updated;
         });
       } catch (err) {
-        cleanup();
         toast.error(err instanceof Error ? err.message : 'Image upload failed');
         setPhase('prompt');
         return;
       }
     }
 
-    // Step 2: build HTML (pass image URLs so Claude embeds them directly)
+    // Step 2: build HTML via SSE
     const res = await fetch('/api/pages/build', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -496,16 +478,35 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
         ...(((freshPageContent ?? competitorPageContent)) ? { competitor_page_content: freshPageContent ?? competitorPageContent } : {}),
       }),
     });
-    cleanup();
-    setBuildStep(BUILD_STEPS.length - 1);
+
     if (!res.ok) {
-      const err = await res.json();
+      const err = await res.json().catch(() => ({ error: 'Build failed' }));
       toast.error(err.error || 'Build failed');
       setPhase('prompt');
       return;
     }
-    const buildResult = await res.json();
-    const { html_url, slug, schema_json: enrichedSchema } = buildResult;
+
+    let htmlUrl: string | null = null;
+    let finalSlug: string | null = null;
+    let finalSchema: unknown = schema;
+    let buildError = false;
+
+    await readSSEStream(res, (event) => {
+      setBuildEvents(prev => [...prev, event]);
+      if (event.type === 'done') {
+        htmlUrl = event.html_url;
+        finalSlug = event.slug ?? null;
+        finalSchema = event.schema_json ?? schema;
+      } else if (event.type === 'error') {
+        buildError = true;
+        toast.error(event.message || 'Build failed');
+      }
+    });
+
+    if (buildError || !htmlUrl) {
+      setPhase('prompt');
+      return;
+    }
 
     // Attach image_urls to the last user entry in history before saving
     const historyWithImages = image_urls.length > 0
@@ -522,9 +523,9 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         prompt,
-        slug,
-        html_url,
-        schema_json: enrichedSchema ?? schema,
+        slug: finalSlug,
+        html_url: htmlUrl,
+        schema_json: finalSchema,
         conversation_json: historyWithImages,
       }),
     });
@@ -532,10 +533,8 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
       toast('Page built but metadata not saved — edits may not persist.', { icon: '⚠️' });
     }
 
-    // Now update state — triggers iframe load after DB is updated
-    setHtmlUrl(html_url);
-    setSlug(slug);
-    const finalSchema = enrichedSchema ?? schema;
+    setHtmlUrl(htmlUrl);
+    setSlug(finalSlug);
     schemaRef.current = finalSchema;
     setSchemaJson(finalSchema);
     setPhase('editing');
@@ -659,6 +658,8 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
       }
     }
 
+    setFollowUpEvents([]);
+
     const res = await fetch(`/api/pages/${pid}/follow-up`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -668,25 +669,53 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
         ...(image_urls.length > 0 ? { image_urls } : {}),
       }),
     });
+
     if (!res.ok) {
-      const err = await res.json();
+      const err = await res.json().catch(() => ({ error: 'Edit failed' }));
       toast.error(err.error || 'Edit failed');
+      setFollowUpEvents(null);
       setPhase('editing');
       return;
     }
-    const data = await res.json();
-    if (data.competitor_fetch_failed) {
+
+    type FollowUpDone = { html_url: string; schema_json?: unknown; competitor_fetch_failed?: boolean };
+    let doneData: FollowUpDone | null = null;
+    let followUpError = false;
+
+    await readSSEStream(res, (event) => {
+      setFollowUpEvents(prev => prev ? [...prev, event] : [event]);
+      if (event.type === 'done') {
+        doneData = {
+          html_url: event.html_url,
+          schema_json: event.schema_json,
+          competitor_fetch_failed: event.competitor_fetch_failed,
+        };
+      } else if (event.type === 'error') {
+        followUpError = true;
+        toast.error(event.message || 'Edit failed');
+      }
+    });
+
+    setFollowUpEvents(null);
+
+    if (followUpError || !doneData) {
+      setPhase('editing');
+      return;
+    }
+
+    const done = doneData as FollowUpDone;
+    if (done.competitor_fetch_failed) {
       toast("Couldn't access that site — building from your description instead.", { icon: '⚠️' });
     }
-    if (data.schema_json) { schemaRef.current = data.schema_json; setSchemaJson(data.schema_json); }
-    setHtmlUrl(data.html_url + `?t=${Date.now()}`);
+    if (done.schema_json) { schemaRef.current = done.schema_json; setSchemaJson(done.schema_json); }
+    setHtmlUrl(done.html_url + `?t=${Date.now()}`);
     if (!silent) {
       addMessage({ role: 'assistant', content: 'Done! The page has been updated.' });
     }
     setConversationJson(prev => [
       ...prev,
       { role: 'user', content: instruction },
-      { role: 'assistant', content: JSON.stringify(data) },
+      { role: 'assistant', content: JSON.stringify(done) },
     ]);
     setPhase('editing');
   }
@@ -864,28 +893,27 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
             </div>
           ))}
 
+          {/* Live follow-up progress panel — shown as assistant bubble while SSE streams */}
+          {followUpEvents !== null && (
+            <div className="flex items-start gap-2.5">
+              <div className="w-6 h-6 rounded-full bg-indigo-50 dark:bg-indigo-600/15 border border-indigo-100 dark:border-indigo-600/25 flex items-center justify-center flex-shrink-0 mt-0.5">
+                <Sparkles size={11} className="text-indigo-600 dark:text-indigo-400" />
+              </div>
+              <div className="flex-1 pt-0.5">
+                <LiveProgressPanel events={followUpEvents} />
+              </div>
+            </div>
+          )}
+
           {/* Loading / build progress */}
-          {isLoading && (
+          {isLoading && followUpEvents === null && (
             <div className="flex items-start gap-2.5">
               <div className="w-6 h-6 rounded-full bg-indigo-50 dark:bg-indigo-600/15 border border-indigo-100 dark:border-indigo-600/25 flex items-center justify-center flex-shrink-0 mt-0.5">
                 <Sparkles size={11} className="text-indigo-600 dark:text-indigo-400" />
               </div>
               <div className="flex-1 pt-0.5">
                 {phase === 'building' ? (
-                  <div className="space-y-2">
-                    {BUILD_STEPS.map((step, i) => (
-                      <div key={i} className={cn('flex items-center gap-2 text-xs transition-all', i <= buildStep ? 'text-slate-700 dark:text-slate-200' : 'text-slate-300 dark:text-slate-600')}>
-                        {i < buildStep ? (
-                          <Check size={11} className="text-green-500 flex-shrink-0" />
-                        ) : i === buildStep ? (
-                          <Loader2 size={11} className="animate-spin text-indigo-600 dark:text-indigo-400 flex-shrink-0" />
-                        ) : (
-                          <div className="w-[11px] h-[11px] rounded-full border border-slate-300 dark:border-slate-600 flex-shrink-0" />
-                        )}
-                        {step}
-                      </div>
-                    ))}
-                  </div>
+                  <LiveProgressPanel events={buildEvents} />
                 ) : (
                   <div className="flex items-center gap-2 text-xs text-slate-400 dark:text-slate-500">
                     <Loader2 size={11} className="animate-spin text-indigo-600 dark:text-indigo-400" />
