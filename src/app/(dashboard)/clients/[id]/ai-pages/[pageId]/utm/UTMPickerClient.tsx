@@ -518,7 +518,6 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
   const nonFallbackRules = rules.filter(r => !r.is_fallback);
   const fallbackRule = rules.find(r => r.is_fallback);
   const mappedFields = fields.filter(f => f.selector);
-  const headlineKey = fields.find(f => f.type === 'text') ? true : null;
 
   function renderRuleFields(ruleIdx: number) {
     const rule = rules[ruleIdx];
@@ -546,7 +545,7 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
                     : 'border-slate-200 dark:border-slate-700'
                 )}
               />
-              {f.key === headlineKey && (
+              {f.type === 'text' && (
                 <button
                   onClick={() => suggestHeadlines(ruleIdx)}
                   disabled={suggestLoading === ruleIdx}
@@ -556,7 +555,7 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
                   {suggestLoading === ruleIdx ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
                 </button>
               )}
-              {suggestPopover?.idx === ruleIdx && f.key === headlineKey && (
+              {suggestPopover?.idx === ruleIdx && f.type === 'text' && (
                 <div className="absolute left-0 top-full mt-1 z-50 w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl overflow-hidden">
                   <div className="flex items-center justify-between px-3 py-2 border-b border-slate-100 dark:border-slate-700">
                     <span className="text-xs text-slate-400 font-medium">AI suggestions</span>
