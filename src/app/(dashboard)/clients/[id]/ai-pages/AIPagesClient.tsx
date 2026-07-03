@@ -2,7 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
-import { Plus, Sparkles, ExternalLink, Edit2, Globe, Trash2, Loader2, Lock, ArrowRight } from 'lucide-react';
+import { Plus, Sparkles, ExternalLink, Edit2, Globe, Trash2, Loader2, Lock, ArrowRight, Sliders } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import toast from 'react-hot-toast';
 import { VERTICALS, VERTICAL_LABELS, VERTICAL_COLORS } from '@/lib/ai-page-verticals';
@@ -222,6 +222,13 @@ export default function AIPagesClient({ pages: initialPages, clientId, workspace
                         <Edit2 className="w-3 h-3" />
                         Edit in Builder
                       </button>
+                      <a
+                        href={`/clients/${clientId}/ai-pages/${page.id}/utm`}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-white/5 hover:bg-white/10 text-gray-300 transition-colors"
+                      >
+                        <Sliders className="w-3 h-3" />
+                        Set Up UTM
+                      </a>
                       {canManage && (
                         <button
                           onClick={() => setDeleteId(page.id)}

@@ -71,7 +71,14 @@ export async function PATCH(
     const updatePayload = {
       ...data,
       ...(storageUrl ? { html_url: storageUrl } : {}),
+      // HTML changed → old injected #sl-f-xxx IDs are gone; clear mappings and rules
+      ...(data.html_content ? { field_selectors_json: null } : {}),
     };
+
+    // If HTML is being replaced, wipe personalization rules (selectors no longer valid)
+    if (data.html_content) {
+      await db.from('personalization_rules').delete().eq('page_id', params.id);
+    }
 
     const { data: updated, error } = await db
       .from('pages')

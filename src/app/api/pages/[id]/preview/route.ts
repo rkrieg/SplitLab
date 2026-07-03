@@ -6,7 +6,7 @@ import { resolveWorkspaceRole } from '@/lib/workspace-auth';
 import { downloadHtmlByPath, fileNameFromUrl } from '@/lib/storage';
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: { id: string } }
 ) {
   const session = await getServerSession(authOptions);
@@ -14,7 +14,7 @@ export async function GET(
 
   const { data: page } = await db
     .from('pages')
-    .select('workspace_id, html_url, html_content')
+    .select('workspace_id, html_url, html_content, field_selectors_json')
     .eq('id', params.id)
     .single();
 
@@ -29,6 +29,48 @@ export async function GET(
     if (!html) {
       const filePath = fileNameFromUrl(page.html_url);
       html = await downloadHtmlByPath(filePath);
+    }
+
+    // Inject UTM swap script (client-side, reads window.location.search in iframe)
+    try {
+      const { data: rules } = await db
+        .from('personalization_rules')
+        .select('match_param,match_value,is_fallback,overrides_json')
+        .eq('page_id', params.id)
+        .order('is_fallback', { ascending: true })
+        .order('priority', { ascending: true });
+
+      if (rules && rules.length > 0) {
+        const fieldSelectors = (page.field_selectors_json as Record<string, { selector: string; type: 'text' | 'image'; label: string }> | null) ?? null;
+        const swapScript = `<script>
+(function(){
+  var rules=${JSON.stringify(rules)};
+  var fs=${JSON.stringify(fieldSelectors || {})};
+  var df={headline:'[data-field="hero.headline"]',subhead:'[data-field="hero.subhead"]',cta_text:'[data-field="hero.cta_text"]',hero_image:'[data-field="hero.background_image"]'};
+  var params=new URLSearchParams(window.location.search);
+  var match=rules.find(function(r){return !r.is_fallback&&params.get(r.match_param)===r.match_value;});
+  var active=match||rules.find(function(r){return r.is_fallback;});
+  if(!active||!active.overrides_json)return;
+  var o=active.overrides_json;
+  function getInfo(field){var fm=fs[field];if(!fm)return{selector:df[field]||null,type:'text'};if(typeof fm==='string')return{selector:fm,type:'text'};return{selector:fm.selector||null,type:fm.type||'text'};}
+  function run(){
+    Object.keys(o).forEach(function(field){
+      var val=o[field];if(!val)return;
+      var info=getInfo(field);if(!info.selector)return;
+      var el=document.querySelector(info.selector);if(!el)return;
+      if(info.type==='image'||el.tagName==='IMG'){el.src=val;}
+      else{el.textContent=val;}
+    });
+  }
+  if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',run);}else{run();}
+})();
+</script>`;
+        html = html.includes('</body')
+          ? html.replace('</body>', `${swapScript}\n</body>`)
+          : html + swapScript;
+      }
+    } catch {
+      // UTM injection failure must never block preview delivery
     }
 
     return new NextResponse(html, {

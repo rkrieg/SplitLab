@@ -6,6 +6,7 @@ import {
   Sparkles, Send, Globe, Copy, Check, ChevronLeft, Loader2,
   Wand2, Layout, Palette, RefreshCw, Monitor, Smartphone,
   ExternalLink, RotateCcw, Plus, Download, Lock, ArrowRight,
+  Sliders, Trash2, AlertTriangle, MoreHorizontal, MousePointer2,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { cn } from '@/lib/utils';
@@ -255,7 +256,8 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
   // Stable iframe src — points to preview route, refreshes when htmlUrl is available/changes
   useEffect(() => {
     if (!pageId || !htmlUrl) return;
-    setIframeSrc(`/api/pages/${pageId}/preview?t=${Date.now()}`);
+    const src = `/api/pages/${pageId}/preview?t=${Date.now()}`;
+    setIframeSrc(src);
     setIframeLoaded(false);
   }, [pageId, htmlUrl]);
 
@@ -783,6 +785,8 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
 
   const [isUnpublishing, setIsUnpublishing] = useState(false);
 
+  const [showPageActions, setShowPageActions] = useState(false);
+
   async function handleUnpublish() {
     if (!pageId) return;
     setIsUnpublishing(true);
@@ -796,6 +800,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
     setPublishedUrl(null);
     addMessage({ role: 'assistant', content: 'Page unpublished. It will return a 404 until you publish again.' });
   }
+
 
   const isLoading = phase === 'generating' || phase === 'building' || phase === 'publishing' || uploadingImage;
   const showPreview = !!iframeSrc;
@@ -1135,73 +1140,19 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
             )}
           </div>
 
-          {/* External link + download + publish */}
+          {/* Page actions */}
           <div className="flex items-center gap-2">
-            {showPreview && iframeSrc && (
-              <a
-                href={iframeSrc}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-1.5 text-xs text-slate-400 dark:text-slate-500 hover:text-indigo-500 dark:hover:text-indigo-400 transition-colors font-mono"
-                title="Open preview"
-              >
-                <span>Preview URL</span>
-                <ExternalLink size={13} className="shrink-0" />
-              </a>
-            )}
-            {showPreview && (
+            {/* UTM Personalization button — links to dedicated picker page */}
+            {phase === 'editing' && !!pageId && (
               <button
-                onClick={() => {
-                  const html = getCleanHtml();
-                  if (!html) { toast.error('Preview not ready'); return; }
-                  const blob = new Blob([html], { type: 'text/html' });
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement('a');
-                  a.href = url;
-                  a.download = `${pageName || 'page'}.html`;
-                  a.click();
-                  URL.revokeObjectURL(url);
-                }}
-                className="p-1.5 text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
-                title="Download HTML"
+                onClick={() => router.push(`/clients/${clientId}/ai-pages/${pageId}/utm`)}
+                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full font-medium border bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-indigo-400 hover:text-indigo-500 transition-colors"
               >
-                <Download size={14} />
+                <Sliders size={12} />
+                UTM
               </button>
             )}
-            {slug && (
-              <a
-                href={phase === 'publishing' || isUnpublishing ? undefined : `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.trysplitlab.com'}/pages/${slug}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-disabled={phase === 'publishing' || isUnpublishing}
-                className={cn(
-                  'flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full font-medium transition-colors text-white',
-                  phase === 'publishing' || isUnpublishing
-                    ? 'bg-slate-700 opacity-40 cursor-not-allowed pointer-events-none'
-                    : 'bg-slate-700 hover:bg-slate-600'
-                )}
-              >
-                <ExternalLink size={12} />
-                Visit
-              </a>
-            )}
-            {publishedUrl && (
-              <>
-                <button
-                  onClick={copyUrl}
-                  className="flex items-center gap-1.5 text-xs bg-green-600 hover:bg-green-500 text-white px-3 py-1.5 rounded-full font-medium transition-colors"
-                >
-                  {urlCopied ? <Check size={12} /> : <Copy size={12} />}
-                  {urlCopied ? 'Copied!' : 'Copy URL'}
-                </button>
-                <button
-                  onClick={handleUnpublish}
-                  className="flex items-center gap-1.5 text-xs bg-red-600 hover:bg-red-500 text-white px-3 py-1.5 rounded-full font-medium transition-colors"
-                >
-                  Unpublish
-                </button>
-              </>
-            )}
+            {/* Primary publish/update button */}
             <button
               onClick={() => setPublishConfirmOpen(true)}
               disabled={!showPreview || isLoading}
@@ -1210,11 +1161,87 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
               {phase === 'publishing' ? <Loader2 size={12} className="animate-spin" /> : <Globe size={12} />}
               {publishedUrl ? 'Update' : 'Publish'}
             </button>
+
+            {/* More actions dropdown */}
+            {showPreview && (
+              <div className="relative">
+                <button
+                  onClick={() => setShowPageActions(v => !v)}
+                  className="p-1.5 rounded-md text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                  title="More actions"
+                >
+                  <MoreHorizontal size={15} />
+                </button>
+                {showPageActions && (
+                  <>
+                    <div className="fixed inset-0 z-10" onClick={() => setShowPageActions(false)} />
+                    <div className="absolute right-0 top-full mt-1 z-20 w-44 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-lg py-1 overflow-hidden">
+                      {slug && (
+                        <a
+                          href={phase === 'publishing' || isUnpublishing ? undefined : `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.trysplitlab.com'}/pages/${slug}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={() => setShowPageActions(false)}
+                          className="flex items-center gap-2 px-3 py-2 text-xs text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+                        >
+                          <ExternalLink size={13} /> Visit page
+                        </a>
+                      )}
+                      {publishedUrl && (
+                        <button
+                          onClick={() => { copyUrl(); setShowPageActions(false); }}
+                          className="w-full flex items-center gap-2 px-3 py-2 text-xs text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+                        >
+                          {urlCopied ? <Check size={13} /> : <Copy size={13} />}
+                          {urlCopied ? 'Copied!' : 'Copy URL'}
+                        </button>
+                      )}
+                      {iframeSrc && (
+                        <a
+                          href={iframeSrc}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={() => setShowPageActions(false)}
+                          className="flex items-center gap-2 px-3 py-2 text-xs text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+                        >
+                          <ExternalLink size={13} /> Preview URL
+                        </a>
+                      )}
+                      <button
+                        onClick={() => {
+                          const html = getCleanHtml();
+                          if (!html) { toast.error('Preview not ready'); return; }
+                          const blob = new Blob([html], { type: 'text/html' });
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement('a');
+                          a.href = url;
+                          a.download = `${pageName || 'page'}.html`;
+                          a.click();
+                          URL.revokeObjectURL(url);
+                          setShowPageActions(false);
+                        }}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-xs text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+                      >
+                        <Download size={13} /> Download HTML
+                      </button>
+                      {publishedUrl && (
+                        <button
+                          onClick={() => { handleUnpublish(); setShowPageActions(false); }}
+                          className="w-full flex items-center gap-2 px-3 py-2 text-xs text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors"
+                        >
+                          <Globe size={13} /> Unpublish
+                        </button>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
         {/* Preview content */}
-        <div className="flex-1 flex items-start justify-center overflow-auto p-5">
+        <div className={cn('flex items-start justify-center overflow-auto p-5', 'flex-1')}>
           {showPreview && iframeSrc ? (
             <div className={cn(
               'relative bg-white rounded-xl overflow-hidden shadow-xl ring-1 ring-black/5 dark:ring-white/5 transition-all duration-300 h-full',

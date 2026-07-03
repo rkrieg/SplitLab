@@ -56,7 +56,7 @@ function getOpenAIImageClient(): OpenAI {
     const apiKey = process.env.OPENAI_API_KEY?.trim();
     if (!apiKey) throw new Error('OPENAI_API_KEY environment variable is not set');
     openaiImageClient = new OpenAI({ apiKey });
-    console.log('[getOpenAIImageClient] key prefix:', apiKey.slice(0, 12), '| baseURL:', openaiImageClient.baseURL);
+    // console.log('[getOpenAIImageClient] key prefix:', apiKey.slice(0, 12), '| baseURL:', openaiImageClient.baseURL);
   }
   return openaiImageClient;
 }
