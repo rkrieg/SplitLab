@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { cn } from '@/lib/utils';
+import { useSidebarCollapsed } from '@/lib/use-sidebar-collapsed';
 import type { UTMRule, FieldMapping } from './page';
 
 export type StoredFieldSelectors = Record<string, { selector: string; type: 'text' | 'image'; label: string }>;
@@ -200,6 +201,7 @@ function buildHtmlPickerScript(activeField: string): string {
 
 export default function UTMPickerClient({ clientId, page, initialRules, appUrl }: Props) {
   const router = useRouter();
+  const sidebarCollapsed = useSidebarCollapsed();
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const isHtmlPage = !page.isAiPage;
 
@@ -516,7 +518,7 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
   const nonFallbackRules = rules.filter(r => !r.is_fallback);
   const fallbackRule = rules.find(r => r.is_fallback);
   const mappedFields = fields.filter(f => f.selector);
-  const headlineKey = fields.find(f => f.key === 'headline') ? 'headline' : null;
+  const headlineKey = fields.find(f => f.type === 'text') ? true : null;
 
   function renderRuleFields(ruleIdx: number) {
     const rule = rules[ruleIdx];
@@ -583,7 +585,7 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
     : `/clients/${clientId}/pages`;
 
   return (
-    <div className="fixed inset-0 z-20 flex bg-slate-50 dark:bg-slate-900" style={{ left: '15rem' }}>
+    <div className="fixed inset-0 z-20 flex bg-slate-50 dark:bg-slate-900 transition-[left] duration-200" style={{ left: sidebarCollapsed ? '4rem' : '15rem' }}>
 
       {/* ── Left sidebar ── */}
       <div className="w-[420px] flex-shrink-0 flex flex-col bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 overflow-hidden">

@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { cn } from '@/lib/utils';
+import { useSidebarCollapsed } from '@/lib/use-sidebar-collapsed';
 import { VERTICAL_LABELS } from '@/lib/ai-page-verticals';
 import { SAMPLE_PROMPTS } from '@/lib/ai-page-sample-prompts';
 import { readSSEStream, type SSEEvent } from '@/lib/use-sse-stream';
@@ -134,10 +135,11 @@ function hasUnfilledPlaceholders(text: string): boolean {
 
 export default function AIBuilderClient({ workspaceId, clientId, clientName, initialPage, backPath, canUseAI = true }: Props) {
   const router = useRouter();
+  const sidebarCollapsed = useSidebarCollapsed();
 
   if (!canUseAI) {
     return (
-      <div className="fixed inset-0 z-20 flex items-center justify-center bg-slate-50 dark:bg-slate-900" style={{ left: '15rem' }}>
+      <div className="fixed inset-0 z-20 flex items-center justify-center bg-slate-50 dark:bg-slate-900 transition-[left] duration-200" style={{ left: sidebarCollapsed ? '4rem' : '15rem' }}>
         <div className="flex flex-col items-center text-center max-w-md px-6">
           <div className="w-16 h-16 rounded-2xl bg-indigo-50 dark:bg-indigo-600/10 border border-indigo-100 dark:border-indigo-600/20 flex items-center justify-center mb-5">
             <Lock size={26} className="text-indigo-500 dark:text-indigo-400" />
@@ -806,7 +808,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
   const showPreview = !!iframeSrc;
 
   return (
-    <div className="fixed inset-0 z-20 flex bg-slate-50 dark:bg-slate-900" style={{ left: '15rem' }}>
+    <div className="fixed inset-0 z-20 flex bg-slate-50 dark:bg-slate-900 transition-[left] duration-200" style={{ left: sidebarCollapsed ? '4rem' : '15rem' }}>
       <input ref={imageInputRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/svg+xml" className="hidden" onChange={handleImageUpload} />
 
       {/* ── Left chat panel ── */}
