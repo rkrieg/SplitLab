@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { fetchHubSpotForms, getValidAccessToken } from '@/lib/integrations/hubspot';
+import { resolveWorkspaceRole } from '@/lib/workspace-auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,6 +15,9 @@ export async function GET(
 ) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const wsRole = await resolveWorkspaceRole(params.id, session.user.id, session.user.role);
+  if (!wsRole || wsRole === 'viewer') return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
   const { data: integration, error } = await db
     .from('workspace_integrations')

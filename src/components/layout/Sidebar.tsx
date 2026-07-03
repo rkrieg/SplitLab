@@ -12,12 +12,15 @@ import {
   Settings,
   LogOut,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Plus,
   Check,
   Sun,
   Moon,
   Globe,
   CreditCard,
+  Sparkles,
   Trash2,
 } from 'lucide-react';
 import { cn, slugify } from '@/lib/utils';
@@ -26,6 +29,12 @@ import { useState, useEffect, useRef } from 'react';
 import { useTheme } from 'next-themes';
 import toast from 'react-hot-toast';
 import Spinner from '@/components/ui/Spinner';
+
+const COLLAPSE_DEFAULT_PATHS = ['/utm', '/pages/new'];
+
+function shouldDefaultCollapsed(pathname: string) {
+  return COLLAPSE_DEFAULT_PATHS.some((p) => pathname.includes(p));
+}
 
 interface Client {
   id: string;
@@ -45,12 +54,13 @@ const globalNavItems = [
 
 function getClientNavItems(clientId: string, isViewer: boolean) {
   const items = [
-    { href: `/clients/${clientId}/pages`,    label: 'Pages',    icon: FileCode2 },
-    { href: `/clients/${clientId}/scripts`,  label: 'Scripts',  icon: Code2 },
-    { href: `/clients/${clientId}/domains`,  label: 'Domains',  icon: Globe },
-    { href: '/team',                         label: 'Team',     icon: Users },
-    { href: '/billing',                      label: 'Billing',  icon: CreditCard },
-    { href: `/clients/${clientId}/settings`, label: 'Settings', icon: Settings },
+    { href: `/clients/${clientId}/pages`,        label: 'Pages',       icon: FileCode2 },
+    { href: `/clients/${clientId}/ai-pages`,      label: 'AI Pages',    icon: Sparkles },
+    { href: `/clients/${clientId}/scripts`,      label: 'Scripts',     icon: Code2 },
+    { href: `/clients/${clientId}/domains`,      label: 'Domains',     icon: Globe },
+    { href: '/team',                             label: 'Team',        icon: Users },
+    { href: '/billing',                          label: 'Billing',     icon: CreditCard },
+    { href: `/clients/${clientId}/settings`,     label: 'Settings',    icon: Settings },
   ];
   return isViewer ? items.filter(i => i.href !== '/billing' && i.href !== '/team') : items;
 }
@@ -61,6 +71,7 @@ export default function Sidebar() {
   const { data: session } = useSession();
   const { theme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [clients, setClients] = useState<Client[]>([]);
   const [clientsLoaded, setClientsLoaded] = useState(false);
@@ -76,6 +87,32 @@ export default function Sidebar() {
 
   useEffect(() => setMounted(true), []);
   useEffect(() => { setNavigating(false); }, [pathname]);
+
+  // Initialize collapsed state: localStorage if set, otherwise path-based default
+  useEffect(() => {
+    const stored = localStorage.getItem('sl-sidebar-collapsed');
+    if (stored !== null) {
+      setCollapsed(stored === 'true');
+    } else {
+      setCollapsed(shouldDefaultCollapsed(pathname));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Auto-collapse when navigating to collapse-default pages (only if not manually set)
+  useEffect(() => {
+    const stored = localStorage.getItem('sl-sidebar-collapsed');
+    if (stored === null && shouldDefaultCollapsed(pathname)) {
+      setCollapsed(true);
+    }
+  }, [pathname]);
+
+  function toggleCollapsed() {
+    const next = !collapsed;
+    setCollapsed(next);
+    localStorage.setItem('sl-sidebar-collapsed', String(next));
+    window.dispatchEvent(new CustomEvent('sl-sidebar-toggle', { detail: next }));
+  }
 
   // Parse selected client from pathname
   const clientMatch = pathname.match(/^\/clients\/([^/]+)/);
@@ -135,6 +172,10 @@ export default function Sidebar() {
 
   function isActive(href: string) {
     if (href === '/dashboard') return pathname === '/dashboard';
+    // Exact match for routes that are prefixes of others
+    if (href.endsWith('/pages') && !href.endsWith('/pages/new')) {
+      return pathname === href;
+    }
     return pathname.startsWith(href);
   }
 
@@ -231,35 +272,63 @@ export default function Sidebar() {
   }
 
   return (
-    <aside className="w-60 min-h-screen bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col">
+    <aside className={cn(
+      'min-h-screen bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col relative transition-all duration-200 flex-shrink-0',
+      collapsed ? 'w-16' : 'w-60'
+    )}>
+      {/* Toggle button */}
+      <button
+        onClick={toggleCollapsed}
+        className="absolute -right-3 top-6 z-10 w-6 h-6 rounded-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex items-center justify-center shadow-sm hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+        title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+      >
+        {collapsed
+          ? <ChevronRight size={12} className="text-slate-500 dark:text-slate-400" />
+          : <ChevronLeft size={12} className="text-slate-500 dark:text-slate-400" />
+        }
+      </button>
+
       {/* Logo */}
-      <div className="h-20 flex items-center px-5 border-b border-slate-200 dark:border-slate-800">
+      <div className={cn('h-20 flex items-center border-b border-slate-200 dark:border-slate-800 overflow-hidden', collapsed ? 'px-3 justify-center' : 'px-5')}>
         <Link href="/dashboard" className="flex items-center">
-          {/* <svg width="140" height="32" ...>...</svg> */}
-          <img src="/splitlab-logo-light.png" alt="SplitLab" className="dark:hidden" style={{ height: '80px', width: 'auto' }} />
-          <img src="/splitlab-logo-dark.png" alt="SplitLab" className="hidden dark:block" style={{ height: '80px', width: 'auto' }} />
+          {collapsed ? (
+            <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center text-white font-bold text-sm flex-shrink-0">S</div>
+          ) : (
+            <>
+              <img src="/splitlab-logo-light.png" alt="SplitLab" className="dark:hidden" style={{ height: '80px', width: 'auto' }} />
+              <img src="/splitlab-logo-dark.png" alt="SplitLab" className="hidden dark:block" style={{ height: '80px', width: 'auto' }} />
+            </>
+          )}
         </Link>
       </div>
 
       {/* Client Dropdown / Static label */}
-      <div className="px-3 pt-4 pb-2" ref={dropdownRef}>
+      <div className={cn('pt-4 pb-2', collapsed ? 'px-2' : 'px-3')} ref={dropdownRef}>
         {multiClientEnabled ? (
           <>
             <button
-              onClick={() => setDropdownOpen(!dropdownOpen)}
-              className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600 transition-colors text-sm"
+              onClick={() => { if (!collapsed) setDropdownOpen(!dropdownOpen); else toggleCollapsed(); }}
+              title={collapsed ? (selectedClient?.name ?? 'All Clients') : undefined}
+              className={cn(
+                'w-full flex items-center gap-2 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600 transition-colors text-sm',
+                collapsed ? 'px-2 py-2 justify-center' : 'px-3 py-2'
+              )}
             >
               <Building2 size={14} className="text-slate-500 dark:text-slate-400 flex-shrink-0" />
-              <span className="flex-1 text-left text-slate-800 dark:text-slate-200 truncate">
-                {selectedClient ? selectedClient.name : 'All Clients'}
-              </span>
-              {navigating
-                ? <Spinner size="sm" className="text-slate-400" />
-                : <ChevronDown size={14} className={cn('text-slate-400 dark:text-slate-500 transition-transform flex-shrink-0', dropdownOpen && 'rotate-180')} />
-              }
+              {!collapsed && (
+                <>
+                  <span className="flex-1 text-left text-slate-800 dark:text-slate-200 truncate">
+                    {selectedClient ? selectedClient.name : 'All Clients'}
+                  </span>
+                  {navigating
+                    ? <Spinner size="sm" className="text-slate-400" />
+                    : <ChevronDown size={14} className={cn('text-slate-400 dark:text-slate-500 transition-transform flex-shrink-0', dropdownOpen && 'rotate-180')} />
+                  }
+                </>
+              )}
             </button>
 
-            {dropdownOpen && (
+            {dropdownOpen && !collapsed && (
               <div className="mt-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden shadow-xl z-50 relative">
                 {/* All Clients option */}
                 <button
@@ -327,30 +396,36 @@ export default function Sidebar() {
           </>
         ) : !clientsLoaded ? (
           /* Skeleton while clients load */
-          <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+          <div className={cn('flex items-center gap-2 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700', collapsed ? 'px-2 py-2 justify-center' : 'px-3 py-2')}>
             <div className="w-4 h-4 rounded bg-slate-200 dark:bg-slate-700 animate-pulse flex-shrink-0" />
-            <div className="h-3 rounded bg-slate-200 dark:bg-slate-700 animate-pulse flex-1" />
+            {!collapsed && <div className="h-3 rounded bg-slate-200 dark:bg-slate-700 animate-pulse flex-1" />}
           </div>
         ) : (
           /* Static account label for single-client plans (free / pro) */
-          <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm">
+          <div
+            title={collapsed ? (selectedClient?.name ?? clients[0]?.name ?? 'My Account') : undefined}
+            className={cn('flex items-center gap-2 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm', collapsed ? 'px-2 py-2 justify-center' : 'px-3 py-2')}
+          >
             <Building2 size={14} className="text-slate-500 dark:text-slate-400 flex-shrink-0" />
-            <span className="flex-1 text-left text-slate-800 dark:text-slate-200 truncate">
-              {selectedClient ? selectedClient.name : (clients[0]?.name ?? 'My Account')}
-            </span>
-            {navigating && <Spinner size="sm" className="text-slate-400" />}
+            {!collapsed && (
+              <>
+                <span className="flex-1 text-left text-slate-800 dark:text-slate-200 truncate">
+                  {selectedClient ? selectedClient.name : (clients[0]?.name ?? 'My Account')}
+                </span>
+                {navigating && <Spinner size="sm" className="text-slate-400" />}
+              </>
+            )}
           </div>
         )}
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 px-3 py-2 space-y-0.5">
+      <nav className={cn('flex-1 py-2 space-y-0.5', collapsed ? 'px-2' : 'px-3')}>
         {!clientsLoaded && !multiClientEnabled ? (
-          // Show skeleton while clients load to prevent Dashboard flash
           Array.from({ length: 5 }).map((_, i) => (
-            <div key={i} className="flex items-center gap-3 px-3 py-2 rounded-lg">
+            <div key={i} className={cn('flex items-center rounded-lg', collapsed ? 'px-2 py-2 justify-center' : 'gap-3 px-3 py-2')}>
               <div className="w-4 h-4 rounded bg-slate-200 dark:bg-slate-700 animate-pulse flex-shrink-0" />
-              <div className="h-3 rounded bg-slate-200 dark:bg-slate-700 animate-pulse" style={{ width: `${55 + (i % 3) * 15}%` }} />
+              {!collapsed && <div className="h-3 rounded bg-slate-200 dark:bg-slate-700 animate-pulse" style={{ width: `${55 + (i % 3) * 15}%` }} />}
             </div>
           ))
         ) : (
@@ -358,42 +433,54 @@ export default function Sidebar() {
             <Link
               key={href}
               href={href}
+              title={collapsed ? label : undefined}
               className={cn(
-                'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
+                'flex items-center rounded-lg text-sm font-medium transition-colors',
+                collapsed ? 'px-2 py-2 justify-center' : 'gap-3 px-3 py-2',
                 isActive(href)
                   ? 'bg-indigo-600/20 text-indigo-400 border border-indigo-600/30'
                   : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
               )}
             >
               <Icon size={16} className="flex-shrink-0" />
-              {label}
+              {!collapsed && label}
             </Link>
           ))
         )}
       </nav>
 
       {/* User menu */}
-      <div className="px-3 py-3 border-t border-slate-200 dark:border-slate-800">
+      <div className={cn('py-3 border-t border-slate-200 dark:border-slate-800', collapsed ? 'px-2' : 'px-3')}>
         <button
           onClick={() => setUserMenuOpen(!userMenuOpen)}
-          className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+          title={collapsed ? (session?.user?.name || 'User') : undefined}
+          className={cn('w-full flex items-center rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors', collapsed ? 'px-2 py-2 justify-center' : 'gap-3 px-3 py-2')}
         >
           <div className="w-7 h-7 rounded-full bg-indigo-600 flex items-center justify-center text-xs font-bold text-white flex-shrink-0">
             {session?.user?.name?.[0]?.toUpperCase() || 'U'}
           </div>
-          <div className="flex-1 text-left min-w-0">
-            <p className="text-sm font-medium text-slate-800 dark:text-slate-200 truncate">
-              {session?.user?.name || 'User'}
-            </p>
-            <p className="text-xs text-slate-400 dark:text-slate-500 capitalize truncate">
-              {session?.user?.role === 'viewer' ? 'Member' : (session?.user?.role || 'member')}
-            </p>
-          </div>
-          <ChevronDown size={14} className="text-slate-400 dark:text-slate-500 flex-shrink-0" />
+          {!collapsed && (
+            <>
+              <div className="flex-1 text-left min-w-0">
+                <p className="text-sm font-medium text-slate-800 dark:text-slate-200 truncate">
+                  {session?.user?.name || 'User'}
+                </p>
+                <p className="text-xs text-slate-400 dark:text-slate-500 capitalize truncate">
+                  {session?.user?.role === 'viewer' ? 'Member' : (session?.user?.role || 'member')}
+                </p>
+              </div>
+              <ChevronDown size={14} className="text-slate-400 dark:text-slate-500 flex-shrink-0" />
+            </>
+          )}
         </button>
 
         {userMenuOpen && (
-          <div className="mt-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
+          <div className={cn(
+            'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden shadow-xl',
+            collapsed
+              ? 'absolute bottom-16 left-2 w-48 z-50'
+              : 'mt-1'
+          )}>
             {/* Current plan + upgrade — hidden for invited members (viewers) */}
             {!isViewer && (
               <div className="px-3 py-2 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between gap-2">

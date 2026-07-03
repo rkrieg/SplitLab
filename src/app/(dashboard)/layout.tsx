@@ -1,6 +1,7 @@
 import { getServerSession } from 'next-auth';
 import { redirect } from 'next/navigation';
 import { authOptions } from '@/lib/auth';
+import { db } from '@/lib/supabase-server';
 import Sidebar from '@/components/layout/Sidebar';
 import VisitorCapBanner from '@/components/layout/VisitorCapBanner';
 
@@ -27,6 +28,13 @@ export default async function DashboardLayout({
   const session = await getServerSession(authOptions);
   if (!session) redirect('/login');
 
+  // JWT sessions aren't re-validated against the DB on every request, so a
+  // stale token (deleted/recreated account, swapped Supabase project) would
+  // otherwise sail through here and only fail later on a FK-constrained
+  // insert (e.g. pages.created_by). Catch it here instead, once per load.
+  const { data: currentUser } = await db.from('users').select('id').eq('id', session.user.id).single();
+  if (!currentUser) redirect('/api/auth/invalidate');
+
   // Admins have no visitor cap — skip the banner entirely
   let visitorUsage: { used: number; limit: number; limitLabel: string; overCap: boolean } | null = null;
   if (session.user.role !== 'admin') {
@@ -41,7 +49,7 @@ export default async function DashboardLayout({
   return (
     <div className="flex min-h-screen bg-slate-50 dark:bg-slate-900">
       <Sidebar />
-      <main className="flex-1 flex flex-col min-w-0 overflow-auto">
+      <main className="flex-1 flex flex-col min-w-0 overflow-auto transition-all duration-200">
         {showBanner && visitorUsage && (
           <VisitorCapBanner
             used={visitorUsage.used}

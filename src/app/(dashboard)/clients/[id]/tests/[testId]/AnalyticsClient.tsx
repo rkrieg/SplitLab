@@ -49,6 +49,7 @@ import {
   Info,
   Loader2,
   AlertTriangle,
+  SlidersHorizontal,
   CheckCircle2,
   ClipboardList,
   Search,
@@ -2615,7 +2616,7 @@ export default function AnalyticsClient({
                                     />
                                   </div>
                                   {stat.variant.pages?.id ? (
-                                    <div className="flex items-end">
+                                    <div className="flex items-end gap-2">
                                       <button
                                         onClick={() =>
                                           openHtmlEditor(stat.variant)
@@ -2625,6 +2626,14 @@ export default function AnalyticsClient({
                                         <FileCode2 size={14} />
                                         Edit HTML
                                       </button>
+                                      <Link
+                                        href={`/clients/${clientId}/pages/${stat.variant.pages.id}/utm`}
+                                        className="btn-secondary text-sm flex items-center gap-2"
+                                        onClick={(e) => e.stopPropagation()}
+                                      >
+                                        <SlidersHorizontal size={14} />
+                                        Set Up UTM
+                                      </Link>
                                     </div>
                                   ) : (
                                     <div>
@@ -4600,6 +4609,10 @@ export default function AnalyticsClient({
               <div className="flex items-start gap-2 rounded-lg bg-amber-500/10 border border-amber-500/20 px-3 py-2.5 text-xs text-amber-600 dark:text-amber-400 m-4 mb-0">
                 <Info size={13} className="flex-shrink-0 mt-px" />
                 <span>Tracking is already built in for this page — <strong>no need to add a <code className="font-mono">tracker.js</code> script tag.</strong></span>
+              </div>
+              <div className="flex items-start gap-2 rounded-lg bg-red-500/10 border border-red-500/30 px-3 py-2.5 text-xs text-red-600 dark:text-red-400 mx-4 mt-2 mb-0">
+                <Info size={13} className="flex-shrink-0 mt-px" />
+                <span><strong>Saving new HTML will clear all UTM field mappings and personalization rules</strong> for this page. You will need to re-map elements and re-create rules in the UTM Personalization tab after saving.</span>
               </div>
               {loadingHtml ? (
                 <div className="flex items-center justify-center h-64">

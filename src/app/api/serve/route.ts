@@ -312,14 +312,21 @@ ${proxyTrackingSnippet}
       });
     }
 
-    // 7. Fetch workspace scripts + page-scoped scripts + test-scoped scripts
-    const [{ data: workspaceScripts }, { data: pageScripts }, { data: testScripts }] = await Promise.all([
+    // 7. Fetch workspace scripts + page-scoped scripts + test-scoped scripts + UTM personalization rules
+    const [{ data: workspaceScripts }, { data: pageScripts }, { data: testScripts }, { data: utmRules }, utmPageRow] = await Promise.all([
       db.from('scripts').select('*').eq('workspace_id', workspaceId).eq('is_active', true).is('page_id', null).is('test_id', null),
       selectedVariant.page_id
         ? db.from('scripts').select('*').eq('workspace_id', workspaceId).eq('is_active', true).eq('page_id', selectedVariant.page_id)
         : Promise.resolve({ data: [] }),
       db.from('scripts').select('*').eq('workspace_id', workspaceId).eq('is_active', true).eq('test_id', test.id),
+      selectedVariant.page_id
+        ? db.from('personalization_rules').select('match_param,match_value,is_fallback,overrides_json').eq('page_id', selectedVariant.page_id).order('is_fallback', { ascending: true }).order('priority', { ascending: true })
+        : Promise.resolve({ data: [] }),
+      selectedVariant.page_id
+        ? db.from('pages').select('field_selectors_json').eq('id', selectedVariant.page_id).single()
+        : Promise.resolve({ data: null }),
     ]);
+    const fieldSelectors = (utmPageRow?.data as { field_selectors_json?: Record<string, { selector: string; type: 'text' | 'image'; label: string }> } | null)?.field_selectors_json ?? null;
     const scripts = [...(workspaceScripts || []), ...(pageScripts || []), ...(testScripts || [])];
 
     const testHeadScriptsHtml = (test as { head_scripts?: string }).head_scripts || '';
@@ -351,11 +358,48 @@ ${proxyTrackingSnippet}
       APP_URL
     );
 
-    // 10. Inject everything into HTML
-    if (isScan) bodyEndScripts.push(buildScanScript(selectedVariant.id, APP_URL));
-    const finalHtml = injectIntoHtml(html, headScripts, bodyEndScripts, trackingSnippet);
+    // 10. Inject UTM swap script (client-side, reads window.location.search)
+    let htmlWithUtm = html;
+    try {
+      const rules = utmRules && utmRules.length > 0 ? utmRules : [];
+      if (rules.length > 0) {
+        const swapScript = `<script>
+(function(){
+  var rules=${JSON.stringify(rules)};
+  var fs=${JSON.stringify(fieldSelectors || {})};
+  var df={headline:'[data-field="hero.headline"]',subhead:'[data-field="hero.subhead"]',cta_text:'[data-field="hero.cta_text"]',hero_image:'[data-field="hero.background_image"]'};
+  var params=new URLSearchParams(window.location.search);
+  var match=rules.find(function(r){return !r.is_fallback&&params.get(r.match_param)===r.match_value;});
+  var active=match||rules.find(function(r){return r.is_fallback;});
+  if(!active||!active.overrides_json)return;
+  var o=active.overrides_json;
+  function getInfo(field){var fm=fs[field];if(!fm)return{selector:df[field]||null,type:'text'};if(typeof fm==='string')return{selector:fm,type:'text'};return{selector:fm.selector||null,type:fm.type||'text'};}
+  function run(){
+    Object.keys(o).forEach(function(field){
+      var val=o[field];if(!val)return;
+      var info=getInfo(field);if(!info.selector)return;
+      var el=document.querySelector(info.selector);if(!el)return;
+      if(info.type==='image'||el.tagName==='IMG'){el.src=val;}
+      else{el.textContent=val;}
+    });
+  }
+  if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',run);}else{run();}
+})();
+</script>`;
+        htmlWithUtm = html.includes('</body')
+          ? html.replace('</body>', `${swapScript}\n</body>`)
+          : html + swapScript;
+      }
+    } catch (utmErr) {
+      console.error('[serve] UTM swap inject failed, continuing without:', utmErr);
+      htmlWithUtm = html;
+    }
 
-    // 10b. Record pageview (skip for cap, scan, and Open-button previews)
+    // 10b. Inject workspace scripts + tracking into final HTML
+    if (isScan) bodyEndScripts.push(buildScanScript(selectedVariant.id, APP_URL));
+    const finalHtml = injectIntoHtml(htmlWithUtm, headScripts, bodyEndScripts, trackingSnippet);
+
+    // 10c. Record pageview (skip for cap, scan, and Open-button previews)
     if (!overVisitorCap && !isScan && !forcedVh) {
       await db.from('events').insert({
         test_id: test.id,

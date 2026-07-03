@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
+import { resolveWorkspaceRole } from '@/lib/workspace-auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,6 +16,11 @@ export async function GET(req: NextRequest) {
   const workspaceId = req.nextUrl.searchParams.get('workspaceId');
   if (!workspaceId) {
     return NextResponse.json({ error: 'Missing workspaceId' }, { status: 400 });
+  }
+
+  const wsRole = await resolveWorkspaceRole(workspaceId, session.user.id, session.user.role);
+  if (!wsRole || wsRole === 'viewer') {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
   const returnTo = req.nextUrl.searchParams.get('returnTo') || null;
