@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getStripeClient } from '@/lib/stripeClient';
 import { db } from '@/lib/supabase-server';
+import { accrueCommissionForInvoice, markReferralChurned } from '@/lib/affiliate';
 
 export const dynamic = 'force-dynamic';
 
@@ -138,6 +139,9 @@ export async function POST(request: NextRequest) {
           subscription_status:    'canceled',
           stripe_subscription_id: null,
         } as never).eq('stripe_customer_id', custId);
+
+        // Affiliate: stop future commission accrual (lifetime = while they pay)
+        await markReferralChurned(custId);
         break;
       }
 
@@ -151,13 +155,28 @@ export async function POST(request: NextRequest) {
         break;
       }
 
-      // ── Payment recovered ────────────────────────────────────────────────
+      // ── Payment recovered / recurring charge ─────────────────────────────
       case 'invoice.payment_succeeded': {
-        const invoice = event.data.object as { customer: unknown; billing_reason: string };
-        // subscription_create is handled by checkout.session.completed
-        if (invoice.billing_reason === 'subscription_create') break;
+        const invoice = event.data.object as {
+          id: string;
+          customer: unknown;
+          billing_reason: string;
+          amount_paid: number;
+        };
         const custId = extractId(invoice.customer);
         if (!custId) break;
+
+        // Affiliate commission accrues on EVERY paid invoice — including the
+        // first (subscription_create) and each recurring renewal. Idempotent
+        // per invoice id, so duplicate deliveries are safe.
+        await accrueCommissionForInvoice({
+          invoiceId:   invoice.id,
+          customerId:  custId,
+          amountCents: invoice.amount_paid,
+        });
+
+        // subscription_create status is handled by checkout.session.completed
+        if (invoice.billing_reason === 'subscription_create') break;
         await db.from('users').update({ subscription_status: 'active' } as never)
           .eq('stripe_customer_id', custId);
         break;
