@@ -4,6 +4,7 @@ import { db } from '@/lib/supabase-server';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { slugify } from '@/lib/utils';
+import { attributeReferral, accrueCommissionForInvoice, REF_COOKIE } from '@/lib/affiliate';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,7 +22,7 @@ export async function POST(request: NextRequest) {
     // Verify payment with Stripe
     const stripe = getStripeClient();
     const session = await stripe.checkout.sessions.retrieve(sessionId, {
-      expand: ['customer', 'subscription'],
+      expand: ['customer', 'subscription', 'subscription.latest_invoice'],
     });
 
     if (session.payment_status !== 'paid') {
@@ -87,6 +88,25 @@ export async function POST(request: NextRequest) {
 
     // Fetch the newly created user's id
     const { data: newUser } = await db.from('users').select('id').eq('email', email).single();
+
+    // Attribute to a referring affiliate (metadata survives the Stripe redirect;
+    // fall back to the cookie if present).
+    if (newUser) {
+      const refCode = session.metadata?.ref || request.cookies.get(REF_COOKIE)?.value || null;
+      await attributeReferral(newUser.id, refCode);
+
+      // Accrue the FIRST invoice's commission here. The webhook's
+      // invoice.payment_succeeded fires before this account exists, so it would
+      // otherwise miss month one. Idempotent via UNIQUE(invoice_id).
+      const latestInvoice = (session.subscription as { latest_invoice?: { id?: string; amount_paid?: number } } | null)?.latest_invoice;
+      if (latestInvoice?.id) {
+        await accrueCommissionForInvoice({
+          invoiceId:   latestInvoice.id,
+          customerId:  stripeCustomerId,
+          amountCents: latestInvoice.amount_paid ?? 0,
+        });
+      }
+    }
 
     // Auto-create default client ("[FirstName]'s Account")
     let defaultClientId: string | null = null;

@@ -218,7 +218,7 @@ export default function LandingPage() {
             <img src="/splitlab-logo-dark.png" alt="SplitLab" style={{height:'60px',width:'auto'}} />
             <span className="footer-copy">&copy; 2026 SplitLab.</span>
           </div>
-          <div className="footer-links"><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/contact">Support</a></div>
+          <div className="footer-links"><a href="/affiliate">Affiliates</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/contact">Support</a></div>
         </div>
       </footer>
     </div>
