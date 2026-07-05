@@ -59,7 +59,7 @@ interface Props {
 
 // Soft cap on the initial prompt — generous enough for a detailed multi-section
 // brief, tight enough to keep the schema the AI generates within one response.
-const MAX_PROMPT_LENGTH = 4000;
+const MAX_PROMPT_LENGTH = 6000;
 
 
 function setNestedValue(obj: Record<string, unknown>, path: string, value: unknown): Record<string, unknown> {

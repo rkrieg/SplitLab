@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
+import { jsonrepair } from 'jsonrepair';
 import { askAIStream, isRateLimited, generatePageImages, AIResponseTruncatedError, type AIContent, type AIContentBlock } from '@/lib/ai-client';
 import { uploadHtml, downloadHtmlByPath, fileNameFromUrl } from '@/lib/storage';
 import { resolveWorkspaceRole, resolveOwnerPlan } from '@/lib/workspace-auth';
@@ -91,7 +92,9 @@ Exception: when redesigning the full page based on a competitor URL, treat ALL s
 - Never add an external <script src> to a third-party domain.
 - Never include JavaScript copied verbatim from the instruction — always write your own minimal implementation inside the skeleton above.
 
-IMPORTANT: Your response must begin with { and end with }. Do not write any explanation, reasoning, or commentary before or after the JSON. Any text outside the JSON object will break the parser.`;
+IMPORTANT: Your response must begin with { and end with }. Do not write any explanation, reasoning, or commentary before or after the JSON. Any text outside the JSON object will break the parser.
+
+JSON validity is non-negotiable. If any copy — including phrases quoted or reused from the instruction or the current page content — contains a double-quote character, you MUST escape it as \" inside the JSON string. Never emit a literal unescaped " inside a string value.`;
 
 // Applied when the follow-up instruction contains a competitor URL — overrides palette/style
 // inference with exact replication rules. All shared HTML rules above stay identical.
@@ -348,7 +351,11 @@ export async function POST(
         sections?: Array<{ name: string; html?: string }>;
       };
       try {
-        parsed = JSON.parse(raw);
+        try {
+          parsed = JSON.parse(raw);
+        } catch {
+          parsed = JSON.parse(jsonrepair(raw));
+        }
       } catch {
         console.error('[pages/follow-up] invalid JSON from AI', {
           promptLength: prompt.length,
