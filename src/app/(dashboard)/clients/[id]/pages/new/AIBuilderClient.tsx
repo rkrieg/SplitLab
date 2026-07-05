@@ -57,6 +57,10 @@ interface Props {
   canUseAI?: boolean;
 }
 
+// Soft cap on the initial prompt — generous enough for a detailed multi-section
+// brief, tight enough to keep the schema the AI generates within one response.
+const MAX_PROMPT_LENGTH = 4000;
+
 
 function setNestedValue(obj: Record<string, unknown>, path: string, value: unknown): Record<string, unknown> {
   const keys = path.split('.');
@@ -548,6 +552,10 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
   async function handleGenerate(e: React.FormEvent) {
     e.preventDefault();
     if (!prompt.trim() || !pageName.trim()) return;
+    if (prompt.length > MAX_PROMPT_LENGTH) {
+      toast.error(`Your prompt is ${prompt.length - MAX_PROMPT_LENGTH} characters over the limit — please shorten it.`);
+      return;
+    }
     if (hasUnfilledPlaceholders(prompt)) {
       toast.error('Please fill in the highlighted [placeholder] fields before building.');
       return;
@@ -1007,9 +1015,21 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
                   >
                     <Plus size={16} />
                   </button>
+                  <span
+                    className={cn(
+                      'text-[11px] tabular-nums font-medium',
+                      prompt.length > MAX_PROMPT_LENGTH
+                        ? 'text-red-500'
+                        : prompt.length >= MAX_PROMPT_LENGTH * 0.9
+                        ? 'text-amber-500'
+                        : 'text-slate-300 dark:text-slate-600'
+                    )}
+                  >
+                    {MAX_PROMPT_LENGTH - prompt.length}
+                  </span>
                   <button
                     type="submit"
-                    disabled={!prompt.trim() || !pageName.trim()}
+                    disabled={!prompt.trim() || !pageName.trim() || prompt.length > MAX_PROMPT_LENGTH}
                     className="w-7 h-7 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-30 disabled:cursor-not-allowed rounded-full flex items-center justify-center transition-colors"
                   >
                     <Send size={13} className="text-white" />

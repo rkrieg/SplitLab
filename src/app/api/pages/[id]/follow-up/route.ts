@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
-import { askAIStream, isRateLimited, generatePageImages, type AIContent, type AIContentBlock } from '@/lib/ai-client';
+import { askAIStream, isRateLimited, generatePageImages, AIResponseTruncatedError, type AIContent, type AIContentBlock } from '@/lib/ai-client';
 import { uploadHtml, downloadHtmlByPath, fileNameFromUrl } from '@/lib/storage';
 import { resolveWorkspaceRole, resolveOwnerPlan } from '@/lib/workspace-auth';
 import { PLAN_LIMITS } from '@/lib/plans';
@@ -294,26 +294,41 @@ export async function POST(
       let thinkingEmitted = false;
       const thinkingRegex = /"thinking"\s*:\s*"((?:[^"\\]|\\.)*)"/;
 
-      const pass1Text = await askAIStream(
-        {
-          system: systemPrompt,
-          messages: [
-            ...history.map(({ role, content }) => ({ role, content })),
-            { role: 'user' as const, content: userContent },
-          ],
-          maxTokens: 32000,
-        },
-        (chunk) => {
-          pass1Buffer += chunk;
-          if (!thinkingEmitted) {
-            const match = thinkingRegex.exec(pass1Buffer);
-            if (match) {
-              sendSSE(controller, { type: 'thinking', message: match[1] });
-              thinkingEmitted = true;
+      let pass1Text: string;
+      try {
+        pass1Text = await askAIStream(
+          {
+            system: systemPrompt,
+            messages: [
+              ...history.map(({ role, content }) => ({ role, content })),
+              { role: 'user' as const, content: userContent },
+            ],
+            maxTokens: 32000,
+          },
+          (chunk) => {
+            pass1Buffer += chunk;
+            if (!thinkingEmitted) {
+              const match = thinkingRegex.exec(pass1Buffer);
+              if (match) {
+                sendSSE(controller, { type: 'thinking', message: match[1] });
+                thinkingEmitted = true;
+              }
             }
           }
+        );
+      } catch (err) {
+        if (err instanceof AIResponseTruncatedError) {
+          console.error('[pages/follow-up] response truncated at maxTokens', {
+            outputTokens: err.outputTokens,
+            maxTokens: err.maxTokens,
+            promptLength: prompt.length,
+          });
+          sendSSE(controller, { type: 'error', message: 'Your instruction asked for more content than we can generate in one pass. Try a smaller or more specific edit.' });
+          closeSSE(controller);
+          return;
         }
-      );
+        throw err;
+      }
 
       if (request.signal.aborted) { closeSSE(controller); return; }
 
@@ -335,6 +350,11 @@ export async function POST(
       try {
         parsed = JSON.parse(raw);
       } catch {
+        console.error('[pages/follow-up] invalid JSON from AI', {
+          promptLength: prompt.length,
+          rawLength: pass1Text.length,
+          rawPreview: pass1Text.slice(0, 1500),
+        });
         sendSSE(controller, { type: 'error', message: 'AI provider returned invalid JSON' });
         closeSSE(controller);
         return;

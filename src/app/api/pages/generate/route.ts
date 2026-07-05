@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { askAI, isRateLimited } from '@/lib/ai-client';
+import { askAI, isRateLimited, AIResponseTruncatedError } from '@/lib/ai-client';
 import { VERTICAL_VALUES } from '@/lib/ai-page-verticals';
 import { SECTION_VOCABULARY, VERTICAL_PRIORITY_HINTS } from '@/lib/ai-page-vocabulary';
 import { resolveWorkspaceRole, resolveOwnerPlan } from '@/lib/workspace-auth';
@@ -169,13 +169,36 @@ export async function POST(request: NextRequest) {
 
     // Screenshot is NOT passed here — schema generation doesn't need vision. It is returned
     // to the client and forwarded to /build where Claude uses it as a visual reference.
-    const text = await askAI({ system: systemPrompt, messages, maxTokens: 8192 });
+    let text: string;
+    try {
+      text = await askAI({ system: systemPrompt, messages, maxTokens: 16000 });
+    } catch (err) {
+      if (err instanceof AIResponseTruncatedError) {
+        console.error('[pages/generate] response truncated at maxTokens', {
+          outputTokens: err.outputTokens,
+          maxTokens: err.maxTokens,
+          promptLength: prompt.length,
+          vertical: selectedVertical,
+        });
+        return NextResponse.json(
+          { error: 'Your request asked for more content than we can generate in one pass. Try requesting fewer sections or a simpler layout.', truncated: true },
+          { status: 500 }
+        );
+      }
+      throw err;
+    }
 
     let parsed: { type: 'questions' | 'schema'; questions?: string[]; schema?: unknown };
     try {
       const raw = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
       parsed = JSON.parse(raw);
     } catch {
+      console.error('[pages/generate] invalid JSON from AI', {
+        promptLength: prompt.length,
+        vertical: selectedVertical,
+        rawLength: text.length,
+        rawPreview: text.slice(0, 1500),
+      });
       return NextResponse.json({ error: 'AI provider returned invalid JSON', raw: text }, { status: 500 });
     }
 

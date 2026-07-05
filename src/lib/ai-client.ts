@@ -28,6 +28,20 @@ export interface AskAIOptions {
   model?: string;
 }
 
+/**
+ * Thrown when the provider stops generating because it hit maxTokens rather
+ * than finishing naturally. The text collected so far is always a truncated,
+ * mid-object fragment — callers must not attempt to JSON.parse it and should
+ * surface a distinct "response too large" message instead of a generic parse
+ * error.
+ */
+export class AIResponseTruncatedError extends Error {
+  constructor(public readonly outputTokens: number, public readonly maxTokens: number) {
+    super(`AI response was truncated at maxTokens (output=${outputTokens}, max=${maxTokens})`);
+    this.name = 'AIResponseTruncatedError';
+  }
+}
+
 // Which provider actually answers askAI() calls. Default is "anthropic" so
 // existing production behavior is unchanged unless someone deliberately
 // opts in to another provider (e.g. AI_PROVIDER=openai-compatible to point
@@ -93,7 +107,11 @@ async function askAnthropic(options: AskAIOptions): Promise<string> {
 
   const response = await stream.finalMessage();
   const { input_tokens, output_tokens } = response.usage;
-  console.log(`[AI tokens] input=${input_tokens} output=${output_tokens} total=${input_tokens + output_tokens} model=${model} maxTokens=${options.maxTokens}`);
+  console.log(`[AI tokens] input=${input_tokens} output=${output_tokens} total=${input_tokens + output_tokens} model=${model} maxTokens=${options.maxTokens} stop_reason=${response.stop_reason}`);
+
+  if (response.stop_reason === 'max_tokens') {
+    throw new AIResponseTruncatedError(output_tokens, options.maxTokens);
+  }
 
   const block = response.content[0];
   if (block.type !== 'text') {
@@ -126,7 +144,11 @@ async function askAnthropicStream(options: AskAIOptions, onChunk: (text: string)
 
   const response = await stream.finalMessage();
   const { input_tokens, output_tokens } = response.usage;
-  console.log(`[AI tokens stream] input=${input_tokens} output=${output_tokens} total=${input_tokens + output_tokens} model=${model} maxTokens=${options.maxTokens}`);
+  console.log(`[AI tokens stream] input=${input_tokens} output=${output_tokens} total=${input_tokens + output_tokens} model=${model} maxTokens=${options.maxTokens} stop_reason=${response.stop_reason}`);
+
+  if (response.stop_reason === 'max_tokens') {
+    throw new AIResponseTruncatedError(output_tokens, options.maxTokens);
+  }
 
   return fullText;
 }
