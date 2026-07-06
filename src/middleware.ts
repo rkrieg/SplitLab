@@ -73,7 +73,8 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith('/clients') ||
     pathname.startsWith('/team') ||
     pathname.startsWith('/settings') ||
-    pathname.startsWith('/billing');
+    pathname.startsWith('/billing') ||
+    pathname.startsWith('/affiliates'); // admin affiliate mgmt (NOT public /affiliate)
 
   if (isDashboardRoute) {
     const token = await getToken({
@@ -99,7 +100,23 @@ export async function middleware(request: NextRequest) {
     }
   }
 
-  return NextResponse.next();
+  const res = NextResponse.next();
+
+  // ── Affiliate referral capture ──────────────────────────────────────────
+  // A visitor arriving via ?ref=CODE gets a 60-day cookie that is read at
+  // signup to attribute them to the referring affiliate (last touch wins).
+  const ref = request.nextUrl.searchParams.get('ref');
+  if (ref && /^[A-Za-z0-9]{4,32}$/.test(ref)) {
+    res.cookies.set('sl_ref', ref.toUpperCase(), {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      path: '/',
+      maxAge: 60 * 24 * 60 * 60, // 60 days
+    });
+  }
+
+  return res;
 }
 
 export const config = {
