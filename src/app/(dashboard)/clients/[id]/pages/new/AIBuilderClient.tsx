@@ -184,6 +184,25 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
   const [buildEvents, setBuildEvents] = useState<SSEEvent[]>([]);
   const [followUpEvents, setFollowUpEvents] = useState<SSEEvent[] | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>('desktop');
+  const previewWrapRef = useRef<HTMLDivElement>(null);
+  const [previewSize, setPreviewSize] = useState({ width: 0, height: 0 });
+
+  // Measure the available preview area so the desktop iframe can be rendered at a real
+  // desktop width (1440px) and scaled down — otherwise the panel's actual width triggers
+  // the page's own mobile/tablet CSS breakpoints even in "Desktop" mode.
+  useEffect(() => {
+    const el = previewWrapRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(entries => {
+      const { width, height } = entries[0].contentRect;
+      setPreviewSize({ width, height });
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const DESKTOP_PREVIEW_WIDTH = 1440;
+  const desktopScale = previewSize.width > 0 ? Math.min(1, previewSize.width / DESKTOP_PREVIEW_WIDTH) : 1;
 
   const [pageId, setPageId] = useState<string | null>(null);
   const [slug, setSlug] = useState<string | null>(null);
@@ -1263,21 +1282,40 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
         </div>
 
         {/* Preview content */}
-        <div className={cn('flex items-start justify-center overflow-auto p-5', 'flex-1')}>
+        <div ref={previewWrapRef} className={cn('flex items-start justify-center overflow-auto p-5', 'flex-1')}>
           {showPreview && iframeSrc ? (
             <div className={cn(
               'relative bg-white rounded-xl overflow-hidden shadow-xl ring-1 ring-black/5 dark:ring-white/5 transition-all duration-300 h-full',
               viewMode === 'mobile' ? 'w-[390px]' : 'w-full'
             )}>
-              <iframe
-                ref={iframeRef}
-                src={iframeSrc}
-                className="w-full h-full border-0 transition-opacity duration-500"
-                style={{ opacity: iframeLoaded ? 1 : 0 }}
-                title="Page preview"
-                sandbox="allow-scripts allow-same-origin allow-forms"
-                onLoad={() => setIframeLoaded(true)}
-              />
+              {viewMode === 'desktop' && desktopScale < 1 ? (
+                <iframe
+                  ref={iframeRef}
+                  src={iframeSrc}
+                  className="transition-opacity duration-500"
+                  style={{
+                    width: `${DESKTOP_PREVIEW_WIDTH}px`,
+                    height: `${previewSize.height / desktopScale}px`,
+                    transform: `scale(${desktopScale})`,
+                    transformOrigin: 'top left',
+                    border: 0,
+                    opacity: iframeLoaded ? 1 : 0,
+                  }}
+                  title="Page preview"
+                  sandbox="allow-scripts allow-same-origin allow-forms"
+                  onLoad={() => setIframeLoaded(true)}
+                />
+              ) : (
+                <iframe
+                  ref={iframeRef}
+                  src={iframeSrc}
+                  className="w-full h-full border-0 transition-opacity duration-500"
+                  style={{ opacity: iframeLoaded ? 1 : 0 }}
+                  title="Page preview"
+                  sandbox="allow-scripts allow-same-origin allow-forms"
+                  onLoad={() => setIframeLoaded(true)}
+                />
+              )}
               {!iframeLoaded && (
                 <div className="absolute inset-0 bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
                   <Loader2 size={20} className="animate-spin text-slate-400" />

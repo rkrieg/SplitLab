@@ -3,12 +3,14 @@
 import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import {
-  ChevronLeft, Plus, Trash2, Check, Loader2, Sparkles,
+  ChevronLeft, ChevronDown, Plus, Trash2, Check, Loader2, Sparkles,
   ExternalLink, AlertTriangle, MousePointer2, X, Image as ImageIcon, Type,
+  Monitor, Smartphone,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { cn } from '@/lib/utils';
 import { useSidebarCollapsed } from '@/lib/use-sidebar-collapsed';
+import Modal from '@/components/ui/Modal';
 import type { UTMRule, FieldMapping } from './page';
 
 export type StoredFieldSelectors = Record<string, { selector: string; type: 'text' | 'image'; label: string }>;
@@ -37,6 +39,9 @@ interface Props {
 }
 
 const UTM_PARAMS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'];
+
+// Toggle to bring back the AI headline-suggestion button (currently hidden per product request)
+const AI_SUGGEST_ENABLED = false;
 
 // Default fields for AI pages — pre-seeded with data-field selectors
 const AI_DEFAULT_FIELDS: Field[] = [
@@ -244,13 +249,52 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
   const [saving, setSaving] = useState(false);
   const [savingSelectors, setSavingSelectors] = useState(false);
   const [utmSimulator, setUtmSimulator] = useState('default');
+  const [viewMode, setViewMode] = useState<'desktop' | 'mobile'>('desktop');
+  const previewWrapRef = useRef<HTMLDivElement>(null);
+  const [previewSize, setPreviewSize] = useState({ width: 0, height: 0 });
+
+  // Measure the available preview area so the desktop iframe can be rendered at a real
+  // desktop width (1440px) and scaled down — otherwise the panel's actual width triggers
+  // the page's own mobile/tablet CSS breakpoints even in "Desktop" mode.
+  useEffect(() => {
+    const el = previewWrapRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(entries => {
+      const { width, height } = entries[0].contentRect;
+      setPreviewSize({ width, height });
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const DESKTOP_PREVIEW_WIDTH = 1440;
+  const desktopScale = previewSize.width > 0 ? Math.min(1, previewSize.width / DESKTOP_PREVIEW_WIDTH) : 1;
   const [suggestLoading, setSuggestLoading] = useState<number | null>(null);
   const [suggestPopover, setSuggestPopover] = useState<{ idx: number; suggestions: string[] } | null>(null);
+  const [deletingRuleIdx, setDeletingRuleIdx] = useState<number | null>(null);
+  const [mapSectionOpen, setMapSectionOpen] = useState(false);
+  const [rulesSectionOpen, setRulesSectionOpen] = useState(false);
+  const [ruleModalIdx, setRuleModalIdx] = useState<number | null>(null);
+  const [openRuleIdxs, setOpenRuleIdxs] = useState<Set<number>>(new Set());
+
+  function toggleRuleOpen(idx: number) {
+    setOpenRuleIdxs(prev => {
+      const next = new Set(prev);
+      if (next.has(idx)) next.delete(idx); else next.add(idx);
+      return next;
+    });
+  }
 
   const [rules, setRules] = useState<UTMRule[]>(() => {
     if (initialRules.length > 0) return initialRules;
     return [{ match_param: 'utm_source', match_value: '', is_fallback: true, priority: 99, overrides_json: {} }];
   });
+
+  // Kept in sync so the message-listener effect (empty deps) never closes over stale state
+  const fieldsRef = useRef(fields);
+  useEffect(() => { fieldsRef.current = fields; }, [fields]);
+  const rulesRef = useRef(rules);
+  useEffect(() => { rulesRef.current = rules; }, [rules]);
 
   const previewSrc = utmSimulator !== 'default'
     ? (page.slug
@@ -330,18 +374,23 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
         setPendingLabel('');
         setTimeout(() => pendingLabelRef.current?.focus(), 50);
       } else {
-        setFields(prev => prev.map(f =>
+        const nextFields = fieldsRef.current.map(f =>
           f.key === field
             ? { ...f, selector, type: elementType, _indexPath: indexPath, _generatedId: generatedId }
             : f
-        ));
+        );
+        const nextRules = elementType === 'text' && preview
+          ? rulesRef.current.map(r =>
+              r.is_fallback ? { ...r, overrides_json: { ...r.overrides_json, [field]: preview } } : r
+            )
+          : rulesRef.current;
+
+        setFields(nextFields);
         setFieldPreviews(prev => ({ ...prev, [field]: preview }));
-        if (elementType === 'text' && preview) {
-          setRules(prev => prev.map(r =>
-            r.is_fallback ? { ...r, overrides_json: { ...r.overrides_json, [field]: preview } } : r
-          ));
-        }
+        setRules(nextRules);
         setActivePickKey(null);
+
+        saveSelectors(nextFields, nextRules);
       }
     }
     window.addEventListener('message', handleMessage);
@@ -349,7 +398,7 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
   }, []);
 
   // ── Field management ──
-  function confirmPendingField() {
+  async function confirmPendingField() {
     const label = pendingLabel.trim();
     if (!label || !pendingPick) return;
     let key = labelToKey(label);
@@ -357,41 +406,58 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
     let uniqueKey = key;
     let i = 2;
     while (existing.includes(uniqueKey)) uniqueKey = `${key}_${i++}`;
-    setFields(prev => [...prev, {
+
+    const newField: Field = {
       key: uniqueKey,
       label,
       selector: pendingPick.selector,
       type: pendingPick.type,
       _indexPath: pendingPick.indexPath,
       _generatedId: pendingPick.generatedId,
-    }]);
-    setFieldPreviews(prev => ({ ...prev, [uniqueKey]: pendingPick.preview }));
+    };
+    const nextFields = [...fields, newField];
+
+    let nextRules = rules;
     if (pendingPick.type === 'text' && pendingPick.preview) {
-      setRules(prev => prev.map(r =>
+      nextRules = rules.map(r =>
         r.is_fallback ? { ...r, overrides_json: { ...r.overrides_json, [uniqueKey]: pendingPick.preview } } : r
-      ));
+      );
     }
+
+    setFields(nextFields);
+    setFieldPreviews(prev => ({ ...prev, [uniqueKey]: pendingPick.preview }));
+    setRules(nextRules);
+
+    await saveSelectors(nextFields, nextRules);
+
     setPendingPick(null);
     setPendingLabel('');
   }
 
   function removeField(key: string) {
-    setFields(prev => prev.filter(f => f.key !== key));
-    setFieldPreviews(prev => { const n = { ...prev }; delete n[key]; return n; });
-    if (activePickKey === key) setActivePickKey(null);
-    setRules(prev => prev.map(r => {
+    const nextFields = fields.filter(f => f.key !== key);
+    const nextRules = rules.map(r => {
       const o = { ...r.overrides_json };
       delete o[key];
       return { ...r, overrides_json: o };
-    }));
+    });
+
+    setFields(nextFields);
+    setFieldPreviews(prev => { const n = { ...prev }; delete n[key]; return n; });
+    if (activePickKey === key) setActivePickKey(null);
+    setRules(nextRules);
+
+    saveSelectors(nextFields, nextRules);
   }
 
-  async function saveSelectors() {
+  async function saveSelectors(overrideFields?: Field[], overrideRules?: UTMRule[]) {
+    const fieldsToSave = overrideFields ?? fields;
+    const rulesToSave = overrideRules ?? rules;
     setSavingSelectors(true);
     try {
       // For HTML pages: first inject IDs into stored html_content for any newly picked fields
       if (isHtmlPage) {
-        const fieldsToInject = fields.filter(f => f._indexPath && f._generatedId);
+        const fieldsToInject = fieldsToSave.filter(f => f._indexPath && f._generatedId);
         if (fieldsToInject.length > 0) {
           const res = await fetch(`/api/pages/${page.id}/inject-field-id`, {
             method: 'POST',
@@ -414,7 +480,7 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
 
       // Save field selectors to field_selectors_json
       const payload: StoredFieldSelectors = {};
-      for (const f of fields) {
+      for (const f of fieldsToSave) {
         if (f.selector) payload[f.key] = { selector: f.selector, type: f.type, label: f.label };
       }
       const res = await fetch(`/api/pages/${page.id}/field-selectors`, {
@@ -425,12 +491,12 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
       if (!res.ok) throw new Error((await res.json()).error);
 
       // Also persist rules so the auto-detected fallback text survives refresh
-      const validNonFallback = nonFallbackRules.filter(r => r.match_value?.trim());
-      const rulesToSave = [...validNonFallback, ...(fallbackRule ? [fallbackRule] : [])];
+      const nonFallback = rulesToSave.filter(r => !r.is_fallback && r.match_value?.trim());
+      const fallback = rulesToSave.find(r => r.is_fallback);
       await fetch(`/api/pages/${page.id}/personalization-rules`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rules: rulesToSave }),
+        body: JSON.stringify({ rules: [...nonFallback, ...(fallback ? [fallback] : [])] }),
       });
 
       toast.success('Element mappings saved.');
@@ -444,16 +510,35 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
   // ── Rules ──
   function addRule() {
     if (rules.filter(r => !r.is_fallback).length >= 20) return;
+    const newIdx = rules.filter(r => !r.is_fallback).length;
     setRules(prev => {
       const nonFallback = prev.filter(r => !r.is_fallback);
       const fallback = prev.find(r => r.is_fallback);
       const newRule: UTMRule = { match_param: 'utm_source', match_value: '', is_fallback: false, priority: nonFallback.length, overrides_json: {} };
       return fallback ? [...nonFallback, newRule, fallback] : [...nonFallback, newRule];
     });
+    setRuleModalIdx(newIdx);
   }
 
+  // Local-only removal — used to discard an unsaved draft rule (never persisted, nothing to sync)
   function removeRule(idx: number) {
     setRules(prev => prev.filter((_, i) => i !== idx));
+    if (ruleModalIdx === idx) setRuleModalIdx(null);
+  }
+
+  // Trash-icon action on an existing rule card — removes it and immediately persists the deletion
+  async function deleteRule(idx: number) {
+    const nextRules = rules.filter((_, i) => i !== idx);
+    setDeletingRuleIdx(idx);
+    const ok = await saveRules(nextRules);
+    if (ok) setRules(nextRules);
+    setDeletingRuleIdx(null);
+  }
+
+  // Cancel/close (anything other than clicking Save inside the modal) always discards the draft rule
+  function closeRuleModal() {
+    if (ruleModalIdx === null) return;
+    removeRule(ruleModalIdx);
   }
 
   function updateRule(idx: number, patch: Partial<UTMRule>) {
@@ -464,13 +549,14 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
     setRules(prev => prev.map((r, i) => i !== idx ? r : { ...r, overrides_json: { ...r.overrides_json, [fieldKey]: value } }));
   }
 
-  async function saveRules() {
-    for (let i = 0; i < rules.length; i++) {
-      const r = rules[i];
+  async function saveRules(overrideRules?: UTMRule[]): Promise<boolean> {
+    const rulesToSave = overrideRules ?? rules;
+    for (let i = 0; i < rulesToSave.length; i++) {
+      const r = rulesToSave[i];
       if (r.is_fallback) continue;
       if (!r.match_value?.trim()) {
         toast.error(`Rule ${i + 1}: fill in the UTM value (e.g. "google", "facebook") in the "When utm_source =" field.`, { duration: 5000 });
-        return;
+        return false;
       }
     }
     setSaving(true);
@@ -478,12 +564,14 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
       const res = await fetch(`/api/pages/${page.id}/personalization-rules`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rules }),
+        body: JSON.stringify({ rules: rulesToSave }),
       });
       if (!res.ok) throw new Error((await res.json()).error);
       toast.success('UTM rules saved.');
+      return true;
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to save rules.');
+      return false;
     } finally {
       setSaving(false);
     }
@@ -545,7 +633,8 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
                     : 'border-slate-200 dark:border-slate-700'
                 )}
               />
-              {f.type === 'text' && (
+              {/* AI-suggest — hidden for now */}
+              {AI_SUGGEST_ENABLED && f.type === 'text' && (
                 <button
                   onClick={() => suggestHeadlines(ruleIdx)}
                   disabled={suggestLoading === ruleIdx}
@@ -555,7 +644,7 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
                   {suggestLoading === ruleIdx ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
                 </button>
               )}
-              {suggestPopover?.idx === ruleIdx && f.type === 'text' && (
+              {AI_SUGGEST_ENABLED && suggestPopover?.idx === ruleIdx && f.type === 'text' && (
                 <div className="absolute left-0 top-full mt-1 z-50 w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl overflow-hidden">
                   <div className="flex items-center justify-between px-3 py-2 border-b border-slate-100 dark:border-slate-700">
                     <span className="text-xs text-slate-400 font-medium">AI suggestions</span>
@@ -609,24 +698,54 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
 
           {/* ── Map Elements ── */}
           <section>
-            <div className="flex items-center justify-between mb-1">
-              <div>
-                <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">Map Elements</h3>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  {isHtmlPage ? 'Click any element in the preview to map it.' : 'Click any element in the preview to map it.'}
-                </p>
+            <button
+              type="button"
+              onClick={() => setMapSectionOpen(o => !o)}
+              className="w-full flex items-center justify-between mb-1 group"
+            >
+              <div className="flex items-start gap-2 text-left">
+                <span className="flex-shrink-0 w-5 h-5 mt-0.5 rounded-full bg-indigo-600 text-white text-[11px] font-semibold flex items-center justify-center">1</span>
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100 flex items-center gap-1.5">
+                    Map Elements
+                    {fields.length > 0 && (
+                      <span className="text-[10px] font-medium text-slate-400 bg-slate-100 dark:bg-slate-800 rounded-full px-1.5 py-0.5">
+                        {fields.filter(f => f.selector).length}/{fields.length} mapped
+                      </span>
+                    )}
+                    {savingSelectors && (
+                      <span className="flex items-center gap-1 text-[10px] font-medium text-slate-400">
+                        <Loader2 size={10} className="animate-spin" /> Saving…
+                      </span>
+                    )}
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Pick the elements on the page you want to personalize.
+                  </p>
+                </div>
               </div>
-              <button
-                onClick={saveSelectors}
-                disabled={savingSelectors}
-                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600 disabled:opacity-40 text-white font-medium transition-colors"
-              >
-                {savingSelectors ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />}
-                Save
-              </button>
-            </div>
+              <ChevronDown size={16} className={cn('flex-shrink-0 text-slate-400 group-hover:text-slate-600 dark:group-hover:text-slate-300 transition-transform', mapSectionOpen ? '' : '-rotate-90')} />
+            </button>
 
+            {mapSectionOpen && (
+            <>
             <div className="space-y-2 mt-3">
+              {/* Pick Element button — primary action, shown first */}
+              {!pendingPick && (
+                <button
+                  onClick={() => { setGlobalPickMode(m => !m); setActivePickKey(null); }}
+                  className={cn(
+                    'w-full flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-semibold shadow-sm transition-colors',
+                    globalPickMode
+                      ? 'bg-indigo-700 text-white ring-2 ring-indigo-400 animate-pulse'
+                      : 'bg-indigo-600 hover:bg-indigo-500 text-white'
+                  )}
+                >
+                  <MousePointer2 size={14} />
+                  {globalPickMode ? 'Click any element on the page…' : 'Pick Element from Page'}
+                </button>
+              )}
+
               {fields.map(f => {
                 const isDefault = page.isAiPage && AI_DEFAULT_KEYS.has(f.key);
                 return (
@@ -697,7 +816,12 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
                       placeholder="e.g. Nav CTA, Badge Text, Hero Title"
                       className="flex-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 dark:text-slate-200 placeholder-slate-400 focus:outline-none focus:border-indigo-400"
                     />
-                    <button onClick={confirmPendingField} disabled={!pendingLabel.trim()} className="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 text-white disabled:opacity-40 font-medium flex-shrink-0">
+                    <button
+                      onClick={confirmPendingField}
+                      disabled={!pendingLabel.trim() || savingSelectors}
+                      className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-indigo-600 text-white disabled:opacity-40 font-medium flex-shrink-0"
+                    >
+                      {savingSelectors ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />}
                       Save
                     </button>
                     <button onClick={() => { setPendingPick(null); setPendingLabel(''); }} className="text-slate-400 hover:text-slate-600 flex-shrink-0">
@@ -705,22 +829,6 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
                     </button>
                   </div>
                 </div>
-              )}
-
-              {/* Pick Element button */}
-              {!pendingPick && (
-                <button
-                  onClick={() => { setGlobalPickMode(m => !m); setActivePickKey(null); }}
-                  className={cn(
-                    'w-full flex items-center justify-center gap-1.5 py-2.5 rounded-xl border text-xs font-medium transition-colors',
-                    globalPickMode
-                      ? 'border-indigo-500 bg-indigo-600 text-white animate-pulse'
-                      : 'border-dashed border-slate-300 dark:border-slate-700 text-slate-400 hover:text-indigo-500 hover:border-indigo-400'
-                  )}
-                >
-                  <MousePointer2 size={12} />
-                  {globalPickMode ? 'Click any element on the page…' : 'Pick Element from Page'}
-                </button>
               )}
             </div>
 
@@ -734,36 +842,51 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
                 <button onClick={() => { setActivePickKey(null); setGlobalPickMode(false); }} className="ml-auto text-slate-400 hover:text-slate-600"><X size={12} /></button>
               </div>
             )}
+            </>
+            )}
           </section>
 
           {/* ── UTM Rules ── */}
           <section>
-            <div className="flex items-center justify-between mb-3">
-              <div>
-                <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">UTM Rules</h3>
-                <p className="text-xs text-slate-400 mt-0.5">Swap content based on UTM params in the visitor URL.</p>
+            <button
+              type="button"
+              onClick={() => setRulesSectionOpen(o => !o)}
+              className="w-full flex items-center justify-between mb-3 group"
+            >
+              <div className="flex items-start gap-2 text-left">
+                <span className="flex-shrink-0 w-5 h-5 mt-0.5 rounded-full bg-indigo-600 text-white text-[11px] font-semibold flex items-center justify-center">2</span>
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100 flex items-center gap-1.5">
+                    UTM Rules
+                    {nonFallbackRules.length > 0 && (
+                      <span className="text-[10px] font-medium text-slate-400 bg-slate-100 dark:bg-slate-800 rounded-full px-1.5 py-0.5">
+                        {nonFallbackRules.length}
+                      </span>
+                    )}
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-0.5">Swap content based on UTM params in the visitor URL.</p>
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={addRule}
-                  disabled={nonFallbackRules.length >= 20}
-                  className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white font-medium transition-colors"
-                >
-                  <Plus size={12} /> Add Rule
-                </button>
-                <button
-                  onClick={saveRules}
-                  disabled={saving}
-                  className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600 disabled:opacity-40 text-white font-medium transition-colors"
-                >
-                  {saving ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />}
-                  Save
-                </button>
-              </div>
+              <ChevronDown size={16} className={cn('flex-shrink-0 text-slate-400 group-hover:text-slate-600 dark:group-hover:text-slate-300 transition-transform', rulesSectionOpen ? '' : '-rotate-90')} />
+            </button>
+
+            {rulesSectionOpen && (
+            <>
+            <div className="flex items-center justify-end gap-2 mb-3 flex-wrap">
+              <button
+                onClick={addRule}
+                disabled={nonFallbackRules.length >= 20}
+                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white font-medium transition-colors whitespace-nowrap flex-shrink-0"
+              >
+                <Plus size={12} /> Add Rule
+              </button>
             </div>
 
             <div className="space-y-3">
-              {rules.map((rule, idx) => rule.is_fallback ? null : (
+              {rules.map((rule, idx) => {
+                if (rule.is_fallback || idx === ruleModalIdx) return null;
+                const isOpen = openRuleIdxs.has(idx);
+                return (
                 <div key={idx} className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-visible">
                   <div className="px-4 pt-2.5 pb-2 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 rounded-t-xl space-y-1.5">
                     <div className="flex items-center gap-1.5">
@@ -797,14 +920,38 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
                           <ExternalLink size={13} />
                         </a>
                       )}
-                      <button onClick={() => removeRule(idx)} className="p-1 text-red-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors">
-                        <Trash2 size={13} />
+                      <button
+                        onClick={() => deleteRule(idx)}
+                        disabled={deletingRuleIdx === idx}
+                        className="p-1 text-red-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors disabled:opacity-60"
+                      >
+                        {deletingRuleIdx === idx
+                          ? <Loader2 size={13} className="animate-spin text-amber-500" />
+                          : <Trash2 size={13} />}
+                      </button>
+                      <button onClick={() => toggleRuleOpen(idx)} className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 rounded transition-colors" title={isOpen ? 'Collapse' : 'Expand'}>
+                        <ChevronDown size={14} className={cn('transition-transform', isOpen ? '' : '-rotate-90')} />
                       </button>
                     </div>
                   </div>
-                  {renderRuleFields(idx)}
+                  {isOpen && (
+                    <>
+                      {renderRuleFields(idx)}
+                      <div className="flex justify-end px-4 pb-3 -mt-1">
+                        <button
+                          onClick={() => saveRules()}
+                          disabled={saving}
+                          className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600 disabled:opacity-40 text-white font-medium transition-colors"
+                        >
+                          {saving ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />}
+                          Save
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </div>
-              ))}
+                );
+              })}
 
               {/* Default (fallback) card */}
               {fallbackRule && (
@@ -846,6 +993,8 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
                 </div>
               )}
             </div>
+            </>
+            )}
           </section>
         </div>
       </div>
@@ -871,6 +1020,25 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
               <AlertTriangle size={11} /> Previewing UTM variant
             </span>
           )}
+
+          {/* View mode toggle */}
+          <div className="flex items-center gap-0.5 bg-slate-100 dark:bg-slate-800 rounded-lg p-1 border border-slate-200 dark:border-slate-700">
+            <button
+              onClick={() => setViewMode('desktop')}
+              title="Web version"
+              className={cn('p-1.5 rounded-md transition-colors', viewMode === 'desktop' ? 'bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200 shadow-sm' : 'text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300')}
+            >
+              <Monitor size={14} />
+            </button>
+            <button
+              onClick={() => setViewMode('mobile')}
+              title="Mobile version"
+              className={cn('p-1.5 rounded-md transition-colors', viewMode === 'mobile' ? 'bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200 shadow-sm' : 'text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300')}
+            >
+              <Smartphone size={14} />
+            </button>
+          </div>
+
           {(activePickKey || globalPickMode) && !pendingPick && (
             <span className="ml-auto text-xs text-indigo-600 dark:text-indigo-400 flex items-center gap-1 animate-pulse">
               <MousePointer2 size={12} />
@@ -882,18 +1050,41 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
           )}
         </div>
 
-        <div className="flex-1 overflow-hidden bg-slate-100 dark:bg-slate-950 flex items-start justify-center p-5">
-          <div className="relative w-full h-full bg-white rounded-xl overflow-hidden shadow-xl ring-1 ring-black/5 dark:ring-white/5">
-            <iframe
-              key={previewSrc}
-              ref={iframeRef}
-              src={previewSrc}
-              className="w-full h-full border-0"
-              style={{ opacity: iframeLoaded ? 1 : 0, cursor: (activePickKey || globalPickMode) ? 'crosshair' : 'default' }}
-              title="Page preview"
-              sandbox="allow-scripts allow-same-origin allow-forms"
-              onLoad={() => setIframeLoaded(true)}
-            />
+        <div ref={previewWrapRef} className="flex-1 overflow-auto bg-slate-100 dark:bg-slate-950 flex items-start justify-center p-5">
+          <div className={cn(
+            'relative h-full bg-white rounded-xl overflow-hidden shadow-xl ring-1 ring-black/5 dark:ring-white/5 transition-all duration-300',
+            viewMode === 'mobile' ? 'w-[390px]' : 'w-full'
+          )}>
+            {viewMode === 'desktop' && desktopScale < 1 ? (
+              <iframe
+                key={previewSrc}
+                ref={iframeRef}
+                src={previewSrc}
+                style={{
+                  width: `${DESKTOP_PREVIEW_WIDTH}px`,
+                  height: `${previewSize.height / desktopScale}px`,
+                  transform: `scale(${desktopScale})`,
+                  transformOrigin: 'top left',
+                  border: 0,
+                  opacity: iframeLoaded ? 1 : 0,
+                  cursor: (activePickKey || globalPickMode) ? 'crosshair' : 'default',
+                }}
+                title="Page preview"
+                sandbox="allow-scripts allow-same-origin allow-forms"
+                onLoad={() => setIframeLoaded(true)}
+              />
+            ) : (
+              <iframe
+                key={previewSrc}
+                ref={iframeRef}
+                src={previewSrc}
+                className="w-full h-full border-0"
+                style={{ opacity: iframeLoaded ? 1 : 0, cursor: (activePickKey || globalPickMode) ? 'crosshair' : 'default' }}
+                title="Page preview"
+                sandbox="allow-scripts allow-same-origin allow-forms"
+                onLoad={() => setIframeLoaded(true)}
+              />
+            )}
             {!iframeLoaded && (
               <div className="absolute inset-0 bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
                 <Loader2 size={20} className="animate-spin text-slate-400" />
@@ -902,6 +1093,72 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
           </div>
         </div>
       </div>
+
+      {/* ── New rule modal ── */}
+      <Modal
+        open={ruleModalIdx !== null}
+        onClose={closeRuleModal}
+        title="New UTM Rule"
+        description="Show different content to visitors who arrive with a specific UTM parameter."
+        size="md"
+      >
+        {ruleModalIdx !== null && rules[ruleModalIdx] && (
+          <div className="space-y-4">
+            <div>
+              <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1.5">When the visitor's URL has</label>
+              <div className="flex items-center gap-1.5">
+                <select
+                  value={rules[ruleModalIdx].match_param}
+                  onChange={e => updateRule(ruleModalIdx, { match_param: e.target.value })}
+                  className="flex-shrink-0 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-2 text-sm text-slate-700 dark:text-slate-200 focus:outline-none focus:border-indigo-400"
+                >
+                  {UTM_PARAMS.map(p => <option key={p} value={p}>{p}</option>)}
+                </select>
+                <span className="text-sm text-slate-400 flex-shrink-0">=</span>
+                <input
+                  type="text"
+                  autoFocus
+                  value={rules[ruleModalIdx].match_value ?? ''}
+                  onChange={e => updateRule(ruleModalIdx, { match_value: e.target.value })}
+                  placeholder="e.g. facebook"
+                  className="min-w-0 flex-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-2 text-sm text-slate-700 dark:text-slate-200 placeholder-slate-400 focus:outline-none focus:border-indigo-400"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1.5">Show this content instead</label>
+              <div className="rounded-xl border border-slate-200 dark:border-slate-800 max-h-[45vh] overflow-y-auto">
+                {renderRuleFields(ruleModalIdx)}
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                onClick={closeRuleModal}
+                className="text-sm px-3 py-1.5 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 font-medium transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  if (!rules[ruleModalIdx]?.match_value?.trim()) {
+                    toast.error('Fill in the UTM value (e.g. "facebook") first.');
+                    return;
+                  }
+                  const ok = await saveRules();
+                  if (ok) setRuleModalIdx(null);
+                }}
+                disabled={saving}
+                className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white font-medium transition-colors"
+              >
+                {saving ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+                Save
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }
