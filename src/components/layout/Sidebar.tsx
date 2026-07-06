@@ -22,6 +22,7 @@ import {
   CreditCard,
   Sparkles,
   Trash2,
+  Gift,
 } from 'lucide-react';
 import { cn, slugify } from '@/lib/utils';
 import { PLAN_LIMITS } from '@/lib/plans';
@@ -49,6 +50,7 @@ const globalNavItems = [
   { href: '/domains',   label: 'Domains',   icon: Globe },
   { href: '/team',      label: 'Team',      icon: Users },
   { href: '/billing',   label: 'Billing',   icon: CreditCard },
+  { href: '/affiliates',label: 'Affiliates',icon: Gift },
   { href: '/settings',  label: 'Settings',  icon: Settings },
 ];
 
@@ -165,8 +167,9 @@ export default function Sidebar() {
   const navItems = effectiveClient
     ? getClientNavItems(effectiveClient.id, isViewer)
     : globalNavItems.filter(item => {
-        if (item.href === '/team'    && isViewer)  return false; // not for viewers
-        if (item.href === '/billing' && isViewer)  return false; // not for viewers
+        if (item.href === '/team'       && isViewer) return false; // not for viewers
+        if (item.href === '/billing'    && isViewer) return false; // not for viewers
+        if (item.href === '/affiliates' && !isAdmin) return false; // admin-only
         return true;
       });
 

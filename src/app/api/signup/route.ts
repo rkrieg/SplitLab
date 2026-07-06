@@ -3,6 +3,7 @@ import { db } from '@/lib/supabase-server';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { slugify } from '@/lib/utils';
+import { attributeReferral, REF_COOKIE } from '@/lib/affiliate';
 
 export const dynamic = 'force-dynamic';
 
@@ -48,6 +49,9 @@ export async function POST(request: NextRequest) {
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
+
+    // Attribute to a referring affiliate if the visitor arrived via ?ref=CODE
+    await attributeReferral(user!.id, request.cookies.get(REF_COOKIE)?.value);
 
     // Auto-create default client for new user ("[FirstName]'s Account")
     const firstName = data.name.trim().split(' ')[0];

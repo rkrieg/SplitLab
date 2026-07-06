@@ -25,6 +25,10 @@ export async function POST(request: NextRequest) {
     const stripe = getStripeClient();
     const appUrl = process.env.NEXTAUTH_URL ?? `${request.nextUrl.protocol}//${request.nextUrl.host}`;
 
+    // Carry any affiliate referral code through checkout so complete-signup can
+    // attribute the new paid user even after the Stripe redirect round-trip.
+    const ref = request.cookies.get('sl_ref')?.value ?? '';
+
     // Is the user already logged in? (upgrading an existing account)
     const session = await getServerSession(authOptions);
     const isLoggedIn = !!session?.user?.id;
@@ -36,10 +40,10 @@ export async function POST(request: NextRequest) {
       allow_promotion_codes: true,
       // plan is stored on the subscription itself so webhooks can read it
       subscription_data: {
-        metadata: { plan },
+        metadata: { plan, ...(ref ? { ref } : {}) },
       },
       // also on the checkout session for complete-signup to read
-      metadata: { plan },
+      metadata: { plan, ...(ref ? { ref } : {}) },
     };
 
     if (isLoggedIn) {

@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { askAI, isRateLimited } from '@/lib/ai-client';
+import { jsonrepair } from 'jsonrepair';
+import { askAI, isRateLimited, AIResponseTruncatedError } from '@/lib/ai-client';
 import { VERTICAL_VALUES } from '@/lib/ai-page-verticals';
 import { SECTION_VOCABULARY, VERTICAL_PRIORITY_HINTS } from '@/lib/ai-page-vocabulary';
 import { resolveWorkspaceRole, resolveOwnerPlan } from '@/lib/workspace-auth';
@@ -52,6 +53,7 @@ ${SECTION_TYPES_BLOCK}
 - Write real, compelling copy based on the business. No placeholders, no lorem ipsum.
 - The user has pre-selected a vertical — treat it as a bias toward certain section types (see the per-vertical hint appended below), not a fixed template. Refine based on the specific prompt.
 - Pick 4-7 sections beyond hero/footer. More variety across pages is better than defaulting to the same shape every time.
+- JSON validity is non-negotiable. If any copy you write — including phrases quoted or reused from the user's prompt — contains a double-quote character, you MUST escape it as \" inside the JSON string. Never emit a literal unescaped " inside a string value.
 
 ## Image prompts — add image_prompt + image_placement to sections that need real photos
 
@@ -169,13 +171,43 @@ export async function POST(request: NextRequest) {
 
     // Screenshot is NOT passed here — schema generation doesn't need vision. It is returned
     // to the client and forwarded to /build where Claude uses it as a visual reference.
-    const text = await askAI({ system: systemPrompt, messages, maxTokens: 8192 });
+    let text: string;
+    try {
+      text = await askAI({ system: systemPrompt, messages, maxTokens: 16000 });
+    } catch (err) {
+      if (err instanceof AIResponseTruncatedError) {
+        console.error('[pages/generate] response truncated at maxTokens', {
+          outputTokens: err.outputTokens,
+          maxTokens: err.maxTokens,
+          promptLength: prompt.length,
+          vertical: selectedVertical,
+        });
+        return NextResponse.json(
+          { error: 'Your request asked for more content than we can generate in one pass. Try requesting fewer sections or a simpler layout.', truncated: true },
+          { status: 500 }
+        );
+      }
+      throw err;
+    }
 
     let parsed: { type: 'questions' | 'schema'; questions?: string[]; schema?: unknown };
     try {
       const raw = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
-      parsed = JSON.parse(raw);
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        // Most common real-world cause: the model echoed a quoted phrase from the
+        // user's prompt without escaping the inner quotes. jsonrepair fixes that
+        // and other minor near-JSON issues before we give up entirely.
+        parsed = JSON.parse(jsonrepair(raw));
+      }
     } catch {
+      console.error('[pages/generate] invalid JSON from AI', {
+        promptLength: prompt.length,
+        vertical: selectedVertical,
+        rawLength: text.length,
+        rawPreview: text.slice(0, 1500),
+      });
       return NextResponse.json({ error: 'AI provider returned invalid JSON', raw: text }, { status: 500 });
     }
 
