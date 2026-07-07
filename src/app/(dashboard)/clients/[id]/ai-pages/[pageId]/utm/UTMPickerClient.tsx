@@ -356,12 +356,17 @@ export default function UTMPickerClient({ clientId, page, initialRules }: Props)
     ? `/api/pages/${page.id}/preview?${utmSimulator}`
     : `/api/pages/${page.id}/preview`;
 
-  // Reset loaded state and force-show after 6s whenever the preview URL changes
+  // The preview bakes in the rules saved at load time, so bump this after every
+  // successful save to force a fresh iframe with the latest rules.
+  const [previewRefresh, setPreviewRefresh] = useState(0);
+  const previewKey = `${previewSrc}#${previewRefresh}`;
+
+  // Reset loaded state and force-show after 6s whenever the preview reloads
   useEffect(() => {
     setIframeLoaded(false);
     const t = setTimeout(() => setIframeLoaded(true), 6000);
     return () => clearTimeout(t);
-  }, [previewSrc]);
+  }, [previewKey]);
 
   // After iframe loads, read current page content for all mapped fields → populate Default card
   useEffect(() => {
@@ -765,6 +770,7 @@ export default function UTMPickerClient({ clientId, page, initialRules }: Props)
       });
       if (!res.ok) throw new Error((await res.json()).error);
       toast.success('UTM rules saved.');
+      setPreviewRefresh(v => v + 1);
       return true;
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to save rules.');
@@ -1313,7 +1319,7 @@ export default function UTMPickerClient({ clientId, page, initialRules }: Props)
           )}>
             {viewMode === 'desktop' && desktopScale < 1 ? (
               <iframe
-                key={previewSrc}
+                key={previewKey}
                 ref={iframeRef}
                 src={previewSrc}
                 style={{
@@ -1331,7 +1337,7 @@ export default function UTMPickerClient({ clientId, page, initialRules }: Props)
               />
             ) : (
               <iframe
-                key={previewSrc}
+                key={previewKey}
                 ref={iframeRef}
                 src={previewSrc}
                 className="w-full h-full border-0"
