@@ -261,6 +261,12 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
     // Both AI and HTML pages: start empty — user picks everything via dynamic mapping
     return [];
   });
+  // Field keys confirmed saved by the server — the "Mapped" badge reflects this,
+  // not just local picker state, so it can't claim success before the API confirms it.
+  const [savedFieldKeys, setSavedFieldKeys] = useState<Set<string>>(() => new Set(fields.map(f => f.key)));
+  // A newly-picked field that's mid-save — rendered as a loading row in place of
+  // the pending-name card, and only committed to `fields` once the API confirms it.
+  const [savingNewField, setSavingNewField] = useState<{ key: string; label: string; type: 'text' | 'image' } | null>(null);
 
   // Preview text shown next to each mapped field — seed from saved fallback rule on mount
   const [fieldPreviews, setFieldPreviews] = useState<Record<string, string>>(() => {
@@ -466,16 +472,24 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
       );
     }
 
-    setFields(nextFields);
-    setFieldPreviews(prev => ({ ...prev, [uniqueKey]: pendingPick.preview }));
-    setRules(nextRules);
+    const preview = pendingPick.preview;
 
     // Clear before the await so a stray/duplicate picker message arriving
     // mid-save can't repopulate a pending card for a field that's already committed.
+    // The field itself isn't added to `fields` yet — it only shows as a loading
+    // row until the API confirms the save.
     setPendingPick(null);
     setPendingLabel('');
+    setSavingNewField({ key: uniqueKey, label, type: newField.type });
 
-    await saveSelectors(nextFields, nextRules);
+    const ok = await saveSelectors(nextFields, nextRules);
+
+    setSavingNewField(null);
+    if (ok) {
+      setFields(nextFields);
+      setFieldPreviews(prev => ({ ...prev, [uniqueKey]: preview }));
+      setRules(nextRules);
+    }
   }
 
   function removeField(key: string) {
@@ -494,7 +508,7 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
     saveSelectors(nextFields, nextRules);
   }
 
-  async function saveSelectors(overrideFields?: Field[], overrideRules?: Rule[]) {
+  async function saveSelectors(overrideFields?: Field[], overrideRules?: Rule[]): Promise<boolean> {
     const fieldsToSave = overrideFields ?? fields;
     const rulesToSave = overrideRules ?? rules;
     setSavingSelectors(true);
@@ -543,9 +557,12 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
         body: JSON.stringify({ rules: [...nonFallback, ...(fallback ? [fallback] : [])] }),
       });
 
+      setSavedFieldKeys(new Set(fieldsToSave.filter(f => f.selector).map(f => f.key)));
       toast.success('Element mappings saved.');
+      return true;
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to save mappings.');
+      return false;
     } finally {
       setSavingSelectors(false);
     }
@@ -871,11 +888,11 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
                     Map Elements
                     {fields.length > 0 && (
                       <span className="text-[10px] font-medium text-slate-400 bg-slate-100 dark:bg-slate-800 rounded-full px-1.5 py-0.5">
-                        {fields.filter(f => f.selector).length}/{fields.length} mapped
+                        {fields.filter(f => f.selector && savedFieldKeys.has(f.key)).length}/{fields.length} mapped
                       </span>
                     )}
                     {savingSelectors && (
-                      <span className="flex items-center gap-1 text-[10px] font-medium text-slate-400">
+                      <span className="flex items-center gap-1 text-[10px] font-medium text-amber-500 dark:text-amber-400">
                         <Loader2 size={10} className="animate-spin" /> Saving…
                       </span>
                     )}
@@ -930,14 +947,14 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
                           'flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg font-medium transition-colors',
                           activePickKey === f.key
                             ? 'bg-indigo-600 text-white'
-                            : f.selector
+                            : f.selector && savedFieldKeys.has(f.key)
                               ? 'bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400 border border-green-200 dark:border-green-700/40'
                               : 'bg-slate-100 dark:bg-slate-800 text-slate-500 hover:bg-indigo-50 hover:text-indigo-500'
                         )}
                       >
                         {activePickKey === f.key ? (
                           <><MousePointer2 size={11} /> Picking…</>
-                        ) : f.selector ? (
+                        ) : f.selector && savedFieldKeys.has(f.key) ? (
                           <><Check size={11} /> Mapped</>
                         ) : (
                           <><MousePointer2 size={11} /> Pick</>
@@ -954,6 +971,21 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
                   </div>
                 );
               })}
+
+              {/* Field mid-save — shown in place of the mapped/pick row until the API confirms it */}
+              {savingNewField && (
+                <div className="flex items-center gap-2 p-3 rounded-xl border border-amber-200 dark:border-amber-700/40 bg-amber-50 dark:bg-amber-900/10">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      {savingNewField.type === 'image' ? <ImageIcon size={11} className="text-slate-400 flex-shrink-0" /> : <Type size={11} className="text-slate-400 flex-shrink-0" />}
+                      <p className="text-xs font-medium text-slate-700 dark:text-slate-300 truncate">{savingNewField.label}</p>
+                    </div>
+                  </div>
+                  <span className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg font-medium text-amber-600 dark:text-amber-400 flex-shrink-0">
+                    <Loader2 size={11} className="animate-spin" /> Saving…
+                  </span>
+                </div>
+              )}
 
               {/* Pending pick — name the element just clicked */}
               {pendingPick && (
