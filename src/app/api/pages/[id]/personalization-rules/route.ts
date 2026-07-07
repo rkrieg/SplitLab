@@ -93,6 +93,9 @@ export async function POST(
 
   // Validate each rule
   let fallbackCount = 0;
+  // Order-insensitive normalized condition signatures, to reject duplicate rules —
+  // two rules with identical conditions can never both fire at runtime.
+  const seenSignatures = new Map<string, number>();
   for (let i = 0; i < rules.length; i++) {
     const rule = rules[i] as Record<string, unknown>;
 
@@ -124,6 +127,19 @@ export async function POST(
       }
       seenParams.add(cond.match_param);
     }
+
+    const signature = conditions
+      .map(c => `${c.match_param}=${c.match_value.trim().toLowerCase()}`)
+      .sort()
+      .join('&');
+    const dupeOf = seenSignatures.get(signature);
+    if (dupeOf !== undefined) {
+      return NextResponse.json(
+        { error: `Rule ${i + 1} has the same conditions as Rule ${dupeOf + 1}. Change a value or delete one of them.` },
+        { status: 400 }
+      );
+    }
+    seenSignatures.set(signature, i);
 
     // XSS: any URL value must start with https://
     const overrides = rule.overrides_json as Record<string, string> | undefined;

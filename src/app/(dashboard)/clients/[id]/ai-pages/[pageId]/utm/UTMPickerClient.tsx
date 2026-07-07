@@ -705,6 +705,10 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
 
   async function saveRules(overrideRules?: Rule[]): Promise<boolean> {
     const rulesToSave = overrideRules ?? rules;
+    // Order-insensitive, normalized signature of a rule's conditions — matches how the
+    // swap script compares values (trim + lowercase), so two rules with the same
+    // signature can never both be useful at runtime.
+    const seenSignatures = new Map<string, number>();
     for (let i = 0; i < rulesToSave.length; i++) {
       const r = rulesToSave[i];
       if (r.is_fallback) continue;
@@ -725,6 +729,17 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
         }
         seenParams.add(cond.match_param);
       }
+
+      const signature = r.conditions
+        .map(c => `${c.match_param}=${c.match_value.trim().toLowerCase()}`)
+        .sort()
+        .join('&');
+      const dupeOf = seenSignatures.get(signature);
+      if (dupeOf !== undefined) {
+        toast.error(`Rule ${i + 1} has the same conditions as Rule ${dupeOf + 1} — change a value or delete one of them.`, { duration: 5000 });
+        return false;
+      }
+      seenSignatures.set(signature, i);
 
       for (const [fieldKey, val] of Object.entries(r.overrides_json ?? {})) {
         if (typeof val === 'string' && val.startsWith('http') && !val.startsWith('https://')) {
