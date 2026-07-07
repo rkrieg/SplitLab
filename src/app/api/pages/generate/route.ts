@@ -55,6 +55,9 @@ ${SECTION_TYPES_BLOCK}
 - Pick 4-7 sections beyond hero/footer. More variety across pages is better than defaulting to the same shape every time.
 - JSON validity is non-negotiable. If any copy you write — including phrases quoted or reused from the user's prompt — contains a double-quote character, you MUST escape it as \" inside the JSON string. Never emit a literal unescaped " inside a string value.
 
+## Visual-first bias — nobody reads landing pages, they skim
+Real users skim H1s, glance at images/icons, and scroll. A wall of paragraphs loses them. Do NOT default to text-only sections. When choosing sections beyond hero/footer, prefer types that pair copy with a real photo (image+text split, card grid with photos) or an icon over plain paragraph/list blocks — vary the mix, but visuals should dominate, not text.
+
 ## Image prompts — add image_prompt + image_placement to sections that need real photos
 
 For sections that benefit from real photography, add these two fields directly on the section object (or on each item in an array). The build step will generate real DALL-E 3 images from these prompts and inject them into the HTML.
@@ -69,9 +72,10 @@ For sections that benefit from real photography, add these two fields directly o
 | reviews_ratings reviews | One image_prompt per review object (headshot) |
 | product_showcase products | One image_prompt per product object (product photo) |
 | about / case_study | One image_prompt on the section if a real photo would help |
+| features / benefits / services / how_it_works | Add ONE image_prompt on the section (or on the lead item) unless the section is purely icon-driven — a supporting photo that illustrates the point beats an icon-only wall |
 | nav / stats / pricing / faq / footer / comparison / logo_wall / guarantee / urgency_banner | NEVER |
 
-Maximum 8 total image_prompts across the entire schema. Priority order: hero first, gallery items, team/testimonials, other sections.
+Default to using image_prompt on every eligible section rather than skipping it — treat "no image" as the exception, not the default. Maximum 10 total image_prompts across the entire schema. Priority order: hero first, gallery items, team/testimonials, features/benefits, other sections.
 
 ### image_placement values (use exactly one)
 - "background" — the image covers the full section as a CSS background

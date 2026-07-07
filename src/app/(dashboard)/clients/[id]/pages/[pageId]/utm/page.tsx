@@ -4,7 +4,7 @@ import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { resolveWorkspaceRole } from '@/lib/workspace-auth';
 import UTMPickerClient, { type StoredFieldSelectors } from '@/app/(dashboard)/clients/[id]/ai-pages/[pageId]/utm/UTMPickerClient';
-import type { UTMRule } from '@/app/(dashboard)/clients/[id]/ai-pages/[pageId]/utm/page';
+import type { UTMRule, UTMCondition } from '@/app/(dashboard)/clients/[id]/ai-pages/[pageId]/utm/page';
 
 interface PageProps {
   params: { id: string; pageId: string };
@@ -56,7 +56,10 @@ export default async function HtmlPageUTMPickerPage({ params }: PageProps) {
         isPublished: page.is_published,
         publishedUrl: page.published_url,
       }}
-      initialRules={(rules ?? []) as UTMRule[]}
+      initialRules={(rules ?? []).map(r => ({
+        ...r,
+        conditions: (r.conditions_json as UTMCondition[] | null) ?? undefined,
+      })) as UTMRule[]}
       appUrl={APP_URL}
     />
   );

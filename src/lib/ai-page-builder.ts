@@ -142,6 +142,13 @@ Pick the layout that best fits the business — vary it, don't always pick the s
 - NEVER: hardcode hex values outside :root
 - NEVER: use the same section layout pattern more than twice on a page
 
+## Text density — mandatory
+Real visitors skim landing pages, they don't read them: they scan H1s, glance at images/icons, and scroll. Text-heavy sections lose them.
+- Body paragraphs inside sections must be 1-2 sentences max. Never write 3+ sentence paragraphs.
+- Every features/benefits/services item must be paired with a real image (use its generated_image_url if present) or an icon — never a bare heading+paragraph with no visual anchor.
+- Prefer layouts that give visuals equal or greater weight than text: alternating image/text rows, bento grids with photo cards, icon-led numbered lists. Avoid stacking multiple plain 3-column text-only cards in a row.
+- If a section in the schema has no generated_image_url and isn't inherently list-like (FAQ, pricing, stats), lean on a strong icon + short label instead of a paragraph-heavy card.
+
 ## Section layout varieties — for every section in the schema, pick the variant that best fits the business
 Never default to the same layout for every section. Vary layouts across the page.
 

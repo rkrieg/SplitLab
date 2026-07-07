@@ -55,16 +55,27 @@ export default async function UTMPickerPage({ params }: PageProps) {
         isPublished: page.is_published,
         publishedUrl: page.published_url,
       }}
-      initialRules={(rules ?? []) as UTMRule[]}
+      initialRules={(rules ?? []).map(r => ({
+        ...r,
+        conditions: (r.conditions_json as UTMCondition[] | null) ?? undefined,
+      })) as UTMRule[]}
       appUrl={APP_URL}
     />
   );
 }
 
+export interface UTMCondition {
+  match_param: string;
+  match_value: string;
+}
+
 export interface UTMRule {
   id?: string;
+  // Legacy single-condition fields — kept for backward compatibility with rows saved
+  // before multi-condition support. New rules populate `conditions` instead.
   match_param: string;
   match_value: string | null;
+  conditions?: UTMCondition[];
   is_fallback: boolean;
   priority: number;
   overrides_json: Record<string, string>;

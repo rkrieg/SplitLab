@@ -231,6 +231,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
   const schemaRef = useRef<unknown>(null);
   const threadRef = useRef<HTMLDivElement>(null);
   const followUpRef = useRef<HTMLTextAreaElement>(null);
+  const FOLLOW_UP_MAX_HEIGHT = 240;
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
 
@@ -758,6 +759,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
     const attachedImages = chatImages;
     setFollowUpInput('');
     setChatImages([]);
+    if (followUpRef.current) followUpRef.current.style.height = 'auto';
     await sendFollowUp(instruction, attachedImages, pageId);
   }
 
@@ -1014,8 +1016,14 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
                 )}
                 <textarea
                   value={prompt}
-                  onChange={e => setPrompt(e.target.value)}
-                  className="w-full bg-transparent px-3.5 pt-3 pb-2 text-sm text-slate-700 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none resize-none"
+                  onChange={e => {
+                    setPrompt(e.target.value);
+                    const el = e.target;
+                    el.style.height = 'auto';
+                    el.style.height = `${Math.min(el.scrollHeight, FOLLOW_UP_MAX_HEIGHT)}px`;
+                  }}
+                  className="w-full bg-transparent px-3.5 pt-3 pb-2 text-sm text-slate-700 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none resize-none overflow-y-auto"
+                  style={{ maxHeight: FOLLOW_UP_MAX_HEIGHT }}
                   placeholder="Describe your landing page…"
                   rows={3}
                   required
@@ -1109,9 +1117,15 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
                 <textarea
                   ref={followUpRef}
                   value={followUpInput}
-                  onChange={e => setFollowUpInput(e.target.value)}
+                  onChange={e => {
+                    setFollowUpInput(e.target.value);
+                    const el = e.target;
+                    el.style.height = 'auto';
+                    el.style.height = `${Math.min(el.scrollHeight, FOLLOW_UP_MAX_HEIGHT)}px`;
+                  }}
                   disabled={isLoading}
-                  className="w-full bg-transparent px-3.5 pt-3 pb-2 text-sm text-slate-700 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none resize-none disabled:opacity-40"
+                  className="w-full bg-transparent px-3.5 pt-3 pb-2 text-sm text-slate-700 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none resize-none disabled:opacity-40 overflow-y-auto"
+                  style={{ maxHeight: FOLLOW_UP_MAX_HEIGHT }}
                   placeholder="Ask Splitlab…"
                   rows={2}
                   onKeyDown={e => {
