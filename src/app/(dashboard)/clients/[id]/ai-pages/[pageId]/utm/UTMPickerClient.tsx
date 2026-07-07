@@ -119,6 +119,7 @@ function buildAiPickerScript(activeField: string): string {
       field: activeField,
       selector: selector,
       preview: preview,
+      src: isImg ? (el.currentSrc || el.src || '') : '',
       elementType: isImg ? 'image' : 'text',
     }, '*');
   }
@@ -210,6 +211,7 @@ function buildHtmlPickerScript(activeField: string): string {
       indexPath: indexPath,
       generatedId: generatedId,
       preview: preview,
+      src: isImg ? (el.currentSrc || el.src || '') : '',
       elementType: isImg ? 'image' : 'text',
     }, '*');
   }
@@ -280,8 +282,12 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
     selector: string;
     type: 'text' | 'image';
     preview: string;
+    src?: string; // image elements only — the current src URL, used to seed the fallback rule
     indexPath?: string;
     generatedId?: string;
+    // Set when re-picking an already-mapped field — the name card is prefilled with
+    // its current label so the user can rename it (or press Enter to keep it).
+    existingKey?: string;
   } | null>(null);
   const [pendingLabel, setPendingLabel] = useState('');
   const pendingLabelRef = useRef<HTMLInputElement>(null);
@@ -313,6 +319,10 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
   const [suggestLoading, setSuggestLoading] = useState<{ idx: number; fieldKey: string } | null>(null);
   const [suggestPopover, setSuggestPopover] = useState<{ idx: number; fieldKey: string; suggestions: string[] } | null>(null);
   const [deletingRuleIdx, setDeletingRuleIdx] = useState<number | null>(null);
+  const [removingFieldKey, setRemovingFieldKey] = useState<string | null>(null);
+  // Field whose re-pick (new selector for an already-mapped field) is mid-save —
+  // its pill shows a spinner instead of the green "Mapped" until the API confirms.
+  const [repickingFieldKey, setRepickingFieldKey] = useState<string | null>(null);
   const [mapSectionOpen, setMapSectionOpen] = useState(false);
   const [rulesSectionOpen, setRulesSectionOpen] = useState(false);
   const [ruleModalIdx, setRuleModalIdx] = useState<number | null>(null);
@@ -412,33 +422,22 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
   useEffect(() => {
     function handleMessage(e: MessageEvent) {
       if (!e.data || e.data.type !== 'sl-element-picked') return;
-      const { field, selector, preview, elementType, indexPath, generatedId } = e.data as {
-        field: string; selector: string; preview: string; elementType: 'text' | 'image';
+      const { field, selector, preview, src, elementType, indexPath, generatedId } = e.data as {
+        field: string; selector: string; preview: string; src?: string; elementType: 'text' | 'image';
         indexPath?: string; generatedId?: string;
       };
       if (field === '__new__') {
         setGlobalPickMode(false);
-        setPendingPick({ selector, type: elementType, preview, indexPath, generatedId });
+        setPendingPick({ selector, type: elementType, preview, src, indexPath, generatedId });
         setPendingLabel('');
         setTimeout(() => pendingLabelRef.current?.focus(), 50);
       } else {
-        const nextFields = fieldsRef.current.map(f =>
-          f.key === field
-            ? { ...f, selector, type: elementType, _indexPath: indexPath, _generatedId: generatedId }
-            : f
-        );
-        const nextRules = elementType === 'text' && preview
-          ? rulesRef.current.map(r =>
-              r.is_fallback ? { ...r, overrides_json: { ...r.overrides_json, [field]: preview } } : r
-            )
-          : rulesRef.current;
-
-        setFields(nextFields);
-        setFieldPreviews(prev => ({ ...prev, [field]: preview }));
-        setRules(nextRules);
+        // Re-pick of an existing field: don't save yet — open the name card
+        // prefilled with the current label so the user can also rename it.
         setActivePickKey(null);
-
-        saveSelectors(nextFields, nextRules);
+        setPendingPick({ selector, type: elementType, preview, src, indexPath, generatedId, existingKey: field });
+        setPendingLabel(fieldsRef.current.find(f => f.key === field)?.label ?? '');
+        setTimeout(() => pendingLabelRef.current?.select(), 50);
       }
     }
     window.addEventListener('message', handleMessage);
@@ -449,6 +448,45 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
   async function confirmPendingField() {
     const label = pendingLabel.trim();
     if (!label || !pendingPick) return;
+
+    // Re-pick of an existing field: update its selector/type/label in place
+    // (key stays stable so rules keep referencing it) and show the spinner pill.
+    if (pendingPick.existingKey) {
+      const key = pendingPick.existingKey;
+      const pick = pendingPick;
+      const nextFields = fields.map(f =>
+        f.key === key
+          ? { ...f, label, selector: pick.selector, type: pick.type, _indexPath: pick.indexPath, _generatedId: pick.generatedId }
+          : f
+      );
+      // Seed the fallback (Default) rule with current content — text uses the visible
+      // text, images use the element's src URL.
+      const fallbackVal = pick.type === 'image' ? (pick.src ?? '') : pick.preview;
+      const nextRules = fallbackVal
+        ? rules.map(r =>
+            r.is_fallback ? { ...r, overrides_json: { ...r.overrides_json, [key]: fallbackVal } } : r
+          )
+        : rules;
+
+      setPendingPick(null);
+      setPendingLabel('');
+      setRepickingFieldKey(key);
+
+      const ok = await saveSelectors(nextFields, nextRules);
+
+      setRepickingFieldKey(null);
+      if (ok) {
+        setFields(nextFields);
+        setFieldPreviews(prev => ({ ...prev, [key]: pick.preview }));
+        setRules(nextRules);
+      } else {
+        // The new selector isn't persisted — drop the green Mapped badge so the
+        // pill honestly shows the field needs re-saving.
+        setSavedFieldKeys(prev => { const n = new Set(prev); n.delete(key); return n; });
+      }
+      return;
+    }
+
     let key = labelToKey(label);
     const existing = fields.map(f => f.key);
     let uniqueKey = key;
@@ -465,10 +503,13 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
     };
     const nextFields = [...fields, newField];
 
+    // Seed the fallback (Default) rule with current content — text uses the visible
+    // text, images use the element's src URL.
+    const fallbackVal = pendingPick.type === 'image' ? (pendingPick.src ?? '') : pendingPick.preview;
     let nextRules = rules;
-    if (pendingPick.type === 'text' && pendingPick.preview) {
+    if (fallbackVal) {
       nextRules = rules.map(r =>
-        r.is_fallback ? { ...r, overrides_json: { ...r.overrides_json, [uniqueKey]: pendingPick.preview } } : r
+        r.is_fallback ? { ...r, overrides_json: { ...r.overrides_json, [uniqueKey]: fallbackVal } } : r
       );
     }
 
@@ -492,7 +533,11 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
     }
   }
 
-  function removeField(key: string) {
+  // Keeps the row visible (with a spinner on the X) until the API confirms the
+  // deletion — only then is it removed from local state, so a failed save
+  // doesn't silently drop a mapping that's still saved server-side.
+  async function removeField(key: string) {
+    if (removingFieldKey) return;
     const nextFields = fields.filter(f => f.key !== key);
     const nextRules = rules.map(r => {
       const o = { ...r.overrides_json };
@@ -500,12 +545,17 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
       return { ...r, overrides_json: o };
     });
 
-    setFields(nextFields);
-    setFieldPreviews(prev => { const n = { ...prev }; delete n[key]; return n; });
+    setRemovingFieldKey(key);
     if (activePickKey === key) setActivePickKey(null);
-    setRules(nextRules);
 
-    saveSelectors(nextFields, nextRules);
+    const ok = await saveSelectors(nextFields, nextRules);
+
+    setRemovingFieldKey(null);
+    if (ok) {
+      setFields(nextFields);
+      setFieldPreviews(prev => { const n = { ...prev }; delete n[key]; return n; });
+      setRules(nextRules);
+    }
   }
 
   async function saveSelectors(overrideFields?: Field[], overrideRules?: Rule[]): Promise<boolean> {
@@ -655,6 +705,10 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
 
   async function saveRules(overrideRules?: Rule[]): Promise<boolean> {
     const rulesToSave = overrideRules ?? rules;
+    // Order-insensitive, normalized signature of a rule's conditions — matches how the
+    // swap script compares values (trim + lowercase), so two rules with the same
+    // signature can never both be useful at runtime.
+    const seenSignatures = new Map<string, number>();
     for (let i = 0; i < rulesToSave.length; i++) {
       const r = rulesToSave[i];
       if (r.is_fallback) continue;
@@ -675,6 +729,17 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
         }
         seenParams.add(cond.match_param);
       }
+
+      const signature = r.conditions
+        .map(c => `${c.match_param}=${c.match_value.trim().toLowerCase()}`)
+        .sort()
+        .join('&');
+      const dupeOf = seenSignatures.get(signature);
+      if (dupeOf !== undefined) {
+        toast.error(`Rule ${i + 1} has the same conditions as Rule ${dupeOf + 1} — change a value or delete one of them.`, { duration: 5000 });
+        return false;
+      }
+      seenSignatures.set(signature, i);
 
       for (const [fieldKey, val] of Object.entries(r.overrides_json ?? {})) {
         if (typeof val === 'string' && val.startsWith('http') && !val.startsWith('https://')) {
@@ -891,14 +956,9 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
                         {fields.filter(f => f.selector && savedFieldKeys.has(f.key)).length}/{fields.length} mapped
                       </span>
                     )}
-                    {savingSelectors && (
-                      <span className="flex items-center gap-1 text-[10px] font-medium text-amber-500 dark:text-amber-400">
-                        <Loader2 size={10} className="animate-spin" /> Saving…
-                      </span>
-                    )}
                   </h3>
                   <p className="text-xs text-slate-400 mt-0.5">
-                    Pick the elements on the page you want to personalize.
+                    Pick the elements on the page you want to personalize. Click a field's Mapped badge to pick its element again.
                   </p>
                 </div>
               </div>
@@ -943,29 +1003,41 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
                     <div className="flex items-center gap-1 flex-shrink-0">
                       <button
                         onClick={() => setActivePickKey(activePickKey === f.key ? null : f.key)}
+                        disabled={repickingFieldKey === f.key}
+                        title={f.selector && savedFieldKeys.has(f.key) ? 'Pick this element again' : undefined}
                         className={cn(
-                          'flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg font-medium transition-colors',
-                          activePickKey === f.key
-                            ? 'bg-indigo-600 text-white'
-                            : f.selector && savedFieldKeys.has(f.key)
-                              ? 'bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400 border border-green-200 dark:border-green-700/40'
-                              : 'bg-slate-100 dark:bg-slate-800 text-slate-500 hover:bg-indigo-50 hover:text-indigo-500'
+                          'group/pill flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg font-medium transition-colors',
+                          repickingFieldKey === f.key
+                            ? 'bg-amber-50 dark:bg-amber-900/10 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-700/40'
+                            : activePickKey === f.key
+                              ? 'bg-indigo-600 text-white'
+                              : f.selector && savedFieldKeys.has(f.key)
+                                ? 'bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400 border border-green-200 dark:border-green-700/40 hover:bg-indigo-50 hover:text-indigo-500 hover:border-indigo-200 dark:hover:bg-indigo-900/20 dark:hover:text-indigo-400 dark:hover:border-indigo-700/40'
+                                : 'bg-slate-100 dark:bg-slate-800 text-slate-500 hover:bg-indigo-50 hover:text-indigo-500'
                         )}
                       >
-                        {activePickKey === f.key ? (
+                        {repickingFieldKey === f.key ? (
+                          <><Loader2 size={11} className="animate-spin" /> Saving…</>
+                        ) : activePickKey === f.key ? (
                           <><MousePointer2 size={11} /> Picking…</>
                         ) : f.selector && savedFieldKeys.has(f.key) ? (
-                          <><Check size={11} /> Mapped</>
+                          <>
+                            <span className="flex items-center gap-1 group-hover/pill:hidden"><Check size={11} /> Mapped</span>
+                            <span className="hidden items-center gap-1 group-hover/pill:flex"><MousePointer2 size={11} /> Pick Again</span>
+                          </>
                         ) : (
                           <><MousePointer2 size={11} /> Pick</>
                         )}
                       </button>
                       <button
                         onClick={() => removeField(f.key)}
-                        className="p-1 text-slate-400 hover:text-red-400 transition-colors"
+                        disabled={removingFieldKey !== null}
+                        className="p-1 text-red-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors disabled:opacity-60"
                         title="Remove field"
                       >
-                        <X size={12} />
+                        {removingFieldKey === f.key
+                          ? <Loader2 size={12} className="animate-spin text-amber-500" />
+                          : <Trash2 size={12} />}
                       </button>
                     </div>
                   </div>
@@ -992,7 +1064,7 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
                 <div className="p-3 rounded-xl border-2 border-indigo-400 dark:border-indigo-600 bg-indigo-50 dark:bg-indigo-900/20 space-y-2">
                   <p className="text-xs font-medium text-indigo-700 dark:text-indigo-300 flex items-center gap-1.5">
                     {pendingPick.type === 'image' ? <ImageIcon size={12} /> : <Type size={12} />}
-                    Element selected — give it a name
+                    {pendingPick.existingKey ? 'New element selected — update the name or keep it' : 'Element selected — give it a name'}
                   </p>
                   <p className="text-xs text-slate-400 truncate">"{pendingPick.preview}"</p>
                   <div className="flex gap-2">
