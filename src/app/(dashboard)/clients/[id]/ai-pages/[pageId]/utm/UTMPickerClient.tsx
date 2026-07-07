@@ -546,6 +546,13 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
         toast.error(`Rule ${i + 1}: fill in the UTM value (e.g. "google", "facebook") in the "When utm_source =" field.`, { duration: 5000 });
         return false;
       }
+      for (const [fieldKey, val] of Object.entries(r.overrides_json ?? {})) {
+        if (typeof val === 'string' && val.startsWith('http') && !val.startsWith('https://')) {
+          const label = fields.find(f => f.key === fieldKey)?.label ?? fieldKey;
+          toast.error(`Rule ${i + 1}: "${label}" URL must start with https://`, { duration: 5000 });
+          return false;
+        }
+      }
     }
     setSaving(true);
     try {
