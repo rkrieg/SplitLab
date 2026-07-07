@@ -41,7 +41,7 @@ interface Props {
 const UTM_PARAMS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'];
 
 // Toggle to bring back the AI headline-suggestion button (currently hidden per product request)
-const AI_SUGGEST_ENABLED = false;
+const AI_SUGGEST_ENABLED = true;
 
 function labelToKey(label: string): string {
   return label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 50) || 'field';
@@ -257,8 +257,8 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
 
   const DESKTOP_PREVIEW_WIDTH = 1440;
   const desktopScale = previewSize.width > 0 ? Math.min(1, previewSize.width / DESKTOP_PREVIEW_WIDTH) : 1;
-  const [suggestLoading, setSuggestLoading] = useState<number | null>(null);
-  const [suggestPopover, setSuggestPopover] = useState<{ idx: number; suggestions: string[] } | null>(null);
+  const [suggestLoading, setSuggestLoading] = useState<{ idx: number; fieldKey: string } | null>(null);
+  const [suggestPopover, setSuggestPopover] = useState<{ idx: number; fieldKey: string; suggestions: string[] } | null>(null);
   const [deletingRuleIdx, setDeletingRuleIdx] = useState<number | null>(null);
   const [mapSectionOpen, setMapSectionOpen] = useState(false);
   const [rulesSectionOpen, setRulesSectionOpen] = useState(false);
@@ -565,10 +565,10 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
     }
   }
 
-  async function suggestHeadlines(idx: number) {
+  async function suggestHeadlines(idx: number, fieldKey: string, fieldLabel: string) {
     const rule = rules[idx];
     if (!rule || !rule.match_value?.trim()) { toast.error('Fill in the UTM value first'); return; }
-    setSuggestLoading(idx);
+    setSuggestLoading({ idx, fieldKey });
     setSuggestPopover(null);
     try {
       const res = await fetch(`/api/pages/${page.id}/suggest-headlines`, {
@@ -577,13 +577,14 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
         body: JSON.stringify({
           match_param: rule.match_param,
           match_value: rule.match_value,
-          current_headline: rule.overrides_json['headline'] ?? '',
-          page_context: `Page: ${page.name}`,
+          field_key: fieldKey,
+          field_label: fieldLabel,
+          current_value: rule.overrides_json[fieldKey] ?? '',
         }),
       });
       const data = await res.json();
       if (!res.ok || !data.suggestions) { toast.error('Could not generate suggestions'); return; }
-      setSuggestPopover({ idx, suggestions: data.suggestions });
+      setSuggestPopover({ idx, fieldKey, suggestions: data.suggestions });
     } catch {
       toast.error('Could not generate suggestions');
     } finally {
@@ -621,27 +622,28 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
                     : 'border-slate-200 dark:border-slate-700'
                 )}
               />
-              {/* AI-suggest — hidden for now */}
               {AI_SUGGEST_ENABLED && f.type === 'text' && (
                 <button
-                  onClick={() => suggestHeadlines(ruleIdx)}
-                  disabled={suggestLoading === ruleIdx}
-                  title="AI suggest"
+                  onClick={() => suggestHeadlines(ruleIdx, f.key, f.label)}
+                  disabled={suggestLoading?.idx === ruleIdx && suggestLoading?.fieldKey === f.key}
+                  title={`AI suggest ${f.label}`}
                   className="absolute right-2 top-1/2 -translate-y-1/2 text-indigo-400 hover:text-indigo-500 disabled:opacity-50"
                 >
-                  {suggestLoading === ruleIdx ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+                  {suggestLoading?.idx === ruleIdx && suggestLoading?.fieldKey === f.key
+                    ? <Loader2 size={13} className="animate-spin" />
+                    : <Sparkles size={13} />}
                 </button>
               )}
-              {AI_SUGGEST_ENABLED && suggestPopover?.idx === ruleIdx && f.type === 'text' && (
+              {AI_SUGGEST_ENABLED && suggestPopover?.idx === ruleIdx && suggestPopover?.fieldKey === f.key && f.type === 'text' && (
                 <div className="absolute left-0 top-full mt-1 z-50 w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl overflow-hidden">
                   <div className="flex items-center justify-between px-3 py-2 border-b border-slate-100 dark:border-slate-700">
-                    <span className="text-xs text-slate-400 font-medium">AI suggestions</span>
+                    <span className="text-xs text-slate-400 font-medium">AI suggestions for {f.label}</span>
                     <button onClick={() => setSuggestPopover(null)} className="text-slate-400 hover:text-slate-600 text-xs">✕</button>
                   </div>
                   {suggestPopover.suggestions.map((s, si) => (
                     <button
                       key={si}
-                      onClick={() => { updateRuleOverride(ruleIdx, 'headline', s); setSuggestPopover(null); }}
+                      onClick={() => { updateRuleOverride(ruleIdx, f.key, s); setSuggestPopover(null); }}
                       className="w-full text-left px-3 py-2.5 text-xs text-slate-700 dark:text-slate-200 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors border-b border-slate-50 dark:border-slate-700/50 last:border-0"
                     >
                       {s}
