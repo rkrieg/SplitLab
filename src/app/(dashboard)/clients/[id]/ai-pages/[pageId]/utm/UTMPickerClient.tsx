@@ -741,6 +741,12 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
       }
       seenSignatures.set(signature, i);
 
+      const hasFilledField = Object.values(r.overrides_json ?? {}).some(v => typeof v === 'string' && v.trim());
+      if (!hasFilledField) {
+        toast.error(`This Rule does not change anything on the page — fill in at least one field.`, { duration: 5000 });
+        return false;
+      }
+
       for (const [fieldKey, val] of Object.entries(r.overrides_json ?? {})) {
         if (typeof val === 'string' && val.startsWith('http') && !val.startsWith('https://')) {
           const label = fields.find(f => f.key === fieldKey)?.label ?? fieldKey;
@@ -985,6 +991,9 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
               )}
 
               {fields.map(f => {
+                // While this field's re-pick card is open below, its old row would show
+                // the same field twice — hide the row until the card is saved/cancelled.
+                if (pendingPick?.existingKey === f.key) return null;
                 return (
                   <div key={f.key} className="flex items-center gap-2 p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950">
                     <div className="flex-1 min-w-0">
