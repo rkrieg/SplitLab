@@ -21,6 +21,18 @@ interface Field extends FieldMapping {
   _generatedId?: string;  // HTML pages: the sl-f-xxx ID already set in live DOM
 }
 
+// Internal rule state — extends UTMRule with a stable client-only key.
+// Rule ids from the DB aren't stable across saves (personalization-rules POST
+// does a full delete+reinsert), so open/collapse UI state can't key off rule.id
+// or array index (which shifts when an earlier rule is deleted).
+interface Rule extends UTMRule {
+  _key: string;
+}
+
+function makeRuleKey(): string {
+  return Math.random().toString(36).slice(2, 10);
+}
+
 interface PageInfo {
   id: string;
   name: string;
@@ -263,19 +275,21 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
   const [mapSectionOpen, setMapSectionOpen] = useState(false);
   const [rulesSectionOpen, setRulesSectionOpen] = useState(false);
   const [ruleModalIdx, setRuleModalIdx] = useState<number | null>(null);
-  const [openRuleIdxs, setOpenRuleIdxs] = useState<Set<number>>(new Set());
+  const [openRuleKeys, setOpenRuleKeys] = useState<Set<string>>(new Set());
 
-  function toggleRuleOpen(idx: number) {
-    setOpenRuleIdxs(prev => {
+  function toggleRuleOpen(key: string) {
+    setOpenRuleKeys(prev => {
       const next = new Set(prev);
-      if (next.has(idx)) next.delete(idx); else next.add(idx);
+      if (next.has(key)) next.delete(key); else next.add(key);
       return next;
     });
   }
 
-  const [rules, setRules] = useState<UTMRule[]>(() => {
-    if (initialRules.length > 0) return initialRules;
-    return [{ match_param: 'utm_source', match_value: '', is_fallback: true, priority: 99, overrides_json: {} }];
+  const [rules, setRules] = useState<Rule[]>(() => {
+    const seed = initialRules.length > 0
+      ? initialRules
+      : [{ match_param: 'utm_source', match_value: '', is_fallback: true, priority: 99, overrides_json: {} }];
+    return seed.map(r => ({ ...r, _key: makeRuleKey() }));
   });
 
   // Kept in sync so the message-listener effect (empty deps) never closes over stale state
@@ -438,7 +452,7 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
     saveSelectors(nextFields, nextRules);
   }
 
-  async function saveSelectors(overrideFields?: Field[], overrideRules?: UTMRule[]) {
+  async function saveSelectors(overrideFields?: Field[], overrideRules?: Rule[]) {
     const fieldsToSave = overrideFields ?? fields;
     const rulesToSave = overrideRules ?? rules;
     setSavingSelectors(true);
@@ -502,7 +516,7 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
     setRules(prev => {
       const nonFallback = prev.filter(r => !r.is_fallback);
       const fallback = prev.find(r => r.is_fallback);
-      const newRule: UTMRule = { match_param: 'utm_source', match_value: '', is_fallback: false, priority: nonFallback.length, overrides_json: {} };
+      const newRule: Rule = { match_param: 'utm_source', match_value: '', is_fallback: false, priority: nonFallback.length, overrides_json: {}, _key: makeRuleKey() };
       return fallback ? [...nonFallback, newRule, fallback] : [...nonFallback, newRule];
     });
     setRuleModalIdx(newIdx);
@@ -537,7 +551,7 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
     setRules(prev => prev.map((r, i) => i !== idx ? r : { ...r, overrides_json: { ...r.overrides_json, [fieldKey]: value } }));
   }
 
-  async function saveRules(overrideRules?: UTMRule[]): Promise<boolean> {
+  async function saveRules(overrideRules?: Rule[]): Promise<boolean> {
     const rulesToSave = overrideRules ?? rules;
     for (let i = 0; i < rulesToSave.length; i++) {
       const r = rulesToSave[i];
@@ -878,9 +892,9 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
             <div className="space-y-3">
               {rules.map((rule, idx) => {
                 if (rule.is_fallback || idx === ruleModalIdx) return null;
-                const isOpen = openRuleIdxs.has(idx);
+                const isOpen = openRuleKeys.has(rule._key);
                 return (
-                <div key={idx} className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-visible">
+                <div key={rule._key} className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-visible">
                   <div className="px-4 pt-2.5 pb-2 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 rounded-t-xl space-y-1.5">
                     <div className="flex items-center gap-1.5">
                       <span className="text-xs text-slate-400 font-medium flex-shrink-0">When</span>
@@ -922,7 +936,7 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
                           ? <Loader2 size={13} className="animate-spin text-amber-500" />
                           : <Trash2 size={13} />}
                       </button>
-                      <button onClick={() => toggleRuleOpen(idx)} className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 rounded transition-colors" title={isOpen ? 'Collapse' : 'Expand'}>
+                      <button onClick={() => toggleRuleOpen(rule._key)} className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 rounded transition-colors" title={isOpen ? 'Collapse' : 'Expand'}>
                         <ChevronDown size={14} className={cn('transition-transform', isOpen ? '' : '-rotate-90')} />
                       </button>
                     </div>
