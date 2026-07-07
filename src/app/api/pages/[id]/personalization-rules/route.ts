@@ -141,8 +141,17 @@ export async function POST(
     }
     seenSignatures.set(signature, i);
 
-    // XSS: any URL value must start with https://
     const overrides = rule.overrides_json as Record<string, string> | undefined;
+
+    const hasFilledField = Object.values(overrides ?? {}).some(v => typeof v === 'string' && v.trim());
+    if (!hasFilledField) {
+      return NextResponse.json(
+        { error: `This rule does not change anything on the page. Fill in at least one field.` },
+        { status: 400 }
+      );
+    }
+
+    // XSS: any URL value must start with https://
     if (overrides) {
       for (const [key, val] of Object.entries(overrides)) {
         if (typeof val === 'string' && val.startsWith('http') && !val.startsWith('https://')) {

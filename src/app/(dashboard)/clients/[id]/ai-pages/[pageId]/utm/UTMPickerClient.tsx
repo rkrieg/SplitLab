@@ -741,6 +741,12 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
       }
       seenSignatures.set(signature, i);
 
+      const hasFilledField = Object.values(r.overrides_json ?? {}).some(v => typeof v === 'string' && v.trim());
+      if (!hasFilledField) {
+        toast.error(`This Rule does not change anything on the page — fill in at least one field.`, { duration: 5000 });
+        return false;
+      }
+
       for (const [fieldKey, val] of Object.entries(r.overrides_json ?? {})) {
         if (typeof val === 'string' && val.startsWith('http') && !val.startsWith('https://')) {
           const label = fields.find(f => f.key === fieldKey)?.label ?? fieldKey;
