@@ -42,8 +42,6 @@ export default async function HtmlPageUTMPickerPage({ params }: PageProps) {
     .order('is_fallback', { ascending: true })
     .order('priority', { ascending: true });
 
-  const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://www.trysplitlab.com';
-
   return (
     <UTMPickerClient
       clientId={params.id}
@@ -60,7 +58,6 @@ export default async function HtmlPageUTMPickerPage({ params }: PageProps) {
         ...r,
         conditions: (r.conditions_json as UTMCondition[] | null) ?? undefined,
       })) as UTMRule[]}
-      appUrl={APP_URL}
     />
   );
 }
