@@ -4,6 +4,7 @@ import { downloadHtml } from '@/lib/storage';
 import { buildTrackingSnippet, buildScanScript, injectIntoHtml, buildScriptTag } from '@/lib/tracking';
 import { assignVariant } from '@/lib/utils';
 import { getPlanDetails } from '@/lib/plans';
+import { buildUtmSwapScript } from '@/lib/utm-swap-script';
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 const COOKIE_NAME = 'sl_visitor';
@@ -320,7 +321,7 @@ ${proxyTrackingSnippet}
         : Promise.resolve({ data: [] }),
       db.from('scripts').select('*').eq('workspace_id', workspaceId).eq('is_active', true).eq('test_id', test.id),
       selectedVariant.page_id
-        ? db.from('personalization_rules').select('match_param,match_value,is_fallback,overrides_json').eq('page_id', selectedVariant.page_id).order('is_fallback', { ascending: true }).order('priority', { ascending: true })
+        ? db.from('personalization_rules').select('match_param,match_value,is_fallback,overrides_json,conditions_json').eq('page_id', selectedVariant.page_id).order('is_fallback', { ascending: true }).order('priority', { ascending: true })
         : Promise.resolve({ data: [] }),
       selectedVariant.page_id
         ? db.from('pages').select('field_selectors_json').eq('id', selectedVariant.page_id).single()
@@ -363,28 +364,7 @@ ${proxyTrackingSnippet}
     try {
       const rules = utmRules && utmRules.length > 0 ? utmRules : [];
       if (rules.length > 0) {
-        const swapScript = `<script>
-(function(){
-  var rules=${JSON.stringify(rules)};
-  var fs=${JSON.stringify(fieldSelectors || {})};
-  var params=new URLSearchParams(window.location.search);
-  var match=rules.find(function(r){return !r.is_fallback&&params.get(r.match_param)===r.match_value;});
-  var active=match||rules.find(function(r){return r.is_fallback;});
-  if(!active||!active.overrides_json)return;
-  var o=active.overrides_json;
-  function getInfo(field){var fm=fs[field];if(!fm)return{selector:null,type:'text'};if(typeof fm==='string')return{selector:fm,type:'text'};return{selector:fm.selector||null,type:fm.type||'text'};}
-  function run(){
-    Object.keys(o).forEach(function(field){
-      var val=o[field];if(!val)return;
-      var info=getInfo(field);if(!info.selector)return;
-      var el=document.querySelector(info.selector);if(!el)return;
-      if(info.type==='image'||el.tagName==='IMG'){el.src=val;}
-      else{el.textContent=val;}
-    });
-  }
-  if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',run);}else{run();}
-})();
-</script>`;
+        const swapScript = buildUtmSwapScript(rules, fieldSelectors);
         htmlWithUtm = html.includes('</body')
           ? html.replace('</body>', `${swapScript}\n</body>`)
           : html + swapScript;

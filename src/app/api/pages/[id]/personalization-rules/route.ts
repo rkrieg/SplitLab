@@ -6,6 +6,25 @@ import { resolveWorkspaceRole } from '@/lib/workspace-auth';
 
 const VALID_PARAMS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'] as const;
 const MAX_RULES = 20;
+const MAX_CONDITIONS_PER_RULE = 5;
+
+interface Condition {
+  match_param: string;
+  match_value: string;
+}
+
+/** A rule's conditions come from `conditions` (new multi-condition shape) or fall
+ *  back to the legacy single match_param/match_value pair (old rules / old clients). */
+function getConditions(rule: Record<string, unknown>): Condition[] {
+  const conditions = rule.conditions;
+  if (Array.isArray(conditions) && conditions.length > 0) {
+    return conditions as Condition[];
+  }
+  if (typeof rule.match_param === 'string' && typeof rule.match_value === 'string' && rule.match_value.trim()) {
+    return [{ match_param: rule.match_param, match_value: rule.match_value }];
+  }
+  return [];
+}
 
 export async function GET(
   _req: NextRequest,
@@ -80,15 +99,30 @@ export async function POST(
     const isFallback = rule.is_fallback === true;
     if (isFallback) { fallbackCount++; continue; }
 
-    if (!VALID_PARAMS.includes(rule.match_param as typeof VALID_PARAMS[number])) {
-      return NextResponse.json(
-        { error: `Rule ${i + 1}: match_param must be one of ${VALID_PARAMS.join(', ')}` },
-        { status: 400 }
-      );
+    const conditions = getConditions(rule);
+
+    if (conditions.length === 0) {
+      return NextResponse.json({ error: `Rule ${i + 1}: at least one condition is required.` }, { status: 400 });
+    }
+    if (conditions.length > MAX_CONDITIONS_PER_RULE) {
+      return NextResponse.json({ error: `Rule ${i + 1}: maximum ${MAX_CONDITIONS_PER_RULE} conditions allowed per rule.` }, { status: 400 });
     }
 
-    if (!rule.match_value || typeof rule.match_value !== 'string' || !rule.match_value.trim()) {
-      return NextResponse.json({ error: `Rule ${i + 1}: match_value is required.` }, { status: 400 });
+    const seenParams = new Set<string>();
+    for (const cond of conditions) {
+      if (!VALID_PARAMS.includes(cond.match_param as typeof VALID_PARAMS[number])) {
+        return NextResponse.json(
+          { error: `Rule ${i + 1}: match_param must be one of ${VALID_PARAMS.join(', ')}` },
+          { status: 400 }
+        );
+      }
+      if (!cond.match_value || typeof cond.match_value !== 'string' || !cond.match_value.trim()) {
+        return NextResponse.json({ error: `Rule ${i + 1}: every condition needs a value.` }, { status: 400 });
+      }
+      if (seenParams.has(cond.match_param)) {
+        return NextResponse.json({ error: `Rule ${i + 1}: "${cond.match_param}" is used more than once in the same rule.` }, { status: 400 });
+      }
+      seenParams.add(cond.match_param);
     }
 
     // XSS: any URL value must start with https://
@@ -120,14 +154,20 @@ export async function POST(
 
   const rows = rules.map((rule, i) => {
     const r = rule as Record<string, unknown>;
+    const isFallback = r.is_fallback === true;
+    const conditions = isFallback ? [] : getConditions(r).map(c => ({ match_param: c.match_param, match_value: c.match_value.trim() }));
+    // Dual-write the first condition into the legacy columns so old readers
+    // (and the DB's "non-fallback rows need a match_value" constraint) still work.
+    const firstCondition = conditions[0];
     return {
       page_id: params.id,
-      match_param: r.is_fallback ? 'utm_source' : (r.match_param as string),
-      match_value: r.is_fallback ? null : (r.match_value as string).trim(),
+      match_param: isFallback ? 'utm_source' : (firstCondition?.match_param as string),
+      match_value: isFallback ? null : (firstCondition?.match_value as string),
       match_type: 'exact',
+      conditions_json: isFallback ? null : conditions,
       overrides_json: r.overrides_json ?? {},
       priority: typeof r.priority === 'number' ? r.priority : i,
-      is_fallback: r.is_fallback === true,
+      is_fallback: isFallback,
     };
   });
 

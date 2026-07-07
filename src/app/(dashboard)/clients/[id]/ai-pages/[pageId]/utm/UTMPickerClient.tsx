@@ -11,7 +11,7 @@ import toast from 'react-hot-toast';
 import { cn } from '@/lib/utils';
 import { useSidebarCollapsed } from '@/lib/use-sidebar-collapsed';
 import Modal from '@/components/ui/Modal';
-import type { UTMRule, FieldMapping } from './page';
+import type { UTMRule, UTMCondition, FieldMapping } from './page';
 
 export type StoredFieldSelectors = Record<string, { selector: string; type: 'text' | 'image'; label: string }>;
 
@@ -21,16 +21,29 @@ interface Field extends FieldMapping {
   _generatedId?: string;  // HTML pages: the sl-f-xxx ID already set in live DOM
 }
 
-// Internal rule state — extends UTMRule with a stable client-only key.
+// Internal rule state — extends UTMRule with a stable client-only key and a
+// required `conditions` list (multiple UTM params ANDed together per rule).
 // Rule ids from the DB aren't stable across saves (personalization-rules POST
 // does a full delete+reinsert), so open/collapse UI state can't key off rule.id
 // or array index (which shifts when an earlier rule is deleted).
-interface Rule extends UTMRule {
+interface Rule extends Omit<UTMRule, 'match_param' | 'match_value' | 'conditions'> {
   _key: string;
+  conditions: UTMCondition[];
 }
 
 function makeRuleKey(): string {
   return Math.random().toString(36).slice(2, 10);
+}
+
+const MAX_CONDITIONS_PER_RULE = 5;
+
+/** Legacy rows (saved before multi-condition support) only have match_param/match_value.
+ *  Normalize them into a 1-item conditions list so the rest of the client never has
+ *  to special-case the old shape. */
+function normalizeConditions(r: UTMRule): UTMCondition[] {
+  if (r.conditions && r.conditions.length > 0) return r.conditions;
+  if (r.match_param && r.match_value) return [{ match_param: r.match_param, match_value: r.match_value }];
+  return [];
 }
 
 interface PageInfo {
@@ -289,7 +302,7 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
     const seed = initialRules.length > 0
       ? initialRules
       : [{ match_param: 'utm_source', match_value: '', is_fallback: true, priority: 99, overrides_json: {} }];
-    return seed.map(r => ({ ...r, _key: makeRuleKey() }));
+    return seed.map(r => ({ ...r, _key: makeRuleKey(), conditions: normalizeConditions(r) }));
   });
 
   // Kept in sync so the message-listener effect (empty deps) never closes over stale state
@@ -493,7 +506,7 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
       if (!res.ok) throw new Error((await res.json()).error);
 
       // Also persist rules so the auto-detected fallback text survives refresh
-      const nonFallback = rulesToSave.filter(r => !r.is_fallback && r.match_value?.trim());
+      const nonFallback = rulesToSave.filter(r => !r.is_fallback && r.conditions.some(c => c.match_value?.trim()));
       const fallback = rulesToSave.find(r => r.is_fallback);
       await fetch(`/api/pages/${page.id}/personalization-rules`, {
         method: 'POST',
@@ -516,10 +529,57 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
     setRules(prev => {
       const nonFallback = prev.filter(r => !r.is_fallback);
       const fallback = prev.find(r => r.is_fallback);
-      const newRule: Rule = { match_param: 'utm_source', match_value: '', is_fallback: false, priority: nonFallback.length, overrides_json: {}, _key: makeRuleKey() };
+      const newRule: Rule = {
+        is_fallback: false,
+        priority: nonFallback.length,
+        overrides_json: {},
+        _key: makeRuleKey(),
+        conditions: [{ match_param: 'utm_source', match_value: '' }],
+      };
       return fallback ? [...nonFallback, newRule, fallback] : [...nonFallback, newRule];
     });
     setRuleModalIdx(newIdx);
+  }
+
+  // Adds a stacked "AND" condition to a rule — defaults to the first UTM param not already used in it
+  function addCondition(ruleIdx: number) {
+    setRules(prev => prev.map((r, i) => {
+      if (i !== ruleIdx || r.conditions.length >= MAX_CONDITIONS_PER_RULE) return r;
+      const usedParams = new Set(r.conditions.map(c => c.match_param));
+      const nextParam = UTM_PARAMS.find(p => !usedParams.has(p)) ?? UTM_PARAMS[0];
+      return { ...r, conditions: [...r.conditions, { match_param: nextParam, match_value: '' }] };
+    }));
+  }
+
+  // Always keeps at least one condition row per rule — the last one can't be removed
+  function removeCondition(ruleIdx: number, condIdx: number) {
+    setRules(prev => prev.map((r, i) => {
+      if (i !== ruleIdx || r.conditions.length <= 1) return r;
+      return { ...r, conditions: r.conditions.filter((_, j) => j !== condIdx) };
+    }));
+  }
+
+  function updateCondition(ruleIdx: number, condIdx: number, patch: Partial<UTMCondition>) {
+    setRules(prev => prev.map((r, i) => {
+      if (i !== ruleIdx) return r;
+      return { ...r, conditions: r.conditions.map((c, j) => j !== condIdx ? c : { ...c, ...patch }) };
+    }));
+  }
+
+  // Joined "utm_source=facebook + utm_campaign=builder" summary for a rule's conditions
+  function ruleSummary(rule: Rule): string {
+    return rule.conditions
+      .filter(c => c.match_value?.trim())
+      .map(c => `${c.match_param}=${c.match_value}`)
+      .join(' + ');
+  }
+
+  // Query string with ALL of a rule's conditions, for preview links/simulator
+  function ruleQueryString(rule: Rule): string {
+    return rule.conditions
+      .filter(c => c.match_value?.trim())
+      .map(c => `${encodeURIComponent(c.match_param)}=${encodeURIComponent(c.match_value)}`)
+      .join('&');
   }
 
   // Local-only removal — used to discard an unsaved draft rule (never persisted, nothing to sync)
@@ -543,10 +603,6 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
     removeRule(ruleModalIdx);
   }
 
-  function updateRule(idx: number, patch: Partial<UTMRule>) {
-    setRules(prev => prev.map((r, i) => i !== idx ? r : { ...r, ...patch }));
-  }
-
   function updateRuleOverride(idx: number, fieldKey: string, value: string) {
     setRules(prev => prev.map((r, i) => i !== idx ? r : { ...r, overrides_json: { ...r.overrides_json, [fieldKey]: value } }));
   }
@@ -556,10 +612,24 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
     for (let i = 0; i < rulesToSave.length; i++) {
       const r = rulesToSave[i];
       if (r.is_fallback) continue;
-      if (!r.match_value?.trim()) {
-        toast.error(`Rule ${i + 1}: fill in the UTM value (e.g. "google", "facebook") in the "When utm_source =" field.`, { duration: 5000 });
+
+      if (r.conditions.length === 0) {
+        toast.error(`Rule ${i + 1}: add at least one "When ___ = ___" condition.`, { duration: 5000 });
         return false;
       }
+      const seenParams = new Set<string>();
+      for (const cond of r.conditions) {
+        if (!cond.match_value?.trim()) {
+          toast.error(`Rule ${i + 1}: fill in every UTM condition's value (e.g. "google", "facebook").`, { duration: 5000 });
+          return false;
+        }
+        if (seenParams.has(cond.match_param)) {
+          toast.error(`Rule ${i + 1}: "${cond.match_param}" is used more than once — pick a different param for each condition.`, { duration: 5000 });
+          return false;
+        }
+        seenParams.add(cond.match_param);
+      }
+
       for (const [fieldKey, val] of Object.entries(r.overrides_json ?? {})) {
         if (typeof val === 'string' && val.startsWith('http') && !val.startsWith('https://')) {
           const label = fields.find(f => f.key === fieldKey)?.label ?? fieldKey;
@@ -588,7 +658,10 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
 
   async function suggestHeadlines(idx: number, fieldKey: string, fieldLabel: string) {
     const rule = rules[idx];
-    if (!rule || !rule.match_value?.trim()) { toast.error('Fill in the UTM value first'); return; }
+    const firstCondition = rule?.conditions[0];
+    // NOTE: suggest-headlines only knows about the rule's first condition — full multi-condition
+    // awareness for AI suggestions is deferred, not part of this stacked-rules change.
+    if (!rule || !firstCondition?.match_value?.trim()) { toast.error('Fill in a UTM condition value first'); return; }
     setSuggestLoading({ idx, fieldKey });
     setSuggestPopover(null);
     try {
@@ -596,8 +669,8 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          match_param: rule.match_param,
-          match_value: rule.match_value,
+          match_param: firstCondition.match_param,
+          match_value: firstCondition.match_value,
           field_key: fieldKey,
           field_label: fieldLabel,
           current_value: rule.overrides_json[fieldKey] ?? '',
@@ -616,6 +689,54 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
   const nonFallbackRules = rules.filter(r => !r.is_fallback);
   const fallbackRule = rules.find(r => r.is_fallback);
   const mappedFields = fields.filter(f => f.selector);
+
+  // Repeatable "When utm_x = y" AND-condition rows, shared by the inline rule card and the New Rule modal
+  function renderConditionRows(ruleIdx: number) {
+    const rule = rules[ruleIdx];
+    if (!rule) return null;
+    return (
+      <div className="space-y-1.5">
+        {rule.conditions.map((cond, condIdx) => {
+          const usedByOthers = new Set(rule.conditions.filter((_, j) => j !== condIdx).map(c => c.match_param));
+          return (
+            <div key={condIdx} className="flex items-center gap-1.5">
+              <span className="text-xs text-slate-400 font-medium flex-shrink-0 w-9">{condIdx === 0 ? 'When' : 'AND'}</span>
+              <select
+                value={cond.match_param}
+                onChange={e => updateCondition(ruleIdx, condIdx, { match_param: e.target.value })}
+                className="flex-shrink-0 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs text-slate-700 dark:text-slate-200 focus:outline-none focus:border-indigo-400"
+              >
+                {UTM_PARAMS.map(p => (
+                  <option key={p} value={p} disabled={usedByOthers.has(p)}>{p}</option>
+                ))}
+              </select>
+              <span className="text-xs text-slate-400 flex-shrink-0">=</span>
+              <input
+                type="text"
+                value={cond.match_value ?? ''}
+                onChange={e => updateCondition(ruleIdx, condIdx, { match_value: e.target.value })}
+                placeholder="e.g. facebook"
+                className="min-w-0 flex-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs text-slate-700 dark:text-slate-200 placeholder-slate-400 focus:outline-none focus:border-indigo-400"
+              />
+              {rule.conditions.length > 1 && (
+                <button onClick={() => removeCondition(ruleIdx, condIdx)} className="p-1 text-slate-400 hover:text-red-400 transition-colors flex-shrink-0" title="Remove condition">
+                  <X size={12} />
+                </button>
+              )}
+            </div>
+          );
+        })}
+        {rule.conditions.length < MAX_CONDITIONS_PER_RULE && (
+          <button
+            onClick={() => addCondition(ruleIdx)}
+            className="flex items-center gap-1 text-xs text-indigo-500 hover:text-indigo-600 font-medium pl-9"
+          >
+            <Plus size={11} /> Add More
+          </button>
+        )}
+      </div>
+    );
+  }
 
   function renderRuleFields(ruleIdx: number) {
     const rule = rules[ruleIdx];
@@ -896,30 +1017,13 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
                 return (
                 <div key={rule._key} className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-visible">
                   <div className="px-4 pt-2.5 pb-2 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 rounded-t-xl space-y-1.5">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-xs text-slate-400 font-medium flex-shrink-0">When</span>
-                      <select
-                        value={rule.match_param}
-                        onChange={e => updateRule(idx, { match_param: e.target.value })}
-                        className="flex-shrink-0 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs text-slate-700 dark:text-slate-200 focus:outline-none focus:border-indigo-400"
-                      >
-                        {UTM_PARAMS.map(p => <option key={p} value={p}>{p}</option>)}
-                      </select>
-                      <span className="text-xs text-slate-400 flex-shrink-0">=</span>
-                      <input
-                        type="text"
-                        value={rule.match_value ?? ''}
-                        onChange={e => updateRule(idx, { match_value: e.target.value })}
-                        placeholder="e.g. facebook"
-                        className="min-w-0 flex-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs text-slate-700 dark:text-slate-200 placeholder-slate-400 focus:outline-none focus:border-indigo-400"
-                      />
-                    </div>
+                    {renderConditionRows(idx)}
                     <div className="flex items-center justify-end gap-1">
-                      {rule.match_value && (
+                      {ruleQueryString(rule) && (
                         <a
                           href={page.slug
-                            ? `${appUrl}/pages/${page.slug}?${rule.match_param}=${encodeURIComponent(rule.match_value)}`
-                            : `/api/pages/${page.id}/preview?${rule.match_param}=${encodeURIComponent(rule.match_value)}`}
+                            ? `${appUrl}/pages/${page.slug}?${ruleQueryString(rule)}`
+                            : `/api/pages/${page.id}/preview?${ruleQueryString(rule)}`}
                           target="_blank" rel="noopener noreferrer"
                           className="p-1 text-slate-400 hover:text-indigo-500 rounded transition-colors inline-flex"
                           title="Preview this variant"
@@ -948,7 +1052,7 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
                         <button
                           onClick={() => saveRules()}
                           disabled={saving}
-                          className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600 disabled:opacity-40 text-white font-medium transition-colors"
+                          className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white font-medium transition-colors"
                         >
                           {saving ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />}
                           Save
@@ -1013,12 +1117,16 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
           <select
             value={utmSimulator}
             onChange={e => setUtmSimulator(e.target.value)}
-            className="text-xs bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-slate-600 dark:text-slate-300 focus:outline-none focus:border-indigo-400"
+            title={(() => {
+              const active = nonFallbackRules.find(r => ruleQueryString(r) === utmSimulator);
+              return active ? ruleSummary(active) : undefined;
+            })()}
+            className="text-xs bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-slate-600 dark:text-slate-300 focus:outline-none focus:border-indigo-400 max-w-[220px] truncate flex-shrink-0"
           >
             <option value="default">Default</option>
-            {nonFallbackRules.filter(r => r.match_value).map((r, i) => (
-              <option key={i} value={`${r.match_param}=${r.match_value}`}>
-                {r.match_param} = {r.match_value}
+            {nonFallbackRules.filter(r => ruleQueryString(r)).map((r, i) => (
+              <option key={i} value={ruleQueryString(r)} title={ruleSummary(r)}>
+                {ruleSummary(r)}
               </option>
             ))}
           </select>
@@ -1113,24 +1221,7 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
           <div className="space-y-4">
             <div>
               <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1.5">When the visitor's URL has</label>
-              <div className="flex items-center gap-1.5">
-                <select
-                  value={rules[ruleModalIdx].match_param}
-                  onChange={e => updateRule(ruleModalIdx, { match_param: e.target.value })}
-                  className="flex-shrink-0 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-2 text-sm text-slate-700 dark:text-slate-200 focus:outline-none focus:border-indigo-400"
-                >
-                  {UTM_PARAMS.map(p => <option key={p} value={p}>{p}</option>)}
-                </select>
-                <span className="text-sm text-slate-400 flex-shrink-0">=</span>
-                <input
-                  type="text"
-                  autoFocus
-                  value={rules[ruleModalIdx].match_value ?? ''}
-                  onChange={e => updateRule(ruleModalIdx, { match_value: e.target.value })}
-                  placeholder="e.g. facebook"
-                  className="min-w-0 flex-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-2 text-sm text-slate-700 dark:text-slate-200 placeholder-slate-400 focus:outline-none focus:border-indigo-400"
-                />
-              </div>
+              {renderConditionRows(ruleModalIdx)}
             </div>
 
             <div>
@@ -1149,8 +1240,9 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
               </button>
               <button
                 onClick={async () => {
-                  if (!rules[ruleModalIdx]?.match_value?.trim()) {
-                    toast.error('Fill in the UTM value (e.g. "facebook") first.');
+                  const modalRule = rules[ruleModalIdx];
+                  if (!modalRule?.conditions.some(c => c.match_value?.trim())) {
+                    toast.error('Fill in at least one UTM condition value (e.g. "facebook") first.');
                     return;
                   }
                   const ok = await saveRules();

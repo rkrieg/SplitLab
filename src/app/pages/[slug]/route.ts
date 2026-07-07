@@ -1,34 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/supabase-server';
 import { downloadHtmlByPath, fileNameFromUrl } from '@/lib/storage';
-
-function buildUtmSwapScript(
-  rules: { match_param: string; match_value: string | null; is_fallback: boolean; overrides_json: Record<string, unknown> }[],
-  fieldSelectors: Record<string, string> | null
-): string {
-  return `<script>
-(function(){
-  var rules=${JSON.stringify(rules)};
-  var fs=${JSON.stringify(fieldSelectors || {})};
-  var params=new URLSearchParams(window.location.search);
-  var match=rules.find(function(r){return !r.is_fallback&&params.get(r.match_param)===r.match_value;});
-  var active=match||rules.find(function(r){return r.is_fallback;});
-  if(!active||!active.overrides_json)return;
-  var o=active.overrides_json;
-  function getInfo(field){var fm=fs[field];if(!fm)return{selector:null,type:'text'};if(typeof fm==='string')return{selector:fm,type:'text'};return{selector:fm.selector||null,type:fm.type||'text'};}
-  function run(){
-    Object.keys(o).forEach(function(field){
-      var val=o[field];if(!val)return;
-      var info=getInfo(field);if(!info.selector)return;
-      var el=document.querySelector(info.selector);if(!el)return;
-      if(info.type==='image'||el.tagName==='IMG'){el.src=val;}
-      else{el.textContent=val;}
-    });
-  }
-  if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',run);}else{run();}
-})();
-</script>`;
-}
+import { buildUtmSwapScript } from '@/lib/utm-swap-script';
 
 export const dynamic = 'force-dynamic';
 
@@ -62,7 +35,7 @@ export async function GET(
   try {
     const [{ data: rules }, { data: pageRow }] = await Promise.all([
       db.from('personalization_rules')
-        .select('match_param,match_value,is_fallback,overrides_json')
+        .select('match_param,match_value,is_fallback,overrides_json,conditions_json')
         .eq('page_id', page.id)
         .order('is_fallback', { ascending: true })
         .order('priority', { ascending: true }),
