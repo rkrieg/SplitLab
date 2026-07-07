@@ -119,6 +119,7 @@ function buildAiPickerScript(activeField: string): string {
       field: activeField,
       selector: selector,
       preview: preview,
+      src: isImg ? (el.currentSrc || el.src || '') : '',
       elementType: isImg ? 'image' : 'text',
     }, '*');
   }
@@ -210,6 +211,7 @@ function buildHtmlPickerScript(activeField: string): string {
       indexPath: indexPath,
       generatedId: generatedId,
       preview: preview,
+      src: isImg ? (el.currentSrc || el.src || '') : '',
       elementType: isImg ? 'image' : 'text',
     }, '*');
   }
@@ -280,6 +282,7 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
     selector: string;
     type: 'text' | 'image';
     preview: string;
+    src?: string; // image elements only — the current src URL, used to seed the fallback rule
     indexPath?: string;
     generatedId?: string;
     // Set when re-picking an already-mapped field — the name card is prefilled with
@@ -419,20 +422,20 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
   useEffect(() => {
     function handleMessage(e: MessageEvent) {
       if (!e.data || e.data.type !== 'sl-element-picked') return;
-      const { field, selector, preview, elementType, indexPath, generatedId } = e.data as {
-        field: string; selector: string; preview: string; elementType: 'text' | 'image';
+      const { field, selector, preview, src, elementType, indexPath, generatedId } = e.data as {
+        field: string; selector: string; preview: string; src?: string; elementType: 'text' | 'image';
         indexPath?: string; generatedId?: string;
       };
       if (field === '__new__') {
         setGlobalPickMode(false);
-        setPendingPick({ selector, type: elementType, preview, indexPath, generatedId });
+        setPendingPick({ selector, type: elementType, preview, src, indexPath, generatedId });
         setPendingLabel('');
         setTimeout(() => pendingLabelRef.current?.focus(), 50);
       } else {
         // Re-pick of an existing field: don't save yet — open the name card
         // prefilled with the current label so the user can also rename it.
         setActivePickKey(null);
-        setPendingPick({ selector, type: elementType, preview, indexPath, generatedId, existingKey: field });
+        setPendingPick({ selector, type: elementType, preview, src, indexPath, generatedId, existingKey: field });
         setPendingLabel(fieldsRef.current.find(f => f.key === field)?.label ?? '');
         setTimeout(() => pendingLabelRef.current?.select(), 50);
       }
@@ -456,9 +459,12 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
           ? { ...f, label, selector: pick.selector, type: pick.type, _indexPath: pick.indexPath, _generatedId: pick.generatedId }
           : f
       );
-      const nextRules = pick.type === 'text' && pick.preview
+      // Seed the fallback (Default) rule with current content — text uses the visible
+      // text, images use the element's src URL.
+      const fallbackVal = pick.type === 'image' ? (pick.src ?? '') : pick.preview;
+      const nextRules = fallbackVal
         ? rules.map(r =>
-            r.is_fallback ? { ...r, overrides_json: { ...r.overrides_json, [key]: pick.preview } } : r
+            r.is_fallback ? { ...r, overrides_json: { ...r.overrides_json, [key]: fallbackVal } } : r
           )
         : rules;
 
@@ -497,10 +503,13 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
     };
     const nextFields = [...fields, newField];
 
+    // Seed the fallback (Default) rule with current content — text uses the visible
+    // text, images use the element's src URL.
+    const fallbackVal = pendingPick.type === 'image' ? (pendingPick.src ?? '') : pendingPick.preview;
     let nextRules = rules;
-    if (pendingPick.type === 'text' && pendingPick.preview) {
+    if (fallbackVal) {
       nextRules = rules.map(r =>
-        r.is_fallback ? { ...r, overrides_json: { ...r.overrides_json, [uniqueKey]: pendingPick.preview } } : r
+        r.is_fallback ? { ...r, overrides_json: { ...r.overrides_json, [uniqueKey]: fallbackVal } } : r
       );
     }
 
