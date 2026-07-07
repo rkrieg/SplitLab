@@ -76,7 +76,7 @@ function labelToKey(label: string): string {
 function buildAiPickerScript(activeField: string): string {
   return `
 (function(){
-  if(window.__slPickerActive) return;
+  if(window.__slPickerCleanup) { window.__slPickerCleanup(); }
   window.__slPickerActive = true;
   var activeField = ${JSON.stringify(activeField)};
   var highlighted = null;
@@ -87,13 +87,13 @@ function buildAiPickerScript(activeField: string): string {
     if(el) el.style.outline = '2px solid #3D8BDA';
   }
 
-  document.addEventListener('mouseover', function(e) {
+  function onMouseOver(e) {
     var el = e.target;
     if(el === document.body || el === document.documentElement) return;
     highlight(el);
-  }, true);
+  }
 
-  document.addEventListener('click', function(e) {
+  function onClick(e) {
     e.preventDefault();
     e.stopPropagation();
     var el = e.target;
@@ -121,7 +121,18 @@ function buildAiPickerScript(activeField: string): string {
       preview: preview,
       elementType: isImg ? 'image' : 'text',
     }, '*');
-  }, true);
+  }
+
+  document.addEventListener('mouseover', onMouseOver, true);
+  document.addEventListener('click', onClick, true);
+
+  window.__slPickerCleanup = function() {
+    document.removeEventListener('mouseover', onMouseOver, true);
+    document.removeEventListener('click', onClick, true);
+    if(highlighted) highlighted.style.outline = '';
+    window.__slPickerActive = false;
+    window.__slPickerCleanup = null;
+  };
 
   function generateSelector(el) {
     if(el.id) return '#' + el.id;
@@ -149,7 +160,7 @@ function buildAiPickerScript(activeField: string): string {
 function buildHtmlPickerScript(activeField: string): string {
   return `
 (function(){
-  if(window.__slPickerActive) return;
+  if(window.__slPickerCleanup) { window.__slPickerCleanup(); }
   window.__slPickerActive = true;
   var activeField = ${JSON.stringify(activeField)};
   var highlighted = null;
@@ -160,13 +171,13 @@ function buildHtmlPickerScript(activeField: string): string {
     if(el) el.style.outline = '2px solid #3D8BDA';
   }
 
-  document.addEventListener('mouseover', function(e) {
+  function onMouseOver(e) {
     var el = e.target;
     if(el === document.body || el === document.documentElement) return;
     highlight(el);
-  }, true);
+  }
 
-  document.addEventListener('click', function(e) {
+  function onClick(e) {
     e.preventDefault();
     e.stopPropagation();
     var el = e.target;
@@ -201,7 +212,18 @@ function buildHtmlPickerScript(activeField: string): string {
       preview: preview,
       elementType: isImg ? 'image' : 'text',
     }, '*');
-  }, true);
+  }
+
+  document.addEventListener('mouseover', onMouseOver, true);
+  document.addEventListener('click', onClick, true);
+
+  window.__slPickerCleanup = function() {
+    document.removeEventListener('mouseover', onMouseOver, true);
+    document.removeEventListener('click', onClick, true);
+    if(highlighted) highlighted.style.outline = '';
+    window.__slPickerActive = false;
+    window.__slPickerCleanup = null;
+  };
 
   function getIndexPath(el) {
     var path = [];
@@ -362,7 +384,12 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
 
     doc.querySelectorAll('[data-sl-picker]').forEach(s => s.remove());
     if (doc.body) doc.body.querySelectorAll('*').forEach(el => ((el as HTMLElement).style.outline = ''));
-    try { (iframeRef.current.contentWindow as unknown as Record<string, unknown>).__slPickerActive = false; } catch { /* cross-origin */ }
+    try {
+      const win = iframeRef.current.contentWindow as unknown as Record<string, unknown>;
+      const cleanup = win.__slPickerCleanup as (() => void) | undefined;
+      if (typeof cleanup === 'function') cleanup();
+      win.__slPickerActive = false;
+    } catch { /* cross-origin */ }
 
     const pickField = activePickKey ?? (globalPickMode ? '__new__' : null);
     if (!pickField) return;
@@ -443,10 +470,12 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
     setFieldPreviews(prev => ({ ...prev, [uniqueKey]: pendingPick.preview }));
     setRules(nextRules);
 
-    await saveSelectors(nextFields, nextRules);
-
+    // Clear before the await so a stray/duplicate picker message arriving
+    // mid-save can't repopulate a pending card for a field that's already committed.
     setPendingPick(null);
     setPendingLabel('');
+
+    await saveSelectors(nextFields, nextRules);
   }
 
   function removeField(key: string) {
