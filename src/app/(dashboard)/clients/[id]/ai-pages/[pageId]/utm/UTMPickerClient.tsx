@@ -60,7 +60,6 @@ interface Props {
   clientId: string;
   page: PageInfo;
   initialRules: UTMRule[];
-  appUrl: string;
 }
 
 const UTM_PARAMS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'];
@@ -243,7 +242,7 @@ function buildHtmlPickerScript(activeField: string): string {
 `;
 }
 
-export default function UTMPickerClient({ clientId, page, initialRules, appUrl }: Props) {
+export default function UTMPickerClient({ clientId, page, initialRules }: Props) {
   const router = useRouter();
   const sidebarCollapsed = useSidebarCollapsed();
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -349,10 +348,12 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
   const rulesRef = useRef(rules);
   useEffect(() => { rulesRef.current = rules; }, [rules]);
 
+  // Previews always use the internal preview route — it renders the same HTML with
+  // the same UTM swap script, works regardless of publish state, and stays same-origin
+  // so the element picker can reach into the iframe. is_published only governs the
+  // public production URL, never previews.
   const previewSrc = utmSimulator !== 'default'
-    ? (page.slug
-      ? `${appUrl}/pages/${page.slug}?${utmSimulator}`
-      : `/api/pages/${page.id}/preview?${utmSimulator}`)
+    ? `/api/pages/${page.id}/preview?${utmSimulator}`
     : `/api/pages/${page.id}/preview`;
 
   // Reset loaded state and force-show after 6s whenever the preview URL changes
@@ -1032,7 +1033,7 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
                         ) : f.selector && savedFieldKeys.has(f.key) ? (
                           <>
                             <span className="flex items-center gap-1 group-hover/pill:hidden"><Check size={11} /> Mapped</span>
-                            <span className="hidden items-center gap-1 group-hover/pill:flex"><MousePointer2 size={11} /> Pick Again</span>
+                            <span className="hidden items-center gap-1 group-hover/pill:flex">Pick Again</span>
                           </>
                         ) : (
                           <><MousePointer2 size={11} /> Pick</>
@@ -1163,9 +1164,7 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
                     <div className="flex items-center justify-end gap-1">
                       {ruleQueryString(rule) && (
                         <a
-                          href={page.slug
-                            ? `${appUrl}/pages/${page.slug}?${ruleQueryString(rule)}`
-                            : `/api/pages/${page.id}/preview?${ruleQueryString(rule)}`}
+                          href={`/api/pages/${page.id}/preview?${ruleQueryString(rule)}`}
                           target="_blank" rel="noopener noreferrer"
                           className="p-1 text-slate-400 hover:text-indigo-500 rounded transition-colors inline-flex"
                           title="Preview this variant"
@@ -1215,7 +1214,7 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
                       <p className="text-xs text-slate-400 mt-0.5">Current page content (auto-detected)</p>
                     </div>
                     <a
-                      href={page.slug ? `${appUrl}/pages/${page.slug}` : `/api/pages/${page.id}/preview`}
+                      href={`/api/pages/${page.id}/preview`}
                       target="_blank" rel="noopener noreferrer"
                       className="p-1 text-slate-400 hover:text-indigo-500 inline-flex"
                       title="Preview default"
