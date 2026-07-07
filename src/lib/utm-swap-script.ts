@@ -51,11 +51,22 @@ export function buildUtmSwapScript(rules: PersonalizationRuleRow[], fieldSelecto
       var val=o[field];if(!val)return;
       var info=getInfo(field);if(!info.selector)return;
       var el=document.querySelector(info.selector);if(!el)return;
-      if(info.type==='image'||el.tagName==='IMG'){el.src=val;}
+      if(info.type==='image'||el.tagName==='IMG'){
+        el.src=val;
+        el.removeAttribute('srcset');
+        // Lazy-load scripts (e.g. Unbounce) re-set src from data-src-* after we run,
+        // so point those at our URL too — whatever they install later is still ours.
+        for(var ai=el.attributes.length-1;ai>=0;ai--){
+          var an=el.attributes[ai].name;
+          if(an.indexOf('data-src')===0){el.setAttribute(an,val);}
+        }
+      }
       else{el.textContent=val;}
     });
   }
   if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',run);}else{run();}
+  // Safety net: re-apply after full load in case a page script overwrote us in between
+  window.addEventListener('load',run);
 })();
 </script>`;
 }
