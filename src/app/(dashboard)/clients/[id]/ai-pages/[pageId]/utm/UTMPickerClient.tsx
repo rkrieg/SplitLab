@@ -313,6 +313,10 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
   const [suggestLoading, setSuggestLoading] = useState<{ idx: number; fieldKey: string } | null>(null);
   const [suggestPopover, setSuggestPopover] = useState<{ idx: number; fieldKey: string; suggestions: string[] } | null>(null);
   const [deletingRuleIdx, setDeletingRuleIdx] = useState<number | null>(null);
+  const [removingFieldKey, setRemovingFieldKey] = useState<string | null>(null);
+  // Field whose re-pick (new selector for an already-mapped field) is mid-save —
+  // its pill shows a spinner instead of the green "Mapped" until the API confirms.
+  const [repickingFieldKey, setRepickingFieldKey] = useState<string | null>(null);
   const [mapSectionOpen, setMapSectionOpen] = useState(false);
   const [rulesSectionOpen, setRulesSectionOpen] = useState(false);
   const [ruleModalIdx, setRuleModalIdx] = useState<number | null>(null);
@@ -438,7 +442,13 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
         setRules(nextRules);
         setActivePickKey(null);
 
-        saveSelectors(nextFields, nextRules);
+        setRepickingFieldKey(field);
+        saveSelectors(nextFields, nextRules).then(ok => {
+          setRepickingFieldKey(null);
+          // A failed save means the new selector isn't persisted — drop the green
+          // "Mapped" badge so the pill honestly shows the field needs re-saving.
+          if (!ok) setSavedFieldKeys(prev => { const n = new Set(prev); n.delete(field); return n; });
+        });
       }
     }
     window.addEventListener('message', handleMessage);
@@ -492,7 +502,11 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
     }
   }
 
-  function removeField(key: string) {
+  // Keeps the row visible (with a spinner on the X) until the API confirms the
+  // deletion — only then is it removed from local state, so a failed save
+  // doesn't silently drop a mapping that's still saved server-side.
+  async function removeField(key: string) {
+    if (removingFieldKey) return;
     const nextFields = fields.filter(f => f.key !== key);
     const nextRules = rules.map(r => {
       const o = { ...r.overrides_json };
@@ -500,12 +514,17 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
       return { ...r, overrides_json: o };
     });
 
-    setFields(nextFields);
-    setFieldPreviews(prev => { const n = { ...prev }; delete n[key]; return n; });
+    setRemovingFieldKey(key);
     if (activePickKey === key) setActivePickKey(null);
-    setRules(nextRules);
 
-    saveSelectors(nextFields, nextRules);
+    const ok = await saveSelectors(nextFields, nextRules);
+
+    setRemovingFieldKey(null);
+    if (ok) {
+      setFields(nextFields);
+      setFieldPreviews(prev => { const n = { ...prev }; delete n[key]; return n; });
+      setRules(nextRules);
+    }
   }
 
   async function saveSelectors(overrideFields?: Field[], overrideRules?: Rule[]): Promise<boolean> {
@@ -891,11 +910,6 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
                         {fields.filter(f => f.selector && savedFieldKeys.has(f.key)).length}/{fields.length} mapped
                       </span>
                     )}
-                    {savingSelectors && (
-                      <span className="flex items-center gap-1 text-[10px] font-medium text-amber-500 dark:text-amber-400">
-                        <Loader2 size={10} className="animate-spin" /> Saving…
-                      </span>
-                    )}
                   </h3>
                   <p className="text-xs text-slate-400 mt-0.5">
                     Pick the elements on the page you want to personalize.
@@ -943,16 +957,21 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
                     <div className="flex items-center gap-1 flex-shrink-0">
                       <button
                         onClick={() => setActivePickKey(activePickKey === f.key ? null : f.key)}
+                        disabled={repickingFieldKey === f.key}
                         className={cn(
                           'flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg font-medium transition-colors',
-                          activePickKey === f.key
-                            ? 'bg-indigo-600 text-white'
-                            : f.selector && savedFieldKeys.has(f.key)
-                              ? 'bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400 border border-green-200 dark:border-green-700/40'
-                              : 'bg-slate-100 dark:bg-slate-800 text-slate-500 hover:bg-indigo-50 hover:text-indigo-500'
+                          repickingFieldKey === f.key
+                            ? 'bg-amber-50 dark:bg-amber-900/10 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-700/40'
+                            : activePickKey === f.key
+                              ? 'bg-indigo-600 text-white'
+                              : f.selector && savedFieldKeys.has(f.key)
+                                ? 'bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400 border border-green-200 dark:border-green-700/40'
+                                : 'bg-slate-100 dark:bg-slate-800 text-slate-500 hover:bg-indigo-50 hover:text-indigo-500'
                         )}
                       >
-                        {activePickKey === f.key ? (
+                        {repickingFieldKey === f.key ? (
+                          <><Loader2 size={11} className="animate-spin" /> Saving…</>
+                        ) : activePickKey === f.key ? (
                           <><MousePointer2 size={11} /> Picking…</>
                         ) : f.selector && savedFieldKeys.has(f.key) ? (
                           <><Check size={11} /> Mapped</>
@@ -962,10 +981,13 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
                       </button>
                       <button
                         onClick={() => removeField(f.key)}
-                        className="p-1 text-slate-400 hover:text-red-400 transition-colors"
+                        disabled={removingFieldKey !== null}
+                        className="p-1 text-slate-400 hover:text-red-400 transition-colors disabled:opacity-60"
                         title="Remove field"
                       >
-                        <X size={12} />
+                        {removingFieldKey === f.key
+                          ? <Loader2 size={12} className="animate-spin text-amber-500" />
+                          : <X size={12} />}
                       </button>
                     </div>
                   </div>
