@@ -43,16 +43,6 @@ const UTM_PARAMS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', '
 // Toggle to bring back the AI headline-suggestion button (currently hidden per product request)
 const AI_SUGGEST_ENABLED = false;
 
-// Default fields for AI pages — pre-seeded with data-field selectors
-const AI_DEFAULT_FIELDS: Field[] = [
-  { key: 'headline',   label: 'Headline',   selector: '[data-field="hero.headline"]',        type: 'text'  },
-  { key: 'subhead',    label: 'Subhead',    selector: '[data-field="hero.subhead"]',          type: 'text'  },
-  { key: 'cta_text',   label: 'CTA Text',   selector: '[data-field="hero.cta_text"]',         type: 'text'  },
-  { key: 'hero_image', label: 'Hero Image', selector: '[data-field="hero.background_image"]', type: 'image' },
-];
-
-const AI_DEFAULT_KEYS = new Set(AI_DEFAULT_FIELDS.map(f => f.key));
-
 function labelToKey(label: string): string {
   return label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 50) || 'field';
 }
@@ -221,9 +211,7 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
         type: val.type,
       }));
     }
-    // AI pages: seed with default fields so user sees them without picking
-    if (!isHtmlPage) return AI_DEFAULT_FIELDS;
-    // HTML pages: start empty — user picks everything
+    // Both AI and HTML pages: start empty — user picks everything via dynamic mapping
     return [];
   });
 
@@ -747,7 +735,6 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
               )}
 
               {fields.map(f => {
-                const isDefault = page.isAiPage && AI_DEFAULT_KEYS.has(f.key);
                 return (
                   <div key={f.key} className="flex items-center gap-2 p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950">
                     <div className="flex-1 min-w-0">
@@ -783,16 +770,13 @@ export default function UTMPickerClient({ clientId, page, initialRules, appUrl }
                           <><MousePointer2 size={11} /> Pick</>
                         )}
                       </button>
-                      {/* Default AI fields cannot be removed; all HTML fields can */}
-                      {!isDefault && (
-                        <button
-                          onClick={() => removeField(f.key)}
-                          className="p-1 text-slate-400 hover:text-red-400 transition-colors"
-                          title="Remove field"
-                        >
-                          <X size={12} />
-                        </button>
-                      )}
+                      <button
+                        onClick={() => removeField(f.key)}
+                        className="p-1 text-slate-400 hover:text-red-400 transition-colors"
+                        title="Remove field"
+                      >
+                        <X size={12} />
+                      </button>
                     </div>
                   </div>
                 );

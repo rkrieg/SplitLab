@@ -46,13 +46,12 @@ export async function GET(
 (function(){
   var rules=${JSON.stringify(rules)};
   var fs=${JSON.stringify(fieldSelectors || {})};
-  var df={headline:'[data-field="hero.headline"]',subhead:'[data-field="hero.subhead"]',cta_text:'[data-field="hero.cta_text"]',hero_image:'[data-field="hero.background_image"]'};
   var params=new URLSearchParams(window.location.search);
   var match=rules.find(function(r){return !r.is_fallback&&params.get(r.match_param)===r.match_value;});
   var active=match||rules.find(function(r){return r.is_fallback;});
   if(!active||!active.overrides_json)return;
   var o=active.overrides_json;
-  function getInfo(field){var fm=fs[field];if(!fm)return{selector:df[field]||null,type:'text'};if(typeof fm==='string')return{selector:fm,type:'text'};return{selector:fm.selector||null,type:fm.type||'text'};}
+  function getInfo(field){var fm=fs[field];if(!fm)return{selector:null,type:'text'};if(typeof fm==='string')return{selector:fm,type:'text'};return{selector:fm.selector||null,type:fm.type||'text'};}
   function run(){
     Object.keys(o).forEach(function(field){
       var val=o[field];if(!val)return;
