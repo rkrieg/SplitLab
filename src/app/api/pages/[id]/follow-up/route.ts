@@ -470,11 +470,15 @@ export async function POST(
         html_content: finalHtml.length < 500_000 ? finalHtml : null,
         conversation_json: updatedConversation,
         updated_at: new Date().toISOString(),
+        // HTML was rewritten by the AI — old UTM selectors can't be trusted, so
+        // clear mappings (and rules below), same as manual HTML edits do
+        field_selectors_json: null,
       };
       if (parsed.type === 'structural' && finalSchemaJson) {
         updatePayload.schema_json = finalSchemaJson;
       }
 
+      await db.from('personalization_rules').delete().eq('page_id', params.id);
       await db.from('pages').update(updatePayload).eq('id', params.id);
 
       const doneEvent: SSEEvent = {

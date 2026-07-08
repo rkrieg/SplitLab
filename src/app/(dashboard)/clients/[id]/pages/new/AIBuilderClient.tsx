@@ -236,6 +236,37 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
   const imageInputRef = useRef<HTMLInputElement>(null);
 
   // Restore state from pre-created page
+  // Editing wipes UTM mappings/rules server-side — warn once when edit mode starts,
+  // in a toast the user can dismiss (stays up until they do)
+  useEffect(() => {
+    if (phase !== 'editing') return;
+    toast(
+      t => (
+        <div className="flex items-start gap-2">
+          <span className="text-xs">
+            <strong>Editing this page clears its UTM field mappings and personalization rules.</strong>{' '}
+            After any chat or on-page edit you will need to re-map elements and re-create rules in UTM Personalization.
+          </span>
+          <button
+            onClick={() => toast.dismiss(t.id)}
+            className="flex-shrink-0 text-amber-700/60 hover:text-amber-800 font-bold"
+            aria-label="Dismiss"
+          >
+            ✕
+          </button>
+        </div>
+      ),
+      {
+        id: 'utm-wipe-warning',
+        icon: '⚠️',
+        duration: Infinity,
+        style: { background: 'rgb(254 243 199)', color: 'rgb(146 64 14)', maxWidth: '420px' },
+      }
+    );
+    return () => toast.dismiss('utm-wipe-warning');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase]);
+
   useEffect(() => {
     if (!initialPage) return;
     setPageId(initialPage.id);
