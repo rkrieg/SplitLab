@@ -41,6 +41,7 @@ The "thinking" field must always be FIRST in the object so it appears immediatel
 - Each section in the sections array must have "name" (matching an existing <!-- SL:name --> marker) and "html" (the complete updated HTML for that element — do NOT include the <!-- SL: --> markers themselves in the html value)
 - For CSS variable / color / font changes: patch the "head" section only (update :root variables). Do NOT touch individual section HTML for pure CSS variable changes.
 - For text, layout, or content changes within a section: return that section's complete updated outer element
+- To REMOVE a section entirely: return it with an empty html string, e.g. {"name":"mid-cta","html":""} — the section will be deleted from the page
 - Return ALL variables in :root when patching head — never return a partial :root block
 - Do NOT use type:patch if the HTML sent to you has no <!-- SL: --> markers — use type:style instead
 
@@ -144,7 +145,8 @@ function applyPatch(
 ): string {
   let html = originalHtml;
   for (const section of sections) {
-    if (!section.name || !section.html) continue;
+    // html may legitimately be an empty string — that means delete the section
+    if (!section.name || typeof section.html !== 'string') continue;
     // Sanitize name to prevent regex injection
     const safeName = section.name.replace(/[^a-zA-Z0-9_-]/g, '');
     if (!safeName) continue;
@@ -153,9 +155,12 @@ function applyPatch(
       'g',
     );
     if (markerRe.test(html)) {
+      const newContent = section.html.trim();
       html = html.replace(
         markerRe,
-        `<!-- SL:${safeName} -->\n${section.html.trim()}\n<!-- /SL:${safeName} -->`,
+        newContent
+          ? `<!-- SL:${safeName} -->\n${newContent}\n<!-- /SL:${safeName} -->`
+          : '',
       );
     }
     // If no marker found, skip silently — old page or wrong section name
@@ -452,9 +457,16 @@ export async function POST(
       // Strip STATUS comments before upload
       finalHtml = finalHtml.replace(/<!--\s*STATUS:[^>]*-->/g, '');
 
+      // No-op guard: if nothing actually changed (e.g. a patch matched no markers),
+      // skip the upload and the UTM mapping/rule wipe — don't destroy the user's
+      // personalization work for an edit that had no effect
+      const htmlUnchanged = finalHtml === html;
+
       // Upload
       const storagePath = fileNameFromUrl(page.html_url);
-      const htmlUrl = await uploadHtml(storagePath, finalHtml);
+      const htmlUrl = htmlUnchanged && page.html_url
+        ? page.html_url
+        : await uploadHtml(storagePath, finalHtml);
 
       // Save conversation
       const userEntry: Record<string, unknown> = { role: 'user', content: prompt };
@@ -466,15 +478,23 @@ export async function POST(
       ];
 
       const updatePayload: Record<string, unknown> = {
-        html_url: htmlUrl,
-        html_content: finalHtml.length < 500_000 ? finalHtml : null,
         conversation_json: updatedConversation,
         updated_at: new Date().toISOString(),
       };
+      if (!htmlUnchanged) {
+        updatePayload.html_url = htmlUrl;
+        updatePayload.html_content = finalHtml.length < 500_000 ? finalHtml : null;
+        // HTML was rewritten by the AI — old UTM selectors can't be trusted, so
+        // clear mappings (and rules below), same as manual HTML edits do
+        updatePayload.field_selectors_json = null;
+      }
       if (parsed.type === 'structural' && finalSchemaJson) {
         updatePayload.schema_json = finalSchemaJson;
       }
 
+      if (!htmlUnchanged) {
+        await db.from('personalization_rules').delete().eq('page_id', params.id);
+      }
       await db.from('pages').update(updatePayload).eq('id', params.id);
 
       const doneEvent: SSEEvent = {
