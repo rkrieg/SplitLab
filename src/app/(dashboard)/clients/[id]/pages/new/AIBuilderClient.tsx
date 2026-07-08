@@ -165,7 +165,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
             <ArrowRight size={15} />
           </a>
           <button
-            onClick={() => router.push(backPath ?? `/clients/${clientId}/pages`)}
+            onClick={() => { router.push(backPath ?? `/clients/${clientId}/pages`); router.refresh(); }}
             className="mt-4 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
           >
             ← Back to pages
@@ -877,7 +877,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
         {/* Panel header */}
         <div className="flex items-center gap-2 px-4 h-12 border-b border-slate-200 dark:border-slate-800 flex-shrink-0">
           <button
-            onClick={() => router.push(backPath ?? `/clients/${clientId}/pages`)}
+            onClick={() => { router.push(backPath ?? `/clients/${clientId}/pages`); router.refresh(); }}
             className="flex items-center gap-1 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors"
           >
             <ChevronLeft size={14} />
