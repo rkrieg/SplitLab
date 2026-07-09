@@ -416,7 +416,7 @@ function buildTrackerScript(appUrl: string): string {
       }
       var sp = new URLSearchParams(window.location.search);
       var utm = {};
-      ["utm_source","utm_medium","utm_content","utm_term","utm_campaign","gclid"].forEach(function(k) {
+      ["utm_source","utm_medium","utm_content","utm_term","utm_campaign","gclid","fbclid"].forEach(function(k) {
         if (sp.get(k)) utm[k] = sp.get(k);
       });
       var payload = JSON.stringify({
@@ -456,7 +456,7 @@ function buildTrackerScript(appUrl: string): string {
 
     var sp = new URLSearchParams(window.location.search);
     var utm = {};
-    ["utm_source","utm_medium","utm_content","utm_term","utm_campaign","gclid"].forEach(function(key) {
+    ["utm_source","utm_medium","utm_content","utm_term","utm_campaign","gclid","fbclid"].forEach(function(key) {
       if (sp.get(key)) utm[key] = sp.get(key);
     });
     var payload = JSON.stringify({

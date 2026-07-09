@@ -42,6 +42,7 @@ export const SYSTEM_FIELDS = [
   { key: 'utm_content',   label: 'UTM Content' },
   { key: 'utm_term',      label: 'UTM Term' },
   { key: 'gclid',         label: 'GCLID' },
+  { key: 'fbclid',        label: 'FBCLID' },
 ];
 
 function authHeaders(accessToken: string) {
@@ -219,6 +220,7 @@ function resolveSystemField(
     utm_content?: string | null;
     utm_term?: string | null;
     gclid?: string | null;
+    fbclid?: string | null;
   }
 ): string | null {
   switch (key) {
@@ -231,6 +233,7 @@ function resolveSystemField(
     case 'utm_content':  return systemData.utm_content ?? null;
     case 'utm_term':     return systemData.utm_term ?? null;
     case 'gclid':        return systemData.gclid ?? null;
+    case 'fbclid':       return systemData.fbclid ?? null;
     default:             return null;
   }
 }
@@ -251,6 +254,7 @@ export async function syncLeadToHubSpot(params: {
     utm_content?: string | null;
     utm_term?: string | null;
     gclid?: string | null;
+    fbclid?: string | null;
   };
 }): Promise<SyncResult> {
   const { accessToken, fieldMappings, formFields, systemData, portalId, formGuid } = params;
