@@ -87,7 +87,7 @@ export function buildTrackingSnippet(
     try {
       var sp = new URLSearchParams(window.location.search);
       var utm = {};
-      ['utm_source','utm_medium','utm_content','utm_term','utm_campaign','gclid'].forEach(function(k) {
+      ['utm_source','utm_medium','utm_content','utm_term','utm_campaign','gclid','fbclid'].forEach(function(k) {
         if (sp.get(k)) utm[k] = sp.get(k);
       });
       var payload = JSON.stringify({

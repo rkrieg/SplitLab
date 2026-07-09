@@ -69,6 +69,7 @@ export async function POST(request: NextRequest) {
     utm_term:     utm?.utm_term || null,
     utm_campaign: utm?.utm_campaign || null,
     gclid:        utm?.gclid || null,
+    fbclid:       utm?.fbclid || null,
     form_fields:  formFields || {},
   });
 
@@ -96,6 +97,7 @@ export async function POST(request: NextRequest) {
       utm_content:  utm?.utm_content ?? null,
       utm_term:     utm?.utm_term ?? null,
       gclid:        utm?.gclid ?? null,
+      fbclid:       utm?.fbclid ?? null,
     },
   }));
 
@@ -117,6 +119,7 @@ interface DispatchParams {
     utm_content?: string | null;
     utm_term?: string | null;
     gclid?: string | null;
+    fbclid?: string | null;
   };
 }
 

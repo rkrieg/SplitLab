@@ -136,6 +136,7 @@ interface FormLead {
   utm_term: string | null;
   utm_campaign: string | null;
   gclid: string | null;
+  fbclid: string | null;
   form_fields: Record<string, string>;
   test_variants: { name: string } | null;
 }
@@ -1642,7 +1643,7 @@ export default function AnalyticsClient({
 
   function exportFormLeadsCsv() {
     if (formLeads.length === 0) return;
-    const fixedCols = ['submitted_at', 'variant', 'visitor_hash', 'ip_address', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'gclid', 'user_agent'];
+    const fixedCols = ['submitted_at', 'variant', 'visitor_hash', 'ip_address', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'gclid', 'fbclid', 'user_agent'];
     const allCols = [...fixedCols, ...formLeadsFieldKeys];
     const rows = formLeads.map((l) => allCols.map((col) => {
       if (col === 'variant') return l.test_variants?.name ?? '';
@@ -3482,6 +3483,7 @@ export default function AnalyticsClient({
                                 { key: 'utm_content', label: 'UTM Content' },
                                 { key: 'utm_term', label: 'UTM Term' },
                                 { key: 'gclid', label: 'GCLID' },
+                                { key: 'fbclid', label: 'FBCLID' },
                               ].map(sf => (
                                 <div key={sf.key} className="grid grid-cols-[1fr_32px_1fr_32px] gap-2 items-center mb-2">
                                   <div className="flex items-center gap-2">
