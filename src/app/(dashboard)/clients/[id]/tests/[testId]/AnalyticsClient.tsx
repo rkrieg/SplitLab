@@ -507,7 +507,10 @@ export default function AnalyticsClient({
     variants: VariantScan[];
   }
   const [scanResults, setScanResults] = useState<ScanResults | null>(null);
-  const [scanning, setScanning] = useState(false);
+  // Variant IDs with a scan currently in progress — busy state is per-variant so
+  // scanning one variant never locks the Setup button on the others.
+  const [scanningVariantIds, setScanningVariantIds] = useState<string[]>([]);
+  const scanning = scanningVariantIds.length > 0;
   const [scannedVariantName, setScannedVariantName] = useState<string | null>(
     null,
   );
@@ -1726,12 +1729,21 @@ export default function AnalyticsClient({
     const scanUrl = buildVariantUrl(variantId, { sl_scan: "1" });
     const scanStartedAt = Date.now();
     window.open(scanUrl, "_blank");
-    setScanning(true);
-    setScanResults(null);
-    setScannedVariantName(targetVariant.name);
+    // Keep existing scan results visible — the timestamp check below swaps in fresh ones
+    setScanningVariantIds((prev) =>
+      prev.includes(variantId) ? prev : [...prev, variantId],
+    );
     setTab("settings");
 
-    // Poll every 2 s for up to 2 minutes to catch stepper form steps
+    // Clears busy state for THIS variant only, so parallel scans don't clobber each other
+    const finishScan = () => {
+      setScanningVariantIds((prev) => prev.filter((id) => id !== variantId));
+      setScannedVariantName(targetVariant.name);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+
+    // Poll every 2 s for up to 2 minutes to catch stepper form steps.
+    // The button re-enables on the FIRST fresh result; polling continues silently.
     let attempts = 0;
     const maxAttempts = 60;
     let foundFirst = false;
@@ -1748,7 +1760,10 @@ export default function AnalyticsClient({
           const resultTime = new Date(variantEntry.scanned_at).getTime();
           if (resultTime > scanStartedAt) {
             setScanResults(data.scan_results);
-            foundFirst = true;
+            if (!foundFirst) {
+              foundFirst = true;
+              finishScan();
+            }
           }
         }
       } catch {
@@ -1757,34 +1772,33 @@ export default function AnalyticsClient({
       attempts++;
       if (attempts < maxAttempts) {
         setTimeout(poll, 2000);
-      } else {
-        setScanning(false);
-        // Only show error if we never got any results
-        if (!foundFirst) {
-          toast.error(
-            "Scan timed out. Make sure tracker.js is installed and the page loaded.",
-          );
-        }
+      } else if (!foundFirst) {
+        finishScan();
+        toast.error(
+          "Scan timed out. Make sure tracker.js is installed and the page loaded.",
+        );
       }
     };
     setTimeout(poll, 3000);
 
-    // Re-fetch when user switches back to this tab after clicking "Finish Scanning"
+    // Re-fetch each time the user switches back to this tab; keeps retrying
+    // until fresh results are found (finishScan removes the listener).
     const onVisibilityChange = async () => {
-      if (document.hidden) return;
+      if (document.hidden || foundFirst) return;
       try {
         const res = await fetch(`/api/tests/${test.id}/scan-results`);
         if (!res.ok) return;
         const data = await res.json();
         const variantEntry = data.scan_results?.variants?.find(
-          (v: { variant_id: string }) => v.variant_id === variantId,
+          (v: { variant_id: string; scanned_at: string }) =>
+            v.variant_id === variantId,
         );
-        if (variantEntry) {
+        if (variantEntry && new Date(variantEntry.scanned_at).getTime() > scanStartedAt) {
           setScanResults(data.scan_results);
-          setScanning(false);
+          foundFirst = true;
+          finishScan();
         }
       } catch { /* ignore */ }
-      document.removeEventListener('visibilitychange', onVisibilityChange);
     };
     document.addEventListener('visibilitychange', onVisibilityChange);
   }
@@ -2568,7 +2582,7 @@ export default function AnalyticsClient({
                                     }
                                     scanPage(stat.variant.id);
                                   }}
-                                  disabled={scanning}
+                                  disabled={scanningVariantIds.includes(stat.variant.id)}
                                   className={`flex items-center justify-center gap-1 w-full px-2 py-1 rounded-lg text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap ${
                                     scanResults !== null && !scanResults.variants.some(vs => vs.variant_id === stat.variant.id)
                                       ? "bg-red-600 border border-red-500 text-white hover:bg-red-700 shadow-md shadow-red-500/50 animate-pulse"
@@ -3986,7 +4000,9 @@ export default function AnalyticsClient({
                     {scanning || scannedVariantName ? (
                       <p className="text-slate-600 dark:text-slate-500 text-xs mt-0.5">
                         {scanning
-                          ? `Scanning ${scannedVariantName}…`
+                          ? `Scanning ${scanningVariantIds
+                              .map((id) => variants.find((v) => v.id === id)?.name ?? "variant")
+                              .join(", ")}…`
                           : `Last scanned: ${scannedVariantName}`}
                       </p>
                     ) : (
