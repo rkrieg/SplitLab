@@ -23,6 +23,11 @@ export function buildTrackingSnippet(
 
   return `<script>
 (function() {
+  // Flag checked by tracker.js: when the inline snippet owns this page,
+  // a hardcoded tracker.js tag must stay dormant or every lead/pageview
+  // would be reported twice. Set before anything else so it is visible
+  // regardless of script order.
+  window.__SL_SNIPPET__ = true;
   var _SL = {
     testId: ${JSON.stringify(testId)},
     variantId: ${JSON.stringify(variantId)},
@@ -478,6 +483,36 @@ export function buildTrackingSnippet(
   window.SplitLab = _SL;
 })();
 </script>`;
+}
+
+/**
+ * Remove SplitLab tracker.js <script> tags baked into variant HTML.
+ * HTML variants get the inline tracking snippet injected at serve time,
+ * so a hardcoded tracker.js on the same page double-reports every
+ * lead/pageview/conversion (and can attribute them to a stale variant
+ * from localStorage). Only strips tags whose src points at a SplitLab
+ * host — client/third-party scripts are never touched.
+ */
+export function stripSplitLabTrackerTags(html: string, appUrl: string): string {
+  let appHost = '';
+  try { appHost = new URL(appUrl).host; } catch { /* keep '' */ }
+
+  return html.replace(
+    /<script\b[^>]*\bsrc\s*=\s*["']([^"']+)["'][^>]*>\s*<\/script>/gi,
+    (tag, src: string) => {
+      if (!/\/tracker\.js([?#]|$)/i.test(src)) return tag;
+      try {
+        const host = new URL(src, appUrl).host;
+        const isSplitLabHost =
+          host === appHost ||
+          /(^|\.)trysplitlab\.com$/i.test(host) ||
+          /^localhost(:\d+)?$/.test(host) ||
+          /^127\.0\.0\.1(:\d+)?$/.test(host);
+        if (isSplitLabHost) return '';
+      } catch { /* unparseable src — leave the tag alone */ }
+      return tag;
+    }
+  );
 }
 
 /**

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/supabase-server';
 import { downloadHtml } from '@/lib/storage';
-import { buildTrackingSnippet, buildScanScript, injectIntoHtml, buildScriptTag } from '@/lib/tracking';
+import { buildTrackingSnippet, buildScanScript, injectIntoHtml, buildScriptTag, stripSplitLabTrackerTags } from '@/lib/tracking';
 import { assignVariant } from '@/lib/utils';
 import { getPlanDetails } from '@/lib/plans';
 
@@ -319,6 +319,9 @@ ${proxyTrackingSnippet}
         headers: { 'Content-Type': 'text/html' },
       });
     }
+
+    // 6c. Hardcoded tracker.js tags double-report against the injected snippet
+    html = stripSplitLabTrackerTags(html, APP_URL);
 
     // 7. Fetch workspace scripts + page-scoped scripts + test-scoped scripts
     const [{ data: workspaceScripts }, { data: pageScripts }, { data: testScripts }] = await Promise.all([
