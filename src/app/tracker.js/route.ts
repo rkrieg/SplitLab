@@ -744,10 +744,17 @@ function buildTrackerScript(appUrl: string): string {
     if (!_ctx) return;
     store(_ctx);
 
-    // Fire pageview immediately
-    track("pageview");
-
-    function onReady() {
+    function start() {
+      // SplitLab-served pages get an inline snippet injected at body end that
+      // does everything this script does. If it's present, stand down entirely
+      // (all capture paths no-op once _ctx is null) or leads/pageviews double.
+      // Checked at DOM-ready because the snippet runs after a hardcoded
+      // tracker.js tag placed earlier in the body.
+      if (window.__SL_SNIPPET__) {
+        _ctx = null;
+        return;
+      }
+      track("pageview");
       wireUrlGoals();
       wireAutoConversions();
       registerFormFields();
@@ -755,9 +762,9 @@ function buildTrackerScript(appUrl: string): string {
       patchNetworkForJsSubmit();
     }
     if (document.readyState === "loading") {
-      document.addEventListener("DOMContentLoaded", onReady);
+      document.addEventListener("DOMContentLoaded", start);
     } else {
-      onReady();
+      start();
     }
   }
 
