@@ -22,6 +22,11 @@ export async function GET(
   // write a row when a configured goal's element was actually clicked, so this toggle
   // is mostly empty for those tests, and that's expected, not a bug.
   const includeUntracked = searchParams.get('all') === '1';
+  // "hits=1" returns every goal-matching event, i.e. the raw "Goal Hits" count.
+  // Default dedupes to one row per visitor per variant, matching the Overview
+  // tab's "Conversions" column (a visitor who re-triggers the same goal several
+  // times still only counts once there).
+  const showAllHits = searchParams.get('hits') === '1';
 
   // Goals currently configured for this test — same set the analytics route
   // uses to decide what counts toward "Conversions"/"Goal Hits".
@@ -33,7 +38,7 @@ export async function GET(
 
   let query = db
     .from('events')
-    .select('id, visitor_hash, goal_id, metadata, created_at, test_variants(name), conversion_goals(name)')
+    .select('id, variant_id, visitor_hash, goal_id, metadata, created_at, test_variants(name), conversion_goals(name)')
     .eq('test_id', params.id)
     .eq('type', 'conversion');
 
@@ -47,7 +52,24 @@ export async function GET(
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  const leads = (events || []).map((e) => ({
+  let rows = events || [];
+
+  if (!showAllHits) {
+    // Rows are already ordered newest-first, so the first occurrence kept per
+    // key is the visitor's most recent hit on that goal/variant. Untracked
+    // rows (goal_id not a currently-enabled goal) are never conversions, so
+    // they're always shown in full rather than deduped.
+    const seen = new Set<string>();
+    rows = rows.filter((e) => {
+      if (e.goal_id == null || !goalIds.has(e.goal_id)) return true;
+      const key = `${e.variant_id}:${e.visitor_hash}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
+  const leads = rows.map((e) => ({
     ...e,
     goalEnabled: e.goal_id != null && goalIds.has(e.goal_id),
   }));

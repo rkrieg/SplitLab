@@ -416,6 +416,7 @@ export default function AnalyticsClient({
   const [leads, setLeads] = useState<Lead[]>([]);
   const [leadsLoading, setLeadsLoading] = useState(false);
   const [showUntrackedLeads, setShowUntrackedLeads] = useState(false);
+  const [showAllGoalHits, setShowAllGoalHits] = useState(false);
 
   // Form Leads
   const [formLeads, setFormLeads] = useState<FormLead[]>([]);
@@ -1300,10 +1301,14 @@ export default function AnalyticsClient({
 
   // ─── Leads ───────────────────────────────────────────────────────────
 
-  const fetchLeads = useCallback(async (all: boolean) => {
+  const fetchLeads = useCallback(async (all: boolean, hits: boolean) => {
     setLeadsLoading(true);
     try {
-      const res = await fetch(`/api/tests/${test.id}/leads${all ? "?all=1" : ""}`);
+      const qs = new URLSearchParams();
+      if (all) qs.set("all", "1");
+      if (hits) qs.set("hits", "1");
+      const query = qs.toString();
+      const res = await fetch(`/api/tests/${test.id}/leads${query ? `?${query}` : ""}`);
       if (!res.ok) throw new Error();
       const data = await res.json();
       setLeads(data.leads || []);
@@ -1315,8 +1320,8 @@ export default function AnalyticsClient({
   }, [test.id]);
 
   useEffect(() => {
-    if (tab === "leads") fetchLeads(showUntrackedLeads);
-  }, [tab, showUntrackedLeads, fetchLeads]);
+    if (tab === "leads") fetchLeads(showUntrackedLeads, showAllGoalHits);
+  }, [tab, showUntrackedLeads, showAllGoalHits, fetchLeads]);
 
   // ─── Form Leads ──────────────────────────────────────────────────────
 
@@ -3175,15 +3180,27 @@ export default function AnalyticsClient({
               <p className="text-sm text-slate-500 dark:text-slate-400">
                 {leadsLoading
                   ? "Loading…"
-                  : `${leads.length} conversion${leads.length !== 1 ? "s" : ""}`}
+                  : `${leads.length} ${showAllGoalHits ? "goal hit" : "conversion"}${leads.length !== 1 ? "s" : ""}`}
                 {!showUntrackedLeads && (
                   <span className="text-slate-400 dark:text-slate-500">
                     {" "}
-                    · goal-tracked only, matches Overview counts
+                    · matches Overview&apos;s {showAllGoalHits ? "Goal Hits" : "Conversions"} column
                   </span>
                 )}
               </p>
               <div className="flex items-center gap-3">
+                <label
+                  className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 cursor-pointer select-none"
+                  title={`By default each visitor only counts once per variant here, even if they triggered a goal several times — this matches the Overview tab's "Conversions" column. Turn this on to see every individual goal-triggering event instead (matches the "Goal Hits" column).`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={showAllGoalHits}
+                    onChange={(e) => setShowAllGoalHits(e.target.checked)}
+                    className="rounded border-slate-300 dark:border-slate-600"
+                  />
+                  Show all goal hits
+                </label>
                 <label
                   className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 cursor-pointer select-none"
                   title="Raw, un-matched clicks/submits. Mostly relevant for redirect variants with tracker.js installed on the destination page — that script logs every interaction by default. Hosted page variants only log an event when a configured goal is actually triggered, so this list is often empty for them even after clicks happen."
@@ -3197,7 +3214,7 @@ export default function AnalyticsClient({
                   Show untracked events
                 </label>
                 <button
-                  onClick={() => fetchLeads(showUntrackedLeads)}
+                  onClick={() => fetchLeads(showUntrackedLeads, showAllGoalHits)}
                   className="btn-secondary text-xs"
                 >
                   <RefreshCw
