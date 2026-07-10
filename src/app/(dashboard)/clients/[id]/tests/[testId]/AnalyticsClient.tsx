@@ -2570,10 +2570,10 @@ export default function AnalyticsClient({
                                   disabled={scanning}
                                   className={`flex items-center justify-center gap-1 w-full px-2 py-1 rounded-lg text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap ${
                                     scanResults !== null && !scanResults.variants.some(vs => vs.variant_id === stat.variant.id)
-                                      ? "bg-amber-500 border border-amber-400 text-white hover:bg-amber-600 shadow-sm shadow-amber-500/30"
-                                      : "bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 hover:bg-indigo-500/20"
+                                      ? "bg-red-600 border border-red-500 text-white hover:bg-red-700 shadow-md shadow-red-500/50 animate-pulse"
+                                      : "bg-green-500/10 border border-green-500/30 text-green-500 dark:text-green-400 hover:bg-green-500/20"
                                   }`}
-                                  title={scanResults !== null && !scanResults.variants.some(vs => vs.variant_id === stat.variant.id) ? "This variant has never been scanned — click to detect trackable elements" : "Set up goal or event tracking"}
+                                  title={scanResults !== null && !scanResults.variants.some(vs => vs.variant_id === stat.variant.id) ? "No goal tracking set up — conversions are NOT being recorded for this variant. Click to set it up now." : "Goal tracking set up — click to manage"}
                                 >
                                   <ScanLine size={11} />
                                   Setup Goal Tracking
