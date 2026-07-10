@@ -30,37 +30,110 @@ export function buildTrackingSnippet(
     apiUrl: ${JSON.stringify(appUrl)},
     goals: ${goalsJson},
     _sent: {},
-    track: function(type, goalId) {
-      var key = type + ':' + (goalId || '');
-      if (this._sent[key]) return;
-      this._sent[key] = true;
-      var self = this;
-      var payload = JSON.stringify({
-        testId: self.testId,
-        variantId: self.variantId,
-        goalId: goalId || null,
-        visitorHash: self.visitorHash,
-        type: type
-      });
+    send: function(payload) {
       if (navigator.sendBeacon) {
         try {
           var blob = new Blob([payload], { type: 'text/plain' });
-          navigator.sendBeacon(self.apiUrl + '/api/event', blob);
+          navigator.sendBeacon(this.apiUrl + '/api/event', blob);
           return;
         } catch(e) {}
       }
-      fetch(self.apiUrl + '/api/event', {
+      fetch(this.apiUrl + '/api/event', {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
         body: payload,
         keepalive: true
       }).catch(function() {});
+    },
+    track: function(type, goalId) {
+      var key = type + ':' + (goalId || '');
+      if (this._sent[key]) return;
+      this._sent[key] = true;
+      this.send(JSON.stringify({
+        testId: this.testId,
+        variantId: this.variantId,
+        goalId: goalId || null,
+        visitorHash: this.visitorHash,
+        type: type
+      }));
     }
   };
 
+  var _isScan = new URLSearchParams(window.location.search).get('sl_scan') === '1';
+
+  // ─── Cross-page context persistence ─────────────────────────────────────────
+  // Persist this test's context (variant, visitor, url_reached goals) keyed per
+  // test, so a later SplitLab-served page on the SAME origin can fire this
+  // test's URL goals after a full page navigation (e.g. /offer -> /booking).
+  // localStorage is per-origin: this does NOT work across different domains or
+  // subdomains (Calendly etc.) — that needs tracker.js on the destination plus
+  // sl_vid link params, which is not implemented yet.
+  var CTX_KEY = 'sl_ctx';
+  var CTX_TTL = 90 * 24 * 60 * 60 * 1000; // 90 days, matches sl_visitor cookie
+
+  function loadCtxMap() {
+    try {
+      var m = JSON.parse(localStorage.getItem(CTX_KEY) || '{}') || {};
+      var now = Date.now();
+      var changed = false;
+      for (var k in m) {
+        if (!m[k] || !m[k].ts || now - m[k].ts > CTX_TTL) { delete m[k]; changed = true; }
+      }
+      if (changed) localStorage.setItem(CTX_KEY, JSON.stringify(m));
+      return m;
+    } catch(e) { return {}; }
+  }
+
+  function saveCtx() {
+    try {
+      var m = loadCtxMap();
+      m[_SL.testId] = {
+        vid: _SL.variantId,
+        vh: _SL.visitorHash,
+        ts: Date.now(),
+        urlGoals: _SL.goals
+          .filter(function(g) { return g.type === 'url_reached' && g.urlPattern; })
+          .map(function(g) { return { id: g.id, p: g.urlPattern }; })
+      };
+      localStorage.setItem(CTX_KEY, JSON.stringify(m));
+    } catch(e) {}
+  }
+
+  // Fire conversions for OTHER tests' saved url_reached goals that match this
+  // page's URL — attributed to the variant/visitor stored when the visitor saw
+  // that test. Own-test goals are handled inline by checkUrlGoals().
+  var _sentStored = {};
+  function checkStoredUrlGoals() {
+    if (_isScan) return;
+    var m = loadCtxMap();
+    var url = window.location.href;
+    var pathname = window.location.pathname + window.location.search;
+    for (var tid in m) {
+      if (tid === _SL.testId) continue;
+      var ctx = m[tid];
+      (ctx.urlGoals || []).forEach(function(g) {
+        if (_sentStored[g.id]) return;
+        try {
+          var pattern = new RegExp(g.p, 'i');
+          if (pattern.test(url) || pattern.test(pathname)) {
+            _sentStored[g.id] = true;
+            _SL.send(JSON.stringify({
+              testId: tid,
+              variantId: ctx.vid,
+              goalId: g.id,
+              visitorHash: ctx.vh,
+              type: 'conversion'
+            }));
+          }
+        } catch(e) {}
+      });
+    }
+  }
+
   // Auto-track pageview (skip on scan requests — sl_scan=1 means dashboard goal setup)
-  if (new URLSearchParams(window.location.search).get('sl_scan') !== '1') {
+  if (!_isScan) {
     _SL.track('pageview');
+    saveCtx();
   }
 
   // ─── Form lead capture helpers ──────────────────────────────────────────────
@@ -191,16 +264,20 @@ export function buildTrackingSnippet(
 
   function initGoals() {
     var urlGoals = _SL.goals.filter(function(g) { return g.type === 'url_reached'; });
-    if (urlGoals.length > 0) {
-      checkUrlGoals();
-      function wrapHistory(method) {
-        var orig = history[method];
-        history[method] = function() { orig.apply(this, arguments); checkUrlGoals(); };
-      }
-      try { wrapHistory('pushState'); wrapHistory('replaceState'); } catch(e) {}
-      window.addEventListener('popstate', function() { checkUrlGoals(); });
-      window.addEventListener('hashchange', function() { checkUrlGoals(); });
+    // Check both this test's URL goals and other tests' goals saved in
+    // localStorage (cross-page attribution after a full navigation)
+    function checkAllUrlGoals() {
+      if (urlGoals.length > 0) checkUrlGoals();
+      checkStoredUrlGoals();
     }
+    checkAllUrlGoals();
+    function wrapHistory(method) {
+      var orig = history[method];
+      history[method] = function() { orig.apply(this, arguments); checkAllUrlGoals(); };
+    }
+    try { wrapHistory('pushState'); wrapHistory('replaceState'); } catch(e) {}
+    window.addEventListener('popstate', function() { checkAllUrlGoals(); });
+    window.addEventListener('hashchange', function() { checkAllUrlGoals(); });
 
     // Resolve an id:/text:/legacy-CSS selector to a list of DOM elements
     function resolveElements(selector, type) {

@@ -2052,7 +2052,8 @@ export default function AnalyticsClient({
                   {/* No domain configured — show the test URL for real traffic */}
                   {(() => {
                     const nameSlug = test.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-                    const testUrl = `${appUrl}/${nameSlug}/${test.id}`;
+                    // Append url_path so url_reached goal patterns (e.g. "/booking") match on preview URLs too
+                    const testUrl = `${appUrl}/${nameSlug}/${test.id}${test.url_path === '/' ? '' : test.url_path}`;
                     return (
                       <>
                         <div className="flex items-center gap-2">
@@ -3928,11 +3929,11 @@ export default function AnalyticsClient({
                         {trackerComplete ? (
                           <p className="text-green-500/70 text-xs mt-0.5">Tracker detected on all variants</p>
                         ) : (
-                          <div className="flex items-center gap-1.5 rounded-lg bg-amber-500/10 border border-amber-500/30 px-2.5 py-1.5 text-xs text-amber-600 dark:text-amber-300 mt-1">
-                            <Info size={12} className="flex-shrink-0" />
+                          <div className="flex items-center gap-1.5 rounded-lg bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 px-2.5 py-1.5 text-xs text-amber-800 dark:text-amber-300 mt-1">
+                            <Info size={12} className="flex-shrink-0 text-amber-700 dark:text-amber-300" />
                             <span>
                               Paste before{" "}
-                              <code className="font-mono">&lt;/body&gt;</code> on your
+                              <code className="font-mono text-amber-900 dark:text-amber-200">&lt;/body&gt;</code> on your
                               external landing page (redirect mode only)
                             </span>
                           </div>
@@ -3967,29 +3968,29 @@ export default function AnalyticsClient({
 
             {/* Set Up Goal Conversion Tracking */}
             {anyTrackerMissing && (
-              <div className="flex items-start gap-2 rounded-lg bg-amber-500/10 border border-amber-500/30 px-4 py-3 text-sm text-amber-400">
-                <AlertTriangle size={14} className="flex-shrink-0 mt-0.5" />
+              <div className="flex items-start gap-2 rounded-lg bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 px-4 py-3 text-sm text-amber-800 dark:text-amber-300">
+                <AlertTriangle size={14} className="flex-shrink-0 mt-0.5 text-amber-700 dark:text-amber-400" />
                 <span>Some variants are missing the tracker snippet — conversions may not be recorded for those variants until it is installed.</span>
               </div>
             )}
-            <div className="card overflow-hidden ring-2 ring-indigo-400/60 border-indigo-400/50">
-              <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700 bg-indigo-500/10">
+            <div className="card overflow-hidden ring-2 ring-indigo-300 dark:ring-indigo-400/60 border-indigo-200 dark:border-indigo-400/50">
+              <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700 bg-indigo-50 dark:bg-indigo-500/10">
                 <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-lg bg-indigo-500/30 flex items-center justify-center flex-shrink-0">
-                    <ScanLine size={18} className="text-indigo-300" />
+                  <div className="w-9 h-9 rounded-lg bg-indigo-100 dark:bg-indigo-500/30 flex items-center justify-center flex-shrink-0">
+                    <ScanLine size={18} className="text-indigo-600 dark:text-indigo-300" />
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="font-semibold text-slate-800 dark:text-slate-100 text-sm">
                       Set Up Goal Conversion Tracking
                     </p>
                     {scanning || scannedVariantName ? (
-                      <p className="text-slate-500 text-xs mt-0.5">
+                      <p className="text-slate-600 dark:text-slate-500 text-xs mt-0.5">
                         {scanning
                           ? `Scanning ${scannedVariantName}…`
                           : `Last scanned: ${scannedVariantName}`}
                       </p>
                     ) : (
-                      <p className="text-slate-400 text-xs mt-0.5">
+                      <p className="text-slate-600 dark:text-slate-400 text-xs mt-0.5">
                         Scan your page to detect buttons &amp; forms — then pick which ones count as a conversion.
                       </p>
                     )}
@@ -3999,17 +4000,17 @@ export default function AnalyticsClient({
 
               <div className="px-5 py-4">
                 {!scanning && !scanResults && (
-                  <div className="flex items-start gap-3 rounded-lg bg-indigo-500/15 border border-indigo-400/30 px-4 py-3">
-                    <Info size={14} className="text-indigo-300 flex-shrink-0 mt-0.5" />
+                  <div className="flex items-start gap-3 rounded-lg bg-indigo-50 dark:bg-indigo-500/15 border border-indigo-200 dark:border-indigo-400/30 px-4 py-3">
+                    <Info size={14} className="text-indigo-600 dark:text-indigo-300 flex-shrink-0 mt-0.5" />
                     <div>
-                      <p className="text-sm font-medium text-indigo-200">How to set up goals</p>
-                      <p className="text-xs text-slate-300 mt-1">Go to the <span className="font-medium text-white">Overview tab</span>, find a variant row, and click <span className="font-medium text-white">&ldquo;Setup Goal Tracking&rdquo;</span> to scan that page for trackable elements. Once scanned, you can turn any button or form into a conversion goal right here.</p>
+                      <p className="text-sm font-medium text-indigo-900 dark:text-indigo-200">How to set up goals</p>
+                      <p className="text-xs text-slate-700 dark:text-slate-300 mt-1">Go to the <span className="font-medium text-slate-900 dark:text-white">Overview tab</span>, find a variant row, and click <span className="font-medium text-slate-900 dark:text-white">&ldquo;Setup Goal Tracking&rdquo;</span> to scan that page for trackable elements. Once scanned, you can turn any button or form into a conversion goal right here.</p>
                     </div>
                   </div>
                 )}
 
                 {scanning && (
-                  <div className="flex items-center gap-2 rounded-lg bg-amber-500/10 border border-amber-500/30 px-3 py-2.5 text-xs text-amber-300 font-medium">
+                  <div className="flex items-center gap-2 rounded-lg bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 px-3 py-2.5 text-xs text-amber-800 dark:text-amber-300 font-medium">
                     <RefreshCw size={13} className="animate-spin flex-shrink-0" />
                     Page opened — waiting for scan results…
                   </div>
@@ -4023,7 +4024,7 @@ export default function AnalyticsClient({
                       {/* Variant tabs */}
                       {scanResults.variants.length > 1 && (
                         <div className="mb-4">
-                          <p className="text-xs text-slate-400 mb-2">Switch variants to set goals per page:</p>
+                          <p className="text-xs text-slate-600 dark:text-slate-400 mb-2">Switch variants to set goals per page:</p>
                           <div className="flex gap-0 border-b border-slate-200 dark:border-slate-700 -mx-5 px-5 overflow-x-auto">
                             {scanResults.variants.map((vs) => (
                               <button
@@ -4032,12 +4033,12 @@ export default function AnalyticsClient({
                                 onClick={() => setScanTab(vs.variant_id)}
                                 className={`px-4 py-2 text-xs font-medium border-b-2 transition-colors whitespace-nowrap flex items-center gap-1.5 ${
                                   vs.variant_id === activeId
-                                    ? "border-indigo-500 text-indigo-400"
-                                    : "border-transparent text-slate-500 hover:text-slate-300"
+                                    ? "border-indigo-500 text-indigo-700 dark:text-indigo-400"
+                                    : "border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
                                 }`}
                               >
                                 {vs.variant_name}
-                                <span className={`text-xs ${vs.variant_id === activeId ? "text-indigo-400/60" : "text-slate-600"}`}>
+                                <span className={`text-xs ${vs.variant_id === activeId ? "text-indigo-500/70 dark:text-indigo-400/60" : "text-slate-400 dark:text-slate-600"}`}>
                                   {vs.elements.length}
                                 </span>
                               </button>
@@ -4101,20 +4102,20 @@ export default function AnalyticsClient({
                                   >
                                     <div className="flex items-center gap-2 min-w-0">
                                       {alreadyAdded
-                                        ? <CheckCircle2 size={13} className="text-green-400 flex-shrink-0" />
+                                        ? <CheckCircle2 size={13} className="text-green-600 dark:text-green-400 flex-shrink-0" />
                                         : icon}
-                                      <span className={`text-sm truncate ${alreadyAdded ? "text-green-300 font-medium" : "text-slate-700 dark:text-slate-300"}`}>
+                                      <span className={`text-sm truncate ${alreadyAdded ? "text-green-700 dark:text-green-300 font-medium" : "text-slate-700 dark:text-slate-300"}`}>
                                         {label}
                                       </span>
                                       {el.id && (
-                                        <span className="text-slate-400 font-mono text-xs flex-shrink-0">
+                                        <span className="text-slate-500 dark:text-slate-400 font-mono text-xs flex-shrink-0">
                                           #{el.id}
                                         </span>
                                       )}
                                       {alreadyAdded ? (
-                                        <span className="text-xs bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded font-medium flex-shrink-0">Goal</span>
+                                        <span className="text-xs bg-green-100 dark:bg-green-500/20 text-green-700 dark:text-green-400 px-1.5 py-0.5 rounded font-medium flex-shrink-0">Goal</span>
                                       ) : (
-                                        <span className="text-slate-400 text-xs flex-shrink-0 capitalize">
+                                        <span className="text-slate-500 dark:text-slate-400 text-xs flex-shrink-0 capitalize">
                                           {el.type.replace("_", " ")}
                                         </span>
                                       )}
@@ -4123,7 +4124,7 @@ export default function AnalyticsClient({
                                       <button
                                         type="button"
                                         onClick={() => removeGoalBySelector(el, activeId)}
-                                        className="flex-shrink-0 flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-colors"
+                                        className="flex-shrink-0 flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg border border-red-300 dark:border-red-500/30 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors"
                                       >
                                         <X size={11} /> Remove
                                       </button>
@@ -4131,7 +4132,7 @@ export default function AnalyticsClient({
                                       <button
                                         type="button"
                                         onClick={() => enableAsGoal(el, activeId)}
-                                        className="flex-shrink-0 text-xs px-2.5 py-1 rounded-lg border border-indigo-400/60 text-indigo-300 bg-indigo-500/15 hover:bg-indigo-500/30 font-medium transition-colors"
+                                        className="flex-shrink-0 text-xs px-2.5 py-1 rounded-lg border border-indigo-300 dark:border-indigo-400/60 text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-500/15 hover:bg-indigo-100 dark:hover:bg-indigo-500/30 font-medium transition-colors"
                                       >
                                         + Goal
                                       </button>
@@ -4149,8 +4150,8 @@ export default function AnalyticsClient({
               </div>
             </div>
 
-            {/* Conversion Goals — hidden for now; uncomment to re-enable */}
-            {false && (
+            {/* Conversion Goals */}
+            {(
               <div className="card overflow-hidden">
                 <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700">
                   <div className="flex items-center justify-between">
@@ -4165,14 +4166,15 @@ export default function AnalyticsClient({
                           {
                             id: "",
                             name: "",
-                            type: "form_submit",
+                            // Manual goal creation is URL Reached only — click/form goals come from the scan flow
+                            type: "url_reached",
                             selector: "",
                             url_pattern: "",
                             is_primary: editGoals.length === 0,
                           },
                         ])
                       }
-                      className="text-indigo-400 hover:text-indigo-300 text-sm"
+                      className="text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300 text-sm font-medium"
                     >
                       + Add Goal
                     </button>
@@ -4200,25 +4202,15 @@ export default function AnalyticsClient({
                           placeholder="Goal name"
                           required
                         />
+                        {/* Type locked: only URL Reached goals are created manually; the single option still shows scan-created goals' real type */}
                         <select
                           value={g.type}
-                          onChange={(e) => {
-                            const c = [...editGoals];
-                            c[i] = {
-                              ...c[i],
-                              type: e.target.value,
-                              selector: "",
-                              url_pattern: "",
-                            };
-                            setEditGoals(c);
-                          }}
-                          className="input-base w-36"
+                          disabled
+                          className="input-base w-36 opacity-70 cursor-not-allowed"
                         >
-                          {GOAL_TYPES.map((t) => (
-                            <option key={t.value} value={t.value}>
-                              {t.label}
-                            </option>
-                          ))}
+                          <option value={g.type}>
+                            {GOAL_TYPES.find((t) => t.value === g.type)?.label || g.type}
+                          </option>
                         </select>
                         <button
                           type="button"
@@ -4292,10 +4284,10 @@ export default function AnalyticsClient({
                 <h3 className="font-medium text-slate-800 dark:text-slate-200">
                   Page-Specific Head Scripts
                 </h3>
-                <div className="flex items-start gap-2 rounded-lg bg-amber-500/10 border border-amber-500/30 px-3 py-2.5 text-xs text-amber-600 dark:text-amber-300 mt-2">
-                  <Info size={13} className="mt-0.5 flex-shrink-0" />
+                <div className="flex items-start gap-2 rounded-lg bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 px-3 py-2.5 text-xs text-amber-800 dark:text-amber-300 mt-2">
+                  <Info size={13} className="mt-0.5 flex-shrink-0 text-amber-700 dark:text-amber-300" />
                   <span>
-                    Injected into the <code className="font-mono">&lt;head&gt;</code> of this test&apos;s HTML pages only — not hosted URLs (Lovable,
+                    Injected into the <code className="font-mono text-amber-900 dark:text-amber-200">&lt;head&gt;</code> of this test&apos;s HTML pages only — not hosted URLs (Lovable,
                     Replit, site builders, etc.). For third-party scripts (GTM,
                     Pixel, etc.), add them directly to your site.
                   </span>
