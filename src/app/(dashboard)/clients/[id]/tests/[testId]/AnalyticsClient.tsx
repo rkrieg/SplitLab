@@ -2360,6 +2360,28 @@ export default function AnalyticsClient({
               </div>
             )}
 
+            {(test.conversion_goals?.length ?? 0) === 0 && (
+              <div className="flex items-start gap-3 rounded-xl p-4 border bg-indigo-500/10 border-indigo-500/30">
+                <ScanLine size={16} className="flex-shrink-0 mt-0.5 text-indigo-400" />
+                <div className="flex-1 min-w-0">
+                  <p className="font-medium text-sm text-indigo-400">
+                    No conversion goals set up yet — nothing is counted as a conversion
+                  </p>
+                  <p className="text-slate-500 text-xs mt-0.5">
+                    Click <span className="font-medium text-slate-700 dark:text-slate-300">Setup Goal Tracking</span> next to a variant below to scan its page, or manage goals anytime in the{" "}
+                    <button
+                      type="button"
+                      onClick={() => setTab("settings")}
+                      className="font-medium text-indigo-500 hover:text-indigo-400 underline underline-offset-2"
+                    >
+                      Settings
+                    </button>{" "}
+                    tab.
+                  </p>
+                </div>
+              </div>
+            )}
+
             {winner &&
               winner.confidence !== null &&
               winner.confidence >= 95 && (
@@ -4121,11 +4143,13 @@ export default function AnalyticsClient({
 
               <div className="px-5 py-4">
                 {!scanning && !scanResults && (
-                  <div className="flex items-start gap-3 rounded-lg bg-indigo-50 dark:bg-indigo-500/15 border border-indigo-200 dark:border-indigo-400/30 px-4 py-3">
-                    <Info size={14} className="text-indigo-600 dark:text-indigo-300 flex-shrink-0 mt-0.5" />
+                  <div className="flex items-start gap-3 rounded-xl bg-indigo-50 dark:bg-indigo-500/15 border-2 border-indigo-300 dark:border-indigo-400/50 px-4 py-4">
+                    <div className="w-8 h-8 rounded-lg bg-indigo-200 dark:bg-indigo-500/30 flex items-center justify-center flex-shrink-0">
+                      <Info size={16} className="text-indigo-700 dark:text-indigo-300" />
+                    </div>
                     <div>
-                      <p className="text-sm font-medium text-indigo-900 dark:text-indigo-200">How to set up goals</p>
-                      <p className="text-xs text-slate-700 dark:text-slate-300 mt-1">Go to the <span className="font-medium text-slate-900 dark:text-white">Overview tab</span>, find a variant row, and click <span className="font-medium text-slate-900 dark:text-white">&ldquo;Setup Goal Tracking&rdquo;</span> to scan that page for trackable elements. Once scanned, you can turn any button or form into a conversion goal right here.</p>
+                      <p className="text-sm font-semibold text-indigo-900 dark:text-indigo-200">How to set up goals</p>
+                      <p className="text-sm text-slate-700 dark:text-slate-300 mt-1">Go to the <span className="font-semibold text-slate-900 dark:text-white">Overview tab</span>, find a variant row, and click <span className="font-semibold text-slate-900 dark:text-white">&ldquo;Setup Goal Tracking&rdquo;</span> to scan that page for trackable elements. Once scanned, you can turn any button or form into a conversion goal right here.</p>
                     </div>
                   </div>
                 )}
