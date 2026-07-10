@@ -57,7 +57,7 @@ export async function POST(request: NextRequest) {
     // duplicate under the new dedup key (type|id|text|selector). When this
     // payload refreshes a type, drop that type's legacy rows (no selector).
     let existingElements: VariantScan['elements'] = idx >= 0 ? variantScans[idx].elements : [];
-    const typesRefreshed = new Set(
+    const typesRefreshed = new Set<string>(
       elements.filter((el) => el.selector !== undefined).map((el) => el.type),
     );
     if (typesRefreshed.size > 0) {
