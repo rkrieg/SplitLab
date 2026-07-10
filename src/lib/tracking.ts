@@ -279,7 +279,48 @@ export function buildTrackingSnippet(
     window.addEventListener('popstate', function() { checkAllUrlGoals(); });
     window.addEventListener('hashchange', function() { checkAllUrlGoals(); });
 
-    // Resolve an id:/text:/legacy-CSS selector to a list of DOM elements
+    function cleanText(value) {
+      return (value || '').replace(/\\s+/g, ' ').trim();
+    }
+
+    function fieldKey(field) {
+      var tag = (field.tagName || '').toLowerCase();
+      var type = (field.type || '').toLowerCase();
+      if (type === 'password' || type === 'hidden' || type === 'submit' || type === 'button' || type === 'reset' || type === 'file') return null;
+      var key = cleanText(field.name || field.id || field.getAttribute('placeholder') || field.getAttribute('aria-label') || type || tag);
+      return key ? encodeURIComponent(key.toLowerCase().slice(0, 80)) : null;
+    }
+
+    function formFieldSignature(form) {
+      var seen = {};
+      var fields = [];
+      var inputs = form.querySelectorAll('input, select, textarea');
+      for (var fi = 0; fi < inputs.length; fi++) {
+        var key = fieldKey(inputs[fi]);
+        if (!key || seen[key]) continue;
+        seen[key] = true;
+        fields.push(key);
+      }
+      if (!fields.length) return null;
+      // Sort so field order in the DOM doesn't change the signature
+      fields.sort();
+      // Cap must match tracker.js so signatures compare equal across scripts
+      var sig = fields.join('|');
+      return sig.length > 300 ? sig.slice(0, 300) : sig;
+    }
+
+    function formSubmitText(form) {
+      var submit = form.querySelector("button[type='submit'], input[type='submit'], button:not([type]), [role='button']");
+      return submit ? cleanText(submit.textContent || submit.value || submit.getAttribute('aria-label')).slice(0, 100) : null;
+    }
+
+    // Capped identically to the scanners so selectors compare equal
+    function formName(form) {
+      if (!form || !form.getAttribute) return null;
+      return (form.getAttribute('name') || '').slice(0, 150) || null;
+    }
+
+    // Resolve an id:/name:/text:/fields:/nth:/legacy-CSS selector to a list of DOM elements
     function resolveElements(selector, type) {
       if (!selector) {
         if (type === 'form_submit') return Array.from(document.querySelectorAll('form'));
@@ -289,26 +330,70 @@ export function buildTrackingSnippet(
         var byId = document.getElementById(selector.slice(3));
         return byId ? [byId] : [];
       }
+      if (selector.indexOf('name:') === 0) {
+        var targetName = selector.slice(5);
+        if (type === 'form_submit') {
+          return Array.from(document.querySelectorAll('form')).filter(function(form) {
+            return formName(form) === targetName;
+          });
+        }
+        if (type === 'button_click') {
+          return Array.from(document.querySelectorAll("button, [role='button'], [role='switch'], input[type='submit'], input[type='button'], input[type='checkbox']")).filter(function(el) {
+            return (el.getAttribute('name') || '') === targetName;
+          });
+        }
+        return [];
+      }
       if (selector.indexOf('text:') === 0) {
         var needle = selector.slice(5).toLowerCase();
+        if (type === 'form_submit') {
+          return Array.from(document.querySelectorAll('form')).filter(function(form) {
+            return (formSubmitText(form) || '').toLowerCase() === needle;
+          });
+        }
         var candidates = document.querySelectorAll("button, [role='button'], [role='switch'], input[type='submit'], input[type='button'], input[type='checkbox'], a[href]");
         var matches = [];
         for (var ci = 0; ci < candidates.length; ci++) {
           var c = candidates[ci];
-          var cText = (c.textContent || c.value || c.getAttribute('aria-label') || '').trim().toLowerCase();
+          var cText = (c.textContent || c.value || c.getAttribute('aria-label') || c.getAttribute('name') || '').trim().toLowerCase();
           if (!c.id && cText === needle) matches.push(c);
         }
         return matches;
       }
+      if (selector.indexOf('fields:') === 0 && type === 'form_submit') {
+        var targetFields = selector.slice(7);
+        return Array.from(document.querySelectorAll('form')).filter(function(form) {
+          return formFieldSignature(form) === targetFields;
+        });
+      }
+      if (selector.indexOf('nth:') === 0 && type === 'form_submit') {
+        var nthForms = document.querySelectorAll('form');
+        var nth = parseInt(selector.slice(4), 10);
+        return !isNaN(nth) && nthForms[nth] ? [nthForms[nth]] : [];
+      }
       // Legacy CSS selector (e.g. #my-form, .cta-btn)
-      return Array.from(document.querySelectorAll(selector));
+      try {
+        return Array.from(document.querySelectorAll(selector));
+      } catch(e) { return []; }
     }
+
+    // Pre-collect forms claimed by specific goals so the null-selector catch-all
+    // doesn't attach a second listener to those same elements.
+    var specificFormEls = [];
+    _SL.goals.forEach(function(goal) {
+      if (goal.type === 'form_submit' && goal.selector) {
+        resolveElements(goal.selector, 'form_submit').forEach(function(form) {
+          specificFormEls.push(form);
+        });
+      }
+    });
 
     _SL.goals.forEach(function(goal) {
       if (goal.type === 'url_reached') {
         // handled above
       } else if (goal.type === 'form_submit') {
         resolveElements(goal.selector, 'form_submit').forEach(function(form) {
+          if (!goal.selector && specificFormEls.indexOf(form) !== -1) return;
           form.addEventListener('submit', function(e) {
             var action = form.getAttribute('action') || '';
             if (!action || action === '#') e.preventDefault();
@@ -459,21 +544,189 @@ export function buildScanScript(variantId: string, appUrl: string): string {
     scanBanner.innerHTML = '<span style="font-size:15px">✦</span><span>Detecting events within your page that you can track</span>';
     document.body.appendChild(scanBanner);
   }
+  function cleanText(value) {
+    return (value || '').replace(/\\s+/g, ' ').trim();
+  }
+  function fieldKey(field) {
+    var tag = (field.tagName || '').toLowerCase();
+    var type = (field.type || '').toLowerCase();
+    if (type === 'password' || type === 'hidden' || type === 'submit' || type === 'button' || type === 'reset' || type === 'file') return null;
+    var key = cleanText(field.name || field.id || field.getAttribute('placeholder') || field.getAttribute('aria-label') || type || tag);
+    return key ? encodeURIComponent(key.toLowerCase().slice(0, 80)) : null;
+  }
+  function formFieldSignature(form) {
+    var seen = {};
+    var fields = [];
+    var inputs = form.querySelectorAll('input, select, textarea');
+    for (var fi = 0; fi < inputs.length; fi++) {
+      var key = fieldKey(inputs[fi]);
+      if (!key || seen[key]) continue;
+      seen[key] = true;
+      fields.push(key);
+    }
+    if (!fields.length) return null;
+    // Sort so field order in the DOM doesn't change the signature
+    fields.sort();
+    // Cap must match tracker.js so signatures compare equal across scripts
+    var sig = fields.join('|');
+    return sig.length > 300 ? sig.slice(0, 300) : sig;
+  }
+  function formSubmitText(form) {
+    var submit = form.querySelector("button[type='submit'], input[type='submit'], button:not([type]), [role='button']");
+    return submit ? cleanText(submit.textContent || submit.value || submit.getAttribute('aria-label')).slice(0, 100) : null;
+  }
+  function incrementCount(counts, key) {
+    if (!key) return;
+    counts[key] = (counts[key] || 0) + 1;
+  }
+  // Read id/name via getAttribute: named inputs (e.g. <input name="id">) shadow
+  // form.id / form.name with the element itself instead of the attribute string.
+  // Capped identically to tracker.js so selectors compare equal across scripts.
+  function formId(form) {
+    if (!form || !form.getAttribute) return null;
+    return (form.getAttribute('id') || '').slice(0, 255) || null;
+  }
+  function formName(form) {
+    if (!form || !form.getAttribute) return null;
+    return (form.getAttribute('name') || '').slice(0, 150) || null;
+  }
+  function collectFormSelectorCounts(forms) {
+    var counts = {};
+    for (var ci = 0; ci < forms.length; ci++) {
+      var form = forms[ci];
+      var name = formName(form);
+      incrementCount(counts, name ? 'name:' + name : null);
+      var submitText = formSubmitText(form);
+      incrementCount(counts, submitText ? 'text:' + submitText.toLowerCase() : null);
+      var fields = formFieldSignature(form);
+      incrementCount(counts, fields ? 'fields:' + fields : null);
+    }
+    return counts;
+  }
+  // Selector priority: content-based identity (id/name/submit text/fields) first,
+  // DOM position (nth:) strictly last. Position breaks silently when the DOM changes:
+  // injected popup/chat-widget forms shift the index, SPA mount order varies, and
+  // page edits renumber every form. Content survives reordering; position does not.
+  function formSelector(form, counts, idx) {
+    var fid = formId(form);
+    if (fid) return 'id:' + fid;
+    var name = formName(form);
+    if (name && (!counts || counts['name:' + name] === 1)) return 'name:' + name;
+    var submitText = formSubmitText(form);
+    if (submitText && (!counts || counts['text:' + submitText.toLowerCase()] === 1)) return 'text:' + submitText;
+    var fields = formFieldSignature(form);
+    if (fields && (!counts || counts['fields:' + fields] === 1)) return 'fields:' + fields;
+    return typeof idx === 'number' && idx >= 0 ? 'nth:' + idx : null;
+  }
+  // Display label = form identity, NOT submit-button text (that confuses forms with buttons).
+  // Priority mirrors the selector: id → name → fields → nth → submit text last.
+  function formLabel(form, selector) {
+    var fid = formId(form);
+    if (fid) return ('#' + fid).slice(0, 100);
+    var name = formName(form);
+    if (name) return name.slice(0, 100);
+    if (selector && selector.indexOf('fields:') === 0) {
+      return selector.slice(7).split('|').map(decodeURIComponent).join(', ').slice(0, 100) || null;
+    }
+    if (selector && selector.indexOf('nth:') === 0) {
+      var n = parseInt(selector.slice(4), 10);
+      return !isNaN(n) ? 'Form #' + (n + 1) : 'Form';
+    }
+    var submitText = formSubmitText(form);
+    return submitText ? ('Form (“' + submitText + '”)').slice(0, 100) : 'Form';
+  }
+  function buttonVisibleText(btn) {
+    return cleanText(btn.textContent || btn.value || '').slice(0, 100) || null;
+  }
+  // Buttons: id → visible text → unique name → aria-label (as text:).
+  // No nth: pages have dozens of buttons; chat/cookie widgets inject more and
+  // shift indexes constantly, so position is too fragile to be useful.
+  function buttonSelector(btn, nameCounts) {
+    var bid = (btn.getAttribute('id') || '').slice(0, 255) || null;
+    if (bid) return 'id:' + bid;
+    var text = buttonVisibleText(btn);
+    if (text) return 'text:' + text;
+    var name = (btn.getAttribute('name') || '').slice(0, 150) || null;
+    if (name && (!nameCounts || nameCounts[name] === 1)) return 'name:' + name;
+    var aria = cleanText(btn.getAttribute('aria-label')).slice(0, 100) || null;
+    if (aria) return 'text:' + aria;
+    return null;
+  }
+  function buttonLabel(btn, selector) {
+    var bid = (btn.getAttribute('id') || '').slice(0, 255) || null;
+    if (bid) return ('#' + bid).slice(0, 100);
+    var text = buttonVisibleText(btn);
+    if (text) return text;
+    if (selector && selector.indexOf('name:') === 0) return selector.slice(5);
+    if (selector && selector.indexOf('text:') === 0) return selector.slice(5);
+    return 'Button';
+  }
+  function toggleAssociatedLabel(cb) {
+    var aria = cleanText(cb.getAttribute('aria-label'));
+    if (aria) return aria.slice(0, 100);
+    var name = (cb.getAttribute('name') || '').slice(0, 150) || null;
+    if (name) return name;
+    var cid = (cb.getAttribute('id') || '') || null;
+    if (cid) {
+      var labels = document.querySelectorAll('label[for]');
+      for (var li = 0; li < labels.length; li++) {
+        if (labels[li].htmlFor === cid) {
+          var t = cleanText(labels[li].textContent).slice(0, 100);
+          if (t) return t;
+        }
+      }
+    }
+    var parent = cb.closest ? cb.closest('label') : null;
+    if (parent) {
+      var pt = cleanText(parent.textContent).slice(0, 100);
+      if (pt) return pt;
+    }
+    return null;
+  }
+  // Toggles: id → aria-label (text:) → name (name:) → associated <label> text.
+  // No nth — same reason as buttons.
+  function toggleSelector(cb) {
+    var cid = (cb.getAttribute('id') || '').slice(0, 255) || null;
+    if (cid) return 'id:' + cid;
+    var aria = cleanText(cb.getAttribute('aria-label')).slice(0, 100) || null;
+    if (aria) return 'text:' + aria;
+    var name = (cb.getAttribute('name') || '').slice(0, 150) || null;
+    if (name) return 'name:' + name;
+    var label = toggleAssociatedLabel(cb);
+    return label ? 'text:' + label : null;
+  }
+  function toggleLabel(cb, selector) {
+    var cid = (cb.getAttribute('id') || '').slice(0, 255) || null;
+    if (cid) return ('#' + cid).slice(0, 100);
+    if (selector && selector.indexOf('name:') === 0) return selector.slice(5);
+    if (selector && selector.indexOf('text:') === 0) return selector.slice(5);
+    return toggleAssociatedLabel(cb) || 'Toggle';
+  }
   function runScan() {
     var elements = [];
     var forms = document.querySelectorAll('form');
+    var formCounts = collectFormSelectorCounts(forms);
     for (var i = 0; i < forms.length; i++) {
-      elements.push({ type: 'form', id: forms[i].id || null, text: null });
+      var form = forms[i];
+      var selector = formSelector(form, formCounts, i);
+      elements.push({ type: 'form', id: formId(form), text: formLabel(form, selector), selector: selector });
     }
     var buttons = document.querySelectorAll("button, [role='button'], [role='switch'], input[type='submit'], input[type='button']");
+    var buttonNameCounts = {};
+    for (var bj = 0; bj < buttons.length; bj++) {
+      var bn = (buttons[bj].getAttribute('name') || '').slice(0, 150) || null;
+      if (bn) buttonNameCounts[bn] = (buttonNameCounts[bn] || 0) + 1;
+    }
     for (var j = 0; j < buttons.length; j++) {
       var btn = buttons[j];
-      elements.push({ type: 'button', id: btn.id || null, text: (btn.textContent || btn.value || '').trim().slice(0, 100) || null });
+      var bSel = buttonSelector(btn, buttonNameCounts);
+      elements.push({ type: 'button', id: (btn.getAttribute('id') || '').slice(0, 255) || null, text: buttonLabel(btn, bSel), selector: bSel });
     }
     var checkboxes = document.querySelectorAll("input[type='checkbox']");
     for (var m = 0; m < checkboxes.length; m++) {
       var cb = checkboxes[m];
-      elements.push({ type: 'toggle', id: cb.id || null, text: cb.getAttribute('aria-label') || cb.name || null });
+      var tSel = toggleSelector(cb);
+      elements.push({ type: 'toggle', id: (cb.getAttribute('id') || '').slice(0, 255) || null, text: toggleLabel(cb, tSel), selector: tSel });
     }
     var links = document.querySelectorAll('a');
     for (var k = 0; k < links.length; k++) {

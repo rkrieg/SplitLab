@@ -496,6 +496,7 @@ export default function AnalyticsClient({
     type: string;
     id: string | null;
     text: string | null;
+    selector?: string | null;
   }
   interface VariantScan {
     variant_id: string;
@@ -516,6 +517,85 @@ export default function AnalyticsClient({
   );
   const [scanResultsLoaded, setScanResultsLoaded] = useState(false);
   const [scanTab, setScanTab] = useState<string | null>(null);
+
+  function goalTypeForElement(el: ScanElement) {
+    const goalTypeMap: Record<string, string> = {
+      form: "form_submit",
+      button: "button_click",
+      cta_link: "button_click",
+      link: "button_click",
+      toggle: "button_click",
+      call: "call_click",
+    };
+    return goalTypeMap[el.type] || "button_click";
+  }
+
+  function selectorForElement(el: ScanElement) {
+    // Scanner may set selector: null on purpose (unidentifiable). Trust that —
+    // do NOT invent text: from display labels like "Button" / "Form" / "Toggle".
+    if (typeof el.selector !== "undefined") {
+      if (el.selector) return el.selector;
+      return el.id ? `id:${el.id}` : null;
+    }
+    // Legacy scan rows (no selector field): derive from id/text as before
+    if (el.id) return `id:${el.id}`;
+    if (el.text) return `text:${el.text}`;
+    return null;
+  }
+
+  // Prefer form identity over submit-button text so forms don't look like buttons.
+  function displayLabelForElement(el: ScanElement) {
+    if (el.type === "form") {
+      if (el.id) return `#${el.id}`;
+      const sel = el.selector || "";
+      if (sel.startsWith("name:")) return sel.slice(5);
+      if (sel.startsWith("fields:")) {
+        try {
+          return sel
+            .slice(7)
+            .split("|")
+            .map((p) => decodeURIComponent(p))
+            .join(", ");
+        } catch {
+          return sel.slice(7);
+        }
+      }
+      if (sel.startsWith("nth:")) {
+        const n = parseInt(sel.slice(4), 10);
+        return Number.isFinite(n) ? `Form #${n + 1}` : "Form";
+      }
+      if (sel.startsWith("text:")) return `Form (“${sel.slice(5)}”)`;
+      // Legacy scans stored submit text in el.text — don't quote it like a button
+      if (el.text) {
+        if (el.text.startsWith("#") || el.text.startsWith("Form")) return el.text;
+        return `Form (“${el.text}”)`;
+      }
+      return "Form";
+    }
+    if (el.type === "button" || el.type === "toggle") {
+      if (el.id) return `#${el.id}`;
+      const sel = el.selector || "";
+      if (sel.startsWith("name:")) return sel.slice(5);
+      if (sel.startsWith("text:")) return `"${sel.slice(5)}"`;
+      if (el.text) return el.text.startsWith("#") ? el.text : `"${el.text}"`;
+      return el.type === "toggle" ? "Toggle" : "Button";
+    }
+    if (el.text) return `"${el.text}"`;
+    if (el.id) return `#${el.id}`;
+    return el.type;
+  }
+
+  function goalMatchesElement(goal: Goal, el: ScanElement, variantId: string, exactOnly = false) {
+    // null variant_id = legacy catch-all; treat as matching any variant
+    if (goal.variant_id !== null && goal.variant_id !== variantId) return false;
+    if (goal.type !== goalTypeForElement(el)) return false;
+
+    const selector = selectorForElement(el);
+    if (selector && goal.selector === selector) return true;
+
+    // Existing form goals with a null selector are catch-all form submit goals.
+    return !exactOnly && el.type === "form" && !goal.selector;
+  }
 
   // Computed
   const variants = test.test_variants || [];
@@ -1803,29 +1883,19 @@ export default function AnalyticsClient({
     document.addEventListener('visibilitychange', onVisibilityChange);
   }
 
-  async function enableAsGoal(el: {
-    type: string;
-    id: string | null;
-    text: string | null;
-  }, variantId: string) {
-    const goalTypeMap: Record<string, string> = {
-      form: "form_submit",
-      button: "button_click",
-      cta_link: "button_click",
-      link: "button_click",
-      toggle: "button_click",
-      call: "call_click",
-    };
-    const goalType = goalTypeMap[el.type] || "button_click";
+  async function enableAsGoal(el: ScanElement, variantId: string) {
+    const goalType = goalTypeForElement(el);
+    const selector = selectorForElement(el);
 
-    let selector: string | null = null;
-    if (el.id) {
-      selector = `id:${el.id}`;
-    } else if (el.text) {
-      selector = `text:${el.text}`;
+    // Forms may still use null as catch-all. Buttons/toggles/links need a real
+    // selector — we intentionally skip nth: for them (too fragile), so some
+    // icon-only elements simply can't be uniquely targeted.
+    if (!selector && el.type !== "form") {
+      toast.error("This element can't be uniquely identified (no id, text, or name)");
+      return;
     }
 
-    const label = el.text || el.id || el.type;
+    const label = displayLabelForElement(el);
     const newGoal: Goal = {
       id: "",
       name: label.slice(0, 60),
@@ -1877,20 +1947,19 @@ export default function AnalyticsClient({
     }
   }
 
-  async function removeGoalBySelector(el: {
-    id: string | null;
-    text: string | null;
-  }, variantId: string) {
-    const matchSelector = el.id
-      ? `id:${el.id}`
-      : el.text
-        ? `text:${el.text}`
-        : null;
-    if (!matchSelector) return;
+  async function removeGoalBySelector(el: ScanElement, variantId: string) {
+    const exactMatch = editGoals.find((g) =>
+      goalMatchesElement(g, el, variantId, true),
+    );
+    const fallbackMatch = editGoals.find((g) =>
+      goalMatchesElement(g, el, variantId),
+    );
+    const matchGoal = exactMatch ?? fallbackMatch;
+    if (!matchGoal) return;
 
     const originalGoals = editGoals;
     const updatedGoals = editGoals.filter(
-      (g) => !(g.selector === matchSelector && g.variant_id === variantId),
+      (g) => g !== matchGoal,
     );
     if (updatedGoals.length === originalGoals.length) return; // nothing matched
     setEditGoals(updatedGoals);
@@ -4094,18 +4163,11 @@ export default function AnalyticsClient({
                                     <MousePointerClick size={13} className="text-indigo-400 flex-shrink-0" />
                                   );
 
-                                const label = el.text
-                                  ? `"${el.text}"`
-                                  : el.id
-                                    ? `#${el.id}`
-                                    : el.type;
+                                const label = displayLabelForElement(el);
 
-                                const alreadyAdded = editGoals.some((g) => {
-                                  if (g.variant_id !== activeId) return false;
-                                  if (el.id) return g.selector === `id:${el.id}`;
-                                  if (el.text) return g.selector === `text:${el.text}`;
-                                  return false;
-                                });
+                                const alreadyAdded = editGoals.some((g) =>
+                                  goalMatchesElement(g, el, activeId),
+                                );
 
                                 return (
                                   <div
@@ -4123,7 +4185,7 @@ export default function AnalyticsClient({
                                       <span className={`text-sm truncate ${alreadyAdded ? "text-green-700 dark:text-green-300 font-medium" : "text-slate-700 dark:text-slate-300"}`}>
                                         {label}
                                       </span>
-                                      {el.id && (
+                                      {el.id && label !== `#${el.id}` && (
                                         <span className="text-slate-500 dark:text-slate-400 font-mono text-xs flex-shrink-0">
                                           #{el.id}
                                         </span>

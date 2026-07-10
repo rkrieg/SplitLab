@@ -112,8 +112,11 @@ export async function POST(request: NextRequest) {
       if (goals && goals.length > 0) {
         const metaId = (data.metadata?.id ?? null) as string | null;
         const metaText = (data.metadata?.text ?? null) as string | null;
+        const metaName = (data.metadata?.name ?? null) as string | null;
+        const metaFields = (data.metadata?.fields ?? null) as string | null;
+        const metaNth = data.metadata?.nth ?? null;
 
-        const matched = goals.find(g => {
+        const matchesGoal = (g: { selector: string | null }) => {
           if (!g.selector) return true; // no selector — match all of that type
 
           if (g.selector.startsWith('id:')) {
@@ -121,10 +124,25 @@ export async function POST(request: NextRequest) {
             return metaId === g.selector.slice(3);
           }
 
+          if (g.selector.startsWith('name:')) {
+            return metaName === g.selector.slice(5);
+          }
+
           if (g.selector.startsWith('text:')) {
-            // Text-based: only match elements that have NO id
+            // Text-based: only match elements that have NO id (case-insensitive)
             if (metaId !== null) return false;
-            return metaText === g.selector.slice(5);
+            if (metaText == null) return false;
+            return metaText.toLowerCase() === g.selector.slice(5).toLowerCase();
+          }
+
+          if (g.selector.startsWith('fields:')) {
+            return metaFields === g.selector.slice(7);
+          }
+
+          // Position-based last resort — only matches when the form's current
+          // document index equals the index recorded at scan time
+          if (g.selector.startsWith('nth:')) {
+            return metaNth !== null && String(metaNth) === g.selector.slice(4);
           }
 
           // Legacy CSS ID selector (#hero-cta) — extract and match by id
@@ -134,7 +152,10 @@ export async function POST(request: NextRequest) {
 
           // Other legacy CSS selectors — can't match via tracker.js metadata; skip
           return false;
-        });
+        };
+
+        const matched = goals.find(g => g.selector && matchesGoal(g))
+          ?? goals.find(g => !g.selector && matchesGoal(g));
 
         if (matched) goalId = matched.id;
       }

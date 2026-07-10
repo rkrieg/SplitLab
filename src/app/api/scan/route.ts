@@ -16,6 +16,7 @@ const elementSchema = z.object({
   type: z.enum(['form', 'button', 'call', 'cta_link', 'link', 'toggle']),
   id: z.string().max(255).nullable(),
   text: z.string().max(200).nullable(),
+  selector: z.string().max(500).nullable().optional(),
 });
 
 const schema = z.object({
@@ -50,13 +51,25 @@ export async function POST(request: NextRequest) {
     const existing = test?.scan_results as { variants?: VariantScan[] } | null;
     const variantScans: VariantScan[] = existing?.variants ?? [];
 
-    // Merge incoming elements with existing ones for this variant (dedup by type+id+text)
+    // Merge incoming elements with existing ones for this variant.
     const idx = variantScans.findIndex(v => v.variant_id === vid);
-    const existingElements: VariantScan['elements'] = idx >= 0 ? variantScans[idx].elements : [];
+    // New scans always send a `selector` field. Legacy rows omit it and would
+    // duplicate under the new dedup key (type|id|text|selector). When this
+    // payload refreshes a type, drop that type's legacy rows (no selector).
+    let existingElements: VariantScan['elements'] = idx >= 0 ? variantScans[idx].elements : [];
+    const typesRefreshed = new Set(
+      elements.filter((el) => el.selector !== undefined).map((el) => el.type),
+    );
+    if (typesRefreshed.size > 0) {
+      existingElements = existingElements.filter((el) => {
+        if (!typesRefreshed.has(el.type)) return true;
+        return !!el.selector; // keep prior new-format rows (stepper merge)
+      });
+    }
 
-    const seen = new Set(existingElements.map(e => `${e.type}|${e.id ?? ''}|${e.text ?? ''}`));
+    const seen = new Set(existingElements.map(e => `${e.type}|${e.id ?? ''}|${e.text ?? ''}|${e.selector ?? ''}`));
     for (const el of elements) {
-      const key = `${el.type}|${el.id ?? ''}|${el.text ?? ''}`;
+      const key = `${el.type}|${el.id ?? ''}|${el.text ?? ''}|${el.selector ?? ''}`;
       if (!seen.has(key)) {
         seen.add(key);
         existingElements.push(el);
@@ -97,7 +110,7 @@ interface VariantScan {
   variant_id: string;
   variant_name: string;
   scanned_at: string;
-  elements: { type: string; id: string | null; text: string | null }[];
+  elements: { type: string; id: string | null; text: string | null; selector?: string | null }[];
 }
 
 export async function OPTIONS(request: NextRequest) {
