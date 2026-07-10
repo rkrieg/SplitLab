@@ -184,6 +184,10 @@ export async function GET(request: NextRequest) {
     if (selectedVariant.redirect_url) {
       // Proxy mode: serve iframe wrapper so URL stays on custom domain
       // The SPA runs in its original context inside the iframe
+      // NOTE: url_reached goals are unreliable here — the wrapper URL never
+      // changes as the visitor navigates inside the iframe, and modern browsers
+      // partition third-party iframe storage, so tracker.js inside the iframe
+      // may lose its context. Don't promise URL tracking for proxy variants.
       if (selectedVariant.proxy_mode !== false) {
         // Fetch workspace scripts + page-scoped scripts + test-scoped scripts
         const [{ data: proxyWorkspaceScripts }, { data: proxyPageScripts }, { data: proxyTestScripts }] = await Promise.all([
@@ -259,6 +263,10 @@ ${proxyTrackingSnippet}
       }
 
       // Standard 302 redirect mode
+      // url_reached goals work here IF tracker.js is installed site-wide on the
+      // destination (it persists context to that origin's localStorage). Only
+      // same-domain destinations are supported — cross-domain (Calendly etc.)
+      // would need sl_vid appended to outbound links, which isn't built yet.
       const redirectUrl = new URL(selectedVariant.redirect_url);
       redirectUrl.searchParams.set('sl_vid', selectedVariant.id);
       redirectUrl.searchParams.set('sl_vh', visitorId);
