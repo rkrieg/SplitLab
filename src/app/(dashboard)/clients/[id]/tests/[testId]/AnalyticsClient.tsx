@@ -616,6 +616,26 @@ export default function AnalyticsClient({
         : v.tracking_verified) === false,
   );
 
+  // Dirty-check against the last-saved goals so "Save Goals" only lights up
+  // when there's an actual add/edit/delete pending — not just because the
+  // list happens to be non-empty.
+  const savedGoals = test.conversion_goals || [];
+  const goalsDirty =
+    editGoals.length !== savedGoals.length ||
+    editGoals.some((g, i) => {
+      const saved = savedGoals[i];
+      if (!saved) return true;
+      return (
+        g.id !== saved.id ||
+        g.name !== saved.name ||
+        g.type !== saved.type ||
+        (g.selector || "") !== (saved.selector || "") ||
+        (g.url_pattern || "") !== (saved.url_pattern || "") ||
+        g.is_primary !== saved.is_primary ||
+        (g.variant_id ?? null) !== (saved.variant_id ?? null)
+      );
+    });
+
 
   // ─── Analytics ──────────────────────────────────────────────────────
 
@@ -4375,10 +4395,7 @@ export default function AnalyticsClient({
                       type="submit"
                       loading={savingGoals}
                       size="sm"
-                      disabled={
-                        editGoals.length === 0 &&
-                        (test.conversion_goals?.length ?? 0) === 0
-                      }
+                      disabled={!goalsDirty}
                     >
                       Save Goals
                     </Button>
