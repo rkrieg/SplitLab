@@ -1,0 +1,2924 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Oodles of Leads - Exclusive Contractor Leads</title>
+        <meta name="description" content="Exclusive homeowner leads for contractors. No shared lists, no marketing headaches&mdash;just verified jobs ready to close.">
+        <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@700;800;900&display=swap');
+
+    :root {
+      --purple-dark: #24154f;
+      --purple: #4f3192;
+      --purple-2: #9f6ff2;
+      --purple-soft: #f1ecff;
+      --orange: #ff7308;
+      --orange-dark: #f2671c;
+      --ink: #0d0d16;
+      --muted: #747487;
+      --line: #ece9f4;
+      --white: #ffffff;
+      --shadow: 0 22px 60px rgba(34, 24, 73, 0.16);
+      --radius: 22px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      color: var(--ink);
+      background: #fbfbfe;
+      -webkit-font-smoothing: antialiased;
+      overflow-x: hidden;
+    }
+
+    img,
+    svg {
+      max-width: 100%;
+      display: block;
+    }
+
+    a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    .page {
+      width: 100%;
+      min-height: 100vh;
+      overflow: hidden;
+    }
+
+    .container {
+      width: min(1160px, calc(100% - 48px));
+      margin: 0 auto;
+    }
+
+    .topbar {
+      width: 100%;
+      min-height: 68px;
+      background: var(--white);
+      display: flex;
+      align-items: center;
+      position: relative;
+      z-index: 10;
+      box-shadow: 0 2px 18px rgba(29, 21, 60, 0.05);
+    }
+
+    .topbar-inner {
+      width: min(1120px, calc(100% - 48px));
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+    }
+
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      min-width: 184px;
+      color: #4b4660;
+      font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-weight: 900;
+      letter-spacing: -0.04em;
+      font-size: clamp(22px, 2vw, 30px);
+      white-space: nowrap;
+      line-height: 1;
+    }
+
+    .brand-eyes {
+      position: relative;
+      display: inline-flex;
+      gap: 1px;
+      margin-right: -2px;
+      transform: translateY(1px);
+    }
+
+    .brand-eye {
+      width: 24px;
+      height: 24px;
+      border: 3px solid #4b4660;
+      border-radius: 50%;
+      background: #fff;
+      position: relative;
+      box-shadow: inset 0 0 0 2px #c8b6ff;
+    }
+
+    .brand-eye::after {
+      content: '';
+      position: absolute;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #271b5c;
+      top: 6px;
+      left: 7px;
+    }
+
+    .brand span:last-child {
+      letter-spacing: -0.045em;
+    }
+
+    .nav-points {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: clamp(20px, 4vw, 66px);
+      flex: 1;
+      font-size: 11px;
+      font-weight: 900;
+      letter-spacing: -0.01em;
+      color: #1d192a;
+      text-transform: uppercase;
+    }
+
+    .nav-points span {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      white-space: nowrap;
+    }
+
+    .nav-icon {
+      width: 14px;
+      height: 14px;
+      flex: 0 0 14px;
+      display: block;
+    }
+
+    .phone {
+      text-align: right;
+      white-space: nowrap;
+      color: #332a4b;
+      min-width: 155px;
+    }
+
+    .phone small {
+      display: block;
+      font-size: 10px;
+      color: #8a849e;
+      line-height: 1.1;
+      font-weight: 700;
+    }
+
+    .phone strong {
+      display: block;
+      color: var(--purple-2);
+      font-size: 16px;
+      line-height: 1.25;
+      font-weight: 900;
+    }
+
+    .hero {
+      position: relative;
+      background:
+        radial-gradient(circle at 92% 75%, rgba(255, 115, 8, 0.36) 0 12%, rgba(255, 115, 8, 0.12) 21%, rgba(255, 115, 8, 0) 36%),
+        radial-gradient(circle at 71% 17%, rgba(164, 102, 255, 0.38) 0 16%, rgba(164, 102, 255, 0) 36%),
+        linear-gradient(145deg, #24144e 0%, #34206d 48%, #59379b 100%);
+      color: #fff;
+      padding: 82px 0 0;
+    }
+
+    .hero .container {
+      position: relative;
+      z-index: 2;
+    }
+
+    .hero-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(360px, 510px);
+      align-items: center;
+      gap: clamp(42px, 7vw, 94px);
+      min-height: 532px;
+      padding-bottom: 84px;
+    }
+
+    .rating-pill {
+      width: fit-content;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 20px;
+      background: rgba(255, 255, 255, 0.12);
+      border: 1px solid rgba(255, 255, 255, 0.13);
+      border-radius: 999px;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+      backdrop-filter: blur(10px);
+      margin-bottom: 16px;
+    }
+
+    .google-g {
+      font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-weight: 900;
+      color: #4285f4;
+      background: #fff;
+      width: 17px;
+      height: 17px;
+      display: inline-grid;
+      place-items: center;
+      border-radius: 50%;
+      font-size: 11px;
+    }
+
+    .stars {
+      color: #ffb100;
+      letter-spacing: 1.1px;
+      font-size: 13px;
+      line-height: 1;
+    }
+
+    .rating-pill strong {
+      font-weight: 900;
+      font-size: 17px;
+      line-height: 1;
+    }
+
+    .rating-pill small {
+      color: rgba(255, 255, 255, 0.72);
+      font-weight: 800;
+      font-size: 10px;
+      white-space: nowrap;
+    }
+
+    .hero h1 {
+      margin: 0;
+      font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-weight: 900;
+      letter-spacing: -0.04em;
+      font-size: clamp(50px, 5.25vw, 72px);
+      line-height: 1.02;
+      max-width: 660px;
+    }
+
+    .accent-orange {
+      color: var(--orange);
+    }
+
+    .accent-purple {
+      color: var(--purple-2);
+    }
+
+    .hero-copy {
+      margin: 24px 0 0;
+      max-width: 580px;
+      color: rgba(255, 255, 255, 0.86);
+      font-size: 17px;
+      font-weight: 700;
+      line-height: 1.65;
+    }
+
+    .button-row {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 22px;
+      margin-top: 33px;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      min-height: 49px;
+      padding: 0 31px;
+      border-radius: 7px;
+      font-weight: 900;
+      font-size: 14px;
+      border: 0;
+      cursor: pointer;
+      transition: transform 180ms ease, box-shadow 180ms ease, background 180ms ease, color 180ms ease;
+      white-space: nowrap;
+    }
+
+    .btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 16px 26px rgba(0, 0, 0, 0.18);
+    }
+
+    .btn-orange {
+      color: #fff;
+      background: var(--orange);
+      box-shadow: 0 12px 24px rgba(255, 115, 8, 0.24);
+    }
+
+    .btn-orange:hover {
+      background: #ff841f;
+    }
+
+    .btn-white {
+      color: #10101a;
+      background: #fff;
+      min-width: 256px;
+    }
+
+    .btn-purple {
+      color: #fff;
+      background: var(--purple-2);
+      box-shadow: 0 16px 26px rgba(159, 111, 242, 0.25);
+    }
+
+    .quick-notes {
+      margin-top: 30px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 13px;
+      color: rgba(255, 255, 255, 0.73);
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .quick-notes span {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .video-card {
+      position: relative;
+      display: block;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 28px 58px rgba(10, 7, 28, 0.42);
+      outline: 1px solid rgba(255, 255, 255, 0.15);
+      isolation: isolate;
+      transform: translateY(4px);
+      transition: transform 180ms ease, box-shadow 180ms ease;
+    }
+
+    .video-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 34px 72px rgba(10, 7, 28, 0.48);
+    }
+
+
+    .video-card.video-embed {
+      background: #050407;
+      aspect-ratio: 16 / 9;
+    }
+
+    .video-card.video-embed::before {
+      display: none;
+    }
+
+    .video-card.video-embed .vimeo-frame {
+      position: relative;
+      width: 100%;
+      padding-top: 56.25%;
+      background: #050407;
+    }
+
+    .video-card.video-embed iframe {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      border: 0;
+    }
+
+    .video-card img {
+      width: 100%;
+      aspect-ratio: 16 / 10;
+      object-fit: cover;
+    }
+
+    .video-card::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(to top, rgba(0, 0, 0, 0.68), rgba(0, 0, 0, 0.06) 48%, transparent 65%);
+      z-index: 1;
+      pointer-events: none;
+    }
+
+    .play-large {
+      position: absolute;
+      inset: 0;
+      margin: auto;
+      width: 68px;
+      height: 68px;
+      border-radius: 50%;
+      background: var(--orange);
+      display: grid;
+      place-items: center;
+      z-index: 3;
+      box-shadow: 0 18px 35px rgba(255, 115, 8, 0.38);
+      transition: transform 180ms ease;
+    }
+
+    .video-card:hover .play-large {
+      transform: scale(1.06);
+    }
+
+    .play-large::after {
+      content: '';
+      margin-left: 4px;
+      border-top: 11px solid transparent;
+      border-bottom: 11px solid transparent;
+      border-left: 15px solid #fff;
+    }
+
+    .mock-controls {
+      position: absolute;
+      left: 24px;
+      right: 24px;
+      bottom: 18px;
+      display: grid;
+      grid-template-columns: auto auto 1fr auto auto auto;
+      align-items: center;
+      gap: 12px;
+      color: #fff;
+      z-index: 3;
+      font-size: 13px;
+      font-weight: 900;
+    }
+
+    .control-play {
+      width: 0;
+      height: 0;
+      border-top: 8px solid transparent;
+      border-bottom: 8px solid transparent;
+      border-left: 12px solid #fff;
+    }
+
+    .control-line {
+      position: relative;
+      height: 5px;
+      border-radius: 99px;
+      background: rgba(255, 255, 255, 0.32);
+    }
+
+    .control-line::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 76%;
+      height: 100%;
+      border-radius: inherit;
+      background: var(--purple-2);
+    }
+
+    .control-line::after {
+      content: '';
+      position: absolute;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: var(--purple-2);
+      top: 50%;
+      left: 76%;
+      transform: translate(-50%, -50%);
+    }
+
+    .proof-wrap {
+      position: relative;
+      z-index: 5;
+      margin-bottom: -40px;
+    }
+
+    .proof-bar {
+      width: min(1140px, calc(100% - 48px));
+      margin: 0 auto;
+      background: #fff;
+      border-radius: 14px;
+      padding: 16px 24px;
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      align-items: center;
+      gap: clamp(28px, 4vw, 52px);
+      box-shadow: 0 18px 34px rgba(29, 21, 60, 0.16);
+    }
+
+    .quote-mini {
+      display: grid;
+      grid-template-columns: 58px minmax(0, 1fr);
+      align-items: center;
+      gap: 14px;
+      min-width: 360px;
+    }
+
+    .avatar {
+      width: 49px;
+      height: 49px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #ff8b2e, #5a2cbf);
+      display: grid;
+      place-items: center;
+      color: #fff;
+      font-weight: 900;
+      border: 3px solid #fff;
+      box-shadow: 0 5px 16px rgba(39, 27, 92, 0.16);
+    }
+
+    .quote-mini strong {
+      display: block;
+      color: #0e0e17;
+      font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-weight: 900;
+      font-size: 13.5px;
+      line-height: 1.18;
+      font-style: italic;
+    }
+
+    .quote-mini span {
+      display: block;
+      margin-top: 4px;
+      color: #0e0e17;
+      font-size: 11px;
+      line-height: 1.25;
+      font-weight: 700;
+    }
+
+    .trusted {
+      text-align: center;
+      font-size: 14px;
+      color: #2a2638;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+
+    .proof-logos {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 26px;
+    }
+
+    .proof-logos img {
+      height: 32px;
+      width: auto;
+      object-fit: contain;
+    }
+
+    .section {
+      padding: clamp(72px, 9vw, 116px) 0;
+    }
+
+    .section-white {
+      background: #fafafd;
+    }
+
+    .section-title {
+      margin: 0 auto 36px;
+      text-align: center;
+      font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-weight: 900;
+      letter-spacing: -0.035em;
+      line-height: 1.12;
+      font-size: clamp(36px, 4.35vw, 48px);
+      max-width: 850px;
+    }
+
+    .problem-cards {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 28px;
+      width: min(900px, 100%);
+      margin: 0 auto;
+    }
+
+    .problem-card,
+    .test-card,
+    .fit-card {
+      background: #fff;
+      border-radius: 14px;
+      box-shadow: 0 15px 40px rgba(28, 23, 56, 0.05);
+      border: 1px solid rgba(39, 27, 92, 0.04);
+      transition: transform 180ms ease, box-shadow 180ms ease;
+    }
+
+    .problem-card:hover,
+    .test-card:hover,
+    .fit-card:hover {
+      transform: translateY(-5px);
+      box-shadow: 0 18px 46px rgba(28, 23, 56, 0.11);
+    }
+
+    .problem-card {
+      padding: 27px 28px 29px;
+      min-height: 170px;
+    }
+
+    .icon-badge {
+      width: 45px;
+      height: 45px;
+      border-radius: 50%;
+      background: #f4edff;
+      display: grid;
+      place-items: center;
+      margin-bottom: 22px;
+    }
+
+    .icon-badge img {
+      width: 45px;
+      height: 45px;
+      object-fit: contain;
+    }
+
+    .problem-card h3 {
+      margin: 0 0 11px;
+      font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 19px;
+      line-height: 1.1;
+      font-weight: 900;
+      letter-spacing: -0.03em;
+    }
+
+    .problem-card p {
+      margin: 0;
+      color: #848295;
+      font-size: 12px;
+      line-height: 1.55;
+      font-weight: 600;
+    }
+
+    .difference {
+      width: min(940px, 100%);
+      margin: 76px auto 0;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: clamp(60px, 10vw, 132px);
+      align-items: start;
+    }
+
+    .split-block h2 {
+      margin: 0 0 22px;
+      font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      letter-spacing: -0.03em;
+      font-weight: 900;
+      font-size: clamp(30px, 3.35vw, 38px);
+      line-height: 1.12;
+    }
+
+    .micro-intro {
+      margin: -8px 0 16px;
+      color: #a5a1b6;
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .check-list {
+      display: grid;
+      gap: 12px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .check-list li {
+      display: grid;
+      grid-template-columns: 18px 1fr;
+      gap: 8px;
+      align-items: start;
+      font-size: 12.5px;
+      line-height: 1.3;
+      font-weight: 900;
+      color: #11111b;
+    }
+
+    .check-list .check,
+    .check-list .cross {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      color: #fff;
+      font-size: 10px;
+      line-height: 1;
+      transform: translateY(-1px);
+    }
+
+    .check {
+      background: var(--purple-2);
+    }
+
+    .cross {
+      background: var(--orange);
+    }
+
+    .watch-cta {
+      text-align: center;
+      margin: 72px 0 0;
+    }
+
+    .lavender-band {
+      background: #f3edff;
+      padding: 68px 0;
+    }
+
+    .fit-grid {
+      width: min(950px, 100%);
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: clamp(40px, 9vw, 132px);
+      align-items: start;
+    }
+
+    .fit-card {
+      padding: 28px 32px;
+      border-radius: 15px;
+    }
+
+    .fit-card h3 {
+      margin: 0 0 22px;
+      font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 21px;
+      font-weight: 900;
+      letter-spacing: -0.03em;
+    }
+
+    .fit-card .is {
+      color: var(--purple-2);
+    }
+
+    .fit-card .not {
+      color: var(--orange);
+    }
+
+    .testimonials {
+      background: #fafafd;
+    }
+
+    .testimonial-grid {
+      width: min(900px, 100%);
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 42px;
+    }
+
+    .test-card {
+      padding: 28px 28px 30px;
+      min-height: 190px;
+    }
+
+    .test-card .stars {
+      color: var(--orange);
+      font-size: 17px;
+      margin-bottom: 18px;
+    }
+
+    .test-card blockquote {
+      margin: 0;
+      font-weight: 900;
+      color: #24212e;
+      font-size: 13.3px;
+      line-height: 1.48;
+    }
+
+    .person {
+      margin-top: 23px;
+      display: grid;
+      grid-template-columns: 43px 1fr;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .person .avatar {
+      width: 43px;
+      height: 43px;
+      font-size: 12px;
+      border: 2px solid var(--orange);
+    }
+
+    .person strong {
+      display: block;
+      font-size: 13px;
+      font-weight: 900;
+    }
+
+    .person small {
+      display: block;
+      color: #555161;
+      font-size: 11px;
+      font-weight: 800;
+      margin-top: 3px;
+    }
+
+    .orange-banner {
+      width: min(900px, 100%);
+      margin: 78px auto 0;
+      background: var(--orange);
+      color: #fff;
+      border-radius: 17px;
+      padding: 27px 33px;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 24px;
+      align-items: center;
+      box-shadow: 0 22px 44px rgba(255, 115, 8, 0.18);
+    }
+
+    .orange-banner h3 {
+      margin: 0 0 5px;
+      font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 24px;
+      line-height: 1.05;
+      font-weight: 900;
+      letter-spacing: -0.035em;
+    }
+
+    .orange-banner p {
+      margin: 0;
+      color: rgba(255, 255, 255, 0.86);
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .orange-banner .btn {
+      background: #fff;
+      color: var(--orange);
+      min-width: 254px;
+    }
+
+    .closing {
+      position: relative;
+      overflow: hidden;
+      color: #fff;
+      background:
+        radial-gradient(circle at 92% 72%, rgba(255, 115, 8, 0.36) 0 12%, rgba(255, 115, 8, 0.12) 22%, rgba(255, 115, 8, 0) 36%),
+        linear-gradient(145deg, #27164f 0%, #322066 47%, #5a3aa0 100%);
+      padding: clamp(76px, 9vw, 106px) 0 90px;
+    }
+
+    .closing .section-title {
+      color: #fff;
+      max-width: 680px;
+      margin-bottom: 22px;
+    }
+
+    .closing-copy {
+      width: min(590px, 100%);
+      margin: 0 auto 54px;
+      text-align: center;
+      color: rgba(255, 255, 255, 0.84);
+      font-size: 17px;
+      line-height: 1.65;
+      font-weight: 700;
+    }
+
+    .closing-points {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 32px;
+      width: min(1080px, 100%);
+      margin: 0 auto 54px;
+    }
+
+    .closing-point {
+      display: grid;
+      grid-template-columns: 46px 1fr;
+      gap: 17px;
+      align-items: start;
+    }
+
+    .closing-icon {
+      width: 42px;
+      height: 42px;
+      display: grid;
+      place-items: center;
+      color: var(--orange);
+    }
+
+    .closing-icon svg {
+      width: 42px;
+      height: 42px;
+      stroke: currentColor;
+      stroke-width: 2.6;
+      fill: none;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .closing-icon img {
+      width: 42px;
+      height: 42px;
+      object-fit: contain;
+      display: block;
+    }
+
+    .closing-point strong {
+      display: block;
+      color: var(--orange);
+      font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 15px;
+      line-height: 1.15;
+      font-weight: 900;
+      letter-spacing: -0.02em;
+      white-space: nowrap;
+    }
+
+    .closing-point span {
+      display: block;
+      margin-top: 6px;
+      color: rgba(255, 255, 255, 0.82);
+      font-size: 11px;
+      line-height: 1.35;
+      font-weight: 700;
+    }
+
+    .center {
+      text-align: center;
+    }
+
+    .footer {
+      background: #1c103b;
+      color: #fff;
+      padding: 64px 0 48px;
+    }
+
+    .footer-grid {
+      width: min(910px, 100%);
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: 1.4fr 0.75fr 1fr;
+      gap: clamp(48px, 8vw, 128px);
+      align-items: start;
+    }
+
+    .footer-logo {
+      width: 218px;
+      margin-bottom: 20px;
+    }
+
+    .footer p {
+      margin: 0;
+      max-width: 290px;
+      color: rgba(255, 255, 255, 0.52);
+      font-size: 14px;
+      line-height: 1.65;
+      font-weight: 600;
+    }
+
+    .footer h4 {
+      margin: 0 0 18px;
+      font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 17px;
+      font-weight: 900;
+      letter-spacing: -0.02em;
+    }
+
+    .footer-links {
+      display: grid;
+      gap: 10px;
+      color: rgba(255, 255, 255, 0.48);
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .footer-links a {
+      transition: color 180ms ease;
+    }
+
+    .footer-links a:hover {
+      color: #fff;
+    }
+
+    .footer-bottom {
+      width: min(910px, 100%);
+      margin: 58px auto 0;
+      padding-top: 28px;
+      border-top: 1px solid rgba(255, 255, 255, 0.14);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      color: rgba(255, 255, 255, 0.38);
+      font-size: 12.5px;
+      font-weight: 600;
+    }
+
+    .footer-bottom strong {
+      color: rgba(255, 255, 255, 0.74);
+    }
+
+    @media (max-width: 980px) {
+      .topbar-inner {
+        flex-wrap: wrap;
+        justify-content: center;
+        padding: 14px 0;
+        gap: 14px 22px;
+      }
+
+      .brand {
+        justify-content: center;
+        min-width: 100%;
+      }
+
+      .nav-points {
+        order: 3;
+        min-width: 100%;
+        gap: 16px;
+        flex-wrap: wrap;
+      }
+
+      .phone {
+        text-align: center;
+        min-width: auto;
+      }
+
+      .hero {
+        padding-top: 58px;
+      }
+
+      .hero-grid {
+        grid-template-columns: 1fr;
+        gap: 44px;
+        min-height: auto;
+        padding-bottom: 78px;
+      }
+
+      .hero-copy,
+      .hero h1 {
+        max-width: none;
+      }
+
+      .video-card {
+        width: min(620px, 100%);
+        margin: 0 auto;
+      }
+
+      .proof-bar {
+        grid-template-columns: 1fr;
+        text-align: center;
+        gap: 18px;
+        padding: 24px;
+      }
+
+      .quote-mini {
+        min-width: 0;
+        justify-content: center;
+        text-align: left;
+      }
+
+      .proof-logos {
+        justify-content: center;
+        flex-wrap: wrap;
+      }
+
+      .problem-cards,
+      .testimonial-grid,
+      .closing-points {
+        grid-template-columns: 1fr;
+      }
+
+      .difference,
+      .fit-grid,
+      .footer-grid {
+        grid-template-columns: 1fr;
+        gap: 36px;
+      }
+
+      .testimonial-grid {
+        gap: 22px;
+      }
+
+      .orange-banner {
+        grid-template-columns: 1fr;
+        text-align: center;
+      }
+
+      .orange-banner .btn {
+        justify-self: center;
+      }
+
+      .footer-grid,
+      .footer-bottom {
+        text-align: center;
+      }
+
+      .footer-logo,
+      .footer p {
+        margin-left: auto;
+        margin-right: auto;
+      }
+
+      .footer-bottom {
+        flex-direction: column;
+      }
+    }
+
+    @media (max-width: 640px) {
+      .container,
+      .topbar-inner {
+        width: min(100% - 32px, 1160px);
+      }
+
+      .topbar {
+        min-height: auto;
+      }
+
+      .brand {
+        font-size: 25px;
+      }
+
+      .brand-eye {
+        width: 21px;
+        height: 21px;
+        border-width: 2.5px;
+      }
+
+      .brand-eye::after {
+        width: 7px;
+        height: 7px;
+        top: 5px;
+        left: 6px;
+      }
+
+      .nav-points {
+        display: none;
+      }
+
+      .phone small {
+        font-size: 9px;
+      }
+
+      .phone strong {
+        font-size: 14px;
+      }
+
+      .hero {
+        padding-top: 44px;
+      }
+
+      .hero-grid {
+        gap: 34px;
+        padding-bottom: 54px;
+      }
+
+      .rating-pill {
+        padding: 9px 13px;
+        gap: 7px;
+        margin-inline: auto;
+      }
+
+      .rating-pill small {
+        display: none;
+      }
+
+      .rating-pill strong {
+        font-size: 14px;
+      }
+
+      .stars {
+        font-size: 11px;
+      }
+
+      .hero h1,
+      .hero-copy,
+      .quick-notes {
+        text-align: center;
+      }
+
+      .hero h1 {
+        font-size: clamp(42px, 13vw, 58px);
+      }
+
+      .hero-copy {
+        font-size: 15px;
+        line-height: 1.55;
+        margin-top: 18px;
+      }
+
+      .button-row {
+        margin-top: 25px;
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 13px;
+      }
+
+      .btn,
+      .btn-white,
+      .orange-banner .btn {
+        width: 100%;
+        min-width: 0;
+        padding-inline: 18px;
+      }
+
+      .quick-notes {
+        justify-content: center;
+        gap: 9px 14px;
+        margin-top: 22px;
+      }
+
+      .mock-controls {
+        left: 12px;
+        right: 12px;
+        bottom: 11px;
+        grid-template-columns: auto auto 1fr auto;
+        gap: 8px;
+        font-size: 10px;
+      }
+
+      .mock-controls .hide-mobile {
+        display: none;
+      }
+
+      .play-large {
+        width: 54px;
+        height: 54px;
+      }
+
+      .play-large::after {
+        border-top-width: 9px;
+        border-bottom-width: 9px;
+        border-left-width: 13px;
+      }
+
+      .proof-wrap {
+        margin-bottom: 0;
+        background: #fafafd;
+        padding-top: 18px;
+      }
+
+      .proof-bar {
+        width: calc(100% - 32px);
+        margin-top: -36px;
+        border-radius: 16px;
+      }
+
+      .quote-mini {
+        grid-template-columns: 44px 1fr;
+      }
+
+      .avatar {
+        width: 44px;
+        height: 44px;
+      }
+
+      .trusted {
+        white-space: normal;
+      }
+
+      .proof-logos {
+        gap: 14px;
+      }
+
+      .proof-logos img {
+        height: 26px;
+      }
+
+      .section {
+        padding: 64px 0;
+      }
+
+      .section-title {
+        font-size: clamp(34px, 10vw, 44px);
+        margin-bottom: 28px;
+      }
+
+      .problem-cards {
+        gap: 16px;
+      }
+
+      .problem-card {
+        min-height: auto;
+        padding: 24px;
+      }
+
+      .difference {
+        margin-top: 48px;
+      }
+
+      .split-block h2 {
+        text-align: center;
+      }
+
+      .micro-intro {
+        text-align: center;
+      }
+
+      .watch-cta {
+        margin-top: 44px;
+      }
+
+      .lavender-band {
+        padding: 48px 0;
+      }
+
+      .fit-card {
+        padding: 24px;
+      }
+
+      .testimonial-grid {
+        width: min(390px, 100%);
+      }
+
+      .orange-banner {
+        margin-top: 48px;
+        padding: 24px;
+      }
+
+      .orange-banner h3 {
+        font-size: 22px;
+      }
+
+      .closing {
+        padding: 70px 0;
+      }
+
+      .closing-copy {
+        font-size: 15px;
+        margin-bottom: 38px;
+      }
+
+      .closing-points {
+        gap: 24px;
+        margin-bottom: 38px;
+      }
+
+      .closing-point {
+        grid-template-columns: 1fr;
+        text-align: center;
+        gap: 8px;
+      }
+
+      .closing-icon {
+        margin: 0 auto;
+      }
+
+      .closing-point strong {
+        white-space: normal;
+      }
+
+      .footer {
+        padding: 48px 0 40px;
+      }
+    }
+
+
+    /* Screenshot-match updates: header logo, hero rating, and trust bar */
+    .brand-image-link {
+      min-width: 181px;
+      width: 181px;
+      height: 38px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: flex-start;
+      overflow: hidden;
+    }
+
+    .logo-image {
+      width: 181px;
+      height: auto;
+      display: block;
+      object-fit: contain;
+    }
+
+    .hero-rating {
+      margin-bottom: 22px;
+      color: #fff;
+    }
+
+    .hero-rating-main {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      line-height: 1;
+    }
+
+    .hero-rating .stars,
+    .proof-rating .stars {
+      color: var(--orange);
+      font-size: 19px;
+      letter-spacing: 1px;
+      line-height: 1;
+      text-shadow: 0 0 18px rgba(255, 115, 8, 0.22);
+    }
+
+    .hero-rating strong {
+      font-size: 15px;
+      line-height: 1;
+      font-weight: 900;
+      letter-spacing: -0.02em;
+    }
+
+    .hero-rating small {
+      display: block;
+      margin: 6px 0 0 112px;
+      font-size: 8.5px;
+      line-height: 1;
+      font-weight: 900;
+      color: rgba(255, 255, 255, 0.92);
+      letter-spacing: -0.01em;
+    }
+
+    .proof-bar-review {
+      width: min(940px, calc(100% - 40px));
+      grid-template-columns: 1.05fr 1fr auto;
+      padding: 17px 28px;
+      min-height: 74px;
+      gap: 26px;
+    }
+
+    .proof-rating {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      white-space: nowrap;
+    }
+
+    .proof-rating strong {
+      color: #171321;
+      font-size: 12px;
+      font-weight: 900;
+      letter-spacing: -0.02em;
+    }
+
+    .proof-bar-review .trusted {
+      font-size: 11px;
+      color: #171321;
+    }
+
+    .proof-bar-review .proof-logos {
+      gap: 18px;
+    }
+
+    .proof-bar-review .proof-logos img {
+      height: 28px;
+      max-width: 86px;
+      object-fit: contain;
+    }
+
+    @media (max-width: 980px) {
+      .brand-image-link {
+        justify-content: center;
+        width: 181px;
+        min-width: 181px;
+      }
+
+      .proof-bar-review {
+        grid-template-columns: 1fr;
+        justify-items: center;
+        text-align: center;
+      }
+    }
+
+    @media (max-width: 640px) {
+      .brand-image-link {
+        min-width: 170px;
+        width: 170px;
+        height: 35px;
+      }
+
+      .logo-image {
+        width: 170px;
+      }
+
+      .hero-rating {
+        display: grid;
+        justify-items: center;
+        margin-bottom: 18px;
+      }
+
+      .hero-rating small {
+        margin-left: 0;
+        margin-top: 7px;
+        font-size: 9px;
+      }
+
+      .hero-rating .stars,
+      .proof-rating .stars {
+        font-size: 16px;
+      }
+
+      .hero-rating strong {
+        font-size: 14px;
+      }
+
+      .proof-bar-review {
+        width: calc(100% - 32px);
+        padding: 22px 18px;
+        gap: 16px;
+      }
+
+      .proof-rating {
+        justify-content: center;
+      }
+
+      .proof-bar-review .proof-logos {
+        gap: 12px;
+        width: 100%;
+        justify-content: center;
+      }
+
+      .proof-bar-review .proof-logos img {
+        height: 24px;
+        max-width: 76px;
+      }
+    }
+
+
+    /* Final typography + rating alignment update */
+    body,
+    button,
+    input,
+    textarea,
+    select,
+    .brand,
+    .hero h1,
+    .section-title,
+    .split-block h2,
+    .problem-card h3,
+    .fit-card h3,
+    .test-card strong,
+    .orange-copy strong,
+    .footer-logo {
+      font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+    }
+
+    .hero h1 {
+      font-weight: 900;
+      font-size: clamp(50px, 5.25vw, 72px);
+      line-height: 1.02;
+      letter-spacing: -0.04em;
+    }
+
+    .section-title {
+      font-weight: 900;
+      font-size: clamp(36px, 4.35vw, 48px);
+      line-height: 1.12;
+      letter-spacing: -0.035em;
+    }
+
+    .split-block h2 {
+      font-weight: 900;
+      font-size: clamp(30px, 3.35vw, 38px);
+      line-height: 1.12;
+      letter-spacing: -0.03em;
+    }
+
+    .hero-rating-main,
+    .proof-rating {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .hero-rating small {
+      display: none;
+    }
+
+    .rating-divider {
+      color: rgba(255, 255, 255, 0.8);
+      font-weight: 900;
+      line-height: 1;
+    }
+
+    .rating-trusted {
+      font-size: 10px;
+      line-height: 1.1;
+      font-weight: 900;
+      letter-spacing: -0.01em;
+      color: rgba(255, 255, 255, 0.92);
+      white-space: nowrap;
+    }
+
+    .proof-bar-review {
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 28px;
+    }
+
+    .proof-rating {
+      justify-content: flex-start;
+    }
+
+    .proof-rating .rating-divider,
+    .proof-rating .rating-trusted {
+      color: #171321;
+    }
+
+    .proof-rating .rating-trusted {
+      font-size: 11px;
+    }
+
+    @media (max-width: 980px) {
+      .proof-bar-review {
+        grid-template-columns: 1fr;
+      }
+
+      .proof-rating {
+        justify-content: center;
+      }
+    }
+
+    @media (max-width: 640px) {
+      .hero h1 {
+        font-size: clamp(40px, 11.4vw, 50px);
+        line-height: 1.05;
+        letter-spacing: -0.035em;
+      }
+
+      .section-title {
+        font-size: clamp(30px, 8.5vw, 38px);
+        line-height: 1.15;
+        letter-spacing: -0.03em;
+      }
+
+      .split-block h2 {
+        font-size: clamp(27px, 8vw, 34px);
+        line-height: 1.15;
+      }
+
+      .hero-rating-main,
+      .proof-rating {
+        justify-content: center;
+        row-gap: 6px;
+      }
+
+      .rating-trusted {
+        font-size: 8.5px;
+      }
+
+      .proof-rating .rating-trusted {
+        font-size: 9px;
+      }
+    }
+
+  
+    /* Screenshot AG version updates */
+    .footer-logo {
+      width: 218px;
+      height: auto;
+      object-fit: contain;
+    }
+
+    .hero h1 {
+      font-size: clamp(42px, 4.55vw, 62px) !important;
+      line-height: 1.05 !important;
+      letter-spacing: -0.038em !important;
+      max-width: 585px !important;
+    }
+
+    .hero-copy {
+      max-width: 520px !important;
+    }
+
+    .proof-bar-quote {
+      width: min(1140px, calc(100% - 48px));
+      grid-template-columns: minmax(360px, 1.05fr) minmax(300px, .8fr) auto;
+      gap: clamp(34px, 4vw, 52px);
+      padding: 16px 24px;
+      min-height: 86px;
+    }
+
+    .avatar-photo {
+      display: block;
+      width: 58px;
+      height: 58px;
+      border-radius: 50%;
+      object-fit: cover;
+      object-position: center;
+      background: #ece7fb;
+      box-shadow: 0 5px 16px rgba(39, 27, 92, 0.16);
+    }
+
+    .quote-mini .avatar-photo {
+      border: 3px solid var(--orange);
+    }
+
+    .person .avatar-photo {
+      width: 43px;
+      height: 43px;
+      border: 2px solid var(--orange);
+    }
+
+    .lead-problem-section,
+    .lead-problem-section *,
+    .fit-check-section,
+    .fit-check-section * {
+      box-sizing: border-box;
+    }
+
+    .lead-problem-section {
+      width: 100%;
+      padding: clamp(82px, 7vw, 112px) 20px clamp(72px, 8vw, 112px);
+      background: #fbfbfe;
+      font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+      color: #171236;
+      overflow: hidden;
+    }
+
+    .lead-problem-wrap {
+      max-width: 1180px;
+      margin: 0 auto;
+    }
+
+    .lead-problem-kicker,
+    .testimonial-kicker {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      margin-bottom: 16px;
+      color: #ec4b00;
+      font-size: 11.5px;
+      font-weight: 900;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+    }
+
+    .testimonial-kicker {
+      color: #7b5cff;
+      margin-bottom: 12px;
+    }
+
+    .lead-problem-kicker::before,
+    .lead-problem-kicker::after,
+    .testimonial-kicker::before,
+    .testimonial-kicker::after {
+      content: "";
+      width: 20px;
+      height: 2px;
+      background: currentColor;
+      border-radius: 999px;
+    }
+
+    .lead-problem-title {
+      max-width: 680px;
+      margin: 0 auto clamp(36px, 4vw, 52px);
+      text-align: center;
+      font-size: clamp(30px, 3.8vw, 46px);
+      line-height: 1.05;
+      font-weight: 900;
+      letter-spacing: -0.035em;
+      color: #181235;
+    }
+
+    .lead-problem-title span {
+      color: #7b5cff;
+    }
+
+    .lead-problem-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: clamp(16px, 2vw, 24px);
+      max-width: 980px;
+      margin: 0 auto;
+    }
+
+    .lead-problem-card {
+      position: relative;
+      padding: clamp(22px, 2.2vw, 30px);
+      background: #ffffff;
+      border: 1px solid #e7e1f2;
+      border-radius: 18px;
+      box-shadow: 0 12px 32px rgba(32, 20, 76, 0.05);
+      transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease;
+    }
+
+    .lead-problem-card:hover {
+      transform: translateY(-8px);
+      border-color: rgba(123, 92, 255, 0.28);
+      box-shadow: 0 22px 52px rgba(32, 20, 76, 0.11);
+    }
+
+    .lead-problem-number {
+      position: absolute;
+      top: 20px;
+      right: 22px;
+      font-size: 36px;
+      line-height: 1;
+      font-weight: 900;
+      letter-spacing: -0.04em;
+      color: #c4b8f0;
+      transition: color 0.25s ease;
+    }
+
+    .lead-problem-card:hover .lead-problem-number {
+      color: #a99ee0;
+    }
+
+    .lead-problem-icon {
+      width: 52px;
+      height: 52px;
+      display: grid;
+      place-items: center;
+      border-radius: 14px;
+      margin-bottom: clamp(36px, 3.5vw, 48px);
+    }
+
+    .lead-problem-icon.orange {
+      background: #fff0e8;
+      border: 1px solid #ffd5bf;
+      color: #f05a00;
+    }
+
+    .lead-problem-icon.purple {
+      background: #ebe5ff;
+      border: 1px solid #cec0ff;
+      color: #7257ff;
+    }
+
+    .lead-problem-icon svg {
+      width: 24px;
+      height: 24px;
+      stroke: currentColor;
+      stroke-width: 2.2;
+      fill: none;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .lead-problem-card h3 {
+      margin: 0 0 10px;
+      color: #07072e;
+      font-size: clamp(17px, 1.5vw, 20px);
+      line-height: 1.15;
+      font-weight: 900;
+      letter-spacing: -0.03em;
+    }
+
+    .lead-problem-card p {
+      margin: 0 0 20px;
+      color: #66617f;
+      font-size: clamp(13.5px, 1.1vw, 15px);
+      line-height: 1.55;
+      font-weight: 500;
+    }
+
+    .lead-problem-card p strong {
+      color: #f04e00;
+      font-weight: 900;
+    }
+
+    .lead-problem-card.purple-card p strong {
+      color: #7257ff;
+    }
+
+    .lead-problem-pill {
+      display: inline-flex;
+      align-items: center;
+      padding: 6px 12px;
+      border-radius: 8px;
+      background: #fdebf1;
+      color: #cf3e61;
+      font-size: 11.5px;
+      font-weight: 900;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+    }
+
+    .lead-problem-card.purple-card .lead-problem-pill {
+      background: #eee8ff;
+      color: #674ef0;
+    }
+
+    .difference-card-wrap {
+      max-width: 980px;
+      margin: clamp(74px, 9vw, 132px) auto 0;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 28px;
+    }
+
+    .difference-card {
+      border-radius: 18px;
+      padding: clamp(26px, 3vw, 34px);
+      transition: transform 0.24s ease, box-shadow 0.24s ease;
+    }
+
+    .difference-card:hover {
+      transform: translateY(-7px);
+      box-shadow: 0 24px 58px rgba(32, 20, 76, 0.14);
+    }
+
+    .difference-card-light {
+      background: #fff;
+      border: 1px solid #e7e1f2;
+      box-shadow: 0 16px 40px rgba(32, 20, 76, 0.06);
+    }
+
+    .difference-card-purple {
+      color: #fff;
+      background:
+        radial-gradient(circle at 90% 18%, rgba(159, 111, 242, 0.34), transparent 34%),
+        linear-gradient(145deg, #39217f 0%, #28165a 100%);
+      box-shadow: 0 18px 44px rgba(42, 23, 101, 0.24);
+    }
+
+    .mini-kicker {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 18px;
+      font-size: 10.5px;
+      font-weight: 900;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+    }
+
+    .mini-kicker::before {
+      content: "";
+      width: 18px;
+      height: 2px;
+      border-radius: 99px;
+      background: currentColor;
+    }
+
+    .mini-kicker.green {
+      color: #27b66d;
+    }
+
+    .mini-kicker.purple {
+      color: #cfc2ff;
+    }
+
+    .difference-card h2 {
+      margin: 0 0 22px;
+      color: inherit;
+      font-size: clamp(26px, 3vw, 34px);
+      line-height: 1.05;
+      letter-spacing: -0.04em;
+      font-weight: 900;
+    }
+
+    .difference-card-light h2 span,
+    .difference-card-purple h2 span {
+      color: #9f6ff2;
+    }
+
+    .difference-card-purple p {
+      margin: -6px 0 14px;
+      color: rgba(255, 255, 255, 0.76);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .difference-list,
+    .watch-list {
+      display: grid;
+      gap: 10px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .difference-list li {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 14px;
+      border-radius: 11px;
+      background: #f4f0ff;
+      border: 1px solid #e8e0ff;
+      font-size: 12.5px;
+      line-height: 1.3;
+    }
+
+    .watch-list li {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: rgba(255, 255, 255, 0.94);
+      font-size: 12.5px;
+      line-height: 1.3;
+    }
+
+    .difference-list span,
+    .watch-list span {
+      width: 22px;
+      height: 22px;
+      flex: 0 0 auto;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: #7b5cff;
+      color: #fff;
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .watch-list span {
+      background: rgba(255, 255, 255, 0.18);
+    }
+
+    .watch-mini-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      margin-top: 22px;
+      min-height: 38px;
+      padding: 0 18px;
+      border-radius: 8px;
+      background: #7b5cff;
+      color: #fff;
+      font-size: 12px;
+      font-weight: 900;
+      transition: transform .2s ease, box-shadow .2s ease;
+    }
+
+    .watch-mini-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 14px 24px rgba(0,0,0,.18);
+    }
+
+    .fit-check-section {
+      width: 100%;
+      padding: clamp(64px, 7vw, 96px) 20px;
+      background: #f3edff;
+      font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+      color: #171236;
+      overflow: hidden;
+    }
+
+    .fit-check-wrap {
+      max-width: 1180px;
+      margin: 0 auto;
+      text-align: center;
+    }
+
+    .fit-main-icon {
+      width: 52px;
+      height: 52px;
+      margin: 0 auto 20px;
+      display: grid;
+      place-items: center;
+      border-radius: 14px;
+      background: #7657e9;
+      color: #ffffff;
+      font-size: 24px;
+      font-weight: 900;
+      box-shadow: 0 12px 30px rgba(118, 87, 233, 0.26);
+    }
+
+    .fit-check-title {
+      margin: 0 0 13px;
+      font-size: clamp(28px, 3.4vw, 42px);
+      line-height: 1.05;
+      font-weight: 900;
+      letter-spacing: -0.04em;
+      color: #171236;
+    }
+
+    .fit-check-subtitle {
+      max-width: 540px;
+      margin: 0 auto clamp(38px, 4.5vw, 56px);
+      color: #6d6586;
+      font-size: clamp(14px, 1.2vw, 16px);
+      line-height: 1.55;
+      font-weight: 500;
+      letter-spacing: -0.01em;
+    }
+
+    .fit-card-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: clamp(20px, 3vw, 36px);
+      align-items: stretch;
+      max-width: 980px;
+      margin: 0 auto;
+    }
+
+    .fit-card-outer {
+      position: relative;
+      padding: clamp(40px, 4vw, 46px) clamp(20px, 2.5vw, 28px) 26px;
+      border-radius: 24px;
+      transition: transform 0.25s ease, box-shadow 0.25s ease;
+    }
+
+    .fit-card-outer:hover {
+      transform: translateY(-6px);
+      box-shadow: 0 22px 54px rgba(32, 20, 76, 0.11);
+    }
+
+    .fit-card-outer.is-card {
+      background: rgba(214, 229, 234, 0.78);
+      border: 1px solid rgba(43, 172, 112, 0.24);
+    }
+
+    .fit-card-outer.not-card {
+      background: rgba(248, 226, 231, 0.58);
+      border: 1px solid rgba(239, 82, 45, 0.24);
+    }
+
+    .fit-floating-badge {
+      position: absolute;
+      top: -26px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 52px;
+      height: 52px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      color: #ffffff;
+      font-size: 24px;
+      font-weight: 900;
+      border: 4px solid #ffffff;
+      z-index: 2;
+      box-shadow: 0 12px 28px rgba(32, 20, 76, 0.16);
+    }
+
+    .fit-card-outer.is-card .fit-floating-badge {
+      background: #27b66d;
+    }
+
+    .fit-card-outer.not-card .fit-floating-badge {
+      background: #ef5231;
+    }
+
+    .fit-card-inner {
+      width: 100%;
+      background: #ffffff;
+      border-radius: 16px;
+      padding: clamp(22px, 2.5vw, 30px);
+      box-shadow: 0 12px 32px rgba(32, 20, 76, 0.05);
+      text-align: center;
+    }
+
+    .fit-card-heading {
+      margin: 0 0 18px;
+      color: #07072e;
+      font-size: clamp(17px, 1.5vw, 20px);
+      line-height: 1.15;
+      font-weight: 900;
+      letter-spacing: -0.03em;
+    }
+
+    .fit-card-heading .green {
+      color: #159b58;
+    }
+
+    .fit-card-heading .orange {
+      color: #e9470b;
+    }
+
+    .fit-list {
+      display: grid;
+      gap: 10px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .fit-list-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 14px;
+      border-radius: 11px;
+      text-align: left;
+      color: #07072e;
+      font-size: clamp(13px, 1.05vw, 14.5px);
+      line-height: 1.35;
+      font-weight: 700;
+      letter-spacing: -0.015em;
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .fit-list-item:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 10px 24px rgba(32, 20, 76, 0.1);
+    }
+
+    .is-card .fit-list-item {
+      background: #f2fbf6;
+      border: 1px solid #d7efdf;
+    }
+
+    .not-card .fit-list-item {
+      background: #fff5f1;
+      border: 1px solid #f5d7cc;
+    }
+
+    .fit-row-icon {
+      flex: 0 0 auto;
+      width: 26px;
+      height: 26px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      color: #ffffff;
+      font-size: 14px;
+      font-weight: 900;
+    }
+
+    .is-card .fit-row-icon {
+      background: #159b58;
+    }
+
+    .not-card .fit-row-icon {
+      background: #ef3f25;
+    }
+
+    .testimonials {
+      background: #fbfbfe;
+    }
+
+    .test-card {
+      position: relative;
+      overflow: hidden;
+    }
+
+    .test-card::before {
+      content: "\201C";
+      position: absolute;
+      top: 14px;
+      left: 24px;
+      color: #d5c9ff;
+      font-size: 42px;
+      line-height: 1;
+      font-weight: 900;
+      opacity: .8;
+    }
+
+    @media (max-width: 980px) {
+      .hero h1 {
+        font-size: clamp(38px, 7.6vw, 52px) !important;
+        max-width: 620px !important;
+      }
+
+      .hero-copy {
+        max-width: 620px !important;
+      }
+
+      .proof-bar-quote {
+        grid-template-columns: 1fr;
+        justify-items: center;
+        text-align: center;
+      }
+
+      .lead-problem-grid {
+        grid-template-columns: 1fr;
+        max-width: 520px;
+      }
+
+      .difference-card-wrap,
+      .fit-card-grid {
+        grid-template-columns: 1fr;
+        max-width: 560px;
+      }
+
+      .difference-card-wrap {
+        gap: 22px;
+      }
+    }
+
+    @media (max-width: 640px) {
+      .hero h1 {
+        font-size: clamp(34px, 9.1vw, 42px) !important;
+        line-height: 1.07 !important;
+        letter-spacing: -0.033em !important;
+        max-width: 100% !important;
+      }
+
+      .hero-copy {
+        max-width: 100% !important;
+      }
+
+      .proof-bar-quote {
+        width: calc(100% - 32px);
+        padding: 22px 18px;
+        gap: 16px;
+      }
+
+      .quote-mini {
+        grid-template-columns: 44px 1fr;
+        text-align: left;
+      }
+
+      .quote-mini .avatar-photo {
+        width: 44px;
+        height: 44px;
+      }
+
+      .lead-problem-section {
+        padding: 64px 14px;
+      }
+
+      .lead-problem-title {
+        font-size: clamp(30px, 9.6vw, 40px);
+      }
+
+      .difference-card {
+        padding: 24px 18px;
+      }
+
+      .fit-check-section {
+        padding: 56px 14px;
+      }
+
+      .fit-card-outer {
+        padding: 38px 14px 18px;
+        border-radius: 20px;
+      }
+
+      .fit-card-inner {
+        padding: 22px 16px;
+        border-radius: 14px;
+      }
+
+      .fit-list-item {
+        font-size: 13.5px;
+      }
+    }
+
+  
+    /* Desktop-only trust bar overlap experiment */
+    @media (min-width: 981px) {
+      .hero .proof-wrap {
+        transform: translateY(26px);
+      }
+
+      .hero .proof-bar,
+      .hero .proof-bar-quote,
+      .hero .proof-bar-review {
+        position: relative;
+        z-index: 2;
+      }
+    }
+        </style>
+    </head>
+    <body>
+        <main class="page">
+            <header class="topbar" aria-label="Site header">
+                <div class="topbar-inner">
+                    <a href="#top" class="brand brand-image-link" aria-label="Oodles of Leads home">
+                        <img class="logo-image" src="https://i.imgur.com/LDoC6Gv.png" alt="Oodles of Leads">
+                    </a>
+                    <nav class="nav-points" aria-label="Main points">
+                        <span>
+                            <svg class="nav-icon" viewBox="0 0 16 16" aria-hidden="true">
+                                <circle
+                                    cx="5.4"
+                                    cy="5.3"
+                                    r="2.2"
+                                    fill="#4f3192"
+                                ></circle>
+                                <circle
+                                    cx="10.9"
+                                    cy="5.6"
+                                    r="1.9"
+                                    fill="#4f3192"
+                                    opacity=".82"
+                                ></circle>
+                                <path d="M1.8 13.1c.28-2.7 1.76-4.2 3.75-4.2 2 0 3.47 1.5 3.76 4.2H1.8z" fill="#4f3192"></path>
+                                <path d="M8.8 13.1c-.12-1.34-.58-2.42-1.32-3.18.62-.36 1.36-.55 2.2-.55 2.06 0 3.53 1.34 3.82 3.74H8.8z" fill="#4f3192" opacity=".82"></path>
+                            </svg>
+                            Exclusive Leads
+                        </span>
+                        <span>
+                            <svg class="nav-icon" viewBox="0 0 16 16" aria-hidden="true">
+                                <path d="M2 7.2 8 2.4l6 4.8v6.3a.9.9 0 0 1-.9.9H2.9a.9.9 0 0 1-.9-.9V7.2z" fill="#18a765"></path>
+                                <path d="M8 2.1 1.25 7.45l.82 1.02L8 3.76l5.93 4.71.82-1.02L8 2.1z" fill="#f2671c"></path>
+                                <path d="M6.4 14.4V9.8h3.2v4.6H6.4z" fill="#ffffff"></path>
+                            </svg>
+                            Real Homeowners
+                        </span>
+                        <span>
+                            <svg class="nav-icon" viewBox="0 0 16 16" aria-hidden="true">
+                                <path
+                                    d="M8 1.9 13 4v3.4c0 3.42-2.08 5.84-5 6.7-2.92-.86-5-3.28-5-6.7V4l5-2.1z"
+                                    fill="none"
+                                    stroke="#1d192a"
+                                    stroke-width="1.35"
+                                    stroke-linejoin="round"
+                                ></path>
+                            </svg>
+                            No Long-Term Contracts
+                        </span>
+                    </nav>
+                    <a class="phone" href="tel:+13073496772">
+                        <small>Questions? Text or Call</small>
+                        <strong>(307) 349-6772</strong>
+                    </a>
+                </div>
+            </header>
+            <section class="hero" id="top">
+                <div class="container hero-grid">
+                    <div class="hero-copy-wrap">
+                        <div class="hero-rating" aria-label="4.9 out of 5 rating">
+                            <div class="hero-rating-main">
+                                <span class="stars">&#9733;&#9733;&#9733;&#9733;&#9733;</span>
+                                <strong>4.9/5 Rating</strong>
+                                <span class="rating-divider">|</span>
+                                <span class="rating-trusted">Trusted by contractors across the U.S.</span>
+                            </div>
+                        </div>
+                        <h1>Exclusive Leads.
+                            <br>Real Jobs.
+                            <span class="accent-orange">No
+                                <br>More Competing.
+                            </span>
+                        </h1>
+                        <p class="hero-copy">We deliver 15 to 20 exclusive homeowner leads in your area every month so you can stop chasing bad leads and start closing.</p>
+                        <div class="button-row">
+                            <a class="btn btn-orange" href="https://staging.trysplitlab.com/testurlconversionbooking/e850003e-0ca5-4c97-bf02-e8996d97b99a">See If Your Area Is Open &rarr;</a>
+                            <a class="btn btn-white" href="#hero-vsl">&#9654; See How It Works</a>
+                        </div>
+                        <div class="quick-notes" aria-label="Call details">
+                            <span>&#9201; Takes 20 to 30 minutes</span>
+                            <span>&#9675; No long-term contracts</span>
+                            <span>&#9989; No pressure, just straight answers</span>
+                        </div>
+                    </div>
+                    <div class="video-card video-embed" id="hero-vsl" aria-label="Oodles Video Script Updated">
+                        <div class="vimeo-frame">
+                            <iframe
+                                src="https://player.vimeo.com/video/1194521377?badge=0&amp;autopause=0&amp;player_id=0&amp;app_id=58479"
+                                allow="autoplay; fullscreen; picture-in-picture; clipboard-write; encrypted-media; web-share"
+                                referrerpolicy="strict-origin-when-cross-origin"
+                                title="Oodles Video Script Updated"
+                            ></iframe>
+                        </div>
+                    </div>
+                </div>
+                <div class="proof-wrap">
+                    <div class="proof-bar proof-bar-quote">
+                        <div class="quote-mini">
+                            <img class="avatar-photo" src="https://i.imgur.com/didu8rG.png" alt="Hunter Ballew">
+                            <div>
+                                <strong>&ldquo;In just 5 days, Oodles delivered 56 quality leads&rdquo;</strong>
+                                <span>Hunter Ballew (Founder of Roofing.com &amp; RiotCON)</span>
+                            </div>
+                        </div>
+                        <div class="trusted">Trusted by contractors across the U.S.</div>
+                        <div class="proof-logos" aria-label="Review platforms">
+                            <img src="https://i.imgur.com/oumBtKU.png" alt="Google reviews">
+                            <img src="https://i.imgur.com/mudxGMf.png" alt="Facebook reviews">
+                            <img src="https://i.imgur.com/aswOLDM.png" alt="Capterra reviews">
+                        </div>
+                    </div>
+                </div>
+            </section>
+            <section class="section section-white" id="how-it-works">
+                <div class="container">
+                    <div class="lead-problem-kicker">The Problem</div>
+                    <h2 class="lead-problem-title">
+                        Tired of paying for leads that
+                        <span>go nowhere?</span>
+                    </h2>
+                    <div class="problem-cards">
+                        <article class="problem-card">
+                            <div class="icon-badge">
+                                <img src="https://d9hhrg4mnvzow.cloudfront.net/try.oodlesofleads.com/0355015e-screenshot-56_101o01o000000000000000.png" alt="Shared lists icon">
+                            </div>
+                            <h3>Shared &ldquo;Exclusive&rdquo; Lists</h3>
+                            <p>You're competing with 4 to 6 other contractors for the same job.</p>
+                        </article>
+                        <article class="problem-card">
+                            <div class="icon-badge">
+                                <img src="https://d9hhrg4mnvzow.cloudfront.net/try.oodlesofleads.com/c4f05f9b-screenshot-57_101o01p01o01o000000000.png" alt="Unqualified leads icon">
+                            </div>
+                            <h3>Unqualified Leads</h3>
+                            <p>You're competing with 4 to 6 other contractors for the same job.</p>
+                        </article>
+                        <article class="problem-card">
+                            <div class="icon-badge">
+                                <img src="https://d9hhrg4mnvzow.cloudfront.net/try.oodlesofleads.com/9bc415b4-screenshot-58_101p01o01o01o000000000.png" alt="Wasted ad spend icon">
+                            </div>
+                            <h3>Wasted Ad Spend</h3>
+                            <p>Thousands spent on ads with no consistent return.</p>
+                        </article>
+                    </div>
+                    <div class="difference" id="watch">
+                        <div class="split-block">
+                            <h2>Here's what we do
+                                <span class="accent-purple">differently.</span>
+                            </h2>
+                            <ul class="check-list">
+                                <li>
+                                    <span class="check">&#10003;</span>
+                                    <span>You get exclusive leads in your service area</span>
+                                </li>
+                                <li>
+                                    <span class="check">&#10003;</span>
+                                    <span>We pre-qualify and speak with homeowners</span>
+                                </li>
+                                <li>
+                                    <span class="check">&#10003;</span>
+                                    <span>You get consistent leads every month</span>
+                                </li>
+                                <li>
+                                    <span class="check">&#10003;</span>
+                                    <span>No long-term lock-in. You stay because it works.</span>
+                                </li>
+                            </ul>
+                        </div>
+                        <div class="split-block">
+                            <h2>Watch This
+                                <span class="accent-purple">Before You Book</span>
+                            </h2>
+                            <p class="micro-intro">In 60 seconds, you'll see:</p>
+                            <ul class="check-list">
+                                <li>
+                                    <span class="check">&#10003;</span>
+                                    <span>How we generate exclusive leads</span>
+                                </li>
+                                <li>
+                                    <span class="check">&#10003;</span>
+                                    <span>What to expect on the call</span>
+                                </li>
+                                <li>
+                                    <span class="check">&#10003;</span>
+                                    <span>How we help contractors grow</span>
+                                </li>
+                                <li>
+                                    <span class="check">&#10003;</span>
+                                    <span>Why our model works so well</span>
+                                </li>
+                            </ul>
+                        </div>
+                    </div>
+                    <div class="watch-cta">
+                        <a class="btn btn-purple" href="#hero-vsl">Watch Before You Book</a>
+                    </div>
+                </div>
+            </section>
+            <section class="fit-check-section">
+                <div class="fit-check-wrap">
+                    <div class="fit-main-icon">&#10003;</div>
+                    <h2 class="fit-check-title">Let&rsquo;s make sure we&rsquo;re a fit.</h2>
+                    <p class="fit-check-subtitle">
+                        We only work with contractors we can genuinely help. Here&rsquo;s exactly who this is&mdash;and isn&rsquo;t&mdash;built for.
+                    </p>
+                    <div class="fit-card-grid">
+                        <div class="fit-card-outer is-card">
+                            <div class="fit-floating-badge">&#10003;</div>
+                            <div class="fit-card-inner">
+                                <h3 class="fit-card-heading">This
+                                    <span class="green">IS</span> for you if:
+                                </h3>
+                                <ul class="fit-list">
+                                    <li class="fit-list-item">
+                                        <span class="fit-row-icon">&#10003;</span>
+                                        <span>You want exclusive leads in your service area</span>
+                                    </li>
+                                    <li class="fit-list-item">
+                                        <span class="fit-row-icon">&#10003;</span>
+                                        <span>You&rsquo;re ready to take on more jobs</span>
+                                    </li>
+                                    <li class="fit-list-item">
+                                        <span class="fit-row-icon">&#10003;</span>
+                                        <span>You answer your phone and follow up</span>
+                                    </li>
+                                    <li class="fit-list-item">
+                                        <span class="fit-row-icon">&#10003;</span>
+                                        <span>You&rsquo;re serious about growing your business</span>
+                                    </li>
+                                </ul>
+                            </div>
+                        </div>
+                        <div class="fit-card-outer not-card">
+                            <div class="fit-floating-badge">&times;</div>
+                            <div class="fit-card-inner">
+                                <h3 class="fit-card-heading">This is
+                                    <span class="orange">NOT</span> for you if:
+                                </h3>
+                                <ul class="fit-list">
+                                    <li class="fit-list-item">
+                                        <span class="fit-row-icon">&times;</span>
+                                        <span>You expect leads to close themselves</span>
+                                    </li>
+                                    <li class="fit-list-item">
+                                        <span class="fit-row-icon">&times;</span>
+                                        <span>You&rsquo;re not ready to take on more work</span>
+                                    </li>
+                                    <li class="fit-list-item">
+                                        <span class="fit-row-icon">&times;</span>
+                                        <span>You don&rsquo;t follow up with prospects</span>
+                                    </li>
+                                    <li class="fit-list-item">
+                                        <span class="fit-row-icon">&times;</span>
+                                        <span>You&rsquo;re just testing the waters</span>
+                                    </li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+            <section class="section testimonials">
+                <div class="container">
+                    <div style="text-align:center;margin-bottom:clamp(40px,5vw,56px);">
+                        <div style="display:inline-flex;align-items:center;gap:9px;font-size:12px;font-weight:800;letter-spacing:.18em;text-transform:uppercase;color:#7d5bef;margin-bottom:16px;">
+                            <span style="width:22px;height:2px;background:#7d5bef;border-radius:2px;"></span>
+                            Real Results
+                            <span style="width:22px;height:2px;background:#7d5bef;border-radius:2px;"></span>
+                        </div>
+                        <h2 style="font-family:'Inter',sans-serif;font-weight:800;font-size:clamp(30px,4.6vw,48px);line-height:1.06;letter-spacing:-.025em;margin:0;color:#1b1533;">
+                            What
+                            <span style="color:#7d5bef;">Contractors</span>
+                            Are Saying
+                        </h2>
+                    </div>
+                    <section class="cf-video-testimonials">
+                        <style>
+            .cf-video-testimonials,
+            .cf-video-testimonials * {
+              box-sizing: border-box;
+            }
+
+            .cf-video-testimonials {
+              width: 100%;
+              margin: 0 0 clamp(30px, 4vw, 46px);
+              padding: 0;
+              background: transparent;
+            }
+
+            .cf-video-testimonials .cf-video-wrap {
+              width: 100%;
+              max-width: 1100px;
+              margin: 0 auto;
+              display: grid;
+              grid-template-columns: repeat(2, minmax(0, 1fr));
+              gap: 24px;
+              align-items: stretch;
+            }
+
+            .cf-video-testimonials .cf-video-card {
+              position: relative;
+              width: 100%;
+              overflow: hidden;
+              border-radius: 18px;
+              background: #000;
+              box-shadow: 0 12px 34px rgba(15, 23, 42, 0.14);
+            }
+
+            .cf-video-testimonials .cf-video-frame {
+              position: relative;
+              width: 100%;
+              aspect-ratio: 16 / 9;
+              overflow: hidden;
+              background: #000;
+            }
+
+            .cf-video-testimonials iframe {
+              position: absolute;
+              inset: 0;
+              width: 100%;
+              height: 100%;
+              border: 0;
+              display: block;
+            }
+
+            .cf-video-testimonials .cf-play-overlay {
+              position: absolute;
+              inset: 0;
+              z-index: 3;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              background: rgba(0, 0, 0, 0.18);
+              border: 0;
+              cursor: pointer;
+              transition: opacity 0.25s ease, visibility 0.25s ease;
+            }
+
+            .cf-video-testimonials .cf-play-overlay.is-hidden {
+              opacity: 0;
+              visibility: hidden;
+              pointer-events: none;
+            }
+
+            .cf-video-testimonials .cf-play-button {
+              width: 76px;
+              height: 76px;
+              border-radius: 50%;
+              background: #ec5a2a;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              box-shadow: 0 12px 30px rgba(236, 90, 42, 0.45);
+              transition: transform 0.25s ease, background 0.25s ease;
+            }
+
+            .cf-video-testimonials .cf-play-overlay:hover .cf-play-button {
+              transform: scale(1.08);
+              background: #d94e20;
+            }
+
+            .cf-video-testimonials .cf-play-button::before {
+              content: "";
+              display: block;
+              width: 0;
+              height: 0;
+              margin-left: 5px;
+              border-top: 15px solid transparent;
+              border-bottom: 15px solid transparent;
+              border-left: 23px solid #ffffff;
+            }
+
+            @media (max-width: 768px) {
+              .cf-video-testimonials .cf-video-wrap {
+                grid-template-columns: 1fr;
+                gap: 20px;
+              }
+
+              .cf-video-testimonials .cf-video-frame {
+                aspect-ratio: 16 / 9;
+              }
+            }
+
+            @media (max-width: 480px) {
+              .cf-video-testimonials .cf-video-wrap {
+                gap: 18px;
+              }
+
+              .cf-video-testimonials .cf-video-card {
+                border-radius: 14px;
+              }
+
+              .cf-video-testimonials .cf-play-button {
+                width: 62px;
+                height: 62px;
+              }
+
+              .cf-video-testimonials .cf-play-button::before {
+                border-top-width: 12px;
+                border-bottom-width: 12px;
+                border-left-width: 19px;
+              }
+            }
+                        </style>
+                        <div class="cf-video-wrap">
+                            <div class="cf-video-card">
+                                <div class="cf-video-frame">
+                                    <iframe
+                                        src="https://player.vimeo.com/video/1202739692?title=0&byline=0&portrait=0&badge=0&autopause=0&player_id=0&app_id=58479"
+                                        allow="autoplay; fullscreen; picture-in-picture; clipboard-write; encrypted-media; web-share"
+                                        referrerpolicy="strict-origin-when-cross-origin"
+                                        title="Milan Video Testimonial"
+                                    ></iframe>
+                                    <button class="cf-play-overlay" type="button" aria-label="Play Milan Video Testimonial">
+                                        <span class="cf-play-button"></span>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="cf-video-card">
+                                <div class="cf-video-frame">
+                                    <iframe
+                                        src="https://player.vimeo.com/video/1202739691?title=0&byline=0&portrait=0&badge=0&autopause=0&player_id=0&app_id=58479"
+                                        allow="autoplay; fullscreen; picture-in-picture; clipboard-write; encrypted-media; web-share"
+                                        referrerpolicy="strict-origin-when-cross-origin"
+                                        title="Hunter Video Testimonial"
+                                    ></iframe>
+                                    <button class="cf-play-overlay" type="button" aria-label="Play Hunter Video Testimonial">
+                                        <span class="cf-play-button"></span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        <script>
+            (function () {
+              const root = document.currentScript.closest(".cf-video-testimonials");
+
+              root.querySelectorAll(".cf-play-overlay").forEach(function (button) {
+                button.addEventListener("click", function () {
+                  const frame = button.closest(".cf-video-frame");
+                  const iframe = frame.querySelector("iframe");
+                  const currentSrc = iframe.getAttribute("src");
+
+                  if (!currentSrc.includes("autoplay=1")) {
+                    iframe.setAttribute("src", currentSrc + "&autoplay=1");
+                  }
+
+                  button.classList.add("is-hidden");
+                });
+              });
+            })();
+                        </script>
+                    </section>
+                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:clamp(18px,2.4vw,26px);">
+                        <div style="background:#fff;border:1px solid #edeaf4;border-radius:22px;padding:30px 28px;box-shadow:0 18px 44px -30px rgba(20,10,50,.35);display:flex;flex-direction:column;">
+                            <div style="font-size:48px;font-family:'Inter';font-weight:900;line-height:.6;color:#efeafe;height:24px;">&quot;</div>
+                            <div style="color:#FFB400;font-size:15px;letter-spacing:2px;margin-bottom:14px;">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
+                            <p style="font-size:16px;line-height:1.6;color:#2c2548;font-weight:600;margin:0 0 22px;flex:1;">
+                                We went from feast or famine to consistent, high-quality jobs every month.
+                            </p>
+                            <div style="display:flex;align-items:center;gap:13px;border-top:1px solid #f0edf7;padding-top:18px;">
+                                <img src="https://i.imgur.com/j2xvRaZ.jpeg" alt="Jake M." style="width:46px;height:46px;border-radius:50%;flex:none;object-fit:cover;border:1px solid #e7e2f2;">
+                                <div style="line-height:1.3;">
+                                    <div style="font-family:'Inter';font-weight:800;font-size:15px;color:#1b1533;">Jake M.</div>
+                                    <div style="font-size:12.5px;color:#9b95ad;font-weight:600;">Roofing Contractor</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div style="background:#fff;border:1px solid #edeaf4;border-radius:22px;padding:30px 28px;box-shadow:0 18px 44px -30px rgba(20,10,50,.35);display:flex;flex-direction:column;">
+                            <div style="font-size:48px;font-family:'Inter';font-weight:900;line-height:.6;color:#efeafe;height:24px;">&quot;</div>
+                            <div style="color:#FFB400;font-size:15px;letter-spacing:2px;margin-bottom:14px;">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
+                            <p style="font-size:16px;line-height:1.6;color:#2c2548;font-weight:600;margin:0 0 22px;flex:1;">
+                                Oodles changed the way we grow our business. The leads are legit and actually answer the phone.
+                            </p>
+                            <div style="display:flex;align-items:center;gap:13px;border-top:1px solid #f0edf7;padding-top:18px;">
+                                <img src="https://i.imgur.com/LnQKXwt.jpeg" alt="Chris D." style="width:46px;height:46px;border-radius:50%;flex:none;object-fit:cover;border:1px solid #e7e2f2;">
+                                <div style="line-height:1.3;">
+                                    <div style="font-family:'Inter';font-weight:800;font-size:15px;color:#1b1533;">Chris D.</div>
+                                    <div style="font-size:12.5px;color:#9b95ad;font-weight:600;">General Contractor</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div style="background:#fff;border:1px solid #edeaf4;border-radius:22px;padding:30px 28px;box-shadow:0 18px 44px -30px rgba(20,10,50,.35);display:flex;flex-direction:column;">
+                            <div style="font-size:48px;font-family:'Inter';font-weight:900;line-height:.6;color:#efeafe;height:24px;">&quot;</div>
+                            <div style="color:#FFB400;font-size:15px;letter-spacing:2px;margin-bottom:14px;">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
+                            <p style="font-size:16px;line-height:1.6;color:#2c2548;font-weight:600;margin:0 0 22px;flex:1;">
+                                Finally, a lead service that keeps its word. Exclusive, real, and worth every penny.
+                            </p>
+                            <div style="display:flex;align-items:center;gap:13px;border-top:1px solid #f0edf7;padding-top:18px;">
+                                <img src="https://i.imgur.com/0mYcubP.jpeg" alt="Matt S." style="width:46px;height:46px;border-radius:50%;flex:none;object-fit:cover;border:1px solid #e7e2f2;">
+                                <div style="line-height:1.3;">
+                                    <div style="font-family:'Inter';font-weight:800;font-size:15px;color:#1b1533;">Matt S.</div>
+                                    <div style="font-size:12.5px;color:#9b95ad;font-weight:600;">Remodeling Contractor</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="orange-banner">
+                        <div>
+                            <h3>We Only Work With One Contractor Per Service Area.</h3>
+                            <p>Some areas are already taken. On the call, we'll see if yours is still open.</p>
+                        </div>
+                        <a class="btn" href="https://staging.trysplitlab.com/oodles-booking/2cd495fd-9ce4-4928-94af-7ea5d0aaaa73">See If Your Area Is Open &rarr;</a>
+                    </div>
+                </div>
+            </section>
+            <section class="closing" id="booking">
+                <div class="container">
+                    <h2 class="section-title">Let&rsquo;s See If Your
+                        <span class="accent-orange">Area Is Still Available</span>
+                    </h2>
+                    <p class="closing-copy">This call is simply to see if your area is open and if this makes sense for you.</p>
+                    <div class="closing-points">
+                        <div class="closing-point">
+                            <span class="closing-icon" aria-hidden="true">
+                                <img src="https://d9hhrg4mnvzow.cloudfront.net/try.oodlesofleads.com/736c5fd3-group-1686566383-1.svg" alt="" loading="lazy">
+                            </span>
+                            <span>
+                                <strong>Takes about 20 to 30 minutes</strong>
+                                <span>Quick, focused, and worth your time.</span>
+                            </span>
+                        </div>
+                        <div class="closing-point">
+                            <span class="closing-icon" aria-hidden="true">
+                                <img src="https://d9hhrg4mnvzow.cloudfront.net/try.oodlesofleads.com/d36f770e-group-1686566314-1.svg" alt="" loading="lazy">
+                            </span>
+                            <span>
+                                <strong>We&rsquo;ll look at your area together</strong>
+                                <span>We&rsquo;ll see if it&rsquo;s open and a good fit.</span>
+                            </span>
+                        </div>
+                        <div class="closing-point">
+                            <span class="closing-icon" aria-hidden="true">
+                                <img src="https://d9hhrg4mnvzow.cloudfront.net/try.oodlesofleads.com/dd70eebe-group-1686566302-1.svg" alt="" loading="lazy">
+                            </span>
+                            <span>
+                                <strong>No pressure, no hard pitch</strong>
+                                <span>Just real answers.</span>
+                            </span>
+                        </div>
+                    </div>
+                    <div class="center">
+                        <a class="btn btn-orange" href="https://oodlesofleads.com/booking">See If Your Area Is Open &rarr;</a>
+                    </div>
+                </div>
+            </section>
+            <footer class="footer">
+                <div class="container">
+                    <div class="footer-grid">
+                        <div>
+                            <img class="footer-logo" src="https://i.imgur.com/lXaMqEQ.png" alt="Oodles of Leads">
+                            <p>Exclusive homeowner leads for contractors. No shared lists, no marketing headaches&mdash;just verified jobs ready to close.</p>
+                        </div>
+                        <div>
+                            <h4>Quick Links</h4>
+                            <div class="footer-links">
+                                <a href="#top">Exclusive leads</a>
+                                <a href="#how-it-works">Real homeowners</a>
+                                <a href="#booking">No long-term contracts</a>
+                            </div>
+                        </div>
+                        <div>
+                            <h4>Contact</h4>
+                            <div class="footer-links">
+                                <a href="mailto:howdy@oodlesofleads.com">howdy@oodlesofleads.com</a>
+                                <span>6485 Centerville Business Parkway, Dayton, OH, 45459</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="footer-bottom">
+                        <span>&copy; 2025 Oodles of Leads. All rights reserved.</span>
+                        <span>Designed &amp; Developed by
+                            <strong>Infinity Media</strong>
+                        </span>
+                    </div>
+                </div>
+            </footer>
+        </main>
+        <script src="https://player.vimeo.com/api/player.js"></script>
+    </body>
+</html>
