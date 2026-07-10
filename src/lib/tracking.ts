@@ -441,6 +441,10 @@ export function buildTrackingSnippet(
     patchNetworkForJsSubmit();
   }
 
+  // One-shot only, unlike tracker.js's watchForNewFields() MutationObserver — hosted
+  // variant HTML is fetched from Storage in full up front, so a later scan/registration
+  // pass isn't needed for fields that are merely CSS-hidden. A field that a page's own JS
+  // injects into the DOM only after some interaction would still be missed here.
   function registerFormFields() {
     try {
       var seen = {};
@@ -702,6 +706,11 @@ export function buildScanScript(variantId: string, appUrl: string): string {
     if (selector && selector.indexOf('text:') === 0) return selector.slice(5);
     return toggleAssociatedLabel(cb) || 'Toggle';
   }
+  // Single-pass only, unlike tracker.js's startStepperObserver() — the full hosted
+  // page HTML is already in the DOM at scan time (querySelectorAll sees CSS-hidden
+  // steps too), so no MutationObserver re-scan is needed for typical multi-step forms.
+  // A step whose markup is injected by the page's own JS only after interaction
+  // would still be missed until the visitor reaches it.
   function runScan() {
     var elements = [];
     var forms = document.querySelectorAll('form');

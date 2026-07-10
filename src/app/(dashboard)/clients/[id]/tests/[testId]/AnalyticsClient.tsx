@@ -118,10 +118,12 @@ interface Test {
 interface Lead {
   id: string;
   visitor_hash: string;
+  goal_id: string | null;
   metadata: Record<string, unknown>;
   created_at: string;
   test_variants: { name: string } | null;
   conversion_goals: { name: string } | null;
+  goalEnabled: boolean;
 }
 
 interface FormLead {
@@ -413,7 +415,7 @@ export default function AnalyticsClient({
   // Leads
   const [leads, setLeads] = useState<Lead[]>([]);
   const [leadsLoading, setLeadsLoading] = useState(false);
-  const [leadsLoaded, setLeadsLoaded] = useState(false);
+  const [showUntrackedLeads, setShowUntrackedLeads] = useState(false);
 
   // Form Leads
   const [formLeads, setFormLeads] = useState<FormLead[]>([]);
@@ -1298,14 +1300,13 @@ export default function AnalyticsClient({
 
   // ─── Leads ───────────────────────────────────────────────────────────
 
-  const fetchLeads = useCallback(async () => {
+  const fetchLeads = useCallback(async (all: boolean) => {
     setLeadsLoading(true);
     try {
-      const res = await fetch(`/api/tests/${test.id}/leads`);
+      const res = await fetch(`/api/tests/${test.id}/leads${all ? "?all=1" : ""}`);
       if (!res.ok) throw new Error();
       const data = await res.json();
       setLeads(data.leads || []);
-      setLeadsLoaded(true);
     } catch {
       toast.error("Failed to load leads");
     } finally {
@@ -1314,8 +1315,8 @@ export default function AnalyticsClient({
   }, [test.id]);
 
   useEffect(() => {
-    if (tab === "leads" && !leadsLoaded) fetchLeads();
-  }, [tab, leadsLoaded, fetchLeads]);
+    if (tab === "leads") fetchLeads(showUntrackedLeads);
+  }, [tab, showUntrackedLeads, fetchLeads]);
 
   // ─── Form Leads ──────────────────────────────────────────────────────
 
@@ -3169,7 +3170,45 @@ export default function AnalyticsClient({
 
         {/* ─── LEADS TAB ─── */}
         {tab === "leads" && (
-          <>
+          <div className="space-y-4">
+            <div className="card px-5 py-3 flex items-center justify-between flex-wrap gap-3">
+              <p className="text-sm text-slate-500 dark:text-slate-400">
+                {leadsLoading
+                  ? "Loading…"
+                  : `${leads.length} conversion${leads.length !== 1 ? "s" : ""}`}
+                {!showUntrackedLeads && (
+                  <span className="text-slate-400 dark:text-slate-500">
+                    {" "}
+                    · goal-tracked only, matches Overview counts
+                  </span>
+                )}
+              </p>
+              <div className="flex items-center gap-3">
+                <label
+                  className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 cursor-pointer select-none"
+                  title="Raw, un-matched clicks/submits. Mostly relevant for redirect variants with tracker.js installed on the destination page — that script logs every interaction by default. Hosted page variants only log an event when a configured goal is actually triggered, so this list is often empty for them even after clicks happen."
+                >
+                  <input
+                    type="checkbox"
+                    checked={showUntrackedLeads}
+                    onChange={(e) => setShowUntrackedLeads(e.target.checked)}
+                    className="rounded border-slate-300 dark:border-slate-600"
+                  />
+                  Show untracked events
+                </label>
+                <button
+                  onClick={() => fetchLeads(showUntrackedLeads)}
+                  className="btn-secondary text-xs"
+                >
+                  <RefreshCw
+                    size={12}
+                    className={leadsLoading ? "animate-spin" : ""}
+                  />{" "}
+                  Refresh
+                </button>
+              </div>
+            </div>
+
             {leadsLoading ? (
               <div className="flex items-center justify-center py-12">
                 <RefreshCw
@@ -3184,22 +3223,13 @@ export default function AnalyticsClient({
                   No conversions recorded yet.
                 </p>
                 <p className="text-slate-500 text-xs mt-1">
-                  Conversions will appear here once visitors trigger your goals.
+                  {showUntrackedLeads
+                    ? "Conversions will appear here once visitors trigger a tracked or untracked event."
+                    : "Conversions will appear here once visitors trigger your goals. Turn on \"Show untracked events\" to see raw clicks/submits that haven't been matched to a goal."}
                 </p>
               </div>
             ) : (
               <div className="card overflow-hidden">
-                <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200 dark:border-slate-700">
-                  <p className="text-sm text-slate-500 dark:text-slate-400">
-                    {leads.length} conversion{leads.length !== 1 ? "s" : ""}
-                  </p>
-                  <button
-                    onClick={fetchLeads}
-                    className="btn-secondary text-xs"
-                  >
-                    <RefreshCw size={12} /> Refresh
-                  </button>
-                </div>
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-slate-200 dark:border-slate-700">
@@ -3224,7 +3254,11 @@ export default function AnalyticsClient({
                     {leads.map((lead) => (
                       <tr
                         key={lead.id}
-                        className="border-b border-slate-200 dark:border-slate-800 last:border-0"
+                        className={`border-b border-slate-200 dark:border-slate-800 last:border-0 ${
+                          lead.goalEnabled
+                            ? ""
+                            : "bg-amber-50/60 dark:bg-amber-500/[0.04]"
+                        }`}
                       >
                         <td className="px-5 py-3 text-slate-700 dark:text-slate-300 text-xs">
                           {new Date(lead.created_at).toLocaleString()}
@@ -3235,8 +3269,21 @@ export default function AnalyticsClient({
                         <td className="px-5 py-3 text-slate-700 dark:text-slate-300">
                           {lead.test_variants?.name || "—"}
                         </td>
-                        <td className="px-5 py-3 text-slate-700 dark:text-slate-300">
-                          {lead.conversion_goals?.name || "—"}
+                        <td className="px-5 py-3">
+                          {lead.goalEnabled ? (
+                            <span className="inline-flex items-center gap-1.5 text-slate-700 dark:text-slate-300">
+                              <span className="w-1.5 h-1.5 rounded-full bg-green-500 flex-shrink-0" />
+                              {lead.conversion_goals?.name || "—"}
+                            </span>
+                          ) : (
+                            <span
+                              className="inline-flex items-center gap-1.5 text-amber-600 dark:text-amber-400 text-xs font-medium"
+                              title="This event didn't match a goal that's currently enabled — it's not counted in the Overview tab's Conversions/Goal Hits."
+                            >
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-500 flex-shrink-0" />
+                              Not tracked
+                            </span>
+                          )}
                         </td>
                         <td className="px-5 py-3 text-slate-500 text-xs font-mono">
                           {(lead.metadata as Record<string, string>)?.trigger ||
@@ -3248,7 +3295,7 @@ export default function AnalyticsClient({
                 </table>
               </div>
             )}
-          </>
+          </div>
         )}
 
         {/* ─── FORM LEADS TAB ─── */}
@@ -4347,6 +4394,11 @@ export default function AnalyticsClient({
                         >
                           <span className="text-sm text-slate-700 dark:text-slate-300 flex-1 truncate">
                             {g.name}
+                          </span>
+                          <span className="text-xs bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 px-1.5 py-0.5 rounded flex-shrink-0 font-medium">
+                            {g.variant_id
+                              ? variants.find((v) => v.id === g.variant_id)?.name ?? "Unknown variant"
+                              : "All variants"}
                           </span>
                           <span className="text-xs bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-400 px-1.5 py-0.5 rounded flex-shrink-0">
                             {GOAL_TYPES.find((t) => t.value === g.type)?.label || g.type}
