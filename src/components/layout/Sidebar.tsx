@@ -234,9 +234,9 @@ export default function Sidebar() {
   }
 
   return (
-    <aside className="w-60 min-h-screen bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col">
+    <aside className="w-60 h-screen sticky top-0 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden">
       {/* Logo */}
-      <div className="h-20 flex items-center px-5 border-b border-slate-200 dark:border-slate-800">
+      <div className="h-20 flex items-center px-5 border-b border-slate-200 dark:border-slate-800 flex-shrink-0">
         <Link href="/dashboard" className="flex items-center">
           {/* <svg width="140" height="32" ...>...</svg> */}
           <img src="/splitlab-logo-light.png" alt="SplitLab" className="dark:hidden" style={{ height: '80px', width: 'auto' }} />
@@ -245,7 +245,7 @@ export default function Sidebar() {
       </div>
 
       {/* Client Dropdown / Static label */}
-      <div className="px-3 pt-4 pb-2" ref={dropdownRef}>
+      <div className="px-3 pt-4 pb-2 flex-shrink-0" ref={dropdownRef}>
         {multiClientEnabled ? (
           <>
             <button
@@ -347,7 +347,7 @@ export default function Sidebar() {
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 px-3 py-2 space-y-0.5">
+      <nav className="flex-1 min-h-0 overflow-y-auto px-3 py-2 space-y-0.5">
         {!clientsLoaded && !multiClientEnabled ? (
           // Show skeleton while clients load to prevent Dashboard flash
           Array.from({ length: 5 }).map((_, i) => (
@@ -376,7 +376,7 @@ export default function Sidebar() {
       </nav>
 
       {/* User menu */}
-      <div className="px-3 py-3 border-t border-slate-200 dark:border-slate-800">
+      <div className="px-3 py-3 border-t border-slate-200 dark:border-slate-800 flex-shrink-0">
         <button
           onClick={() => setUserMenuOpen(!userMenuOpen)}
           className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"

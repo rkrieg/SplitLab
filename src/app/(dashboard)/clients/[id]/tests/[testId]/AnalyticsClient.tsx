@@ -2461,6 +2461,14 @@ export default function AnalyticsClient({
                       const isEditing = editingVariantId === stat.variant.id;
                       const verified = getVerifiedStatus(stat.variant);
                       const rowBg = stat.isWinner ? "bg-green-500/5" : "";
+                      const variantScanned =
+                        scanResults !== null &&
+                        scanResults.variants.some((vs) => vs.variant_id === stat.variant.id);
+                      const variantHasGoals = editGoals.some(
+                        (g) =>
+                          g.name.trim() !== "" &&
+                          (g.variant_id == null || g.variant_id === stat.variant.id),
+                      );
 
                       return (
                         <Fragment key={stat.variant.id}>
@@ -2653,11 +2661,19 @@ export default function AnalyticsClient({
                                   }}
                                   disabled={scanningVariantIds.includes(stat.variant.id)}
                                   className={`flex items-center justify-center gap-1 w-full px-2 py-1 rounded-lg text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap ${
-                                    scanResults !== null && !scanResults.variants.some(vs => vs.variant_id === stat.variant.id)
-                                      ? "bg-red-600 border border-red-500 text-white hover:bg-red-700 shadow-md shadow-red-500/50 animate-pulse"
-                                      : "bg-green-500/10 border border-green-500/30 text-green-500 dark:text-green-400 hover:bg-green-500/20"
+                                    variantHasGoals
+                                      ? "bg-green-500/10 border border-green-500/30 text-green-500 dark:text-green-400 hover:bg-green-500/20"
+                                      : variantScanned
+                                      ? "bg-amber-500 border border-amber-600 text-white hover:bg-amber-600 shadow-md shadow-amber-500/50 animate-pulse"
+                                      : "bg-red-600 border border-red-500 text-white hover:bg-red-700 shadow-md shadow-red-500/50 animate-pulse"
                                   }`}
-                                  title={scanResults !== null && !scanResults.variants.some(vs => vs.variant_id === stat.variant.id) ? "No goal tracking set up — conversions are NOT being recorded for this variant. Click to set it up now." : "Goal tracking set up — click to manage"}
+                                  title={
+                                    variantHasGoals
+                                      ? "Goal tracking set up — click to manage"
+                                      : variantScanned
+                                      ? "Page scanned but no goal is enabled yet — conversions are NOT being recorded. Click to choose a goal."
+                                      : "No goal tracking set up — conversions are NOT being recorded for this variant. Click to set it up now."
+                                  }
                                 >
                                   <ScanLine size={11} />
                                   Setup Goal Tracking
@@ -4233,9 +4249,14 @@ export default function AnalyticsClient({
               <div className="card overflow-hidden">
                 <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700">
                   <div className="flex items-center justify-between">
-                    <h3 className="font-medium text-slate-800 dark:text-slate-200">
-                      Goals
-                    </h3>
+                    <div>
+                      <h3 className="font-medium text-slate-800 dark:text-slate-200">
+                        Conversion Goals
+                      </h3>
+                      <p className="text-slate-500 dark:text-slate-400 text-xs mt-0.5">
+                        Goals enabled from the scanner above appear here automatically. Add a URL-based goal manually for pages you don&apos;t want to scan (e.g. a thank-you page).
+                      </p>
+                    </div>
                     <button
                       type="button"
                       onClick={() =>
@@ -4252,9 +4273,9 @@ export default function AnalyticsClient({
                           },
                         ])
                       }
-                      className="text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300 text-sm font-medium"
+                      className="text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300 text-sm font-medium flex-shrink-0"
                     >
-                      + Add Goal
+                      + Add URL Goal
                     </button>
                   </div>
                 </div>
@@ -4262,7 +4283,38 @@ export default function AnalyticsClient({
                   onSubmit={handleSaveGoals}
                   className="px-5 py-4 space-y-3"
                 >
-                  {editGoals.map((g, i) => (
+                  <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
+                  {editGoals.map((g, i) => {
+                    // Only URL Reached goals are created here manually. Everything else
+                    // (form/button/call goals) comes from the scanner above and is
+                    // managed there — editing/removing it here would desync from the
+                    // scanned element it's matched against.
+                    // Inferred, not stored: there's no source/created_via column, so this
+                    // relies on url_reached never being produced by the scanner. If that
+                    // ever changes, a scan-created url_reached goal would be misclassified
+                    // as manual here.
+                    const isManual = g.type === "url_reached";
+
+                    if (!isManual) {
+                      return (
+                        <div
+                          key={i}
+                          className="flex items-center gap-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 p-3"
+                        >
+                          <span className="text-sm text-slate-700 dark:text-slate-300 flex-1 truncate">
+                            {g.name}
+                          </span>
+                          <span className="text-xs bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-400 px-1.5 py-0.5 rounded flex-shrink-0">
+                            {GOAL_TYPES.find((t) => t.value === g.type)?.label || g.type}
+                          </span>
+                          <span className="text-slate-400 dark:text-slate-500 text-[11px] flex-shrink-0" title="Detected via the scanner above — manage it there, not here">
+                            From scan
+                          </span>
+                        </div>
+                      );
+                    }
+
+                    return (
                     <div
                       key={i}
                       className="rounded-lg border border-slate-200 dark:border-slate-700 p-3 space-y-2"
@@ -4280,16 +4332,9 @@ export default function AnalyticsClient({
                           placeholder="Goal name"
                           required
                         />
-                        {/* Type locked: only URL Reached goals are created manually; the single option still shows scan-created goals' real type */}
-                        <select
-                          value={g.type}
-                          disabled
-                          className="input-base w-36 opacity-70 cursor-not-allowed"
-                        >
-                          <option value={g.type}>
-                            {GOAL_TYPES.find((t) => t.value === g.type)?.label || g.type}
-                          </option>
-                        </select>
+                        <span className="text-xs bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 px-2 py-1.5 rounded-lg flex-shrink-0 whitespace-nowrap">
+                          URL Reached
+                        </span>
                         <button
                           type="button"
                           onClick={() =>
@@ -4301,52 +4346,40 @@ export default function AnalyticsClient({
                         </button>
                       </div>
                       <div className="flex items-center gap-2">
-                        {(g.type === "form_submit" ||
-                          g.type === "button_click") && (
-                          <input
-                            type="text"
-                            value={g.selector || ""}
-                            onChange={(e) => {
-                              const c = [...editGoals];
-                              c[i] = { ...c[i], selector: e.target.value };
-                              setEditGoals(c);
-                            }}
-                            className="input-base flex-1 font-mono text-xs"
-                            placeholder={
-                              g.type === "form_submit"
-                                ? "#my-form"
-                                : "#cta-button"
-                            }
-                          />
-                        )}
-                        {g.type === "url_reached" && (
-                          <input
-                            type="text"
-                            value={g.url_pattern || ""}
-                            onChange={(e) => {
-                              const c = [...editGoals];
-                              c[i] = { ...c[i], url_pattern: e.target.value };
-                              setEditGoals(c);
-                            }}
-                            className="input-base flex-1 font-mono text-xs"
-                            placeholder="/thank-you"
-                          />
-                        )}
-                        {g.type === "call_click" && (
-                          <p className="text-slate-500 text-xs flex-1">
-                            Tracks tel: link clicks
-                          </p>
-                        )}
+                        <input
+                          type="text"
+                          value={g.url_pattern || ""}
+                          onChange={(e) => {
+                            const c = [...editGoals];
+                            c[i] = { ...c[i], url_pattern: e.target.value };
+                            setEditGoals(c);
+                          }}
+                          className="input-base flex-1 font-mono text-xs"
+                          placeholder="/thank-you"
+                        />
                       </div>
+                      <p className="text-slate-500 dark:text-slate-500 text-[11px]">
+                        Matches if the visitor&apos;s URL <span className="font-medium">contains</span> this text anywhere — e.g. <code className="font-mono">/booking</code> matches <code className="font-mono">/booking</code>, <code className="font-mono">/booking-confirmed</code>, and <code className="font-mono">/booking?utm_source=fb</code>. Enter the path only — no need to add search params.
+                      </p>
                     </div>
-                  ))}
+                    );
+                  })}
                   {editGoals.length === 0 && (
                     <p className="text-slate-500 text-xs">
                       No goals. Add one to track conversions.
                     </p>
                   )}
+                  </div>
                   <div className="flex justify-end pt-2">
-                    <Button type="submit" loading={savingGoals} size="sm">
+                    <Button
+                      type="submit"
+                      loading={savingGoals}
+                      size="sm"
+                      disabled={
+                        editGoals.length === 0 &&
+                        (test.conversion_goals?.length ?? 0) === 0
+                      }
+                    >
                       Save Goals
                     </Button>
                   </div>
