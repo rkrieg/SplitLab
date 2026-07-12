@@ -30,8 +30,20 @@ export async function GET(
   const cookieHeader = request.headers.get('cookie') || '';
   const res = await fetch(serveUrl.toString(), {
     headers: { cookie: cookieHeader },
-    redirect: 'follow',
+    // Redirect variants answer with a 302 to the destination site; relay it to
+    // the browser instead of following it server-side, which would serve the
+    // destination's HTML from this origin and break its relative assets.
+    redirect: 'manual',
   });
+
+  const location = res.headers.get('location');
+  if (res.status >= 300 && res.status < 400 && location) {
+    const redirectResponse = NextResponse.redirect(location, res.status);
+    res.headers.getSetCookie?.().forEach((cookie) => {
+      redirectResponse.headers.append('Set-Cookie', cookie);
+    });
+    return redirectResponse;
+  }
 
   const body = await res.arrayBuffer();
   const response = new NextResponse(body, {
