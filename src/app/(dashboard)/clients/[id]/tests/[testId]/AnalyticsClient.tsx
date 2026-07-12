@@ -954,8 +954,10 @@ export default function AnalyticsClient({
 
     setSavingVariant(true);
     try {
+      // checkFrameable may only downgrade proxy → redirect (site blocks iframing);
+      // an explicit redirect choice is never overridden
       let proxyMode = variantDraft.proxy_mode;
-      if (variantDraft.redirect_url) {
+      if (variantDraft.redirect_url && proxyMode) {
         proxyMode = await checkFrameable(variantDraft.redirect_url.trim());
       }
       const res = await fetch(`/api/tests/${test.id}`, {

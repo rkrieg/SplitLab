@@ -1,0 +1,1475 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Hunbal Siddiqui — Fullstack Developer</title>
+        <meta name="description" content="Hunbal Siddiqui — Fullstack Developer specializing in MERN and MEVN stacks. Building scalable web applications for 5+ years.">
+        <link rel="icon" type="image/x-icon" href="./src/images/favicon-64-light.png">
+        <link rel="preconnect" href="https://fonts.googleapis.com">
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,300;0,14..32,400;0,14..32,500;0,14..32,600;0,14..32,700;0,14..32,800;1,14..32,400&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+        <link rel="stylesheet" href="./css/main.css">
+    </head>
+    <body>
+        <!-- Scroll Progress Bar -->
+        <div class="scroll-progress" id="scrollProgress"></div>
+        <!-- Theme Toggle -->
+        <button id="themeToggle" class="theme-toggle" aria-label="Toggle dark/light mode">
+            <span class="theme-icon theme-icon--sun" aria-hidden="true">
+                <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 24 24"
+                    fill="currentColor"
+                    width="18"
+                    height="18"
+                >
+                    <path d="M12 2.25a.75.75 0 01.75.75v2.25a.75.75 0 01-1.5 0V3a.75.75 0 01.75-.75zM7.5 12a4.5 4.5 0 119 0 4.5 4.5 0 01-9 0zM18.894 6.166a.75.75 0 00-1.06-1.06l-1.591 1.59a.75.75 0 101.06 1.061l1.591-1.59zM21.75 12a.75.75 0 01-.75.75h-2.25a.75.75 0 010-1.5H21a.75.75 0 01.75.75zM17.834 18.894a.75.75 0 001.06-1.06l-1.59-1.591a.75.75 0 10-1.061 1.06l1.59 1.591zM12 18a.75.75 0 01.75.75V21a.75.75 0 01-1.5 0v-2.25A.75.75 0 0112 18zM7.758 17.303a.75.75 0 00-1.061-1.06l-1.591 1.59a.75.75 0 001.06 1.061l1.591-1.59zM6 12a.75.75 0 01-.75.75H3a.75.75 0 010-1.5h2.25A.75.75 0 016 12zM6.697 7.757a.75.75 0 001.06-1.06l-1.59-1.591a.75.75 0 00-1.061 1.06l1.59 1.591z"/>
+                </svg>
+            </span>
+            <span class="theme-icon theme-icon--moon" aria-hidden="true">
+                <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 24 24"
+                    fill="currentColor"
+                    width="18"
+                    height="18"
+                >
+                    <path fill-rule="evenodd" d="M9.528 1.718a.75.75 0 01.162.819A8.97 8.97 0 009 6a9 9 0 009 9 8.97 8.97 0 003.463-.69.75.75 0 01.981.98 10.503 10.503 0 01-9.694 6.46c-5.799 0-10.5-4.701-10.5-10.5 0-4.368 2.667-8.112 6.46-9.694a.75.75 0 01.818.162z" clip-rule="evenodd"/>
+                </svg>
+            </span>
+        </button>
+        <!-- Back to Top -->
+        <button id="backToTopBtn" class="back-to-top" aria-label="Back to top">
+            <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 20 20"
+                fill="currentColor"
+                width="18"
+                height="18"
+            >
+                <path fill-rule="evenodd" d="M10 17a.75.75 0 01-.75-.75V5.612L5.29 9.77a.75.75 0 01-1.08-1.04l5.25-5.5a.75.75 0 011.08 0l5.25 5.5a.75.75 0 11-1.08 1.04l-3.96-4.158V16.25A.75.75 0 0110 17z" clip-rule="evenodd"/>
+            </svg>
+        </button>
+        <main class="main">
+            <!-- Header -->
+            <header class="header" id="header">
+                <div class="header__inner">
+                    <a href="#about" class="logo">
+                        <div class="logo__outer">
+                            <div class="logo__inner">
+                                <span>H</span>
+                            </div>
+                        </div>
+                    </a>
+                    <nav class="nav">
+                        <input type="checkbox" id="menuToggle" class="nav__checkbox">
+                        <label for="menuToggle" class="nav__hamburger" aria-label="Toggle menu">
+                            <span class="nav__hamburger-line"></span>
+                            <span class="nav__hamburger-line"></span>
+                            <span class="nav__hamburger-line"></span>
+                        </label>
+                        <label for="menuToggle" class="nav__backdrop" aria-hidden="true"></label>
+                        <ul class="nav__list">
+                            <li class="nav__item">
+                                <a href="#about" class="nav__link" data-nav="about">About</a>
+                            </li>
+                            <li class="nav__item">
+                                <a href="#stack" class="nav__link" data-nav="stack">Stack</a>
+                            </li>
+                            <li class="nav__item">
+                                <a href="#methodology" class="nav__link" data-nav="methodology">Methodology</a>
+                            </li>
+                            <li class="nav__item">
+                                <a href="#projects" class="nav__link" data-nav="projects">Projects</a>
+                            </li>
+                            <li class="nav__item">
+                                <a href="#blogs" class="nav__link" data-nav="blogs">Blogs</a>
+                            </li>
+                            <li class="nav__item">
+                                <a href="#contact" class="btn btn--primary nav__cta">
+                                    Connect
+                                    <svg
+                                        class="btn__icon"
+                                        xmlns="http://www.w3.org/2000/svg"
+                                        viewBox="0 0 20 20"
+                                        fill="currentColor"
+                                        width="16"
+                                        height="16"
+                                    >
+                                        <path fill-rule="evenodd" d="M3 10a.75.75 0 01.75-.75h10.638L10.23 5.29a.75.75 0 111.04-1.08l5.5 5.25a.75.75 0 010 1.08l-5.5 5.25a.75.75 0 11-1.04-1.08l4.158-3.96H3.75A.75.75 0 013 10z" clip-rule="evenodd"/>
+                                    </svg>
+                                </a>
+                            </li>
+                        </ul>
+                    </nav>
+                </div>
+            </header>
+            <!-- ═══════════════════════════════════════
+           HERO
+      ═══════════════════════════════════════ -->
+            <section class="hero" id="about">
+                <canvas id="heroParticles" class="hero__particles" aria-hidden="true"></canvas>
+                <div class="hero__content">
+                    <span class="hero__badge">
+                        <span class="hero__badge-dot"></span>
+                        Available for work
+                    </span>
+                    <h1 class="hero__title">
+                        Hi, I'm
+                        <span class="hero__name">Hunbal Siddiqui.</span>
+                    </h1>
+                    <div class="hero__typewriter-row">
+                        <span class="hero__prompt">&gt;&nbsp;</span>
+                        <span class="hero__typewriter" id="typewriter"></span>
+                        <span class="hero__cursor" id="twCursor">|</span>
+                    </div>
+                    <p class="hero__desc">
+                        I have a strong programming background and am proficient in MERN, MEVN, MySQL and PostgreSQL. Whether you're a business seeking a digital presence or an employer looking to hire, I've built everything from marketing sites to highly interactive enterprise applications.
+                    </p>
+                    <div class="hero__actions">
+                        <a href="#contact" class="btn btn--primary">
+                            Let's Connect
+                            <svg
+                                class="btn__icon"
+                                xmlns="http://www.w3.org/2000/svg"
+                                viewBox="0 0 20 20"
+                                fill="currentColor"
+                                width="16"
+                                height="16"
+                            >
+                                <path fill-rule="evenodd" d="M3 10a.75.75 0 01.75-.75h10.638L10.23 5.29a.75.75 0 111.04-1.08l5.5 5.25a.75.75 0 010 1.08l-5.5 5.25a.75.75 0 11-1.04-1.08l4.158-3.96H3.75A.75.75 0 013 10z" clip-rule="evenodd"/>
+                            </svg>
+                        </a>
+                        <a href="#projects" class="btn btn--outline">
+                            View Projects
+                        </a>
+                    </div>
+                </div>
+                <div class="hero__visual">
+                    <div class="terminal-window">
+                        <div class="terminal-bar">
+                            <div class="terminal-dots">
+                                <span class="dot dot--red"></span>
+                                <span class="dot dot--yellow"></span>
+                                <span class="dot dot--green"></span>
+                            </div>
+                            <span class="terminal-title">developer.config.ts</span>
+                        </div>
+                        <div class="terminal-body">
+                            <div class="tl">
+                                <span class="tk">const</span>
+                                <span class="tv">developer</span>
+                                <span class="to">=</span> {
+                            </div>
+                            <div class="tl tl--indent">
+                                <span class="tp">name</span>
+                                <span class="to">:</span>
+                                <span class="ts">'Hunbal Siddiqui'</span>,
+                            </div>
+                            <div class="tl tl--indent">
+                                <span class="tp">role</span>
+                                <span class="to">:</span>
+                                <span class="ts">'Fullstack Developer'</span>,
+                            </div>
+                            <div class="tl tl--indent">
+                                <span class="tp">stack</span>
+                                <span class="to">:</span> [
+                                <span class="ts">'MERN'</span>,
+                                <span class="ts">'MEVN'</span>],
+                            </div>
+                            <div class="tl tl--indent">
+                                <span class="tp">experience</span>
+                                <span class="to">:</span>
+                                <span class="tn">5</span>,
+                            </div>
+                            <div class="tl tl--indent">
+                                <span class="tp">available</span>
+                                <span class="to">:</span>
+                                <span class="tb">true</span>,
+                            </div>
+                            <div class="tl tl--indent">
+                                <span class="tp">passion</span>
+                                <span class="to">:</span>
+                                <span class="ts">'Building at scale'</span>
+                            </div>
+                            <div class="tl">};</div>
+                            <div class="tl tl--empty">
+                                <span class="terminal-prompt">$</span>
+                                <span class="terminal-blink">█</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="hero__floating-badges">
+                        <span class="fbadge fbadge--1">
+                            <span class="fbadge__dot" style="background:#61dafb"></span>React</span>
+                        <span class="fbadge fbadge--2">
+                            <span class="fbadge__dot" style="background:#42b883"></span>Vue 3</span>
+                        <span class="fbadge fbadge--3">
+                            <span class="fbadge__dot" style="background:#68a063"></span>Node.js</span>
+                        <span class="fbadge fbadge--4">
+                            <span class="fbadge__dot" style="background:#f7931a"></span>AWS</span>
+                    </div>
+                </div>
+            </section>
+            <!-- STATS BAR -->
+            <div class="stats-bar">
+                <div class="stat">
+                    <span class="stat__number">5
+                        <span class="stat__plus">+</span>
+                    </span>
+                    <span class="stat__label">Years Experience</span>
+                </div>
+                <div class="stat__sep"></div>
+                <div class="stat">
+                    <span class="stat__number">25
+                        <span class="stat__plus">+</span>
+                    </span>
+                    <span class="stat__label">Projects Shipped</span>
+                </div>
+                <div class="stat__sep"></div>
+                <div class="stat">
+                    <span class="stat__number">15
+                        <span class="stat__plus">+</span>
+                    </span>
+                    <span class="stat__label">Happy Clients</span>
+                </div>
+                <div class="stat__sep"></div>
+                <div class="stat">
+                    <span class="stat__number">MERN</span>
+                    <span class="stat__label">+ MEVN Expert</span>
+                </div>
+            </div>
+            <!-- ═══════════════════════════════════════
+           TECH NUCLEUS
+      ═══════════════════════════════════════ -->
+            <section class="nucleus-section" id="stack">
+                <h2 class="section-title">
+                    Tech Stack
+                    <span class="section-title__accent">Visualized</span>
+                </h2>
+                <p class="section-subtitle">Hub-and-spoke view of my toolkit: frontend, backend, databases and cloud infrastructure orbiting a full-stack core.</p>
+                <div class="nucleus-container">
+                    <canvas id="nucleusCanvas" class="nucleus-canvas"></canvas>
+                    <!-- Fallback for very small screens -->
+                    <div class="nucleus-fallback">
+                        <div class="nf-group">
+                            <span class="nf-label" style="color:#3a86ff">Frontend</span>
+                            <div class="nf-tags">
+                                <span>React JS</span>
+                                <span>Vue 3</span>
+                                <span>Next.js</span>
+                                <span>React Native</span>
+                                <span>Redux</span>
+                                <span>Pinia</span>
+                            </div>
+                        </div>
+                        <div class="nf-group">
+                            <span class="nf-label" style="color:#818cf8">Backend</span>
+                            <div class="nf-tags">
+                                <span>Node.js</span>
+                                <span>Express</span>
+                                <span>Fastify</span>
+                                <span>REST</span>
+                                <span>GraphQL</span>
+                            </div>
+                        </div>
+                        <div class="nf-group">
+                            <span class="nf-label" style="color:#8b5cf6">Cloud &amp; DB</span>
+                            <div class="nf-tags">
+                                <span>MongoDB</span>
+                                <span>PostgreSQL</span>
+                                <span>MySQL</span>
+                                <span>AWS ECS</span>
+                                <span>S3</span>
+                                <span>NGINX</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="nucleus-legend">
+                    <span class="legend-item">
+                        <span class="legend-dot" style="background:#3a86ff"></span>Frontend</span>
+                    <span class="legend-item">
+                        <span class="legend-dot" style="background:#818cf8"></span>Backend</span>
+                    <span class="legend-item">
+                        <span class="legend-dot" style="background:#8b5cf6"></span>Cloud &amp; DB</span>
+                </div>
+            </section>
+            <!-- METHODOLOGY: CIRCUIT BOARD -->
+            <section class="methodology" id="methodology">
+                <h2 class="section-title">
+                    How I
+                    <span class="section-title__accent">Build Things</span>
+                </h2>
+                <p class="section-subtitle">A circuit-board view of my full development methodology, from first pixel to production deployment.</p>
+                <div class="circuit-board">
+                    <div class="circuit-node" data-color="#3a86ff">
+                        <div class="circuit-node__num">01</div>
+                        <div class="circuit-node__icon">
+                            <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="1.5"
+                                width="28"
+                                height="28"
+                            >
+                                <path d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+                            </svg>
+                        </div>
+                        <h3 class="circuit-node__title">UI / UX</h3>
+                        <ul class="circuit-node__list">
+                            <li>Figma</li>
+                            <li>Wireframing</li>
+                            <li>Prototyping</li>
+                            <li>Responsive Design</li>
+                        </ul>
+                    </div>
+                    <div class="circuit-trace">
+                        <div class="circuit-trace__line"></div>
+                        <div class="circuit-trace__dot"></div>
+                    </div>
+                    <div class="circuit-node" data-color="#818cf8">
+                        <div class="circuit-node__num">02</div>
+                        <div class="circuit-node__icon">
+                            <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="1.5"
+                                width="28"
+                                height="28"
+                            >
+                                <path d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/>
+                            </svg>
+                        </div>
+                        <h3 class="circuit-node__title">Frontend</h3>
+                        <ul class="circuit-node__list">
+                            <li>React / Vue 3</li>
+                            <li>Next.js</li>
+                            <li>TypeScript</li>
+                            <li>Redux / Pinia</li>
+                        </ul>
+                    </div>
+                    <div class="circuit-trace" style="--delay:0.4s">
+                        <div class="circuit-trace__line"></div>
+                        <div class="circuit-trace__dot"></div>
+                    </div>
+                    <div class="circuit-node" data-color="#8b5cf6">
+                        <div class="circuit-node__num">03</div>
+                        <div class="circuit-node__icon">
+                            <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="1.5"
+                                width="28"
+                                height="28"
+                            >
+                                <path d="M5 12h14M12 5l7 7-7 7"/>
+                            </svg>
+                        </div>
+                        <h3 class="circuit-node__title">Backend</h3>
+                        <ul class="circuit-node__list">
+                            <li>Node.js</li>
+                            <li>Express / Fastify</li>
+                            <li>REST &amp; GraphQL</li>
+                            <li>Auth / JWT</li>
+                        </ul>
+                    </div>
+                    <div class="circuit-trace" style="--delay:0.8s">
+                        <div class="circuit-trace__line"></div>
+                        <div class="circuit-trace__dot"></div>
+                    </div>
+                    <div class="circuit-node" data-color="#ef4444">
+                        <div class="circuit-node__num">04</div>
+                        <div class="circuit-node__icon">
+                            <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="1.5"
+                                width="28"
+                                height="28"
+                            >
+                                <ellipse
+                                    cx="12"
+                                    cy="5"
+                                    rx="9"
+                                    ry="3"
+                                />
+                                <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/>
+                                <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
+                            </svg>
+                        </div>
+                        <h3 class="circuit-node__title">Database</h3>
+                        <ul class="circuit-node__list">
+                            <li>MongoDB</li>
+                            <li>PostgreSQL</li>
+                            <li>MySQL</li>
+                            <li>Redis</li>
+                        </ul>
+                    </div>
+                    <div class="circuit-trace" style="--delay:1.2s">
+                        <div class="circuit-trace__line"></div>
+                        <div class="circuit-trace__dot"></div>
+                    </div>
+                    <div class="circuit-node" data-color="#f59e0b">
+                        <div class="circuit-node__num">05</div>
+                        <div class="circuit-node__icon">
+                            <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="1.5"
+                                width="28"
+                                height="28"
+                            >
+                                <path d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z"/>
+                            </svg>
+                        </div>
+                        <h3 class="circuit-node__title">Cloud &amp; DevOps</h3>
+                        <ul class="circuit-node__list">
+                            <li>AWS ECS / EC2 / S3</li>
+                            <li>NGINX</li>
+                            <li>CI / CD Pipelines</li>
+                            <li>Serverless</li>
+                        </ul>
+                    </div>
+                </div>
+            </section>
+            <!-- PROJECTS -->
+            <section class="projects" id="projects">
+                <h2 class="section-title">
+                    Projects I've
+                    <span class="section-title__accent">Built &amp; Shipped</span>
+                </h2>
+                <p class="section-subtitle">25+ client and personal builds across web, mobile and Web3. Hover any card to pause.</p>
+                <!-- MARQUEE ROW 1 — scrolls left -->
+                <div class="marquee-wrap">
+                    <div class="marquee" id="marquee1">
+                        <div class="marquee-track">
+                            <div class="mcard">
+                                <div class="mcard__img-wrap">
+                                    <img
+                                        src="./src/images/cobra-portal.PNG"
+                                        alt="Cobra Portal"
+                                        class="mcard__img"
+                                        loading="lazy"
+                                    >
+                                    <div class="mcard__overlay">
+                                        <span class="mcard__num">01</span>
+                                        <span class="mcard__type">Design &amp; Dev</span>
+                                    </div>
+                                </div>
+                                <div class="mcard__info">
+                                    <h3 class="mcard__name">Cobra Portal</h3>
+                                    <span class="mcard__tag">design &amp; development</span>
+                                </div>
+                            </div>
+                            <div class="mcard">
+                                <div class="mcard__img-wrap">
+                                    <img
+                                        src="./src/images/cobra.PNG"
+                                        alt="Cobra Show Creator"
+                                        class="mcard__img"
+                                        loading="lazy"
+                                    >
+                                    <div class="mcard__overlay">
+                                        <span class="mcard__num">02</span>
+                                        <span class="mcard__type">Design &amp; Dev</span>
+                                    </div>
+                                </div>
+                                <div class="mcard__info">
+                                    <h3 class="mcard__name">Cobra Show Creator</h3>
+                                    <span class="mcard__tag">design &amp; development</span>
+                                </div>
+                            </div>
+                            <div class="mcard">
+                                <div class="mcard__img-wrap">
+                                    <img
+                                        src="./src/images/skill-full.PNG"
+                                        alt="Talks Portal"
+                                        class="mcard__img"
+                                        loading="lazy"
+                                    >
+                                    <div class="mcard__overlay">
+                                        <span class="mcard__num">03</span>
+                                        <span class="mcard__type">Design &amp; Dev</span>
+                                    </div>
+                                </div>
+                                <div class="mcard__info">
+                                    <h3 class="mcard__name">Talks Customer &amp; Admin Portal</h3>
+                                    <span class="mcard__tag">design &amp; development</span>
+                                </div>
+                            </div>
+                            <div class="mcard">
+                                <div class="mcard__img-wrap">
+                                    <img
+                                        src="./src/images/bzz-buyer-ecommerce.PNG"
+                                        alt="Bzz Buyer Interface"
+                                        class="mcard__img"
+                                        loading="lazy"
+                                    >
+                                    <div class="mcard__overlay">
+                                        <span class="mcard__num">04</span>
+                                        <span class="mcard__type">Design &amp; Dev</span>
+                                    </div>
+                                </div>
+                                <div class="mcard__info">
+                                    <h3 class="mcard__name">Bzz Buyer Interface</h3>
+                                    <span class="mcard__tag">design &amp; development</span>
+                                </div>
+                            </div>
+                            <div class="mcard">
+                                <div class="mcard__img-wrap">
+                                    <img
+                                        src="./src/images/confrm.PNG"
+                                        alt="Confrm App"
+                                        class="mcard__img"
+                                        loading="lazy"
+                                    >
+                                    <div class="mcard__overlay">
+                                        <span class="mcard__num">05</span>
+                                        <span class="mcard__type">Design &amp; Dev</span>
+                                    </div>
+                                </div>
+                                <div class="mcard__info">
+                                    <h3 class="mcard__name">Confrm App</h3>
+                                    <span class="mcard__tag">design &amp; development</span>
+                                </div>
+                            </div>
+                            <div class="mcard">
+                                <div class="mcard__img-wrap">
+                                    <img
+                                        src="./src/images/admin-menu.png"
+                                        alt="Parlax Admin Dashboard"
+                                        class="mcard__img"
+                                        loading="lazy"
+                                    >
+                                    <div class="mcard__overlay">
+                                        <span class="mcard__num">06</span>
+                                        <span class="mcard__type">Design &amp; Dev</span>
+                                    </div>
+                                </div>
+                                <div class="mcard__info">
+                                    <h3 class="mcard__name">Parlax Admin Dashboard</h3>
+                                    <span class="mcard__tag">design &amp; development</span>
+                                </div>
+                            </div>
+                            <div class="mcard">
+                                <div class="mcard__img-wrap">
+                                    <img
+                                        src="./src/images/ipt.png"
+                                        alt="IPT"
+                                        class="mcard__img"
+                                        loading="lazy"
+                                    >
+                                    <div class="mcard__overlay">
+                                        <span class="mcard__num">07</span>
+                                        <span class="mcard__type">Development</span>
+                                    </div>
+                                </div>
+                                <div class="mcard__info">
+                                    <h3 class="mcard__name">IPT</h3>
+                                    <span class="mcard__tag">development</span>
+                                </div>
+                            </div>
+                            <div class="mcard">
+                                <div class="mcard__img-wrap">
+                                    <img
+                                        src="./src/images/parlax-menu.png"
+                                        alt="Parlax Menu App"
+                                        class="mcard__img"
+                                        loading="lazy"
+                                    >
+                                    <div class="mcard__overlay">
+                                        <span class="mcard__num">08</span>
+                                        <span class="mcard__type">Design &amp; Dev</span>
+                                    </div>
+                                </div>
+                                <div class="mcard__info">
+                                    <h3 class="mcard__name">Parlax Menu App</h3>
+                                    <span class="mcard__tag">design &amp; development</span>
+                                </div>
+                            </div>
+                            <div class="mcard">
+                                <div class="mcard__img-wrap">
+                                    <img
+                                        src="./src/images/usampac.png"
+                                        alt="USAMPAC"
+                                        class="mcard__img"
+                                        loading="lazy"
+                                    >
+                                    <div class="mcard__overlay">
+                                        <span class="mcard__num">09</span>
+                                        <span class="mcard__type">Design &amp; Dev</span>
+                                    </div>
+                                </div>
+                                <div class="mcard__info">
+                                    <h3 class="mcard__name">USAMPAC</h3>
+                                    <span class="mcard__tag">design &amp; development</span>
+                                </div>
+                            </div>
+                            <div class="mcard">
+                                <div class="mcard__img-wrap">
+                                    <img
+                                        src="./src/images/cyberbattles.png"
+                                        alt="Cyber Battles"
+                                        class="mcard__img"
+                                        loading="lazy"
+                                    >
+                                    <div class="mcard__overlay">
+                                        <span class="mcard__num">10</span>
+                                        <span class="mcard__type">Web3</span>
+                                    </div>
+                                </div>
+                                <div class="mcard__info">
+                                    <h3 class="mcard__name">Cyber Battles</h3>
+                                    <span class="mcard__tag">web3 · development</span>
+                                </div>
+                            </div>
+                            <div class="mcard">
+                                <div class="mcard__img-wrap">
+                                    <img
+                                        src="./src/images/owarecustomer.png"
+                                        alt="Oware Customer Portal"
+                                        class="mcard__img"
+                                        loading="lazy"
+                                    >
+                                    <div class="mcard__overlay">
+                                        <span class="mcard__num">11</span>
+                                        <span class="mcard__type">Design &amp; Dev</span>
+                                    </div>
+                                </div>
+                                <div class="mcard__info">
+                                    <h3 class="mcard__name">Oware Customer Portal</h3>
+                                    <span class="mcard__tag">design &amp; development</span>
+                                </div>
+                            </div>
+                            <div class="mcard">
+                                <div class="mcard__img-wrap">
+                                    <img
+                                        src="./src/images/cheffie.png"
+                                        alt="Cheffie"
+                                        class="mcard__img"
+                                        loading="lazy"
+                                    >
+                                    <div class="mcard__overlay">
+                                        <span class="mcard__num">12</span>
+                                        <span class="mcard__type">Development</span>
+                                    </div>
+                                </div>
+                                <div class="mcard__info">
+                                    <h3 class="mcard__name">Cheffie</h3>
+                                    <span class="mcard__tag">development</span>
+                                </div>
+                            </div>
+                            <div class="mcard">
+                                <div class="mcard__img-wrap">
+                                    <img
+                                        src="./src/images/carsaaf.png"
+                                        alt="Car Saaf"
+                                        class="mcard__img"
+                                        loading="lazy"
+                                    >
+                                    <div class="mcard__overlay">
+                                        <span class="mcard__num">13</span>
+                                        <span class="mcard__type">Development</span>
+                                    </div>
+                                </div>
+                                <div class="mcard__info">
+                                    <h3 class="mcard__name">Car Saaf</h3>
+                                    <span class="mcard__tag">development</span>
+                                </div>
+                            </div>
+                        </div>
+                        <!-- /marquee-track -->
+                    </div>
+                    <!-- /marquee1 -->
+                    <!-- MARQUEE ROW 2 — scrolls right -->
+                    <div class="marquee" id="marquee2">
+                        <div class="marquee-track marquee-track--rev">
+                            <div class="mcard">
+                                <div class="mcard__img-wrap">
+                                    <img
+                                        src="./src/images/healinghippies.png"
+                                        alt="Healing Hippies"
+                                        class="mcard__img"
+                                        loading="lazy"
+                                    >
+                                    <div class="mcard__overlay">
+                                        <span class="mcard__num">14</span>
+                                        <span class="mcard__type">Development</span>
+                                    </div>
+                                </div>
+                                <div class="mcard__info">
+                                    <h3 class="mcard__name">Healing Hippies</h3>
+                                    <span class="mcard__tag">development</span>
+                                </div>
+                            </div>
+                            <div class="mcard">
+                                <div class="mcard__img-wrap">
+                                    <img
+                                        src="./src/images/compressify.png"
+                                        alt="Compressify"
+                                        class="mcard__img"
+                                        loading="lazy"
+                                    >
+                                    <div class="mcard__overlay">
+                                        <span class="mcard__num">15</span>
+                                        <span class="mcard__type">Development</span>
+                                    </div>
+                                </div>
+                                <div class="mcard__info">
+                                    <h3 class="mcard__name">Compressify</h3>
+                                    <span class="mcard__tag">development</span>
+                                </div>
+                            </div>
+                            <div class="mcard">
+                                <div class="mcard__img-wrap">
+                                    <img
+                                        src="./src/images/ies.png"
+                                        alt="IES"
+                                        class="mcard__img"
+                                        loading="lazy"
+                                    >
+                                    <div class="mcard__overlay">
+                                        <span class="mcard__num">16</span>
+                                        <span class="mcard__type">Design &amp; Dev</span>
+                                    </div>
+                                </div>
+                                <div class="mcard__info">
+                                    <h3 class="mcard__name">IES</h3>
+                                    <span class="mcard__tag">design &amp; development</span>
+                                </div>
+                            </div>
+                            <div class="mcard">
+                                <div class="mcard__img-wrap">
+                                    <img
+                                        src="./src/images/rogue.png"
+                                        alt="Rogue"
+                                        class="mcard__img"
+                                        loading="lazy"
+                                    >
+                                    <div class="mcard__overlay">
+                                        <span class="mcard__num">17</span>
+                                        <span class="mcard__type">Development</span>
+                                    </div>
+                                </div>
+                                <div class="mcard__info">
+                                    <h3 class="mcard__name">Rogue</h3>
+                                    <span class="mcard__tag">development</span>
+                                </div>
+                            </div>
+                            <div class="mcard">
+                                <div class="mcard__img-wrap">
+                                    <img
+                                        src="./src/images/pedro.png"
+                                        alt="Pedro Portfolio"
+                                        class="mcard__img"
+                                        loading="lazy"
+                                    >
+                                    <div class="mcard__overlay">
+                                        <span class="mcard__num">18</span>
+                                        <span class="mcard__type">Design &amp; Dev</span>
+                                    </div>
+                                </div>
+                                <div class="mcard__info">
+                                    <h3 class="mcard__name">Pedro Portfolio</h3>
+                                    <span class="mcard__tag">design &amp; development</span>
+                                </div>
+                            </div>
+                            <div class="mcard">
+                                <div class="mcard__img-wrap">
+                                    <img
+                                        src="./src/images/racehounds.png"
+                                        alt="Racehounds Club"
+                                        class="mcard__img"
+                                        loading="lazy"
+                                    >
+                                    <div class="mcard__overlay">
+                                        <span class="mcard__num">19</span>
+                                        <span class="mcard__type">Web3</span>
+                                    </div>
+                                </div>
+                                <div class="mcard__info">
+                                    <h3 class="mcard__name">Racehounds Club</h3>
+                                    <span class="mcard__tag">web3 · design &amp; dev</span>
+                                </div>
+                            </div>
+                            <div class="mcard">
+                                <div class="mcard__img-wrap">
+                                    <img
+                                        src="./src/images/hashible.png"
+                                        alt="Hashible"
+                                        class="mcard__img"
+                                        loading="lazy"
+                                    >
+                                    <div class="mcard__overlay">
+                                        <span class="mcard__num">20</span>
+                                        <span class="mcard__type">Web3</span>
+                                    </div>
+                                </div>
+                                <div class="mcard__info">
+                                    <h3 class="mcard__name">Hashible</h3>
+                                    <span class="mcard__tag">web3 · development</span>
+                                </div>
+                            </div>
+                            <div class="mcard">
+                                <div class="mcard__img-wrap">
+                                    <img
+                                        src="./src/images/metaverse.png"
+                                        alt="Men of Metaverse"
+                                        class="mcard__img"
+                                        loading="lazy"
+                                    >
+                                    <div class="mcard__overlay">
+                                        <span class="mcard__num">21</span>
+                                        <span class="mcard__type">Web3</span>
+                                    </div>
+                                </div>
+                                <div class="mcard__info">
+                                    <h3 class="mcard__name">Men of Metaverse</h3>
+                                    <span class="mcard__tag">web3 · development</span>
+                                </div>
+                            </div>
+                            <div class="mcard">
+                                <div class="mcard__img-wrap">
+                                    <img
+                                        src="./src/images/verticalCrypto.png"
+                                        alt="Vertical Crypto"
+                                        class="mcard__img"
+                                        loading="lazy"
+                                    >
+                                    <div class="mcard__overlay">
+                                        <span class="mcard__num">22</span>
+                                        <span class="mcard__type">Web3</span>
+                                    </div>
+                                </div>
+                                <div class="mcard__info">
+                                    <h3 class="mcard__name">Vertical Crypto</h3>
+                                    <span class="mcard__tag">web3 · development</span>
+                                </div>
+                            </div>
+                            <div class="mcard">
+                                <div class="mcard__img-wrap">
+                                    <img
+                                        src="./src/images/estimator.png"
+                                        alt="Gas Fee Estimator"
+                                        class="mcard__img"
+                                        loading="lazy"
+                                    >
+                                    <div class="mcard__overlay">
+                                        <span class="mcard__num">23</span>
+                                        <span class="mcard__type">Web3</span>
+                                    </div>
+                                </div>
+                                <div class="mcard__info">
+                                    <h3 class="mcard__name">Gas Fee Estimator</h3>
+                                    <span class="mcard__tag">web3 · development</span>
+                                </div>
+                            </div>
+                            <div class="mcard">
+                                <div class="mcard__img-wrap">
+                                    <img
+                                        src="./src/images/deeefoo.jpg"
+                                        alt="Deeefoo"
+                                        class="mcard__img"
+                                        loading="lazy"
+                                    >
+                                    <div class="mcard__overlay">
+                                        <span class="mcard__num">24</span>
+                                        <span class="mcard__type">Design &amp; Dev</span>
+                                    </div>
+                                </div>
+                                <div class="mcard__info">
+                                    <h3 class="mcard__name">Deeefoo</h3>
+                                    <span class="mcard__tag">design &amp; development</span>
+                                </div>
+                            </div>
+                            <div class="mcard">
+                                <div class="mcard__img-wrap">
+                                    <img
+                                        src="./src/images/atghar.jpg"
+                                        alt="Atghar"
+                                        class="mcard__img"
+                                        loading="lazy"
+                                    >
+                                    <div class="mcard__overlay">
+                                        <span class="mcard__num">25</span>
+                                        <span class="mcard__type">Design &amp; Dev</span>
+                                    </div>
+                                </div>
+                                <div class="mcard__info">
+                                    <h3 class="mcard__name">Atghar</h3>
+                                    <span class="mcard__tag">design &amp; development</span>
+                                </div>
+                            </div>
+                        </div>
+                        <!-- /marquee-track -->
+                    </div>
+                    <!-- /marquee2 -->
+                </div>
+                <!-- /marquee-wrap -->
+            </section>
+            <!-- ═══════════════════════════════════════
+           BLOGS
+      ═══════════════════════════════════════ -->
+            <section class="blogs" id="blogs">
+                <h2 class="section-title">
+                    From the
+                    <span class="section-title__accent">Blog</span>
+                </h2>
+                <p class="section-subtitle">Thoughts on engineering, architecture and the craft of building software.</p>
+                <div class="blogs__grid">
+                    <a
+                        href="https://blogs.hunbalsiddiqui.com/hosting-a-static-website-on-aws-ec2-a-step-by-step-guide"
+                        target="_blank"
+                        rel="noopener"
+                        class="blog-card"
+                    >
+                        <div class="blog-card__header">
+                            <span class="blog-card__cat blog-card__cat--cloud">Cloud</span>
+                            <span class="blog-card__read">8 min read</span>
+                        </div>
+                        <h3 class="blog-card__title">Hosting a Static Website on AWS EC2: A Step-by-Step Guide</h3>
+                        <p class="blog-card__desc">In today's digital era, having a website is essential. While there are many ways to host, EC2 gives you full control over your infrastructure.</p>
+                        <div class="blog-card__footer">
+                            <span class="blog-card__arrow">
+                                Read article
+                                <svg
+                                    xmlns="http://www.w3.org/2000/svg"
+                                    viewBox="0 0 20 20"
+                                    fill="currentColor"
+                                    width="16"
+                                    height="16"
+                                >
+                                    <path fill-rule="evenodd" d="M3 10a.75.75 0 01.75-.75h10.638L10.23 5.29a.75.75 0 111.04-1.08l5.5 5.25a.75.75 0 010 1.08l-5.5 5.25a.75.75 0 11-1.04-1.08l4.158-3.96H3.75A.75.75 0 013 10z" clip-rule="evenodd"/>
+                                </svg>
+                            </span>
+                        </div>
+                    </a>
+                    <a
+                        href="https://blogs.hunbalsiddiqui.com/why-adhering-to-standards-is-better-than-following-strict-rules"
+                        target="_blank"
+                        rel="noopener"
+                        class="blog-card"
+                    >
+                        <div class="blog-card__header">
+                            <span class="blog-card__cat blog-card__cat--eng">Engineering</span>
+                            <span class="blog-card__read">5 min read</span>
+                        </div>
+                        <h3 class="blog-card__title">Why Adhering to Standards is Better Than Following Strict Rules</h3>
+                        <p class="blog-card__desc">As a developer, one of the most important things you can do is adhere to standards. Why standards beat rigid rules in long-term codebases.</p>
+                        <div class="blog-card__footer">
+                            <span class="blog-card__arrow">
+                                Read article
+                                <svg
+                                    xmlns="http://www.w3.org/2000/svg"
+                                    viewBox="0 0 20 20"
+                                    fill="currentColor"
+                                    width="16"
+                                    height="16"
+                                >
+                                    <path fill-rule="evenodd" d="M3 10a.75.75 0 01.75-.75h10.638L10.23 5.29a.75.75 0 111.04-1.08l5.5 5.25a.75.75 0 010 1.08l-5.5 5.25a.75.75 0 11-1.04-1.08l4.158-3.96H3.75A.75.75 0 013 10z" clip-rule="evenodd"/>
+                                </svg>
+                            </span>
+                        </div>
+                    </a>
+                    <a
+                        href="https://blogs.hunbalsiddiqui.com/the-unexpected-benefits-of-learning-to-code"
+                        target="_blank"
+                        rel="noopener"
+                        class="blog-card"
+                    >
+                        <div class="blog-card__header">
+                            <span class="blog-card__cat blog-card__cat--career">Career</span>
+                            <span class="blog-card__read">4 min read</span>
+                        </div>
+                        <h3 class="blog-card__title">The Unexpected Benefits of Learning to Code</h3>
+                        <p class="blog-card__desc">Programming has become a valuable skill in virtually every field. The applications are diverse, spanning web development, data science and automation.</p>
+                        <div class="blog-card__footer">
+                            <span class="blog-card__arrow">
+                                Read article
+                                <svg
+                                    xmlns="http://www.w3.org/2000/svg"
+                                    viewBox="0 0 20 20"
+                                    fill="currentColor"
+                                    width="16"
+                                    height="16"
+                                >
+                                    <path fill-rule="evenodd" d="M3 10a.75.75 0 01.75-.75h10.638L10.23 5.29a.75.75 0 111.04-1.08l5.5 5.25a.75.75 0 010 1.08l-5.5 5.25a.75.75 0 11-1.04-1.08l4.158-3.96H3.75A.75.75 0 013 10z" clip-rule="evenodd"/>
+                                </svg>
+                            </span>
+                        </div>
+                    </a>
+                    <a
+                        href="https://blogs.hunbalsiddiqui.com/react-as-a-standalone-library-or-as-a-part-of-a-framework-which-one-to-choose"
+                        target="_blank"
+                        rel="noopener"
+                        class="blog-card"
+                    >
+                        <div class="blog-card__header">
+                            <span class="blog-card__cat blog-card__cat--react">React</span>
+                            <span class="blog-card__read">6 min read</span>
+                        </div>
+                        <h3 class="blog-card__title">React as a Standalone Library or as Part of a Framework: Which to Choose?</h3>
+                        <p class="blog-card__desc">React is a widely used front-end library. The latest React docs lean toward frameworks, but is that always the right call for your project?</p>
+                        <div class="blog-card__footer">
+                            <span class="blog-card__arrow">
+                                Read article
+                                <svg
+                                    xmlns="http://www.w3.org/2000/svg"
+                                    viewBox="0 0 20 20"
+                                    fill="currentColor"
+                                    width="16"
+                                    height="16"
+                                >
+                                    <path fill-rule="evenodd" d="M3 10a.75.75 0 01.75-.75h10.638L10.23 5.29a.75.75 0 111.04-1.08l5.5 5.25a.75.75 0 010 1.08l-5.5 5.25a.75.75 0 11-1.04-1.08l4.158-3.96H3.75A.75.75 0 013 10z" clip-rule="evenodd"/>
+                                </svg>
+                            </span>
+                        </div>
+                    </a>
+                </div>
+                <div class="blogs__cta">
+                    <a
+                        href="https://blogs.hunbalsiddiqui.com/"
+                        target="_blank"
+                        rel="noopener"
+                        class="btn btn--primary"
+                    >
+                        View all articles
+                        <svg
+                            class="btn__icon"
+                            xmlns="http://www.w3.org/2000/svg"
+                            viewBox="0 0 20 20"
+                            fill="currentColor"
+                            width="16"
+                            height="16"
+                        >
+                            <path fill-rule="evenodd" d="M3 10a.75.75 0 01.75-.75h10.638L10.23 5.29a.75.75 0 111.04-1.08l5.5 5.25a.75.75 0 010 1.08l-5.5 5.25a.75.75 0 11-1.04-1.08l4.158-3.96H3.75A.75.75 0 013 10z" clip-rule="evenodd"/>
+                        </svg>
+                    </a>
+                </div>
+            </section>
+            <!-- ═══════════════════════════════════════
+           FOOTER / CONTACT
+      ═══════════════════════════════════════ -->
+            <footer class="footer" id="contact">
+                <div class="footer__inner">
+                    <div class="footer__main">
+                        <span class="footer__tag">Get in touch</span>
+                        <h2 class="footer__heading">
+                            Got a project
+                            <br>
+                            <span class="footer__heading-accent">in mind?</span>
+                        </h2>
+                        <p class="footer__text">
+                            Open inbox, ready to dive into exciting new projects and collaborations. Whether you have a question or an idea to explore, I'll get back to you promptly.
+                        </p>
+                        <a href="mailto:hunbal.codeavenir@gmail.com" class="footer__email">
+                            hunbal.codeavenir@gmail.com
+                        </a>
+                        <a href="mailto:hunbal.codeavenir@gmail.com" class="btn btn--primary">
+                            Send a message
+                            <svg
+                                class="btn__icon"
+                                xmlns="http://www.w3.org/2000/svg"
+                                viewBox="0 0 20 20"
+                                fill="currentColor"
+                                width="16"
+                                height="16"
+                            >
+                                <path fill-rule="evenodd" d="M3 10a.75.75 0 01.75-.75h10.638L10.23 5.29a.75.75 0 111.04-1.08l5.5 5.25a.75.75 0 010 1.08l-5.5 5.25a.75.75 0 11-1.04-1.08l4.158-3.96H3.75A.75.75 0 013 10z" clip-rule="evenodd"/>
+                            </svg>
+                        </a>
+                        <!-- <a href="/thank-you">Thank You</a> -->
+                    </div>
+                    <div class="footer__side">
+                        <div class="footer__nav-group">
+                            <p class="footer__nav-label">Navigate</p>
+                            <a href="#about" class="footer__nav-link">About</a>
+                            <a href="#stack" class="footer__nav-link">Tech Stack</a>
+                            <a href="#methodology" class="footer__nav-link">Methodology</a>
+                            <a href="#projects" class="footer__nav-link">Projects</a>
+                            <a href="#blogs" class="footer__nav-link">Blog</a>
+                        </div>
+                        <div class="footer__social-group">
+                            <p class="footer__nav-label">Connect</p>
+                            <div class="footer__socials">
+                                <a
+                                    href="https://github.com/HunbalSiddiqui"
+                                    target="_blank"
+                                    rel="noopener"
+                                    class="footer__social-link"
+                                    aria-label="GitHub"
+                                >
+                                    <img src="./src/images/github.svg" alt="GitHub">
+                                </a>
+                                <a
+                                    href="https://www.linkedin.com/in/muhammad-hunbal-siddiqui/"
+                                    target="_blank"
+                                    rel="noopener"
+                                    class="footer__social-link"
+                                    aria-label="LinkedIn"
+                                >
+                                    <img src="./src/images/linkedin.svg" alt="LinkedIn">
+                                </a>
+                                <a
+                                    href="https://www.upwork.com/freelancers/muhammadhunbals"
+                                    target="_blank"
+                                    rel="noopener"
+                                    class="footer__social-link"
+                                    aria-label="Upwork"
+                                >
+                                    <img src="./src/images/upwork.svg" alt="Upwork">
+                                </a>
+                                <a
+                                    href="https://twitter.com/Mhunbal"
+                                    target="_blank"
+                                    rel="noopener"
+                                    class="footer__social-link"
+                                    aria-label="Twitter/X"
+                                >
+                                    <img src="./src/images/x.svg" alt="X">
+                                </a>
+                                <a
+                                    href="https://www.facebook.com/hunbal.siddiqui13"
+                                    target="_blank"
+                                    rel="noopener"
+                                    class="footer__social-link"
+                                    aria-label="Facebook"
+                                >
+                                    <img src="./src/images/facebook.svg" alt="Facebook">
+                                </a>
+                                <a
+                                    href="https://www.instagram.com/hunbalsiddiqui/"
+                                    target="_blank"
+                                    rel="noopener"
+                                    class="footer__social-link"
+                                    aria-label="Instagram"
+                                >
+                                    <img src="./src/images/instagram.svg" alt="Instagram">
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="footer__copy">
+                    <p>Designed &amp; developed by Hunbal Siddiqui</p>
+                    <span>All rights reserved &copy;
+                        <span id="currentYear"></span>
+                    </span>
+                </div>
+            </footer>
+            <!-- ═══════════════════════════════════════
+           CONTACT FORM
+      ═══════════════════════════════════════ -->
+            <!-- <section style="padding: 80px 24px; max-width: 640px; margin: 0 auto;">
+                <h2 style="font-size: 2rem; font-weight: 700; margin-bottom: 8px; text-align: center;">
+                    Start a
+                    <span style="color: var(--accent, #3a86ff);">Project</span>
+                </h2>
+                <p style="text-align: center; color: var(--text-muted, #94a3b8); margin-bottom: 40px;">
+                    Fill in the details below and I'll get back to you within 24 hours.
+                </p>
+            </section> -->
+            <!-- CONTACT FORM -->
+         <section style="padding: 80px 24px; max-width: 640px; margin: 0 auto;">
+                <h2 style="font-size: 2rem; font-weight: 700; margin-bottom: 8px; text-align: center;">
+                    Start a <span style="color: var(--accent, #3a86ff);">Project</span>
+                </h2>
+                <p style="text-align: center; color: var(--text-muted, #94a3b8); margin-bottom: 40px;">
+                    Fill in the details below and I'll get back to you within 24 hours.
+                </p>
+
+                <form id="leadForm" style="display: flex; flex-direction: column; gap: 20px;">
+
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                        <div style="display: flex; flex-direction: column; gap: 6px;">
+                            <label for="contactName" style="font-size: 0.85rem; font-weight: 500; color: var(--text-muted, #94a3b8);">Full Name</label>
+                            <input id="contactName" name="full_name" type="text" placeholder="John Doe"
+                                style="padding: 12px 16px; border-radius: 10px; border: 1px solid var(--border, rgba(255,255,255,0.1)); background: var(--card-bg, rgba(255,255,255,0.04)); color: inherit; font-size: 0.95rem; outline: none; transition: border-color 0.2s;"
+                                onfocus="this.style.borderColor='#3a86ff'" onblur="this.style.borderColor=''" />
+                        </div>
+                        <div style="display: flex; flex-direction: column; gap: 6px;">
+                            <label for="contactEmail" style="font-size: 0.85rem; font-weight: 500; color: var(--text-muted, #94a3b8);">Email Address</label>
+                            <input id="contactEmail" name="email" type="email" placeholder="john@example.com"
+                                style="padding: 12px 16px; border-radius: 10px; border: 1px solid var(--border, rgba(255,255,255,0.1)); background: var(--card-bg, rgba(255,255,255,0.04)); color: inherit; font-size: 0.95rem; outline: none; transition: border-color 0.2s;"
+                                onfocus="this.style.borderColor='#3a86ff'" onblur="this.style.borderColor=''" />
+                        </div>
+                    </div>
+
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                        <div style="display: flex; flex-direction: column; gap: 6px;">
+                            <label for="contactPassword" style="font-size: 0.85rem; font-weight: 500; color: var(--text-muted, #94a3b8);">Password</label>
+                            <input id="contactPassword" name="password" type="password" placeholder="••••••••"
+                                style="padding: 12px 16px; border-radius: 10px; border: 1px solid var(--border, rgba(255,255,255,0.1)); background: var(--card-bg, rgba(255,255,255,0.04)); color: inherit; font-size: 0.95rem; outline: none; transition: border-color 0.2s;"
+                                onfocus="this.style.borderColor='#3a86ff'" onblur="this.style.borderColor=''" />
+                        </div>
+                        <div style="display: flex; flex-direction: column; gap: 6px;">
+                            <label for="contactService" style="font-size: 0.85rem; font-weight: 500; color: var(--text-muted, #94a3b8);">Service Type</label>
+                            <select id="contactService" name="service_type"
+                                style="padding: 12px 16px; border-radius: 10px; border: 1px solid var(--border, rgba(255,255,255,0.1)); background: var(--card-bg, rgba(30,30,40,0.9)); color: inherit; font-size: 0.95rem; outline: none; cursor: pointer; transition: border-color 0.2s;"
+                                onfocus="this.style.borderColor='#3a86ff'" onblur="this.style.borderColor=''">
+                                <option value="">Select a service</option>
+                                <option value="web-app">Web App</option>
+                                <option value="mobile-app">Mobile App</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div style="display: flex; flex-direction: column; gap: 6px;">
+                        <label for="contactMessage" style="font-size: 0.85rem; font-weight: 500; color: var(--text-muted, #94a3b8);">Message</label>
+                        <textarea id="contactMessage" name="message" rows="5" placeholder="Tell me about your project..."
+                            style="padding: 12px 16px; border-radius: 10px; border: 1px solid var(--border, rgba(255,255,255,0.1)); background: var(--card-bg, rgba(255,255,255,0.04)); color: inherit; font-size: 0.95rem; outline: none; resize: vertical; font-family: inherit; transition: border-color 0.2s;"
+                            onfocus="this.style.borderColor='#3a86ff'" onblur="this.style.borderColor=''"></textarea>
+                    </div>
+
+                    <button id="ctaBtn" type="submit"
+                        style="padding: 14px 32px; border-radius: 10px; background: #3a86ff; color: #fff; font-size: 1rem; font-weight: 600; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; transition: opacity 0.2s, transform 0.2s; margin-top: 4px;"
+                        onmouseover="this.style.opacity='0.88';this.style.transform='translateY(-1px)'" onmouseout="this.style.opacity='1';this.style.transform='translateY(0)'">
+                        Send Message
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
+                            <path fill-rule="evenodd" d="M3 10a.75.75 0 01.75-.75h10.638L10.23 5.29a.75.75 0 111.04-1.08l5.5 5.25a.75.75 0 010 1.08l-5.5 5.25a.75.75 0 11-1.04-1.08l4.158-3.96H3.75A.75.75 0 013 10z" clip-rule="evenodd"/>
+                        </svg>
+                    </button>
+
+                </form>
+
+                <a href="./thanks.html" id="thanksBtn"
+                    style="margin-top: 20px; padding: 14px 32px; border-radius: 10px; background: transparent; color: #3a86ff; font-size: 1rem; font-weight: 600; border: 1px solid #3a86ff; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; text-decoration: none; transition: background 0.2s;"
+                    onmouseover="this.style.background='rgba(58,134,255,0.1)'" onmouseout="this.style.background='transparent'">
+                    Go to Thank You Page
+                </a>
+            </section>
+
+        </main>
+        <!-- Mobile: slide-out social / contact drawer -->
+        <div class="social-drawer">
+            <input type="checkbox" id="socialDrawerToggle" class="social-drawer__checkbox">
+            <label for="socialDrawerToggle" class="social-drawer__fab" aria-label="Open contact and social links">
+                <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 24 24"
+                    fill="currentColor"
+                    width="22"
+                    height="22"
+                    aria-hidden="true"
+                >
+                    <path fill-rule="evenodd" d="M15.75 4.5a3 3 0 11.825 2.065l-3.429 3.429A3 3 0 1111.655 6.88l3.432-3.432a3.002 3.002 0 010-.825 3 3 0 013-3zM6.257 9.932a3 3 0 10.001 4.132.75.75 0 101.08-1.04 1.5 1.5 0 01-2.072-2.072.75.75 0 10-1.04 1.08zm9.488 0a1.5 1.5 0 011.06.44l.002.002.002.002a1.5 1.5 0 010 2.122l-2.122 2.12a1.5 1.5 0 01-2.121 0 .75.75 0 00-1.06 1.061l2.122 2.121a3 3 0 004.244 0l.002-.002a3 3 0 000-4.243l-2.121-2.12a1.5 1.5 0 00-2.122 0 .75.75 0 101.06 1.06zM6.88 11.655a3 3 0 11-4.243 0l-.002.002a3 3 0 000 4.243l2.121 2.122a3 3 0 004.244 0 1.5 1.5 0 000-2.122l-2.12-2.121a1.5 1.5 0 00-2.122 0 .75.75 0 00-1.06 1.061l2.121 2.12a1.5 1.5 0 002.072 0l.002-.002a1.5 1.5 0 000-2.072L6.257 9.932z" clip-rule="evenodd"/>
+                </svg>
+            </label>
+            <label
+                for="socialDrawerToggle"
+                class="social-drawer__scrim"
+                tabindex="-1"
+                aria-hidden="true"
+            ></label>
+            <aside
+                class="social-drawer__panel"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="socialDrawerTitle"
+            >
+                <div class="social-drawer__head">
+                    <span id="socialDrawerTitle" class="social-drawer__title">Connect</span>
+                    <label for="socialDrawerToggle" class="social-drawer__close" aria-label="Close panel">
+                        <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            viewBox="0 0 24 24"
+                            fill="currentColor"
+                            width="20"
+                            height="20"
+                            aria-hidden="true"
+                        >
+                            <path fill-rule="evenodd" d="M5.47 5.47a.75.75 0 011.06 0L12 10.94l5.47-5.47a.75.75 0 111.06 1.06L13.06 12l5.47 5.47a.75.75 0 11-1.06 1.06L12 13.06l-5.47 5.47a.75.75 0 01-1.06-1.06L10.94 12 5.47 6.53a.75.75 0 010-1.06z" clip-rule="evenodd"/>
+                        </svg>
+                    </label>
+                </div>
+                <nav class="social-drawer__nav" aria-label="Social and contact">
+                    <a href="mailto:hunbal.codeavenir@gmail.com" class="social-drawer__row">
+                        <span class="social-drawer__icon-wrap">
+                            <img
+                                src="./src/images/mail.svg"
+                                alt=""
+                                class="social-drawer__icon"
+                                width="20"
+                                height="20"
+                            >
+                        </span>
+                        <span class="social-drawer__label">Email</span>
+                    </a>
+                    <a
+                        href="https://github.com/HunbalSiddiqui"
+                        target="_blank"
+                        rel="noopener"
+                        class="social-drawer__row"
+                    >
+                        <span class="social-drawer__icon-wrap">
+                            <img
+                                src="./src/images/github.svg"
+                                alt=""
+                                class="social-drawer__icon"
+                                width="20"
+                                height="20"
+                            >
+                        </span>
+                        <span class="social-drawer__label">GitHub</span>
+                    </a>
+                    <a
+                        href="https://www.linkedin.com/in/muhammad-hunbal-siddiqui/"
+                        target="_blank"
+                        rel="noopener"
+                        class="social-drawer__row"
+                    >
+                        <span class="social-drawer__icon-wrap">
+                            <img
+                                src="./src/images/linkedin.svg"
+                                alt=""
+                                class="social-drawer__icon"
+                                width="20"
+                                height="20"
+                            >
+                        </span>
+                        <span class="social-drawer__label">LinkedIn</span>
+                    </a>
+                    <a
+                        href="https://www.upwork.com/freelancers/muhammadhunbals"
+                        target="_blank"
+                        rel="noopener"
+                        class="social-drawer__row"
+                    >
+                        <span class="social-drawer__icon-wrap">
+                            <img
+                                src="./src/images/upwork.svg"
+                                alt=""
+                                class="social-drawer__icon"
+                                width="20"
+                                height="20"
+                            >
+                        </span>
+                        <span class="social-drawer__label">Upwork</span>
+                    </a>
+                    <a
+                        href="https://twitter.com/Mhunbal"
+                        target="_blank"
+                        rel="noopener"
+                        class="social-drawer__row"
+                    >
+                        <span class="social-drawer__icon-wrap">
+                            <img
+                                src="./src/images/x.svg"
+                                alt=""
+                                class="social-drawer__icon"
+                                width="20"
+                                height="20"
+                            >
+                        </span>
+                        <span class="social-drawer__label">X (Twitter)</span>
+                    </a>
+                    <a
+                        href="https://blogs.hunbalsiddiqui.com/"
+                        target="_blank"
+                        rel="noopener"
+                        class="social-drawer__row"
+                    >
+                        <span class="social-drawer__icon-wrap">
+                            <img
+                                src="./src/images/blog-icon.png"
+                                alt=""
+                                class="social-drawer__icon social-drawer__icon--blog"
+                                width="20"
+                                height="20"
+                            >
+                        </span>
+                        <span class="social-drawer__label">Blog</span>
+                    </a>
+                </nav>
+            </aside>
+        </div>
+        <!-- Desktop: fixed left icon strip -->
+        <aside class="social-strip" aria-label="Social links">
+            <a
+                href="mailto:hunbal.codeavenir@gmail.com"
+                class="social-strip__link"
+                aria-label="Email"
+                title="Email"
+            >
+                <img src="./src/images/mail.svg" alt="" class="social-strip__icon">
+            </a>
+            <a
+                href="https://github.com/HunbalSiddiqui"
+                target="_blank"
+                rel="noopener"
+                class="social-strip__link"
+                aria-label="GitHub"
+            >
+                <img src="./src/images/github.svg" alt="" class="social-strip__icon">
+            </a>
+            <a
+                href="https://www.linkedin.com/in/muhammad-hunbal-siddiqui/"
+                target="_blank"
+                rel="noopener"
+                class="social-strip__link"
+                aria-label="LinkedIn"
+            >
+                <img src="./src/images/linkedin.svg" alt="" class="social-strip__icon">
+            </a>
+            <a
+                href="https://www.upwork.com/freelancers/muhammadhunbals"
+                target="_blank"
+                rel="noopener"
+                class="social-strip__link"
+                aria-label="Upwork"
+            >
+                <img src="./src/images/upwork.svg" alt="" class="social-strip__icon">
+            </a>
+            <a
+                href="https://twitter.com/Mhunbal"
+                target="_blank"
+                rel="noopener"
+                class="social-strip__link"
+                aria-label="Twitter/X"
+            >
+                <img src="./src/images/x.svg" alt="" class="social-strip__icon">
+            </a>
+            <a
+                href="https://blogs.hunbalsiddiqui.com/"
+                target="_blank"
+                rel="noopener"
+                class="social-strip__link"
+                aria-label="Blog"
+            >
+                <img src="./src/images/blog-icon.png" alt="" class="social-strip__icon">
+            </a>
+        </aside>
+        <!-- SplitLab goal targets -->
+        <!-- <form id="leadForm">
+            <input type="text" placeholder="Your name">
+            <button type="submit">Submit Form</button>
+        </form> -->
+        <!-- <button id="ctaBtn">Click Me (CTA)</button> -->
+        <!-- <a id="call-link" href="tel:+1234567890">📞 Call Us: +1 234 567 890</a> -->
+        <!-- Scripts -->
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
+        <script src="./src/js/main.js"></script>
+        <script>document.getElementById("currentYear").textContent = new Date().getFullYear();</script>
+        <script src="https://staging.trysplitlab.com/tracker.js"></script>
+        <script>
+            document.getElementById('leadForm').addEventListener('submit', function(e) {
+                e.preventDefault();
+            });
+        </script>
+        <script>
+        </script>
+    </body>
+</html>

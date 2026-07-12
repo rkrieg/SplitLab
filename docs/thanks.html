@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>United Exploration LLC - Thank You</title>
+  <meta name="description" content="Thank you page for United Exploration LLC." />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Crimson+Text:wght@600;700&family=Montserrat:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --black: #040404;
+      --paper: #fefbf6;
+      --gold: #b3832f;
+      --copy: #3b3935;
+      --footer-gold: #845c24;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      margin: 0;
+      min-width: 320px;
+      background: var(--black);
+      color: var(--copy);
+      overflow-x: hidden;
+    }
+
+    body {
+      font-family: "Montserrat", Arial, Helvetica, sans-serif;
+    }
+
+    a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    .topbar,
+    .main,
+    .footer-main,
+    .footer-copy {
+      width: 100%;
+    }
+
+    .topbar,
+    .footer-main,
+    .footer-copy {
+      background: var(--black);
+    }
+
+    .wrap {
+      width: 1200px;
+      margin: 0 auto;
+      position: relative;
+    }
+
+    .topbar {
+      height: 117px;
+    }
+
+    .topbar .wrap {
+      height: 117px;
+    }
+
+    .logo-top {
+      display: block;
+      width: 170px;
+      height: 112px;
+      margin-top: 4px;
+      object-fit: contain;
+    }
+
+    .main {
+      background: var(--paper);
+    }
+
+    .main .wrap {
+      height: 596px;
+      display: grid;
+      grid-template-columns: 576px 624px;
+    }
+
+    .copy-panel {
+      padding: 121px 36px 0 18px;
+    }
+
+    .headline {
+      margin: 0 0 30px;
+      color: var(--gold);
+      font-family: "Crimson Text", Georgia, serif;
+      font-size: 55px;
+      font-weight: 600;
+      line-height: 58px;
+      letter-spacing: -2px;
+    }
+
+    .headline-mobile {
+      display: none;
+    }
+
+    .message {
+      width: 507px;
+      color: var(--copy);
+      font-size: 18px;
+      font-weight: 400;
+      line-height: 1.45;
+    }
+
+    .message p {
+      margin: 0 0 23px;
+    }
+
+    .message p:last-child {
+      margin-bottom: 0;
+    }
+
+    .pumpjack {
+      display: block;
+      width: 624px;
+      height: 596px;
+      object-fit: cover;
+    }
+
+    .footer-main {
+      height: 136px;
+      color: #ffffff;
+    }
+
+    .footer-main .wrap {
+      height: 136px;
+    }
+
+    .footer-logo {
+      position: absolute;
+      top: 5px;
+      left: 0;
+      display: block;
+      width: 191px;
+      height: 126px;
+      object-fit: contain;
+    }
+
+    .disclaimer {
+      position: absolute;
+      top: 20px;
+      left: 205px;
+      width: 847px;
+      margin: 0;
+      color: var(--footer-gold);
+      font-size: 16px;
+      font-weight: 400;
+      line-height: 1.38;
+      text-align: center;
+    }
+
+    .privacy-desktop {
+      position: absolute;
+      top: 111px;
+      right: 0;
+      width: 178px;
+      color: #ffffff;
+      font-size: 16px;
+      font-weight: 600;
+      line-height: 20px;
+      text-align: center;
+    }
+
+    .privacy-mobile {
+      display: none;
+    }
+
+    .footer-copy {
+      height: 89px;
+      border-top: 1px solid #e5e6ea;
+      color: #ffffff;
+    }
+
+    .footer-copy .wrap {
+      height: 89px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .copyright {
+      margin: 0;
+      color: #ffffff;
+      font-size: 16px;
+      font-weight: 400;
+      line-height: 1.35;
+      text-align: center;
+    }
+
+    @media (max-width: 1240px) and (min-width: 601px) {
+      .wrap {
+        width: 100%;
+        max-width: 1200px;
+      }
+
+      .topbar .wrap,
+      .main .wrap,
+      .footer-main .wrap,
+      .footer-copy .wrap {
+        padding-left: 24px;
+        padding-right: 24px;
+      }
+
+      .main .wrap {
+        grid-template-columns: minmax(460px, 48%) minmax(0, 52%);
+      }
+
+      .copy-panel {
+        padding-left: 0;
+      }
+
+      .message {
+        width: min(507px, 100%);
+      }
+
+      .pumpjack {
+        width: 100%;
+      }
+
+      .footer-logo {
+        left: 24px;
+      }
+
+      .disclaimer {
+        left: 230px;
+        width: calc(100% - 430px);
+      }
+
+      .privacy-desktop {
+        right: 24px;
+      }
+    }
+
+    @media (max-width: 600px) {
+      .wrap {
+        width: 320px;
+        max-width: 100%;
+      }
+
+      .topbar {
+        height: 138px;
+      }
+
+      .topbar .wrap {
+        height: 138px;
+      }
+
+      .logo-top {
+        width: 200px;
+        height: 132px;
+        margin: 0 auto;
+      }
+
+      .main .wrap {
+        height: 733px;
+        display: block;
+      }
+
+      .copy-panel {
+        padding: 28px 0 0 20px;
+      }
+
+      .headline {
+        display: none;
+      }
+
+      .headline-mobile {
+        display: block;
+        width: 290px;
+        margin: 0 0 7px;
+        color: var(--gold);
+        font-family: "Crimson Text", Georgia, serif;
+        font-size: 29px;
+        font-weight: 700;
+        line-height: 30.4px;
+        letter-spacing: -1.6px;
+      }
+
+      .message {
+        width: 285px;
+        font-size: 18px;
+        line-height: 1.48;
+      }
+
+      .message p {
+        margin-bottom: 18px;
+      }
+
+      .pumpjack {
+        width: 304px;
+        height: 290px;
+        margin: 32px auto 0;
+        object-fit: cover;
+      }
+
+      .footer-main {
+        height: 253px;
+      }
+
+      .footer-main .wrap {
+        height: 253px;
+      }
+
+      .footer-logo {
+        top: 43px;
+        left: 50%;
+        width: 192px;
+        height: 127px;
+        transform: translateX(-50%);
+      }
+
+      .disclaimer,
+      .privacy-desktop {
+        display: none;
+      }
+
+      .privacy-mobile {
+        position: absolute;
+        top: 192px;
+        left: 0;
+        display: block;
+        width: 100%;
+        color: #ffffff;
+        font-size: 14px;
+        font-weight: 600;
+        line-height: 20px;
+        text-align: center;
+      }
+
+      .footer-copy {
+        height: 89px;
+      }
+
+      .footer-copy .wrap {
+        height: 89px;
+        padding: 0 26px;
+      }
+
+      .copyright {
+        font-size: 16px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="wrap">
+      <picture>
+        <source media="(max-width: 600px)" srcset="https://d9hhrg4mnvzow.cloudfront.net/www.unitedexpinv.com/thanks/x9lpmy-image-37-3_105k03o000000000000028.png">
+        <img class="logo-top" src="https://d9hhrg4mnvzow.cloudfront.net/www.unitedexpinv.com/thanks/x9lpmy-image-37-3_104r03404q034000000028.png" alt="United Exploration">
+      </picture>
+    </div>
+  </header>
+
+  <main class="main">
+    <div class="wrap">
+      <section class="copy-panel" aria-label="Thank you message">
+        <h1 class="headline">Thanks for your interest in United Exploration.</h1>
+        <h1 class="headline-mobile">Protect your income with future-proofed oil and gas investments</h1>
+        <div class="message">
+          <p>We have received your contact information. We will reach out to you by email and/or phone shortly with more information.</p>
+          <p>Feel free to give us a ring at <a href="tel:6826511629">(682)651-1629</a> or <a href="tel:8177172401">(817)717-2401</a> in the meantime.</p>
+        </div>
+      </section>
+      <picture>
+        <source media="(max-width: 600px)" srcset="https://d9hhrg4mnvzow.cloudfront.net/www.unitedexpinv.com/thanks/kymfk9-frame-427319502_108g08708g082000002028.png">
+        <img class="pumpjack" src="https://d9hhrg4mnvzow.cloudfront.net/www.unitedexpinv.com/thanks/kymfk9-frame-427319502_10hc0gu0hc0gk000005028.png" alt="Oil pumpjack at sunset">
+      </picture>
+    </div>
+  </main>
+
+  <footer>
+    <section class="footer-main" aria-label="Legal">
+      <div class="wrap">
+        <picture>
+          <source media="(max-width: 600px)" srcset="https://d9hhrg4mnvzow.cloudfront.net/www.unitedexpinv.com/thanks/gqty6z-image-37-2_105c03j000000000000028.png">
+          <img class="footer-logo" src="https://d9hhrg4mnvzow.cloudfront.net/www.unitedexpinv.com/thanks/gqty6z-image-37-2_105b03i000000000000028.png" alt="United Exploration">
+        </picture>
+        <p class="disclaimer">This content is for informational purposes only and not an offer to buy or sell any security. Offers are made only via a written prospectus. This is not tax, legal, or accounting advice. Investing in oil and gas is highly speculative with no guaranteed returns and potential for substantial losses. Consult legal and financial advisors before investing.</p>
+        <a class="privacy-desktop" href="https://www.iubenda.com/privacy-policy/59795716" target="_blank" rel="noopener">Privacy</a>
+        <a class="privacy-mobile" href="https://www.iubenda.com/privacy-policy/59795716" target="_blank" rel="noopener">Privacy Policy</a>
+      </div>
+    </section>
+    <section class="footer-copy" aria-label="Copyright">
+      <div class="wrap">
+        <p class="copyright">&copy; 2024 United Exploration LLC, All Rights Reserved</p>
+      </div>
+    </section>
+  </footer>
+</body>
+</html>
