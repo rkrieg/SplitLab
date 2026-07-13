@@ -98,6 +98,47 @@ function buildTrackerScript(appUrl: string): string {
     } catch(e) {}
   }
 
+  // ─── Cross-domain linker (like GA4's _gl) ───────────────────────────────────
+  // localStorage never crosses origins, so the only way context survives a jump
+  // to another domain is in the URL itself. Decorate outbound cross-domain
+  // navigations with sl_tid/sl_vid/sl_vh; detect() Method 1 rebuilds context on
+  // the destination and cleanUrl() strips the params there.
+
+  function decorate(url) {
+    try {
+      if (!_ctx || !url) return url;
+      var u = new URL(String(url), window.location.href);
+      if (u.protocol !== "http:" && u.protocol !== "https:") return url;
+      if (u.hostname === window.location.hostname) return url;
+      if (u.searchParams.get("sl_vid") || u.searchParams.get("sl_tid")) return url;
+      u.searchParams.set("sl_tid", _ctx.tid);
+      u.searchParams.set("sl_vid", _ctx.vid);
+      u.searchParams.set("sl_vh", _ctx.vh);
+      return u.toString();
+    } catch(e) { return url; }
+  }
+
+  function decorateLink(a) {
+    try {
+      var dec = decorate(a.href);
+      if (dec !== a.href) a.href = dec;
+    } catch(e) {}
+  }
+
+  function patchWindowOpen() {
+    try {
+      var origOpen = window.open;
+      if (!origOpen || origOpen.__sl_patched) return;
+      var patched = function() {
+        var args = Array.prototype.slice.call(arguments);
+        if (args[0]) args[0] = decorate(String(args[0]));
+        return origOpen.apply(window, args);
+      };
+      patched.__sl_patched = true;
+      window.open = patched;
+    } catch(e) {}
+  }
+
   // ─── Scan mode ─────────────────────────────────────────────────────────────
 
   var _scanBanner = null;
@@ -779,6 +820,30 @@ function buildTrackerScript(appUrl: string): string {
 
     document.addEventListener("submit", function(e) {
       var form = e.target;
+      // Read action via getAttribute — an input named "action" shadows form.action
+      if (form && form.getAttribute) {
+        var slAction = form.getAttribute("action");
+        if (slAction) {
+          var decAction = decorate(slAction);
+          if (decAction !== slAction) {
+            var slMethod = (form.getAttribute("method") || "get").toLowerCase();
+            if (slMethod === "get") {
+              // GET submits replace the action's query string with the form
+              // fields, so carry the params as hidden inputs instead
+              ["sl_tid", "sl_vid", "sl_vh"].forEach(function(name) {
+                if (form.querySelector && form.querySelector("input[name='" + name + "']")) return;
+                var hidden = document.createElement("input");
+                hidden.type = "hidden";
+                hidden.name = name;
+                hidden.value = name === "sl_tid" ? _ctx.tid : name === "sl_vid" ? _ctx.vid : _ctx.vh;
+                form.appendChild(hidden);
+              });
+            } else {
+              form.setAttribute("action", decAction);
+            }
+          }
+        }
+      }
       _leadSent = true; // prevent JS-submit patch from double-sending
       captureFormLead(form);
       var formNth = form ? formDocumentIndex(form) : -1;
@@ -792,9 +857,22 @@ function buildTrackerScript(appUrl: string): string {
       });
     }, true);
 
+    // Decorate cross-domain links before the browser follows them. mousedown
+    // precedes every click variant, and middle-click fires auxclick (not click)
+    // in some browsers — cover all three so new-tab opens are decorated too.
+    function decorateFromEvent(e) {
+      var t = e.target;
+      if (!t || !t.closest) return;
+      var a = t.closest("a[href]");
+      if (a) decorateLink(a);
+    }
+    document.addEventListener("mousedown", decorateFromEvent, true);
+    document.addEventListener("auxclick", decorateFromEvent, true);
+
     document.addEventListener("click", function(e) {
       var el = e.target;
       if (!el || !el.closest) return;
+      decorateFromEvent(e);
 
       // Check for tel: link clicks (call conversions)
       var link = el.closest("a[href^='tel:']");
@@ -881,7 +959,24 @@ function buildTrackerScript(appUrl: string): string {
     var vh  = params.get("sl_vh");
     if (tid && vid && vh) {
       cleanUrl(["sl_tid", "sl_vid", "sl_vh", "sl_scan"]);
-      return callback({ tid: tid, vid: vid, vh: vh, goals: [] });
+      // Fetch goals so url_reached patterns can fire on this page too (params
+      // may arrive via cross-domain link decoration, not just a SplitLab 302)
+      var xhr0 = new XMLHttpRequest();
+      xhr0.open("GET", RESOLVE_URL + "?vid=" + encodeURIComponent(vid), true);
+      xhr0.withCredentials = false;
+      xhr0.onload = function() {
+        var goals = [];
+        try {
+          var data = JSON.parse(xhr0.responseText);
+          if (data.goals) goals = data.goals;
+        } catch(e) {}
+        callback({ tid: tid, vid: vid, vh: vh, goals: goals });
+      };
+      xhr0.onerror = function() {
+        callback({ tid: tid, vid: vid, vh: vh, goals: [] });
+      };
+      xhr0.send();
+      return;
     }
 
     // Method 2: Variant ID only (?sl_vid=xxx) — resolve test ID + goals via API
@@ -974,6 +1069,7 @@ function buildTrackerScript(appUrl: string): string {
       registerFormFields();
       watchForNewFields();
       patchNetworkForJsSubmit();
+      patchWindowOpen();
     }
     if (document.readyState === "loading") {
       document.addEventListener("DOMContentLoaded", start);
@@ -990,6 +1086,12 @@ function buildTrackerScript(appUrl: string): string {
     },
     getContext: function() { return _ctx; },
     isActive: function() { return !!_ctx; }
+    // Manual escape hatch for JS-driven cross-domain redirects
+    // (window.location.href can't be intercepted by any script):
+    //   SplitLab.go(url) instead of window.location.href = url
+    // Disabled for now — uncomment to expose:
+    // ,decorate: function(url) { return decorate(url); },
+    // go: function(url) { window.location.href = decorate(url); }
   };
 
   // Auto-detect and boot — no init() call needed
