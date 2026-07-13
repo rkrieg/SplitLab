@@ -135,6 +135,81 @@ export function buildTrackingSnippet(
     }
   }
 
+  // ─── Cross-domain linker (mirrors tracker.js) ───────────────────────────────
+  // localStorage never crosses origins, so tag outbound cross-domain
+  // navigations with sl_tid/sl_vid/sl_vh; tracker.js on the destination
+  // rebuilds context from the params (detect Method 1) and strips them.
+  function decorate(url) {
+    try {
+      if (!url) return url;
+      var u = new URL(String(url), window.location.href);
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') return url;
+      if (u.hostname === window.location.hostname) return url;
+      if (u.searchParams.get('sl_vid') || u.searchParams.get('sl_tid')) return url;
+      u.searchParams.set('sl_tid', _SL.testId);
+      u.searchParams.set('sl_vid', _SL.variantId);
+      u.searchParams.set('sl_vh', _SL.visitorHash);
+      return u.toString();
+    } catch(e) { return url; }
+  }
+
+  function decorateFromEvent(e) {
+    var t = e.target;
+    if (!t || !t.closest) return;
+    var a = t.closest('a[href]');
+    if (!a) return;
+    try {
+      var dec = decorate(a.href);
+      if (dec !== a.href) a.href = dec;
+    } catch(err) {}
+  }
+
+  function decorateFormForSubmit(form) {
+    if (!form || !form.getAttribute) return;
+    var action = form.getAttribute('action');
+    if (!action) return;
+    var dec = decorate(action);
+    if (dec === action) return;
+    var method = (form.getAttribute('method') || 'get').toLowerCase();
+    if (method === 'get') {
+      // GET submits replace the action query string with the form fields,
+      // so carry the params as hidden inputs instead
+      ['sl_tid', 'sl_vid', 'sl_vh'].forEach(function(name) {
+        if (form.querySelector && form.querySelector("input[name='" + name + "']")) return;
+        var hidden = document.createElement('input');
+        hidden.type = 'hidden';
+        hidden.name = name;
+        hidden.value = name === 'sl_tid' ? _SL.testId : name === 'sl_vid' ? _SL.variantId : _SL.visitorHash;
+        form.appendChild(hidden);
+      });
+    } else {
+      form.setAttribute('action', dec);
+    }
+  }
+
+  function patchWindowOpen() {
+    try {
+      var origOpen = window.open;
+      if (!origOpen || origOpen.__sl_patched) return;
+      var patched = function() {
+        var args = Array.prototype.slice.call(arguments);
+        if (args[0]) args[0] = decorate(String(args[0]));
+        return origOpen.apply(window, args);
+      };
+      patched.__sl_patched = true;
+      window.open = patched;
+    } catch(e) {}
+  }
+
+  if (!_isScan) {
+    // mousedown precedes every click variant; middle-click fires auxclick
+    // (not click) in some browsers — cover all three for new-tab opens
+    document.addEventListener('mousedown', decorateFromEvent, true);
+    document.addEventListener('auxclick', decorateFromEvent, true);
+    document.addEventListener('click', decorateFromEvent, true);
+    patchWindowOpen();
+  }
+
   // Auto-track pageview (skip on scan requests — sl_scan=1 means dashboard goal setup)
   if (!_isScan) {
     _SL.track('pageview');
@@ -424,6 +499,7 @@ export function buildTrackingSnippet(
 
     // Global form submit — captures all forms (not just goal-targeted ones)
     document.addEventListener('submit', function(e) {
+      if (!_isScan) decorateFormForSubmit(e.target);
       captureFormLead(e.target);
     }, true);
 
