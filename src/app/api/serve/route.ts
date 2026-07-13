@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/supabase-server';
 import { downloadHtml } from '@/lib/storage';
-import { buildTrackingSnippet, buildScanScript, injectIntoHtml, buildScriptTag } from '@/lib/tracking';
+import { buildTrackingSnippet, buildScanScript, injectIntoHtml, buildScriptTag, buildFaviconTag, stripFaviconTags } from '@/lib/tracking';
 import { assignVariant } from '@/lib/utils';
 import { getPlanDetails } from '@/lib/plans';
 
@@ -22,13 +22,23 @@ export async function GET(request: NextRequest) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let test: any;
     let workspaceId: string;
+    let clientLogoUrl: string | null = null;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const extractLogoUrl = (wsData: any): string | null => {
+      // Supabase may return nested relations as array or object
+      const ws = Array.isArray(wsData) ? wsData[0] : wsData;
+      const clients = ws?.clients;
+      const clientRow = Array.isArray(clients) ? clients[0] : clients;
+      return clientRow?.logo_url ?? null;
+    };
 
     if (previewTestId) {
       // Preview mode: dashboard "Open" with no custom domain configured.
       // Look up the test directly by ID — skip domain resolution and status filter.
       const { data: testRow, error: testErr } = await db
         .from('tests')
-        .select('*')
+        .select('*, workspaces(clients(logo_url))')
         .eq('id', previewTestId)
         .single();
 
@@ -47,11 +57,12 @@ export async function GET(request: NextRequest) {
       }
       test = testRow;
       workspaceId = testRow.workspace_id;
+      clientLogoUrl = extractLogoUrl(testRow.workspaces);
     } else {
-      // 1. Resolve domain → workspace
+      // 1. Resolve domain → workspace (+ client logo for favicon injection)
       const { data: domainRow, error: domainError } = await db
         .from('domains')
-        .select('workspace_id')
+        .select('workspace_id, workspaces(clients(logo_url))')
         .eq('domain', domain)
         .single();
 
@@ -63,6 +74,7 @@ export async function GET(request: NextRequest) {
       }
 
       workspaceId = domainRow.workspace_id;
+      clientLogoUrl = extractLogoUrl(domainRow.workspaces);
 
       // 2. Find active test matching this URL path
       const { data: testRow, error: testError } = await db
@@ -225,6 +237,7 @@ export async function GET(request: NextRequest) {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Loading…</title>
+${clientLogoUrl ? buildFaviconTag(clientLogoUrl) : ''}
 ${headScriptTags.join('\n')}
 <style>*{margin:0;padding:0}html,body{width:100%;height:100%;overflow:hidden}iframe{width:100%;height:100vh;border:none;display:block}</style>
 </head>
@@ -352,6 +365,11 @@ ${proxyTrackingSnippet}
     );
 
     // 10. Inject everything into HTML
+    if (clientLogoUrl) {
+      // Client logo always wins: strip the page's own favicon links first
+      html = stripFaviconTags(html);
+      headScripts.push(buildFaviconTag(clientLogoUrl));
+    }
     if (isScan) bodyEndScripts.push(buildScanScript(selectedVariant.id, APP_URL));
     const finalHtml = injectIntoHtml(html, headScripts, bodyEndScripts, trackingSnippet);
 
