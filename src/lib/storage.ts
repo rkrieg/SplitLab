@@ -33,6 +33,40 @@ export async function uploadHtml(
   return data.publicUrl;
 }
 
+const FAVICON_BUCKET = process.env.SUPABASE_FAVICON_BUCKET || 'favicons';
+
+/**
+ * Upload a client logo/favicon to the dedicated public favicons bucket.
+ * Returns the public URL of the uploaded file.
+ */
+export async function uploadFavicon(
+  fileName: string,
+  data: ArrayBuffer,
+  contentType: string
+): Promise<string> {
+  const client = getStorageClient();
+
+  const { error } = await client.storage
+    .from(FAVICON_BUCKET)
+    .upload(fileName, data, { contentType, upsert: true });
+
+  if (error) throw new Error(`Storage upload failed: ${error.message}`);
+
+  const { data: urlData } = client.storage.from(FAVICON_BUCKET).getPublicUrl(fileName);
+  return urlData.publicUrl;
+}
+
+/**
+ * Delete a favicon from the favicons bucket by its public URL. Best-effort.
+ */
+export async function deleteFaviconByUrl(url: string): Promise<void> {
+  const fileName = url.split('?')[0].split(`/${FAVICON_BUCKET}/`)[1];
+  if (!fileName) return;
+  const client = getStorageClient();
+  const { error } = await client.storage.from(FAVICON_BUCKET).remove([fileName]);
+  if (error) throw new Error(`Storage delete failed: ${error.message}`);
+}
+
 /**
  * Download HTML content from Supabase Storage by public URL.
  */

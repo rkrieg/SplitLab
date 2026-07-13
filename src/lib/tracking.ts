@@ -360,6 +360,23 @@ export function buildTrackingSnippet(
 }
 
 /**
+ * Build a favicon link tag for the client's logo.
+ */
+export function buildFaviconTag(logoUrl: string): string {
+  const safeUrl = logoUrl.replace(/"/g, '&quot;');
+  return `<link rel="icon" href="${safeUrl}">`;
+}
+
+/**
+ * Remove favicon link tags (rel="icon" / rel="shortcut icon") from HTML so an
+ * injected client logo always wins. apple-touch-icon is left alone — it's for
+ * home-screen shortcuts, not the browser tab.
+ */
+export function stripFaviconTags(html: string): string {
+  return html.replace(/<link\b[^>]*\brel\s*=\s*["']?(?:shortcut\s+)?icon\b[^>]*>/gi, '');
+}
+
+/**
  * Inject workspace scripts and tracking snippet into raw HTML.
  */
 export function injectIntoHtml(
