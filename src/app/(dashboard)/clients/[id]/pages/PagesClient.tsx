@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
@@ -46,6 +46,12 @@ interface Props {
 export default function PagesClient({ tests: initialTests, workspaceId, clientId, canManage, domain }: Props) {
   const router = useRouter();
   const [tests, setTests] = useState(initialTests);
+
+  // Follow refreshed server data — router.refresh() after mutations re-renders
+  // the server component, and this keeps local state in sync with it.
+  useEffect(() => {
+    setTests(initialTests);
+  }, [initialTests]);
   const [createOpen, setCreateOpen] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -135,12 +141,9 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
         setCreatePageError({ message: msg, isLimit: !!err.limitError });
         return;
       }
-      await res.json();
-      const listRes = await fetch(`/api/workspaces/${workspaceId}/tests`);
-      if (listRes.ok) {
-        const fresh = await listRes.json();
-        setTests(fresh);
-      }
+      const created = await res.json();
+      setTests((prev) => [created, ...prev]);
+      router.refresh();
       toast.success('Page created');
       setCreateOpen(false);
       resetCreateForm();
@@ -173,6 +176,7 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
       });
       if (!res.ok) { const err = await res.json().catch(() => null); toast.error(err?.error || 'Failed to update status'); return; }
       setTests((prev) => prev.map((t) => (t.id === testId ? { ...t, status } : t)));
+      router.refresh();
       toast.success(`Page ${status}`);
     } finally {
       setUpdatingStatusId(null);
@@ -186,6 +190,7 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
       const res = await fetch(`/api/tests/${deleteId}`, { method: 'DELETE' });
       if (!res.ok) { toast.error('Failed to delete'); return; }
       setTests((prev) => prev.filter((t) => t.id !== deleteId));
+      router.refresh();
       toast.success('Page deleted');
     } finally { setDeleting(false); setDeleteId(null); }
   }
@@ -254,6 +259,7 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
       }
       const updated = await res.json();
       setTests((prev) => prev.map((t) => (t.id === addVariantTestId ? updated : t)));
+      router.refresh();
       setAddVariantTestId(null);
       setAddVariantError(null);
       toast.success('Variant added');

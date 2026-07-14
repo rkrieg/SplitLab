@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/supabase-server';
 import { downloadHtml } from '@/lib/storage';
-import { buildTrackingSnippet, buildScanScript, injectIntoHtml, buildScriptTag, buildFaviconTag, stripFaviconTags } from '@/lib/tracking';
+import { buildTrackingSnippet, buildScanScript, injectIntoHtml, buildScriptTag, buildFaviconTag, stripFaviconTags, stripSplitLabTrackerTags } from '@/lib/tracking';
 import { assignVariant } from '@/lib/utils';
 import { getPlanDetails } from '@/lib/plans';
 
@@ -196,6 +196,10 @@ export async function GET(request: NextRequest) {
     if (selectedVariant.redirect_url) {
       // Proxy mode: serve iframe wrapper so URL stays on custom domain
       // The SPA runs in its original context inside the iframe
+      // NOTE: url_reached goals are unreliable here — the wrapper URL never
+      // changes as the visitor navigates inside the iframe, and modern browsers
+      // partition third-party iframe storage, so tracker.js inside the iframe
+      // may lose its context. Don't promise URL tracking for proxy variants.
       if (selectedVariant.proxy_mode !== false) {
         // Fetch workspace scripts + page-scoped scripts + test-scoped scripts
         const [{ data: proxyWorkspaceScripts }, { data: proxyPageScripts }, { data: proxyTestScripts }] = await Promise.all([
@@ -272,6 +276,10 @@ ${proxyTrackingSnippet}
       }
 
       // Standard 302 redirect mode
+      // url_reached goals work here IF tracker.js is installed site-wide on the
+      // destination (it persists context to that origin's localStorage). Only
+      // same-domain destinations are supported — cross-domain (Calendly etc.)
+      // would need sl_vid appended to outbound links, which isn't built yet.
       const redirectUrl = new URL(selectedVariant.redirect_url);
       redirectUrl.searchParams.set('sl_vid', selectedVariant.id);
       redirectUrl.searchParams.set('sl_vh', visitorId);
@@ -324,6 +332,9 @@ ${proxyTrackingSnippet}
         headers: { 'Content-Type': 'text/html' },
       });
     }
+
+    // 6c. Hardcoded tracker.js tags double-report against the injected snippet
+    html = stripSplitLabTrackerTags(html, APP_URL);
 
     // 7. Fetch workspace scripts + page-scoped scripts + test-scoped scripts
     const [{ data: workspaceScripts }, { data: pageScripts }, { data: testScripts }] = await Promise.all([

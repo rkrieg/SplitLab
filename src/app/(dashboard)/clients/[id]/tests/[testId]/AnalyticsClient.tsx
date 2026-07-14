@@ -118,10 +118,12 @@ interface Test {
 interface Lead {
   id: string;
   visitor_hash: string;
+  goal_id: string | null;
   metadata: Record<string, unknown>;
   created_at: string;
   test_variants: { name: string } | null;
   conversion_goals: { name: string } | null;
+  goalEnabled: boolean;
 }
 
 interface FormLead {
@@ -413,7 +415,8 @@ export default function AnalyticsClient({
   // Leads
   const [leads, setLeads] = useState<Lead[]>([]);
   const [leadsLoading, setLeadsLoading] = useState(false);
-  const [leadsLoaded, setLeadsLoaded] = useState(false);
+  const [showUntrackedLeads, setShowUntrackedLeads] = useState(false);
+  const [showAllGoalHits, setShowAllGoalHits] = useState(false);
 
   // Form Leads
   const [formLeads, setFormLeads] = useState<FormLead[]>([]);
@@ -496,6 +499,7 @@ export default function AnalyticsClient({
     type: string;
     id: string | null;
     text: string | null;
+    selector?: string | null;
   }
   interface VariantScan {
     variant_id: string;
@@ -507,12 +511,94 @@ export default function AnalyticsClient({
     variants: VariantScan[];
   }
   const [scanResults, setScanResults] = useState<ScanResults | null>(null);
-  const [scanning, setScanning] = useState(false);
+  // Variant IDs with a scan currently in progress — busy state is per-variant so
+  // scanning one variant never locks the Setup button on the others.
+  const [scanningVariantIds, setScanningVariantIds] = useState<string[]>([]);
+  const scanning = scanningVariantIds.length > 0;
   const [scannedVariantName, setScannedVariantName] = useState<string | null>(
     null,
   );
   const [scanResultsLoaded, setScanResultsLoaded] = useState(false);
   const [scanTab, setScanTab] = useState<string | null>(null);
+
+  function goalTypeForElement(el: ScanElement) {
+    const goalTypeMap: Record<string, string> = {
+      form: "form_submit",
+      button: "button_click",
+      cta_link: "button_click",
+      link: "button_click",
+      toggle: "button_click",
+      call: "call_click",
+    };
+    return goalTypeMap[el.type] || "button_click";
+  }
+
+  function selectorForElement(el: ScanElement) {
+    // Scanner may set selector: null on purpose (unidentifiable). Trust that —
+    // do NOT invent text: from display labels like "Button" / "Form" / "Toggle".
+    if (typeof el.selector !== "undefined") {
+      if (el.selector) return el.selector;
+      return el.id ? `id:${el.id}` : null;
+    }
+    // Legacy scan rows (no selector field): derive from id/text as before
+    if (el.id) return `id:${el.id}`;
+    if (el.text) return `text:${el.text}`;
+    return null;
+  }
+
+  // Prefer form identity over submit-button text so forms don't look like buttons.
+  function displayLabelForElement(el: ScanElement) {
+    if (el.type === "form") {
+      if (el.id) return `#${el.id}`;
+      const sel = el.selector || "";
+      if (sel.startsWith("name:")) return sel.slice(5);
+      if (sel.startsWith("fields:")) {
+        try {
+          return sel
+            .slice(7)
+            .split("|")
+            .map((p) => decodeURIComponent(p))
+            .join(", ");
+        } catch {
+          return sel.slice(7);
+        }
+      }
+      if (sel.startsWith("nth:")) {
+        const n = parseInt(sel.slice(4), 10);
+        return Number.isFinite(n) ? `Form #${n + 1}` : "Form";
+      }
+      if (sel.startsWith("text:")) return `Form (“${sel.slice(5)}”)`;
+      // Legacy scans stored submit text in el.text — don't quote it like a button
+      if (el.text) {
+        if (el.text.startsWith("#") || el.text.startsWith("Form")) return el.text;
+        return `Form (“${el.text}”)`;
+      }
+      return "Form";
+    }
+    if (el.type === "button" || el.type === "toggle") {
+      if (el.id) return `#${el.id}`;
+      const sel = el.selector || "";
+      if (sel.startsWith("name:")) return sel.slice(5);
+      if (sel.startsWith("text:")) return `"${sel.slice(5)}"`;
+      if (el.text) return el.text.startsWith("#") ? el.text : `"${el.text}"`;
+      return el.type === "toggle" ? "Toggle" : "Button";
+    }
+    if (el.text) return `"${el.text}"`;
+    if (el.id) return `#${el.id}`;
+    return el.type;
+  }
+
+  function goalMatchesElement(goal: Goal, el: ScanElement, variantId: string, exactOnly = false) {
+    // null variant_id = legacy catch-all; treat as matching any variant
+    if (goal.variant_id !== null && goal.variant_id !== variantId) return false;
+    if (goal.type !== goalTypeForElement(el)) return false;
+
+    const selector = selectorForElement(el);
+    if (selector && goal.selector === selector) return true;
+
+    // Existing form goals with a null selector are catch-all form submit goals.
+    return !exactOnly && el.type === "form" && !goal.selector;
+  }
 
   // Computed
   const variants = test.test_variants || [];
@@ -532,6 +618,26 @@ export default function AnalyticsClient({
         ? variantOverrides[v.id]
         : v.tracking_verified) === false,
   );
+
+  // Dirty-check against the last-saved goals so "Save Goals" only lights up
+  // when there's an actual add/edit/delete pending — not just because the
+  // list happens to be non-empty.
+  const savedGoals = test.conversion_goals || [];
+  const goalsDirty =
+    editGoals.length !== savedGoals.length ||
+    editGoals.some((g, i) => {
+      const saved = savedGoals[i];
+      if (!saved) return true;
+      return (
+        g.id !== saved.id ||
+        g.name !== saved.name ||
+        g.type !== saved.type ||
+        (g.selector || "") !== (saved.selector || "") ||
+        (g.url_pattern || "") !== (saved.url_pattern || "") ||
+        g.is_primary !== saved.is_primary ||
+        (g.variant_id ?? null) !== (saved.variant_id ?? null)
+      );
+    });
 
 
   // ─── Analytics ──────────────────────────────────────────────────────
@@ -848,8 +954,10 @@ export default function AnalyticsClient({
 
     setSavingVariant(true);
     try {
+      // checkFrameable may only downgrade proxy → redirect (site blocks iframing);
+      // an explicit redirect choice is never overridden
       let proxyMode = variantDraft.proxy_mode;
-      if (variantDraft.redirect_url) {
+      if (variantDraft.redirect_url && proxyMode) {
         proxyMode = await checkFrameable(variantDraft.redirect_url.trim());
       }
       const res = await fetch(`/api/tests/${test.id}`, {
@@ -1195,14 +1303,17 @@ export default function AnalyticsClient({
 
   // ─── Leads ───────────────────────────────────────────────────────────
 
-  const fetchLeads = useCallback(async () => {
+  const fetchLeads = useCallback(async (all: boolean, hits: boolean) => {
     setLeadsLoading(true);
     try {
-      const res = await fetch(`/api/tests/${test.id}/leads`);
+      const qs = new URLSearchParams();
+      if (all) qs.set("all", "1");
+      if (hits) qs.set("hits", "1");
+      const query = qs.toString();
+      const res = await fetch(`/api/tests/${test.id}/leads${query ? `?${query}` : ""}`);
       if (!res.ok) throw new Error();
       const data = await res.json();
       setLeads(data.leads || []);
-      setLeadsLoaded(true);
     } catch {
       toast.error("Failed to load leads");
     } finally {
@@ -1211,8 +1322,8 @@ export default function AnalyticsClient({
   }, [test.id]);
 
   useEffect(() => {
-    if (tab === "leads" && !leadsLoaded) fetchLeads();
-  }, [tab, leadsLoaded, fetchLeads]);
+    if (tab === "leads") fetchLeads(showUntrackedLeads, showAllGoalHits);
+  }, [tab, showUntrackedLeads, showAllGoalHits, fetchLeads]);
 
   // ─── Form Leads ──────────────────────────────────────────────────────
 
@@ -1726,12 +1837,21 @@ export default function AnalyticsClient({
     const scanUrl = buildVariantUrl(variantId, { sl_scan: "1" });
     const scanStartedAt = Date.now();
     window.open(scanUrl, "_blank");
-    setScanning(true);
-    setScanResults(null);
-    setScannedVariantName(targetVariant.name);
+    // Keep existing scan results visible — the timestamp check below swaps in fresh ones
+    setScanningVariantIds((prev) =>
+      prev.includes(variantId) ? prev : [...prev, variantId],
+    );
     setTab("settings");
 
-    // Poll every 2 s for up to 2 minutes to catch stepper form steps
+    // Clears busy state for THIS variant only, so parallel scans don't clobber each other
+    const finishScan = () => {
+      setScanningVariantIds((prev) => prev.filter((id) => id !== variantId));
+      setScannedVariantName(targetVariant.name);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+
+    // Poll every 2 s for up to 2 minutes to catch stepper form steps.
+    // The button re-enables on the FIRST fresh result; polling continues silently.
     let attempts = 0;
     const maxAttempts = 60;
     let foundFirst = false;
@@ -1748,7 +1868,10 @@ export default function AnalyticsClient({
           const resultTime = new Date(variantEntry.scanned_at).getTime();
           if (resultTime > scanStartedAt) {
             setScanResults(data.scan_results);
-            foundFirst = true;
+            if (!foundFirst) {
+              foundFirst = true;
+              finishScan();
+            }
           }
         }
       } catch {
@@ -1757,61 +1880,50 @@ export default function AnalyticsClient({
       attempts++;
       if (attempts < maxAttempts) {
         setTimeout(poll, 2000);
-      } else {
-        setScanning(false);
-        // Only show error if we never got any results
-        if (!foundFirst) {
-          toast.error(
-            "Scan timed out. Make sure tracker.js is installed and the page loaded.",
-          );
-        }
+      } else if (!foundFirst) {
+        finishScan();
+        toast.error(
+          "Scan timed out. Make sure tracker.js is installed and the page loaded.",
+        );
       }
     };
     setTimeout(poll, 3000);
 
-    // Re-fetch when user switches back to this tab after clicking "Finish Scanning"
+    // Re-fetch each time the user switches back to this tab; keeps retrying
+    // until fresh results are found (finishScan removes the listener).
     const onVisibilityChange = async () => {
-      if (document.hidden) return;
+      if (document.hidden || foundFirst) return;
       try {
         const res = await fetch(`/api/tests/${test.id}/scan-results`);
         if (!res.ok) return;
         const data = await res.json();
         const variantEntry = data.scan_results?.variants?.find(
-          (v: { variant_id: string }) => v.variant_id === variantId,
+          (v: { variant_id: string; scanned_at: string }) =>
+            v.variant_id === variantId,
         );
-        if (variantEntry) {
+        if (variantEntry && new Date(variantEntry.scanned_at).getTime() > scanStartedAt) {
           setScanResults(data.scan_results);
-          setScanning(false);
+          foundFirst = true;
+          finishScan();
         }
       } catch { /* ignore */ }
-      document.removeEventListener('visibilitychange', onVisibilityChange);
     };
     document.addEventListener('visibilitychange', onVisibilityChange);
   }
 
-  async function enableAsGoal(el: {
-    type: string;
-    id: string | null;
-    text: string | null;
-  }, variantId: string) {
-    const goalTypeMap: Record<string, string> = {
-      form: "form_submit",
-      button: "button_click",
-      cta_link: "button_click",
-      link: "button_click",
-      toggle: "button_click",
-      call: "call_click",
-    };
-    const goalType = goalTypeMap[el.type] || "button_click";
+  async function enableAsGoal(el: ScanElement, variantId: string) {
+    const goalType = goalTypeForElement(el);
+    const selector = selectorForElement(el);
 
-    let selector: string | null = null;
-    if (el.id) {
-      selector = `id:${el.id}`;
-    } else if (el.text) {
-      selector = `text:${el.text}`;
+    // Forms may still use null as catch-all. Buttons/toggles/links need a real
+    // selector — we intentionally skip nth: for them (too fragile), so some
+    // icon-only elements simply can't be uniquely targeted.
+    if (!selector && el.type !== "form") {
+      toast.error("This element can't be uniquely identified (no id, text, or name)");
+      return;
     }
 
-    const label = el.text || el.id || el.type;
+    const label = displayLabelForElement(el);
     const newGoal: Goal = {
       id: "",
       name: label.slice(0, 60),
@@ -1863,20 +1975,19 @@ export default function AnalyticsClient({
     }
   }
 
-  async function removeGoalBySelector(el: {
-    id: string | null;
-    text: string | null;
-  }, variantId: string) {
-    const matchSelector = el.id
-      ? `id:${el.id}`
-      : el.text
-        ? `text:${el.text}`
-        : null;
-    if (!matchSelector) return;
+  async function removeGoalBySelector(el: ScanElement, variantId: string) {
+    const exactMatch = editGoals.find((g) =>
+      goalMatchesElement(g, el, variantId, true),
+    );
+    const fallbackMatch = editGoals.find((g) =>
+      goalMatchesElement(g, el, variantId),
+    );
+    const matchGoal = exactMatch ?? fallbackMatch;
+    if (!matchGoal) return;
 
     const originalGoals = editGoals;
     const updatedGoals = editGoals.filter(
-      (g) => !(g.selector === matchSelector && g.variant_id === variantId),
+      (g) => g !== matchGoal,
     );
     if (updatedGoals.length === originalGoals.length) return; // nothing matched
     setEditGoals(updatedGoals);
@@ -2052,7 +2163,8 @@ export default function AnalyticsClient({
                   {/* No domain configured — show the test URL for real traffic */}
                   {(() => {
                     const nameSlug = test.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-                    const testUrl = `${appUrl}/${nameSlug}/${test.id}`;
+                    // Append url_path so url_reached goal patterns (e.g. "/booking") match on preview URLs too
+                    const testUrl = `${appUrl}/${nameSlug}/${test.id}${test.url_path === '/' ? '' : test.url_path}`;
                     return (
                       <>
                         <div className="flex items-center gap-2">
@@ -2256,6 +2368,28 @@ export default function AnalyticsClient({
               </div>
             )}
 
+            {(test.conversion_goals?.length ?? 0) === 0 && (
+              <div className="flex items-start gap-3 rounded-xl p-4 border bg-indigo-500/10 border-indigo-500/30">
+                <ScanLine size={16} className="flex-shrink-0 mt-0.5 text-indigo-400" />
+                <div className="flex-1 min-w-0">
+                  <p className="font-medium text-sm text-indigo-400">
+                    No conversion goals set up yet — nothing is counted as a conversion
+                  </p>
+                  <p className="text-slate-500 text-xs mt-0.5">
+                    Click <span className="font-medium text-slate-700 dark:text-slate-300">Setup Goal Tracking</span> next to a variant below to scan its page, or manage goals anytime in the{" "}
+                    <button
+                      type="button"
+                      onClick={() => setTab("settings")}
+                      className="font-medium text-indigo-500 hover:text-indigo-400 underline underline-offset-2"
+                    >
+                      Settings
+                    </button>{" "}
+                    tab.
+                  </p>
+                </div>
+              </div>
+            )}
+
             {winner &&
               winner.confidence !== null &&
               winner.confidence >= 95 && (
@@ -2377,6 +2511,14 @@ export default function AnalyticsClient({
                       const isEditing = editingVariantId === stat.variant.id;
                       const verified = getVerifiedStatus(stat.variant);
                       const rowBg = stat.isWinner ? "bg-green-500/5" : "";
+                      const variantScanned =
+                        scanResults !== null &&
+                        scanResults.variants.some((vs) => vs.variant_id === stat.variant.id);
+                      const variantHasGoals = editGoals.some(
+                        (g) =>
+                          g.name.trim() !== "" &&
+                          (g.variant_id == null || g.variant_id === stat.variant.id),
+                      );
 
                       return (
                         <Fragment key={stat.variant.id}>
@@ -2567,13 +2709,21 @@ export default function AnalyticsClient({
                                     }
                                     scanPage(stat.variant.id);
                                   }}
-                                  disabled={scanning}
+                                  disabled={scanningVariantIds.includes(stat.variant.id)}
                                   className={`flex items-center justify-center gap-1 w-full px-2 py-1 rounded-lg text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap ${
-                                    scanResults !== null && !scanResults.variants.some(vs => vs.variant_id === stat.variant.id)
-                                      ? "bg-amber-500 border border-amber-400 text-white hover:bg-amber-600 shadow-sm shadow-amber-500/30"
-                                      : "bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 hover:bg-indigo-500/20"
+                                    variantHasGoals
+                                      ? "bg-green-500/10 border border-green-500/30 text-green-500 dark:text-green-400 hover:bg-green-500/20"
+                                      : variantScanned
+                                      ? "bg-amber-500 border border-amber-600 text-white hover:bg-amber-600 shadow-md shadow-amber-500/50 animate-pulse"
+                                      : "bg-red-600 border border-red-500 text-white hover:bg-red-700 shadow-md shadow-red-500/50 animate-pulse"
                                   }`}
-                                  title={scanResults !== null && !scanResults.variants.some(vs => vs.variant_id === stat.variant.id) ? "This variant has never been scanned — click to detect trackable elements" : "Set up goal or event tracking"}
+                                  title={
+                                    variantHasGoals
+                                      ? "Goal tracking set up — click to manage"
+                                      : variantScanned
+                                      ? "Page scanned but no goal is enabled yet — conversions are NOT being recorded. Click to choose a goal."
+                                      : "No goal tracking set up — conversions are NOT being recorded for this variant. Click to set it up now."
+                                  }
                                 >
                                   <ScanLine size={11} />
                                   Setup Goal Tracking
@@ -3027,7 +3177,57 @@ export default function AnalyticsClient({
 
         {/* ─── LEADS TAB ─── */}
         {tab === "leads" && (
-          <>
+          <div className="space-y-4">
+            <div className="card px-5 py-3 flex items-center justify-between flex-wrap gap-3">
+              <p className="text-sm text-slate-500 dark:text-slate-400">
+                {leadsLoading
+                  ? "Loading…"
+                  : `${leads.length} ${showAllGoalHits ? "goal hit" : "conversion"}${leads.length !== 1 ? "s" : ""}`}
+                {!showUntrackedLeads && (
+                  <span className="text-slate-400 dark:text-slate-500">
+                    {" "}
+                    · matches Overview&apos;s {showAllGoalHits ? "Goal Hits" : "Conversions"} column
+                  </span>
+                )}
+              </p>
+              <div className="flex items-center gap-3">
+                <label
+                  className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 cursor-pointer select-none"
+                  title={`By default each visitor only counts once per variant here, even if they triggered a goal several times — this matches the Overview tab's "Conversions" column. Turn this on to see every individual goal-triggering event instead (matches the "Goal Hits" column).`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={showAllGoalHits}
+                    onChange={(e) => setShowAllGoalHits(e.target.checked)}
+                    className="rounded border-slate-300 dark:border-slate-600"
+                  />
+                  Show all goal hits
+                </label>
+                <label
+                  className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 cursor-pointer select-none"
+                  title="Raw, un-matched clicks/submits. Mostly relevant for redirect variants with tracker.js installed on the destination page — that script logs every interaction by default. Hosted page variants only log an event when a configured goal is actually triggered, so this list is often empty for them even after clicks happen."
+                >
+                  <input
+                    type="checkbox"
+                    checked={showUntrackedLeads}
+                    onChange={(e) => setShowUntrackedLeads(e.target.checked)}
+                    className="rounded border-slate-300 dark:border-slate-600"
+                  />
+                  Show untracked events
+                </label>
+                <button
+                  onClick={() => fetchLeads(showUntrackedLeads, showAllGoalHits)}
+                  className="btn-secondary text-xs"
+                >
+                  <RefreshCw
+                    size={12}
+                    className={leadsLoading ? "animate-spin" : ""}
+                  />{" "}
+                  Refresh
+                </button>
+              </div>
+            </div>
+
             {leadsLoading ? (
               <div className="flex items-center justify-center py-12">
                 <RefreshCw
@@ -3042,22 +3242,13 @@ export default function AnalyticsClient({
                   No conversions recorded yet.
                 </p>
                 <p className="text-slate-500 text-xs mt-1">
-                  Conversions will appear here once visitors trigger your goals.
+                  {showUntrackedLeads
+                    ? "Conversions will appear here once visitors trigger a tracked or untracked event."
+                    : "Conversions will appear here once visitors trigger your goals. Turn on \"Show untracked events\" to see raw clicks/submits that haven't been matched to a goal."}
                 </p>
               </div>
             ) : (
               <div className="card overflow-hidden">
-                <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200 dark:border-slate-700">
-                  <p className="text-sm text-slate-500 dark:text-slate-400">
-                    {leads.length} conversion{leads.length !== 1 ? "s" : ""}
-                  </p>
-                  <button
-                    onClick={fetchLeads}
-                    className="btn-secondary text-xs"
-                  >
-                    <RefreshCw size={12} /> Refresh
-                  </button>
-                </div>
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-slate-200 dark:border-slate-700">
@@ -3082,7 +3273,11 @@ export default function AnalyticsClient({
                     {leads.map((lead) => (
                       <tr
                         key={lead.id}
-                        className="border-b border-slate-200 dark:border-slate-800 last:border-0"
+                        className={`border-b border-slate-200 dark:border-slate-800 last:border-0 ${
+                          lead.goalEnabled
+                            ? ""
+                            : "bg-amber-50/60 dark:bg-amber-500/[0.04]"
+                        }`}
                       >
                         <td className="px-5 py-3 text-slate-700 dark:text-slate-300 text-xs">
                           {new Date(lead.created_at).toLocaleString()}
@@ -3093,8 +3288,21 @@ export default function AnalyticsClient({
                         <td className="px-5 py-3 text-slate-700 dark:text-slate-300">
                           {lead.test_variants?.name || "—"}
                         </td>
-                        <td className="px-5 py-3 text-slate-700 dark:text-slate-300">
-                          {lead.conversion_goals?.name || "—"}
+                        <td className="px-5 py-3">
+                          {lead.goalEnabled ? (
+                            <span className="inline-flex items-center gap-1.5 text-slate-700 dark:text-slate-300">
+                              <span className="w-1.5 h-1.5 rounded-full bg-green-500 flex-shrink-0" />
+                              {lead.conversion_goals?.name || "—"}
+                            </span>
+                          ) : (
+                            <span
+                              className="inline-flex items-center gap-1.5 text-amber-600 dark:text-amber-400 text-xs font-medium"
+                              title="This event didn't match a goal that's currently enabled — it's not counted in the Overview tab's Conversions/Goal Hits."
+                            >
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-500 flex-shrink-0" />
+                              Not tracked
+                            </span>
+                          )}
                         </td>
                         <td className="px-5 py-3 text-slate-500 text-xs font-mono">
                           {(lead.metadata as Record<string, string>)?.trigger ||
@@ -3106,7 +3314,7 @@ export default function AnalyticsClient({
                 </table>
               </div>
             )}
-          </>
+          </div>
         )}
 
         {/* ─── FORM LEADS TAB ─── */}
@@ -3928,11 +4136,11 @@ export default function AnalyticsClient({
                         {trackerComplete ? (
                           <p className="text-green-500/70 text-xs mt-0.5">Tracker detected on all variants</p>
                         ) : (
-                          <div className="flex items-center gap-1.5 rounded-lg bg-amber-500/10 border border-amber-500/30 px-2.5 py-1.5 text-xs text-amber-600 dark:text-amber-300 mt-1">
-                            <Info size={12} className="flex-shrink-0" />
+                          <div className="flex items-center gap-1.5 rounded-lg bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 px-2.5 py-1.5 text-xs text-amber-800 dark:text-amber-300 mt-1">
+                            <Info size={12} className="flex-shrink-0 text-amber-700 dark:text-amber-300" />
                             <span>
                               Paste before{" "}
-                              <code className="font-mono">&lt;/body&gt;</code> on your
+                              <code className="font-mono text-amber-900 dark:text-amber-200">&lt;/body&gt;</code> on your
                               external landing page (redirect mode only)
                             </span>
                           </div>
@@ -3967,29 +4175,31 @@ export default function AnalyticsClient({
 
             {/* Set Up Goal Conversion Tracking */}
             {anyTrackerMissing && (
-              <div className="flex items-start gap-2 rounded-lg bg-amber-500/10 border border-amber-500/30 px-4 py-3 text-sm text-amber-400">
-                <AlertTriangle size={14} className="flex-shrink-0 mt-0.5" />
+              <div className="flex items-start gap-2 rounded-lg bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 px-4 py-3 text-sm text-amber-800 dark:text-amber-300">
+                <AlertTriangle size={14} className="flex-shrink-0 mt-0.5 text-amber-700 dark:text-amber-400" />
                 <span>Some variants are missing the tracker snippet — conversions may not be recorded for those variants until it is installed.</span>
               </div>
             )}
-            <div className="card overflow-hidden ring-2 ring-indigo-400/60 border-indigo-400/50">
-              <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700 bg-indigo-500/10">
+            <div className="card overflow-hidden ring-2 ring-indigo-300 dark:ring-indigo-400/60 border-indigo-200 dark:border-indigo-400/50">
+              <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700 bg-indigo-50 dark:bg-indigo-500/10">
                 <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-lg bg-indigo-500/30 flex items-center justify-center flex-shrink-0">
-                    <ScanLine size={18} className="text-indigo-300" />
+                  <div className="w-9 h-9 rounded-lg bg-indigo-100 dark:bg-indigo-500/30 flex items-center justify-center flex-shrink-0">
+                    <ScanLine size={18} className="text-indigo-600 dark:text-indigo-300" />
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="font-semibold text-slate-800 dark:text-slate-100 text-sm">
                       Set Up Goal Conversion Tracking
                     </p>
                     {scanning || scannedVariantName ? (
-                      <p className="text-slate-500 text-xs mt-0.5">
+                      <p className="text-slate-600 dark:text-slate-500 text-xs mt-0.5">
                         {scanning
-                          ? `Scanning ${scannedVariantName}…`
+                          ? `Scanning ${scanningVariantIds
+                              .map((id) => variants.find((v) => v.id === id)?.name ?? "variant")
+                              .join(", ")}…`
                           : `Last scanned: ${scannedVariantName}`}
                       </p>
                     ) : (
-                      <p className="text-slate-400 text-xs mt-0.5">
+                      <p className="text-slate-600 dark:text-slate-400 text-xs mt-0.5">
                         Scan your page to detect buttons &amp; forms — then pick which ones count as a conversion.
                       </p>
                     )}
@@ -3999,17 +4209,19 @@ export default function AnalyticsClient({
 
               <div className="px-5 py-4">
                 {!scanning && !scanResults && (
-                  <div className="flex items-start gap-3 rounded-lg bg-indigo-500/15 border border-indigo-400/30 px-4 py-3">
-                    <Info size={14} className="text-indigo-300 flex-shrink-0 mt-0.5" />
+                  <div className="flex items-start gap-3 rounded-xl bg-indigo-50 dark:bg-indigo-500/15 border-2 border-indigo-300 dark:border-indigo-400/50 px-4 py-4">
+                    <div className="w-8 h-8 rounded-lg bg-indigo-200 dark:bg-indigo-500/30 flex items-center justify-center flex-shrink-0">
+                      <Info size={16} className="text-indigo-700 dark:text-indigo-300" />
+                    </div>
                     <div>
-                      <p className="text-sm font-medium text-indigo-200">How to set up goals</p>
-                      <p className="text-xs text-slate-300 mt-1">Go to the <span className="font-medium text-white">Overview tab</span>, find a variant row, and click <span className="font-medium text-white">&ldquo;Setup Goal Tracking&rdquo;</span> to scan that page for trackable elements. Once scanned, you can turn any button or form into a conversion goal right here.</p>
+                      <p className="text-sm font-semibold text-indigo-900 dark:text-indigo-200">How to set up goals</p>
+                      <p className="text-sm text-slate-700 dark:text-slate-300 mt-1">Go to the <span className="font-semibold text-slate-900 dark:text-white">Overview tab</span>, find a variant row, and click <span className="font-semibold text-slate-900 dark:text-white">&ldquo;Setup Goal Tracking&rdquo;</span> to scan that page for trackable elements. Once scanned, you can turn any button or form into a conversion goal right here.</p>
                     </div>
                   </div>
                 )}
 
                 {scanning && (
-                  <div className="flex items-center gap-2 rounded-lg bg-amber-500/10 border border-amber-500/30 px-3 py-2.5 text-xs text-amber-300 font-medium">
+                  <div className="flex items-center gap-2 rounded-lg bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 px-3 py-2.5 text-xs text-amber-800 dark:text-amber-300 font-medium">
                     <RefreshCw size={13} className="animate-spin flex-shrink-0" />
                     Page opened — waiting for scan results…
                   </div>
@@ -4023,7 +4235,7 @@ export default function AnalyticsClient({
                       {/* Variant tabs */}
                       {scanResults.variants.length > 1 && (
                         <div className="mb-4">
-                          <p className="text-xs text-slate-400 mb-2">Switch variants to set goals per page:</p>
+                          <p className="text-xs text-slate-600 dark:text-slate-400 mb-2">Switch variants to set goals per page:</p>
                           <div className="flex gap-0 border-b border-slate-200 dark:border-slate-700 -mx-5 px-5 overflow-x-auto">
                             {scanResults.variants.map((vs) => (
                               <button
@@ -4032,12 +4244,12 @@ export default function AnalyticsClient({
                                 onClick={() => setScanTab(vs.variant_id)}
                                 className={`px-4 py-2 text-xs font-medium border-b-2 transition-colors whitespace-nowrap flex items-center gap-1.5 ${
                                   vs.variant_id === activeId
-                                    ? "border-indigo-500 text-indigo-400"
-                                    : "border-transparent text-slate-500 hover:text-slate-300"
+                                    ? "border-indigo-500 text-indigo-700 dark:text-indigo-400"
+                                    : "border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
                                 }`}
                               >
                                 {vs.variant_name}
-                                <span className={`text-xs ${vs.variant_id === activeId ? "text-indigo-400/60" : "text-slate-600"}`}>
+                                <span className={`text-xs ${vs.variant_id === activeId ? "text-indigo-500/70 dark:text-indigo-400/60" : "text-slate-400 dark:text-slate-600"}`}>
                                   {vs.elements.length}
                                 </span>
                               </button>
@@ -4077,18 +4289,11 @@ export default function AnalyticsClient({
                                     <MousePointerClick size={13} className="text-indigo-400 flex-shrink-0" />
                                   );
 
-                                const label = el.text
-                                  ? `"${el.text}"`
-                                  : el.id
-                                    ? `#${el.id}`
-                                    : el.type;
+                                const label = displayLabelForElement(el);
 
-                                const alreadyAdded = editGoals.some((g) => {
-                                  if (g.variant_id !== activeId) return false;
-                                  if (el.id) return g.selector === `id:${el.id}`;
-                                  if (el.text) return g.selector === `text:${el.text}`;
-                                  return false;
-                                });
+                                const alreadyAdded = editGoals.some((g) =>
+                                  goalMatchesElement(g, el, activeId),
+                                );
 
                                 return (
                                   <div
@@ -4101,20 +4306,20 @@ export default function AnalyticsClient({
                                   >
                                     <div className="flex items-center gap-2 min-w-0">
                                       {alreadyAdded
-                                        ? <CheckCircle2 size={13} className="text-green-400 flex-shrink-0" />
+                                        ? <CheckCircle2 size={13} className="text-green-600 dark:text-green-400 flex-shrink-0" />
                                         : icon}
-                                      <span className={`text-sm truncate ${alreadyAdded ? "text-green-300 font-medium" : "text-slate-700 dark:text-slate-300"}`}>
+                                      <span className={`text-sm truncate ${alreadyAdded ? "text-green-700 dark:text-green-300 font-medium" : "text-slate-700 dark:text-slate-300"}`}>
                                         {label}
                                       </span>
-                                      {el.id && (
-                                        <span className="text-slate-400 font-mono text-xs flex-shrink-0">
+                                      {el.id && label !== `#${el.id}` && (
+                                        <span className="text-slate-500 dark:text-slate-400 font-mono text-xs flex-shrink-0">
                                           #{el.id}
                                         </span>
                                       )}
                                       {alreadyAdded ? (
-                                        <span className="text-xs bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded font-medium flex-shrink-0">Goal</span>
+                                        <span className="text-xs bg-green-100 dark:bg-green-500/20 text-green-700 dark:text-green-400 px-1.5 py-0.5 rounded font-medium flex-shrink-0">Goal</span>
                                       ) : (
-                                        <span className="text-slate-400 text-xs flex-shrink-0 capitalize">
+                                        <span className="text-slate-500 dark:text-slate-400 text-xs flex-shrink-0 capitalize">
                                           {el.type.replace("_", " ")}
                                         </span>
                                       )}
@@ -4123,7 +4328,7 @@ export default function AnalyticsClient({
                                       <button
                                         type="button"
                                         onClick={() => removeGoalBySelector(el, activeId)}
-                                        className="flex-shrink-0 flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-colors"
+                                        className="flex-shrink-0 flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg border border-red-300 dark:border-red-500/30 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors"
                                       >
                                         <X size={11} /> Remove
                                       </button>
@@ -4131,7 +4336,7 @@ export default function AnalyticsClient({
                                       <button
                                         type="button"
                                         onClick={() => enableAsGoal(el, activeId)}
-                                        className="flex-shrink-0 text-xs px-2.5 py-1 rounded-lg border border-indigo-400/60 text-indigo-300 bg-indigo-500/15 hover:bg-indigo-500/30 font-medium transition-colors"
+                                        className="flex-shrink-0 text-xs px-2.5 py-1 rounded-lg border border-indigo-300 dark:border-indigo-400/60 text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-500/15 hover:bg-indigo-100 dark:hover:bg-indigo-500/30 font-medium transition-colors"
                                       >
                                         + Goal
                                       </button>
@@ -4149,14 +4354,22 @@ export default function AnalyticsClient({
               </div>
             </div>
 
-            {/* Conversion Goals — hidden for now; uncomment to re-enable */}
-            {false && (
+            {/* Conversion Goals */}
+            {(
               <div className="card overflow-hidden">
                 <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700">
                   <div className="flex items-center justify-between">
-                    <h3 className="font-medium text-slate-800 dark:text-slate-200">
-                      Goals
-                    </h3>
+                    <div>
+                      <h3 className="font-medium text-slate-800 dark:text-slate-200">
+                        Conversion Goals
+                      </h3>
+                      <p className="text-slate-500 dark:text-slate-400 text-xs mt-0.5">
+                        Goals enabled from the scanner above appear here automatically. Add a URL-based goal manually for pages you don&apos;t want to scan (e.g. a thank-you page).
+                      </p>
+                      <p className="text-xs mt-2 px-3 py-2 rounded-lg border border-amber-300 dark:border-amber-500/40 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400">
+                        URL-based goals work on HTML variants and URL variants in Redirect mode only — Proxy mode can&apos;t detect page changes. To switch a URL variant from Proxy to Redirect, edit it in Overview tab and change its mode from Proxy to Redirect.
+                      </p>
+                    </div>
                     <button
                       type="button"
                       onClick={() =>
@@ -4165,16 +4378,17 @@ export default function AnalyticsClient({
                           {
                             id: "",
                             name: "",
-                            type: "form_submit",
+                            // Manual goal creation is URL Reached only — click/form goals come from the scan flow
+                            type: "url_reached",
                             selector: "",
                             url_pattern: "",
                             is_primary: editGoals.length === 0,
                           },
                         ])
                       }
-                      className="text-indigo-400 hover:text-indigo-300 text-sm"
+                      className="text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300 text-sm font-medium flex-shrink-0"
                     >
-                      + Add Goal
+                      + Add URL Goal
                     </button>
                   </div>
                 </div>
@@ -4182,7 +4396,43 @@ export default function AnalyticsClient({
                   onSubmit={handleSaveGoals}
                   className="px-5 py-4 space-y-3"
                 >
-                  {editGoals.map((g, i) => (
+                  <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
+                  {editGoals.map((g, i) => {
+                    // Only URL Reached goals are created here manually. Everything else
+                    // (form/button/call goals) comes from the scanner above and is
+                    // managed there — editing/removing it here would desync from the
+                    // scanned element it's matched against.
+                    // Inferred, not stored: there's no source/created_via column, so this
+                    // relies on url_reached never being produced by the scanner. If that
+                    // ever changes, a scan-created url_reached goal would be misclassified
+                    // as manual here.
+                    const isManual = g.type === "url_reached";
+
+                    if (!isManual) {
+                      return (
+                        <div
+                          key={i}
+                          className="flex items-center gap-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 p-3"
+                        >
+                          <span className="text-sm text-slate-700 dark:text-slate-300 flex-1 truncate">
+                            {g.name}
+                          </span>
+                          <span className="text-xs bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 px-1.5 py-0.5 rounded flex-shrink-0 font-medium">
+                            {g.variant_id
+                              ? variants.find((v) => v.id === g.variant_id)?.name ?? "Unknown variant"
+                              : "All variants"}
+                          </span>
+                          <span className="text-xs bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-400 px-1.5 py-0.5 rounded flex-shrink-0">
+                            {GOAL_TYPES.find((t) => t.value === g.type)?.label || g.type}
+                          </span>
+                          <span className="text-slate-400 dark:text-slate-500 text-[11px] flex-shrink-0" title="Detected via the scanner above — manage it there, not here">
+                            From scan
+                          </span>
+                        </div>
+                      );
+                    }
+
+                    return (
                     <div
                       key={i}
                       className="rounded-lg border border-slate-200 dark:border-slate-700 p-3 space-y-2"
@@ -4200,26 +4450,9 @@ export default function AnalyticsClient({
                           placeholder="Goal name"
                           required
                         />
-                        <select
-                          value={g.type}
-                          onChange={(e) => {
-                            const c = [...editGoals];
-                            c[i] = {
-                              ...c[i],
-                              type: e.target.value,
-                              selector: "",
-                              url_pattern: "",
-                            };
-                            setEditGoals(c);
-                          }}
-                          className="input-base w-36"
-                        >
-                          {GOAL_TYPES.map((t) => (
-                            <option key={t.value} value={t.value}>
-                              {t.label}
-                            </option>
-                          ))}
-                        </select>
+                        <span className="text-xs bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 px-2 py-1.5 rounded-lg flex-shrink-0 whitespace-nowrap">
+                          URL Reached
+                        </span>
                         <button
                           type="button"
                           onClick={() =>
@@ -4231,52 +4464,37 @@ export default function AnalyticsClient({
                         </button>
                       </div>
                       <div className="flex items-center gap-2">
-                        {(g.type === "form_submit" ||
-                          g.type === "button_click") && (
-                          <input
-                            type="text"
-                            value={g.selector || ""}
-                            onChange={(e) => {
-                              const c = [...editGoals];
-                              c[i] = { ...c[i], selector: e.target.value };
-                              setEditGoals(c);
-                            }}
-                            className="input-base flex-1 font-mono text-xs"
-                            placeholder={
-                              g.type === "form_submit"
-                                ? "#my-form"
-                                : "#cta-button"
-                            }
-                          />
-                        )}
-                        {g.type === "url_reached" && (
-                          <input
-                            type="text"
-                            value={g.url_pattern || ""}
-                            onChange={(e) => {
-                              const c = [...editGoals];
-                              c[i] = { ...c[i], url_pattern: e.target.value };
-                              setEditGoals(c);
-                            }}
-                            className="input-base flex-1 font-mono text-xs"
-                            placeholder="/thank-you"
-                          />
-                        )}
-                        {g.type === "call_click" && (
-                          <p className="text-slate-500 text-xs flex-1">
-                            Tracks tel: link clicks
-                          </p>
-                        )}
+                        <input
+                          type="text"
+                          value={g.url_pattern || ""}
+                          onChange={(e) => {
+                            const c = [...editGoals];
+                            c[i] = { ...c[i], url_pattern: e.target.value };
+                            setEditGoals(c);
+                          }}
+                          className="input-base flex-1 font-mono text-xs"
+                          placeholder="/thank-you"
+                        />
                       </div>
+                      <p className="text-slate-500 dark:text-slate-500 text-[11px]">
+                        Matches if the visitor&apos;s URL <span className="font-medium">contains</span> this text anywhere — e.g. <code className="font-mono">/booking</code> matches <code className="font-mono">/booking</code>, <code className="font-mono">/booking-confirmed</code>, and <code className="font-mono">/booking?utm_source=fb</code>. Enter the path only — no need to add search params.
+                      </p>
                     </div>
-                  ))}
+                    );
+                  })}
                   {editGoals.length === 0 && (
                     <p className="text-slate-500 text-xs">
                       No goals. Add one to track conversions.
                     </p>
                   )}
+                  </div>
                   <div className="flex justify-end pt-2">
-                    <Button type="submit" loading={savingGoals} size="sm">
+                    <Button
+                      type="submit"
+                      loading={savingGoals}
+                      size="sm"
+                      disabled={!goalsDirty}
+                    >
                       Save Goals
                     </Button>
                   </div>
@@ -4292,10 +4510,10 @@ export default function AnalyticsClient({
                 <h3 className="font-medium text-slate-800 dark:text-slate-200">
                   Page-Specific Head Scripts
                 </h3>
-                <div className="flex items-start gap-2 rounded-lg bg-amber-500/10 border border-amber-500/30 px-3 py-2.5 text-xs text-amber-600 dark:text-amber-300 mt-2">
-                  <Info size={13} className="mt-0.5 flex-shrink-0" />
+                <div className="flex items-start gap-2 rounded-lg bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 px-3 py-2.5 text-xs text-amber-800 dark:text-amber-300 mt-2">
+                  <Info size={13} className="mt-0.5 flex-shrink-0 text-amber-700 dark:text-amber-300" />
                   <span>
-                    Injected into the <code className="font-mono">&lt;head&gt;</code> of this test&apos;s HTML pages only — not hosted URLs (Lovable,
+                    Injected into the <code className="font-mono text-amber-900 dark:text-amber-200">&lt;head&gt;</code> of this test&apos;s HTML pages only — not hosted URLs (Lovable,
                     Replit, site builders, etc.). For third-party scripts (GTM,
                     Pixel, etc.), add them directly to your site.
                   </span>
