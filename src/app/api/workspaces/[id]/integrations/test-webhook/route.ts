@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { fireWebhook, type WebhookConfig, type WebhookFieldMappings } from '@/lib/integrations/webhook';
+import { resolveWorkspaceRole } from '@/lib/workspace-auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -10,10 +11,13 @@ export const dynamic = 'force-dynamic';
 // Fires a sample payload to the given URL and returns the result.
 export async function POST(
   req: NextRequest,
-  { params: _params }: { params: { id: string } }
+  { params }: { params: { id: string } }
 ) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const wsRole = await resolveWorkspaceRole(params.id, session.user.id, session.user.role);
+  if (!wsRole || wsRole === 'viewer') return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
   const body = await req.json() as { config?: WebhookConfig; mappings?: WebhookFieldMappings };
   const { config, mappings } = body;

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
+import { resolveWorkspaceRole } from '@/lib/workspace-auth';
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://www.trysplitlab.com';
 
@@ -13,6 +14,21 @@ export async function POST(request: NextRequest) {
   if (!url || !variant_id) {
     return NextResponse.json({ error: 'url and variant_id required' }, { status: 400 });
   }
+
+  const { data: variant } = await db
+    .from('test_variants')
+    .select('test_id, tests(workspace_id)')
+    .eq('id', variant_id)
+    .single();
+
+  if (!variant) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+
+  const testsRel = variant.tests as unknown as { workspace_id: string } | { workspace_id: string }[] | null;
+  const workspaceId = Array.isArray(testsRel) ? testsRel[0]?.workspace_id : testsRel?.workspace_id;
+  if (!workspaceId) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+
+  const wsRole = await resolveWorkspaceRole(workspaceId, session.user.id, session.user.role);
+  if (!wsRole || wsRole === 'viewer') return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
   try {
     const controller = new AbortController();

@@ -92,9 +92,30 @@ export async function GET() {
     invalid: allVars.filter((v) => v.set && !v.valid).map((v) => v.key),
   };
 
+  // Reported separately from groups/summary above (not via check()) because
+  // AI_PROVIDER/AI_BASE_URL/AI_MODEL are correctly unset on the default
+  // Anthropic setup — folding them into the pass/fail summary would flag a
+  // normal deployment as "missing" config it was never meant to have. This
+  // block just tells you, as a developer, which provider is actually live
+  // and what it's configured with — the thing you'd want first when
+  // debugging "the AI builder isn't working" on a deployed environment.
+  const activeAIProvider = (process.env.AI_PROVIDER?.trim() || 'anthropic').toLowerCase();
+  const aiProvider = activeAIProvider === 'anthropic'
+    ? {
+        active: 'anthropic',
+        anthropic_model: process.env.ANTHROPIC_MODEL?.trim() || 'claude-sonnet-4-6 (default)',
+      }
+    : {
+        active: activeAIProvider,
+        ai_base_url: process.env.AI_BASE_URL?.trim() || '(unset — defaults to https://api.openai.com/v1)',
+        ai_model: process.env.AI_MODEL?.trim() || null,
+        ai_api_key_set: Boolean(process.env.AI_API_KEY?.trim()),
+      };
+
   return NextResponse.json({
     supabase: { ok: supabaseOk, error: supabaseError },
     summary,
     groups,
+    aiProvider,
   });
 }

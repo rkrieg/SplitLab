@@ -2,9 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
-
-// TODO (post-trial): Add ownership check — verify the test belongs to the requesting
-// user's workspace before returning lead/conversion data.
+import { resolveTestWorkspaceRole } from '@/lib/workspace-auth';
 
 export async function GET(
   request: NextRequest,
@@ -12,6 +10,10 @@ export async function GET(
 ) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const access = await resolveTestWorkspaceRole(params.id, session.user.id, session.user.role);
+  if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  if (!access.role || access.role === 'viewer') return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
   const { searchParams } = new URL(request.url);
   const limit = Math.min(parseInt(searchParams.get('limit') || '100'), 500);

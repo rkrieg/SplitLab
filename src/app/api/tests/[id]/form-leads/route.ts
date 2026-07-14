@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
+import { resolveTestWorkspaceRole } from '@/lib/workspace-auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,6 +16,11 @@ export async function GET(
   }
 
   const testId = params.id;
+
+  const access = await resolveTestWorkspaceRole(testId, session.user.id, session.user.role);
+  if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  if (!access.role || access.role === 'viewer') return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+
   const sp = request.nextUrl.searchParams;
 
   const variantId  = sp.get('variant_id') || null;
@@ -26,38 +32,6 @@ export async function GET(
   const page       = Math.max(1, parseInt(pageStr, 10) || 1);
   const limit      = Math.min(200, Math.max(1, parseInt(limitStr, 10) || 50));
   const offset     = (page - 1) * limit;
-
-  // Verify caller has access to this test
-  const { data: test } = await db
-    .from('tests')
-    .select('id, workspaces!inner(client_id, clients!inner(owner_id))')
-    .eq('id', testId)
-    .single();
-
-  if (!test) {
-    return NextResponse.json({ error: 'Test not found' }, { status: 404 });
-  }
-
-  const userId   = session.user.id;
-  const userRole = (session.user as { role?: string }).role ?? 'manager';
-
-  if (userRole !== 'admin') {
-    const clientsData = (test as { workspaces?: { clients?: { owner_id?: string } | { owner_id?: string }[] } }).workspaces?.clients;
-    const ownerId = Array.isArray(clientsData) ? clientsData[0]?.owner_id : clientsData?.owner_id;
-
-    if (ownerId !== userId) {
-      // Also allow workspace members
-      const { data: member } = await db
-        .from('workspace_members')
-        .select('id')
-        .eq('user_id', userId)
-        .limit(1)
-        .single();
-      if (!member) {
-        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-      }
-    }
-  }
 
   // Build query
   let query = db

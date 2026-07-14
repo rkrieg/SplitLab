@@ -14,11 +14,11 @@
  */
 // Domain limit is 1 per client/workspace (confirmed by client).
 // "Up to 10 custom domains" on Agency = 10 clients × 1 domain each, not 10 per workspace.
-export const PLAN_LIMITS: Record<string, { domains: number; tests: number; variants: number; clients: number; teamSeats: number }> = {
-  free:   { domains: 0,        tests: 1,        variants: 2,         clients: 1,         teamSeats: 0        },
-  pro:    { domains: 1,        tests: 10,       variants: Infinity,  clients: 1,         teamSeats: 1        },
-  agency: { domains: 1,        tests: 50,       variants: Infinity,  clients: 10,        teamSeats: 10       },
-  scale:  { domains: Infinity, tests: Infinity, variants: Infinity,  clients: Infinity,  teamSeats: Infinity },
+export const PLAN_LIMITS: Record<string, { domains: number; tests: number; variants: number; clients: number; teamSeats: number; aiPages: boolean }> = {
+  free:   { domains: 0,        tests: 1,        variants: 2,         clients: 1,         teamSeats: 0,        aiPages: false },
+  pro:    { domains: 1,        tests: 10,       variants: Infinity,  clients: 1,         teamSeats: 1,        aiPages: false },
+  agency: { domains: 1,        tests: 50,       variants: Infinity,  clients: 10,        teamSeats: 10,       aiPages: true  },
+  scale:  { domains: Infinity, tests: Infinity, variants: Infinity,  clients: Infinity,  teamSeats: Infinity, aiPages: true  },
 };
 
 export interface Plan {
