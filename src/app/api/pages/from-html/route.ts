@@ -22,6 +22,23 @@ export async function POST(request: NextRequest) {
     const wsRole = await resolveWorkspaceRole(workspace_id, session.user.id, session.user.role);
     if (!wsRole || wsRole === 'viewer') return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
+    // Block duplicate active url_path within the same workspace
+    const { data: pathConflict } = await db
+      .from('tests')
+      .select('id, name')
+      .eq('workspace_id', workspace_id)
+      .eq('url_path', url_path)
+      .eq('status', 'active')
+      .limit(1)
+      .maybeSingle();
+
+    if (pathConflict) {
+      return NextResponse.json(
+        { error: `Another active test "${pathConflict.name}" is already running on path "${url_path}". Pause it before creating a new test on the same path.` },
+        { status: 409 }
+      );
+    }
+
     const pageId = crypto.randomUUID();
     const storagePath = `pages/${workspace_id}/${pageId}.html`;
     const publicUrl = await uploadHtml(storagePath, html_content);

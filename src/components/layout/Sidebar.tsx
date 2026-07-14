@@ -276,7 +276,7 @@ export default function Sidebar() {
 
   return (
     <aside className={cn(
-      'min-h-screen bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col relative transition-all duration-200 flex-shrink-0',
+      'h-screen sticky top-0 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col relative transition-all duration-200 flex-shrink-0',
       collapsed ? 'w-16' : 'w-60'
     )}>
       {/* Toggle button */}
@@ -292,7 +292,7 @@ export default function Sidebar() {
       </button>
 
       {/* Logo */}
-      <div className={cn('h-20 flex items-center border-b border-slate-200 dark:border-slate-800 overflow-hidden', collapsed ? 'px-3 justify-center' : 'px-5')}>
+      <div className={cn('h-20 flex items-center border-b border-slate-200 dark:border-slate-800 overflow-hidden flex-shrink-0', collapsed ? 'px-3 justify-center' : 'px-5')}>
         <Link href="/dashboard" className="flex items-center">
           {collapsed ? (
             <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center text-white font-bold text-sm flex-shrink-0">S</div>
@@ -306,7 +306,7 @@ export default function Sidebar() {
       </div>
 
       {/* Client Dropdown / Static label */}
-      <div className={cn('pt-4 pb-2', collapsed ? 'px-2' : 'px-3')} ref={dropdownRef}>
+      <div className={cn('pt-4 pb-2 flex-shrink-0', collapsed ? 'px-2' : 'px-3')} ref={dropdownRef}>
         {multiClientEnabled ? (
           <>
             <button
@@ -423,7 +423,7 @@ export default function Sidebar() {
       </div>
 
       {/* Navigation */}
-      <nav className={cn('flex-1 py-2 space-y-0.5', collapsed ? 'px-2' : 'px-3')}>
+      <nav className={cn('flex-1 min-h-0 overflow-y-auto py-2 space-y-0.5', collapsed ? 'px-2' : 'px-3')}>
         {!clientsLoaded && !multiClientEnabled ? (
           Array.from({ length: 5 }).map((_, i) => (
             <div key={i} className={cn('flex items-center rounded-lg', collapsed ? 'px-2 py-2 justify-center' : 'gap-3 px-3 py-2')}>
@@ -453,7 +453,7 @@ export default function Sidebar() {
       </nav>
 
       {/* User menu */}
-      <div className={cn('py-3 border-t border-slate-200 dark:border-slate-800', collapsed ? 'px-2' : 'px-3')}>
+      <div className={cn('py-3 border-t border-slate-200 dark:border-slate-800 flex-shrink-0', collapsed ? 'px-2' : 'px-3')}>
         <button
           onClick={() => setUserMenuOpen(!userMenuOpen)}
           title={collapsed ? (session?.user?.name || 'User') : undefined}

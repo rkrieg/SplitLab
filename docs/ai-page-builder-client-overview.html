@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>SplitLab — AI Landing Page Builder</title>
+  <style>
+    @page { margin: 1.2in; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      color: #1a1a2e;
+      line-height: 1.55;
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 48px 32px;
+      font-size: 14px;
+    }
+    h1 {
+      font-size: 26px;
+      font-weight: 700;
+      margin: 0 0 6px;
+      color: #0f172a;
+    }
+    .subtitle {
+      color: #64748b;
+      font-size: 15px;
+      margin-bottom: 32px;
+    }
+    h2 {
+      font-size: 16px;
+      font-weight: 700;
+      color: #3D8BDA;
+      margin: 28px 0 10px;
+      padding-bottom: 4px;
+      border-bottom: 2px solid #e2e8f0;
+    }
+    p { margin: 0 0 12px; }
+    ol, ul { margin: 0 0 14px; padding-left: 22px; }
+    li { margin-bottom: 6px; }
+    .flow {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 18px 20px;
+      margin: 14px 0;
+    }
+    .flow-step {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 10px;
+      align-items: flex-start;
+    }
+    .flow-step:last-child { margin-bottom: 0; }
+    .num {
+      background: #3D8BDA;
+      color: white;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin: 14px 0;
+    }
+    .box {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+    .box h3 {
+      font-size: 13px;
+      font-weight: 700;
+      margin: 0 0 8px;
+      color: #0f172a;
+    }
+    .box ul { margin: 0; padding-left: 18px; font-size: 13px; }
+    .note {
+      background: #eff6ff;
+      border-left: 3px solid #3D8BDA;
+      padding: 12px 14px;
+      margin: 16px 0;
+      font-size: 13px;
+      border-radius: 0 6px 6px 0;
+    }
+    .footer {
+      margin-top: 36px;
+      padding-top: 16px;
+      border-top: 1px solid #e2e8f0;
+      font-size: 12px;
+      color: #94a3b8;
+    }
+    @media print {
+      body { padding: 0; }
+    }
+  </style>
+</head>
+<body>
+
+  <h1>AI Landing Page Builder</h1>
+  <p class="subtitle">SplitLab — Feature 1 plan &amp; walkthrough</p>
+
+  <h2>What we're building</h2>
+  <p>
+    A built-in AI page builder inside SplitLab. Users describe the landing page they want in plain English,
+    AI generates a complete page, they preview and edit it, then publish — hosted on their custom domain with
+    tracking already wired in. Think Lovable, but native to SplitLab.
+  </p>
+
+  <h2>End-to-end user flow</h2>
+  <div class="flow">
+    <div class="flow-step">
+      <div class="num">1</div>
+      <div><strong>Describe the page</strong> — User types a prompt (e.g. "Landing page for a personal injury firm in Miami") and picks a vertical: Lead Gen, SaaS, or Local Services.</div>
+    </div>
+    <div class="flow-step">
+      <div class="num">2</div>
+      <div><strong>AI generates the page</strong> — AI writes the copy and builds a full, unique landing page (layout, styling, sections). If the prompt is too vague, AI asks 1–2 clarifying questions first.</div>
+    </div>
+    <div class="flow-step">
+      <div class="num">3</div>
+      <div><strong>Live preview</strong> — The generated page appears in a preview panel. User sees exactly what visitors will see.</div>
+    </div>
+    <div class="flow-step">
+      <div class="num">4</div>
+      <div><strong>Edit inline</strong> — User clicks any headline, paragraph, or button text to edit it directly on the page. No drag-and-drop builder — just click and type.</div>
+    </div>
+    <div class="flow-step">
+      <div class="num">5</div>
+      <div><strong>Publish</strong> — User hits Publish. The page goes live on the client's existing custom domain (same as pasted HTML pages work today).</div>
+    </div>
+    <div class="flow-step">
+      <div class="num">6</div>
+      <div><strong>Track conversions</strong> — SplitLab automatically injects tracking. Form submissions, button clicks, and conversion goals work the same as every other SplitLab page.</div>
+    </div>
+  </div>
+
+  <h2>What works automatically (no extra build)</h2>
+  <p>Because AI pages are served the same way as custom HTML pages today, these already work out of the box:</p>
+  <ul>
+    <li>Conversion tracking via tracker.js</li>
+    <li>Form lead capture</li>
+    <li>Email notifications (Resend)</li>
+    <li>HubSpot, Facebook, and Google integrations</li>
+    <li>Custom domain hosting</li>
+    <li>A/B testing (page can be used as a test variant)</li>
+  </ul>
+
+  <h2>How hosting works</h2>
+  <p>
+    Published AI pages are stored and served exactly like manually pasted HTML pages — on the client's
+    custom domain through SplitLab's existing infrastructure. No change to how live traffic is handled.
+  </p>
+  <div class="note">
+  <strong>Later (not v1):</strong> Optional dedicated subdomain hosting at <em>pages.trysplitlab.com/your-slug</em> for pages that don't need a custom domain.
+  </div>
+
+  <h2>Scope</h2>
+  <div class="two-col">
+    <div class="box">
+      <h3>In v1</h3>
+      <ul>
+        <li>AI page generation from prompt</li>
+        <li>Vertical selector (3 options)</li>
+        <li>Live preview</li>
+        <li>Inline text editing</li>
+        <li>Publish on custom domain</li>
+        <li>Page management (list, edit, duplicate, delete)</li>
+      </ul>
+    </div>
+    <div class="box">
+      <h3>Coming after v1</h3>
+      <ul>
+        <li>UTM personalization (swap headlines/CTAs by traffic source)</li>
+        <li>Full page routing by UTM (different page per campaign)</li>
+        <li>pages.trysplitlab.com subdomain</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2>Why this order</h2>
+  <p>
+    The AI builder is the foundation. UTM headline swapping and full page routing both depend on pages
+    being built and stored in a structured way inside SplitLab. Ship the builder first, then layer
+    personalization on top.
+  </p>
+
+  <div class="footer">
+    SplitLab — AI Landing Page Builder · Feature 1 plan
+  </div>
+
+</body>
+</html>

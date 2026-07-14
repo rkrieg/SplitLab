@@ -23,6 +23,11 @@ export function buildTrackingSnippet(
 
   return `<script>
 (function() {
+  // Flag checked by tracker.js: when the inline snippet owns this page,
+  // a hardcoded tracker.js tag must stay dormant or every lead/pageview
+  // would be reported twice. Set before anything else so it is visible
+  // regardless of script order.
+  window.__SL_SNIPPET__ = true;
   var _SL = {
     testId: ${JSON.stringify(testId)},
     variantId: ${JSON.stringify(variantId)},
@@ -30,37 +35,110 @@ export function buildTrackingSnippet(
     apiUrl: ${JSON.stringify(appUrl)},
     goals: ${goalsJson},
     _sent: {},
-    track: function(type, goalId) {
-      var key = type + ':' + (goalId || '');
-      if (this._sent[key]) return;
-      this._sent[key] = true;
-      var self = this;
-      var payload = JSON.stringify({
-        testId: self.testId,
-        variantId: self.variantId,
-        goalId: goalId || null,
-        visitorHash: self.visitorHash,
-        type: type
-      });
+    send: function(payload) {
       if (navigator.sendBeacon) {
         try {
           var blob = new Blob([payload], { type: 'text/plain' });
-          navigator.sendBeacon(self.apiUrl + '/api/event', blob);
+          navigator.sendBeacon(this.apiUrl + '/api/event', blob);
           return;
         } catch(e) {}
       }
-      fetch(self.apiUrl + '/api/event', {
+      fetch(this.apiUrl + '/api/event', {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
         body: payload,
         keepalive: true
       }).catch(function() {});
+    },
+    track: function(type, goalId) {
+      var key = type + ':' + (goalId || '');
+      if (this._sent[key]) return;
+      this._sent[key] = true;
+      this.send(JSON.stringify({
+        testId: this.testId,
+        variantId: this.variantId,
+        goalId: goalId || null,
+        visitorHash: this.visitorHash,
+        type: type
+      }));
     }
   };
 
+  var _isScan = new URLSearchParams(window.location.search).get('sl_scan') === '1';
+
+  // ─── Cross-page context persistence ─────────────────────────────────────────
+  // Persist this test's context (variant, visitor, url_reached goals) keyed per
+  // test, so a later SplitLab-served page on the SAME origin can fire this
+  // test's URL goals after a full page navigation (e.g. /offer -> /booking).
+  // localStorage is per-origin: this does NOT work across different domains or
+  // subdomains (Calendly etc.) — that needs tracker.js on the destination plus
+  // sl_vid link params, which is not implemented yet.
+  var CTX_KEY = 'sl_ctx';
+  var CTX_TTL = 90 * 24 * 60 * 60 * 1000; // 90 days, matches sl_visitor cookie
+
+  function loadCtxMap() {
+    try {
+      var m = JSON.parse(localStorage.getItem(CTX_KEY) || '{}') || {};
+      var now = Date.now();
+      var changed = false;
+      for (var k in m) {
+        if (!m[k] || !m[k].ts || now - m[k].ts > CTX_TTL) { delete m[k]; changed = true; }
+      }
+      if (changed) localStorage.setItem(CTX_KEY, JSON.stringify(m));
+      return m;
+    } catch(e) { return {}; }
+  }
+
+  function saveCtx() {
+    try {
+      var m = loadCtxMap();
+      m[_SL.testId] = {
+        vid: _SL.variantId,
+        vh: _SL.visitorHash,
+        ts: Date.now(),
+        urlGoals: _SL.goals
+          .filter(function(g) { return g.type === 'url_reached' && g.urlPattern; })
+          .map(function(g) { return { id: g.id, p: g.urlPattern }; })
+      };
+      localStorage.setItem(CTX_KEY, JSON.stringify(m));
+    } catch(e) {}
+  }
+
+  // Fire conversions for OTHER tests' saved url_reached goals that match this
+  // page's URL — attributed to the variant/visitor stored when the visitor saw
+  // that test. Own-test goals are handled inline by checkUrlGoals().
+  var _sentStored = {};
+  function checkStoredUrlGoals() {
+    if (_isScan) return;
+    var m = loadCtxMap();
+    var url = window.location.href;
+    var pathname = window.location.pathname + window.location.search;
+    for (var tid in m) {
+      if (tid === _SL.testId) continue;
+      var ctx = m[tid];
+      (ctx.urlGoals || []).forEach(function(g) {
+        if (_sentStored[g.id]) return;
+        try {
+          var pattern = new RegExp(g.p, 'i');
+          if (pattern.test(url) || pattern.test(pathname)) {
+            _sentStored[g.id] = true;
+            _SL.send(JSON.stringify({
+              testId: tid,
+              variantId: ctx.vid,
+              goalId: g.id,
+              visitorHash: ctx.vh,
+              type: 'conversion'
+            }));
+          }
+        } catch(e) {}
+      });
+    }
+  }
+
   // Auto-track pageview (skip on scan requests — sl_scan=1 means dashboard goal setup)
-  if (new URLSearchParams(window.location.search).get('sl_scan') !== '1') {
+  if (!_isScan) {
     _SL.track('pageview');
+    saveCtx();
   }
 
   // ─── Form lead capture helpers ──────────────────────────────────────────────
@@ -68,6 +146,46 @@ export function buildTrackingSnippet(
   // Accumulates field values across stepper steps so submit captures all steps' data
   var _accumulatedFormData = {};
   var _leadSent = false;
+  // Form (or null) containing the last-clicked submit-style button — scopes the
+  // validity check for JS-driven submits so unrelated forms can never block a lead
+  var _lastClickScopeForm = null;
+
+  function isFieldVisible(el) {
+    try {
+      if (el.checkVisibility) return el.checkVisibility({ checkVisibilityCSS: true });
+      // Legacy fallback: offsetParent is null for display:none but also for
+      // position:fixed (visible popups) — treat fixed as visible; unsure → visible
+      if (el.offsetParent !== null) return true;
+      var st = window.getComputedStyle ? getComputedStyle(el) : null;
+      return st ? (st.position === 'fixed' && st.display !== 'none') : true;
+    } catch(e) { return true; }
+  }
+
+  // True when every visible field passes the browser's HTML constraint validation
+  // (required, type=email, pattern…). Reads validity.valid directly so no invalid
+  // events fire on the host page. Hidden fields (other stepper steps, conditional
+  // fields) never block. With no scopeForm, fields inside any <form> are ignored —
+  // they belong to real forms whose own submit path governs them. Fails open: any
+  // uncertainty means send anyway (worst case = pre-gate behavior).
+  function fieldsLookValid(scopeForm) {
+    try {
+      // Deliberately no novalidate exemption: builders like Unbounce set novalidate
+      // at runtime and run their own validation off the same required/pattern
+      // attributes — validity.valid is still computed per-element regardless.
+      var els = scopeForm ? scopeForm.elements : document.querySelectorAll('input, select, textarea');
+      for (var i = 0; i < els.length; i++) {
+        var el = els[i];
+        if (!el || el.disabled) continue;
+        var t = (el.type || '').toLowerCase();
+        if (t === 'hidden' || t === 'submit' || t === 'button' || t === 'reset' || t === 'file') continue;
+        if (!scopeForm && el.form) continue;
+        if (!(el.willValidate && el.validity && !el.validity.valid)) continue;
+        if (!isFieldVisible(el)) continue;
+        return false;
+      }
+    } catch(e) {}
+    return true;
+  }
 
   function snapshotVisibleFormFields() {
     try {
@@ -87,7 +205,7 @@ export function buildTrackingSnippet(
     try {
       var sp = new URLSearchParams(window.location.search);
       var utm = {};
-      ['utm_source','utm_medium','utm_content','utm_term','utm_campaign','gclid'].forEach(function(k) {
+      ['utm_source','utm_medium','utm_content','utm_term','utm_campaign','gclid','fbclid'].forEach(function(k) {
         if (sp.get(k)) utm[k] = sp.get(k);
       });
       var payload = JSON.stringify({
@@ -113,6 +231,9 @@ export function buildTrackingSnippet(
 
   function captureFormLead(form) {
     if (_leadSent) return;
+    // Incomplete/invalid form → the site will reject this attempt; skip the send
+    // and leave _leadSent unlocked so the corrected re-submit still captures.
+    if (form && form.elements && !fieldsLookValid(form)) return;
     _leadSent = true;
     try {
       // Start with accumulated data from previous stepper steps
@@ -140,6 +261,7 @@ export function buildTrackingSnippet(
       if (_accumulatedFormData.hasOwnProperty(k) && _accumulatedFormData[k]) { hasData = true; break; }
     }
     if (!hasData) return;
+    if (!fieldsLookValid(_lastClickScopeForm)) return;
     _leadSent = true;
     sendFormLead(_accumulatedFormData);
   }
@@ -191,18 +313,63 @@ export function buildTrackingSnippet(
 
   function initGoals() {
     var urlGoals = _SL.goals.filter(function(g) { return g.type === 'url_reached'; });
-    if (urlGoals.length > 0) {
-      checkUrlGoals();
-      function wrapHistory(method) {
-        var orig = history[method];
-        history[method] = function() { orig.apply(this, arguments); checkUrlGoals(); };
-      }
-      try { wrapHistory('pushState'); wrapHistory('replaceState'); } catch(e) {}
-      window.addEventListener('popstate', function() { checkUrlGoals(); });
-      window.addEventListener('hashchange', function() { checkUrlGoals(); });
+    // Check both this test's URL goals and other tests' goals saved in
+    // localStorage (cross-page attribution after a full navigation)
+    function checkAllUrlGoals() {
+      if (urlGoals.length > 0) checkUrlGoals();
+      checkStoredUrlGoals();
+    }
+    checkAllUrlGoals();
+    function wrapHistory(method) {
+      var orig = history[method];
+      history[method] = function() { orig.apply(this, arguments); checkAllUrlGoals(); };
+    }
+    try { wrapHistory('pushState'); wrapHistory('replaceState'); } catch(e) {}
+    window.addEventListener('popstate', function() { checkAllUrlGoals(); });
+    window.addEventListener('hashchange', function() { checkAllUrlGoals(); });
+
+    function cleanText(value) {
+      return (value || '').replace(/\\s+/g, ' ').trim();
     }
 
-    // Resolve an id:/text:/legacy-CSS selector to a list of DOM elements
+    function fieldKey(field) {
+      var tag = (field.tagName || '').toLowerCase();
+      var type = (field.type || '').toLowerCase();
+      if (type === 'password' || type === 'hidden' || type === 'submit' || type === 'button' || type === 'reset' || type === 'file') return null;
+      var key = cleanText(field.name || field.id || field.getAttribute('placeholder') || field.getAttribute('aria-label') || type || tag);
+      return key ? encodeURIComponent(key.toLowerCase().slice(0, 80)) : null;
+    }
+
+    function formFieldSignature(form) {
+      var seen = {};
+      var fields = [];
+      var inputs = form.querySelectorAll('input, select, textarea');
+      for (var fi = 0; fi < inputs.length; fi++) {
+        var key = fieldKey(inputs[fi]);
+        if (!key || seen[key]) continue;
+        seen[key] = true;
+        fields.push(key);
+      }
+      if (!fields.length) return null;
+      // Sort so field order in the DOM doesn't change the signature
+      fields.sort();
+      // Cap must match tracker.js so signatures compare equal across scripts
+      var sig = fields.join('|');
+      return sig.length > 300 ? sig.slice(0, 300) : sig;
+    }
+
+    function formSubmitText(form) {
+      var submit = form.querySelector("button[type='submit'], input[type='submit'], button:not([type]), [role='button']");
+      return submit ? cleanText(submit.textContent || submit.value || submit.getAttribute('aria-label')).slice(0, 100) : null;
+    }
+
+    // Capped identically to the scanners so selectors compare equal
+    function formName(form) {
+      if (!form || !form.getAttribute) return null;
+      return (form.getAttribute('name') || '').slice(0, 150) || null;
+    }
+
+    // Resolve an id:/name:/text:/fields:/nth:/legacy-CSS selector to a list of DOM elements
     function resolveElements(selector, type) {
       if (!selector) {
         if (type === 'form_submit') return Array.from(document.querySelectorAll('form'));
@@ -212,26 +379,70 @@ export function buildTrackingSnippet(
         var byId = document.getElementById(selector.slice(3));
         return byId ? [byId] : [];
       }
+      if (selector.indexOf('name:') === 0) {
+        var targetName = selector.slice(5);
+        if (type === 'form_submit') {
+          return Array.from(document.querySelectorAll('form')).filter(function(form) {
+            return formName(form) === targetName;
+          });
+        }
+        if (type === 'button_click') {
+          return Array.from(document.querySelectorAll("button, [role='button'], [role='switch'], input[type='submit'], input[type='button'], input[type='checkbox']")).filter(function(el) {
+            return (el.getAttribute('name') || '') === targetName;
+          });
+        }
+        return [];
+      }
       if (selector.indexOf('text:') === 0) {
         var needle = selector.slice(5).toLowerCase();
+        if (type === 'form_submit') {
+          return Array.from(document.querySelectorAll('form')).filter(function(form) {
+            return (formSubmitText(form) || '').toLowerCase() === needle;
+          });
+        }
         var candidates = document.querySelectorAll("button, [role='button'], [role='switch'], input[type='submit'], input[type='button'], input[type='checkbox'], a[href]");
         var matches = [];
         for (var ci = 0; ci < candidates.length; ci++) {
           var c = candidates[ci];
-          var cText = (c.textContent || c.value || c.getAttribute('aria-label') || '').trim().toLowerCase();
+          var cText = (c.textContent || c.value || c.getAttribute('aria-label') || c.getAttribute('name') || '').trim().toLowerCase();
           if (!c.id && cText === needle) matches.push(c);
         }
         return matches;
       }
+      if (selector.indexOf('fields:') === 0 && type === 'form_submit') {
+        var targetFields = selector.slice(7);
+        return Array.from(document.querySelectorAll('form')).filter(function(form) {
+          return formFieldSignature(form) === targetFields;
+        });
+      }
+      if (selector.indexOf('nth:') === 0 && type === 'form_submit') {
+        var nthForms = document.querySelectorAll('form');
+        var nth = parseInt(selector.slice(4), 10);
+        return !isNaN(nth) && nthForms[nth] ? [nthForms[nth]] : [];
+      }
       // Legacy CSS selector (e.g. #my-form, .cta-btn)
-      return Array.from(document.querySelectorAll(selector));
+      try {
+        return Array.from(document.querySelectorAll(selector));
+      } catch(e) { return []; }
     }
+
+    // Pre-collect forms claimed by specific goals so the null-selector catch-all
+    // doesn't attach a second listener to those same elements.
+    var specificFormEls = [];
+    _SL.goals.forEach(function(goal) {
+      if (goal.type === 'form_submit' && goal.selector) {
+        resolveElements(goal.selector, 'form_submit').forEach(function(form) {
+          specificFormEls.push(form);
+        });
+      }
+    });
 
     _SL.goals.forEach(function(goal) {
       if (goal.type === 'url_reached') {
         // handled above
       } else if (goal.type === 'form_submit') {
         resolveElements(goal.selector, 'form_submit').forEach(function(form) {
+          if (!goal.selector && specificFormEls.indexOf(form) !== -1) return;
           form.addEventListener('submit', function(e) {
             var action = form.getAttribute('action') || '';
             if (!action || action === '#') e.preventDefault();
@@ -266,6 +477,7 @@ export function buildTrackingSnippet(
       if (!el || !el.closest) return;
       var btn = el.closest("button, [role='button'], input[type='submit'], input[type='button']");
       if (!btn) return;
+      _lastClickScopeForm = btn.form || (btn.closest ? btn.closest('form') : null);
       snapshotVisibleFormFields();
       if (!_leadSent) {
         var btnText = (btn.textContent || btn.value || '').trim();
@@ -279,6 +491,10 @@ export function buildTrackingSnippet(
     patchNetworkForJsSubmit();
   }
 
+  // One-shot only, unlike tracker.js's watchForNewFields() MutationObserver — hosted
+  // variant HTML is fetched from Storage in full up front, so a later scan/registration
+  // pass isn't needed for fields that are merely CSS-hidden. A field that a page's own JS
+  // injects into the DOM only after some interaction would still be missed here.
   function registerFormFields() {
     try {
       var seen = {};
@@ -312,6 +528,53 @@ export function buildTrackingSnippet(
   window.SplitLab = _SL;
 })();
 </script>`;
+}
+
+/**
+ * Remove SplitLab tracker.js <script> tags baked into variant HTML.
+ * HTML variants get the inline tracking snippet injected at serve time,
+ * so a hardcoded tracker.js on the same page double-reports every
+ * lead/pageview/conversion (and can attribute them to a stale variant
+ * from localStorage). Only strips tags whose src points at a SplitLab
+ * host — client/third-party scripts are never touched.
+ */
+export function stripSplitLabTrackerTags(html: string, appUrl: string): string {
+  let appHost = '';
+  try { appHost = new URL(appUrl).host; } catch { /* keep '' */ }
+
+  return html.replace(
+    /<script\b[^>]*\bsrc\s*=\s*["']([^"']+)["'][^>]*>\s*<\/script>/gi,
+    (tag, src: string) => {
+      if (!/\/tracker\.js([?#]|$)/i.test(src)) return tag;
+      try {
+        const host = new URL(src, appUrl).host;
+        const isSplitLabHost =
+          host === appHost ||
+          /(^|\.)trysplitlab\.com$/i.test(host) ||
+          /^localhost(:\d+)?$/.test(host) ||
+          /^127\.0\.0\.1(:\d+)?$/.test(host);
+        if (isSplitLabHost) return '';
+      } catch { /* unparseable src — leave the tag alone */ }
+      return tag;
+    }
+  );
+}
+
+/**
+ * Build a favicon link tag for the client's logo.
+ */
+export function buildFaviconTag(logoUrl: string): string {
+  const safeUrl = logoUrl.replace(/"/g, '&quot;');
+  return `<link rel="icon" href="${safeUrl}">`;
+}
+
+/**
+ * Remove favicon link tags (rel="icon" / rel="shortcut icon") from HTML so an
+ * injected client logo always wins. apple-touch-icon is left alone — it's for
+ * home-screen shortcuts, not the browser tab.
+ */
+export function stripFaviconTags(html: string): string {
+  return html.replace(/<link\b[^>]*\brel\s*=\s*["']?(?:shortcut\s+)?icon\b[^>]*>/gi, '');
 }
 
 /**
@@ -382,21 +645,194 @@ export function buildScanScript(variantId: string, appUrl: string): string {
     scanBanner.innerHTML = '<span style="font-size:15px">✦</span><span>Detecting events within your page that you can track</span>';
     document.body.appendChild(scanBanner);
   }
+  function cleanText(value) {
+    return (value || '').replace(/\\s+/g, ' ').trim();
+  }
+  function fieldKey(field) {
+    var tag = (field.tagName || '').toLowerCase();
+    var type = (field.type || '').toLowerCase();
+    if (type === 'password' || type === 'hidden' || type === 'submit' || type === 'button' || type === 'reset' || type === 'file') return null;
+    var key = cleanText(field.name || field.id || field.getAttribute('placeholder') || field.getAttribute('aria-label') || type || tag);
+    return key ? encodeURIComponent(key.toLowerCase().slice(0, 80)) : null;
+  }
+  function formFieldSignature(form) {
+    var seen = {};
+    var fields = [];
+    var inputs = form.querySelectorAll('input, select, textarea');
+    for (var fi = 0; fi < inputs.length; fi++) {
+      var key = fieldKey(inputs[fi]);
+      if (!key || seen[key]) continue;
+      seen[key] = true;
+      fields.push(key);
+    }
+    if (!fields.length) return null;
+    // Sort so field order in the DOM doesn't change the signature
+    fields.sort();
+    // Cap must match tracker.js so signatures compare equal across scripts
+    var sig = fields.join('|');
+    return sig.length > 300 ? sig.slice(0, 300) : sig;
+  }
+  function formSubmitText(form) {
+    var submit = form.querySelector("button[type='submit'], input[type='submit'], button:not([type]), [role='button']");
+    return submit ? cleanText(submit.textContent || submit.value || submit.getAttribute('aria-label')).slice(0, 100) : null;
+  }
+  function incrementCount(counts, key) {
+    if (!key) return;
+    counts[key] = (counts[key] || 0) + 1;
+  }
+  // Read id/name via getAttribute: named inputs (e.g. <input name="id">) shadow
+  // form.id / form.name with the element itself instead of the attribute string.
+  // Capped identically to tracker.js so selectors compare equal across scripts.
+  function formId(form) {
+    if (!form || !form.getAttribute) return null;
+    return (form.getAttribute('id') || '').slice(0, 255) || null;
+  }
+  function formName(form) {
+    if (!form || !form.getAttribute) return null;
+    return (form.getAttribute('name') || '').slice(0, 150) || null;
+  }
+  function collectFormSelectorCounts(forms) {
+    var counts = {};
+    for (var ci = 0; ci < forms.length; ci++) {
+      var form = forms[ci];
+      var name = formName(form);
+      incrementCount(counts, name ? 'name:' + name : null);
+      var submitText = formSubmitText(form);
+      incrementCount(counts, submitText ? 'text:' + submitText.toLowerCase() : null);
+      var fields = formFieldSignature(form);
+      incrementCount(counts, fields ? 'fields:' + fields : null);
+    }
+    return counts;
+  }
+  // Selector priority: content-based identity (id/name/submit text/fields) first,
+  // DOM position (nth:) strictly last. Position breaks silently when the DOM changes:
+  // injected popup/chat-widget forms shift the index, SPA mount order varies, and
+  // page edits renumber every form. Content survives reordering; position does not.
+  function formSelector(form, counts, idx) {
+    var fid = formId(form);
+    if (fid) return 'id:' + fid;
+    var name = formName(form);
+    if (name && (!counts || counts['name:' + name] === 1)) return 'name:' + name;
+    var submitText = formSubmitText(form);
+    if (submitText && (!counts || counts['text:' + submitText.toLowerCase()] === 1)) return 'text:' + submitText;
+    var fields = formFieldSignature(form);
+    if (fields && (!counts || counts['fields:' + fields] === 1)) return 'fields:' + fields;
+    return typeof idx === 'number' && idx >= 0 ? 'nth:' + idx : null;
+  }
+  // Display label = form identity, NOT submit-button text (that confuses forms with buttons).
+  // Priority mirrors the selector: id → name → fields → nth → submit text last.
+  function formLabel(form, selector) {
+    var fid = formId(form);
+    if (fid) return ('#' + fid).slice(0, 100);
+    var name = formName(form);
+    if (name) return name.slice(0, 100);
+    if (selector && selector.indexOf('fields:') === 0) {
+      return selector.slice(7).split('|').map(decodeURIComponent).join(', ').slice(0, 100) || null;
+    }
+    if (selector && selector.indexOf('nth:') === 0) {
+      var n = parseInt(selector.slice(4), 10);
+      return !isNaN(n) ? 'Form #' + (n + 1) : 'Form';
+    }
+    var submitText = formSubmitText(form);
+    return submitText ? ('Form (“' + submitText + '”)').slice(0, 100) : 'Form';
+  }
+  function buttonVisibleText(btn) {
+    return cleanText(btn.textContent || btn.value || '').slice(0, 100) || null;
+  }
+  // Buttons: id → visible text → unique name → aria-label (as text:).
+  // No nth: pages have dozens of buttons; chat/cookie widgets inject more and
+  // shift indexes constantly, so position is too fragile to be useful.
+  function buttonSelector(btn, nameCounts) {
+    var bid = (btn.getAttribute('id') || '').slice(0, 255) || null;
+    if (bid) return 'id:' + bid;
+    var text = buttonVisibleText(btn);
+    if (text) return 'text:' + text;
+    var name = (btn.getAttribute('name') || '').slice(0, 150) || null;
+    if (name && (!nameCounts || nameCounts[name] === 1)) return 'name:' + name;
+    var aria = cleanText(btn.getAttribute('aria-label')).slice(0, 100) || null;
+    if (aria) return 'text:' + aria;
+    return null;
+  }
+  function buttonLabel(btn, selector) {
+    var bid = (btn.getAttribute('id') || '').slice(0, 255) || null;
+    if (bid) return ('#' + bid).slice(0, 100);
+    var text = buttonVisibleText(btn);
+    if (text) return text;
+    if (selector && selector.indexOf('name:') === 0) return selector.slice(5);
+    if (selector && selector.indexOf('text:') === 0) return selector.slice(5);
+    return 'Button';
+  }
+  function toggleAssociatedLabel(cb) {
+    var aria = cleanText(cb.getAttribute('aria-label'));
+    if (aria) return aria.slice(0, 100);
+    var name = (cb.getAttribute('name') || '').slice(0, 150) || null;
+    if (name) return name;
+    var cid = (cb.getAttribute('id') || '') || null;
+    if (cid) {
+      var labels = document.querySelectorAll('label[for]');
+      for (var li = 0; li < labels.length; li++) {
+        if (labels[li].htmlFor === cid) {
+          var t = cleanText(labels[li].textContent).slice(0, 100);
+          if (t) return t;
+        }
+      }
+    }
+    var parent = cb.closest ? cb.closest('label') : null;
+    if (parent) {
+      var pt = cleanText(parent.textContent).slice(0, 100);
+      if (pt) return pt;
+    }
+    return null;
+  }
+  // Toggles: id → aria-label (text:) → name (name:) → associated <label> text.
+  // No nth — same reason as buttons.
+  function toggleSelector(cb) {
+    var cid = (cb.getAttribute('id') || '').slice(0, 255) || null;
+    if (cid) return 'id:' + cid;
+    var aria = cleanText(cb.getAttribute('aria-label')).slice(0, 100) || null;
+    if (aria) return 'text:' + aria;
+    var name = (cb.getAttribute('name') || '').slice(0, 150) || null;
+    if (name) return 'name:' + name;
+    var label = toggleAssociatedLabel(cb);
+    return label ? 'text:' + label : null;
+  }
+  function toggleLabel(cb, selector) {
+    var cid = (cb.getAttribute('id') || '').slice(0, 255) || null;
+    if (cid) return ('#' + cid).slice(0, 100);
+    if (selector && selector.indexOf('name:') === 0) return selector.slice(5);
+    if (selector && selector.indexOf('text:') === 0) return selector.slice(5);
+    return toggleAssociatedLabel(cb) || 'Toggle';
+  }
+  // Single-pass only, unlike tracker.js's startStepperObserver() — the full hosted
+  // page HTML is already in the DOM at scan time (querySelectorAll sees CSS-hidden
+  // steps too), so no MutationObserver re-scan is needed for typical multi-step forms.
+  // A step whose markup is injected by the page's own JS only after interaction
+  // would still be missed until the visitor reaches it.
   function runScan() {
     var elements = [];
     var forms = document.querySelectorAll('form');
+    var formCounts = collectFormSelectorCounts(forms);
     for (var i = 0; i < forms.length; i++) {
-      elements.push({ type: 'form', id: forms[i].id || null, text: null });
+      var form = forms[i];
+      var selector = formSelector(form, formCounts, i);
+      elements.push({ type: 'form', id: formId(form), text: formLabel(form, selector), selector: selector });
     }
     var buttons = document.querySelectorAll("button, [role='button'], [role='switch'], input[type='submit'], input[type='button']");
+    var buttonNameCounts = {};
+    for (var bj = 0; bj < buttons.length; bj++) {
+      var bn = (buttons[bj].getAttribute('name') || '').slice(0, 150) || null;
+      if (bn) buttonNameCounts[bn] = (buttonNameCounts[bn] || 0) + 1;
+    }
     for (var j = 0; j < buttons.length; j++) {
       var btn = buttons[j];
-      elements.push({ type: 'button', id: btn.id || null, text: (btn.textContent || btn.value || '').trim().slice(0, 100) || null });
+      var bSel = buttonSelector(btn, buttonNameCounts);
+      elements.push({ type: 'button', id: (btn.getAttribute('id') || '').slice(0, 255) || null, text: buttonLabel(btn, bSel), selector: bSel });
     }
     var checkboxes = document.querySelectorAll("input[type='checkbox']");
     for (var m = 0; m < checkboxes.length; m++) {
       var cb = checkboxes[m];
-      elements.push({ type: 'toggle', id: cb.id || null, text: cb.getAttribute('aria-label') || cb.name || null });
+      var tSel = toggleSelector(cb);
+      elements.push({ type: 'toggle', id: (cb.getAttribute('id') || '').slice(0, 255) || null, text: toggleLabel(cb, tSel), selector: tSel });
     }
     var links = document.querySelectorAll('a');
     for (var k = 0; k < links.length; k++) {

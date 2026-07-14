@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
@@ -46,6 +46,12 @@ interface Props {
 export default function PagesClient({ tests: initialTests, workspaceId, clientId, canManage, domain }: Props) {
   const router = useRouter();
   const [tests, setTests] = useState(initialTests);
+
+  // Follow refreshed server data — router.refresh() after mutations re-renders
+  // the server component, and this keeps local state in sync with it.
+  useEffect(() => {
+    setTests(initialTests);
+  }, [initialTests]);
   const [createOpen, setCreateOpen] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -135,12 +141,9 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
         setCreatePageError({ message: msg, isLimit: !!err.limitError });
         return;
       }
-      await res.json();
-      const listRes = await fetch(`/api/workspaces/${workspaceId}/tests`);
-      if (listRes.ok) {
-        const fresh = await listRes.json();
-        setTests(fresh);
-      }
+      const created = await res.json();
+      setTests((prev) => [created, ...prev]);
+      router.refresh();
       toast.success('Page created');
       setCreateOpen(false);
       resetCreateForm();
@@ -171,8 +174,9 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status }),
       });
-      if (!res.ok) { toast.error('Failed to update status'); return; }
+      if (!res.ok) { const err = await res.json().catch(() => null); toast.error(err?.error || 'Failed to update status'); return; }
       setTests((prev) => prev.map((t) => (t.id === testId ? { ...t, status } : t)));
+      router.refresh();
       toast.success(`Page ${status}`);
     } finally {
       setUpdatingStatusId(null);
@@ -186,6 +190,7 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
       const res = await fetch(`/api/tests/${deleteId}`, { method: 'DELETE' });
       if (!res.ok) { toast.error('Failed to delete'); return; }
       setTests((prev) => prev.filter((t) => t.id !== deleteId));
+      router.refresh();
       toast.success('Page deleted');
     } finally { setDeleting(false); setDeleteId(null); }
   }
@@ -254,6 +259,7 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
       }
       const updated = await res.json();
       setTests((prev) => prev.map((t) => (t.id === addVariantTestId ? updated : t)));
+      router.refresh();
       setAddVariantTestId(null);
       setAddVariantError(null);
       toast.success('Variant added');
@@ -472,6 +478,24 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
                 required
               />
               <p className="text-slate-400 dark:text-slate-500 text-xs mt-1">Paste your full page HTML. SplitLab will host and serve it directly.</p>
+              <div className="mt-2">
+                <label className="btn-secondary text-xs inline-flex items-center gap-1.5 cursor-pointer">
+                  <FileCode2 size={12} /> Upload .html file
+                  <input
+                    type="file"
+                    accept=".html,.htm"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      const reader = new FileReader();
+                      reader.onload = () => setCreateHtml(reader.result as string);
+                      reader.readAsText(file);
+                      e.target.value = '';
+                    }}
+                  />
+                </label>
+              </div>
               <div className="flex items-start gap-2 rounded-lg bg-amber-500/10 border border-amber-500/20 px-3 py-2.5 text-xs text-amber-600 dark:text-amber-400 mt-2">
                 <Info size={13} className="flex-shrink-0 mt-px" />
                 <span>Tracking is already built in for this page — <strong>no need to add a <code className="font-mono">tracker.js</code> script tag.</strong></span>

@@ -1,3 +1,7 @@
+// Same as the /[slug]/[testId] preview route, but tolerates extra trailing
+// segments (e.g. /my-test/{testId}/booking). The trailing path is ignored for
+// resolution — it only stays in the browser URL so url_reached goal patterns
+// like "/booking" match locally the same way they do on a custom domain.
 import { NextRequest, NextResponse } from 'next/server';
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
@@ -5,7 +9,7 @@ const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { slug: string; testId: string } }
+  { params }: { params: { slug: string; testId: string; rest: string[] } }
 ) {
   const { testId } = params;
 

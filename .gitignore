@@ -39,3 +39,6 @@ settings.local.json
 next-env.d.ts
 
 stripe.exe
+
+# local test page for form-lead validation fix
+docs/titan.html

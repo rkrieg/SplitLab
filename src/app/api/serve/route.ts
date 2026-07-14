@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/supabase-server';
 import { downloadHtml } from '@/lib/storage';
-import { buildTrackingSnippet, buildScanScript, injectIntoHtml, buildScriptTag } from '@/lib/tracking';
+import { buildTrackingSnippet, buildScanScript, injectIntoHtml, buildScriptTag, buildFaviconTag, stripFaviconTags, stripSplitLabTrackerTags } from '@/lib/tracking';
 import { assignVariant } from '@/lib/utils';
 import { getPlanDetails } from '@/lib/plans';
 import { buildUtmSwapScript } from '@/lib/utm-swap-script';
@@ -23,13 +23,23 @@ export async function GET(request: NextRequest) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let test: any;
     let workspaceId: string;
+    let clientLogoUrl: string | null = null;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const extractLogoUrl = (wsData: any): string | null => {
+      // Supabase may return nested relations as array or object
+      const ws = Array.isArray(wsData) ? wsData[0] : wsData;
+      const clients = ws?.clients;
+      const clientRow = Array.isArray(clients) ? clients[0] : clients;
+      return clientRow?.logo_url ?? null;
+    };
 
     if (previewTestId) {
       // Preview mode: dashboard "Open" with no custom domain configured.
       // Look up the test directly by ID — skip domain resolution and status filter.
       const { data: testRow, error: testErr } = await db
         .from('tests')
-        .select('*')
+        .select('*, workspaces(clients(logo_url))')
         .eq('id', previewTestId)
         .single();
 
@@ -48,11 +58,12 @@ export async function GET(request: NextRequest) {
       }
       test = testRow;
       workspaceId = testRow.workspace_id;
+      clientLogoUrl = extractLogoUrl(testRow.workspaces);
     } else {
-      // 1. Resolve domain → workspace
+      // 1. Resolve domain → workspace (+ client logo for favicon injection)
       const { data: domainRow, error: domainError } = await db
         .from('domains')
-        .select('workspace_id')
+        .select('workspace_id, workspaces(clients(logo_url))')
         .eq('domain', domain)
         .single();
 
@@ -64,6 +75,7 @@ export async function GET(request: NextRequest) {
       }
 
       workspaceId = domainRow.workspace_id;
+      clientLogoUrl = extractLogoUrl(domainRow.workspaces);
 
       // 2. Find active test matching this URL path
       const { data: testRow, error: testError } = await db
@@ -185,6 +197,10 @@ export async function GET(request: NextRequest) {
     if (selectedVariant.redirect_url) {
       // Proxy mode: serve iframe wrapper so URL stays on custom domain
       // The SPA runs in its original context inside the iframe
+      // NOTE: url_reached goals are unreliable here — the wrapper URL never
+      // changes as the visitor navigates inside the iframe, and modern browsers
+      // partition third-party iframe storage, so tracker.js inside the iframe
+      // may lose its context. Don't promise URL tracking for proxy variants.
       if (selectedVariant.proxy_mode !== false) {
         // Fetch workspace scripts + page-scoped scripts + test-scoped scripts
         const [{ data: proxyWorkspaceScripts }, { data: proxyPageScripts }, { data: proxyTestScripts }] = await Promise.all([
@@ -226,6 +242,7 @@ export async function GET(request: NextRequest) {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Loading…</title>
+${clientLogoUrl ? buildFaviconTag(clientLogoUrl) : ''}
 ${headScriptTags.join('\n')}
 <style>*{margin:0;padding:0}html,body{width:100%;height:100%;overflow:hidden}iframe{width:100%;height:100vh;border:none;display:block}</style>
 </head>
@@ -260,6 +277,10 @@ ${proxyTrackingSnippet}
       }
 
       // Standard 302 redirect mode
+      // url_reached goals work here IF tracker.js is installed site-wide on the
+      // destination (it persists context to that origin's localStorage). Only
+      // same-domain destinations are supported — cross-domain (Calendly etc.)
+      // would need sl_vid appended to outbound links, which isn't built yet.
       const redirectUrl = new URL(selectedVariant.redirect_url);
       redirectUrl.searchParams.set('sl_vid', selectedVariant.id);
       redirectUrl.searchParams.set('sl_vh', visitorId);
@@ -312,6 +333,9 @@ ${proxyTrackingSnippet}
         headers: { 'Content-Type': 'text/html' },
       });
     }
+
+    // 6c. Hardcoded tracker.js tags double-report against the injected snippet
+    html = stripSplitLabTrackerTags(html, APP_URL);
 
     // 7. Fetch workspace scripts + page-scoped scripts + test-scoped scripts + UTM personalization rules
     const [{ data: workspaceScripts }, { data: pageScripts }, { data: testScripts }, { data: utmRules }, utmPageRow] = await Promise.all([
@@ -372,6 +396,12 @@ ${proxyTrackingSnippet}
     } catch (utmErr) {
       console.error('[serve] UTM swap inject failed, continuing without:', utmErr);
       htmlWithUtm = html;
+    }
+
+    // 10a. Client logo always wins: strip the page's own favicon links first
+    if (clientLogoUrl) {
+      htmlWithUtm = stripFaviconTags(htmlWithUtm);
+      headScripts.push(buildFaviconTag(clientLogoUrl));
     }
 
     // 10b. Inject workspace scripts + tracking into final HTML
