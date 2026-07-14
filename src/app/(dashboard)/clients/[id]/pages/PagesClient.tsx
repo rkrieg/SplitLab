@@ -171,7 +171,7 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status }),
       });
-      if (!res.ok) { toast.error('Failed to update status'); return; }
+      if (!res.ok) { const err = await res.json().catch(() => null); toast.error(err?.error || 'Failed to update status'); return; }
       setTests((prev) => prev.map((t) => (t.id === testId ? { ...t, status } : t)));
       toast.success(`Page ${status}`);
     } finally {
