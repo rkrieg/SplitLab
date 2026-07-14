@@ -472,6 +472,24 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
                 required
               />
               <p className="text-slate-400 dark:text-slate-500 text-xs mt-1">Paste your full page HTML. SplitLab will host and serve it directly.</p>
+              <div className="mt-2">
+                <label className="btn-secondary text-xs inline-flex items-center gap-1.5 cursor-pointer">
+                  <FileCode2 size={12} /> Upload .html file
+                  <input
+                    type="file"
+                    accept=".html,.htm"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      const reader = new FileReader();
+                      reader.onload = () => setCreateHtml(reader.result as string);
+                      reader.readAsText(file);
+                      e.target.value = '';
+                    }}
+                  />
+                </label>
+              </div>
               <div className="flex items-start gap-2 rounded-lg bg-amber-500/10 border border-amber-500/20 px-3 py-2.5 text-xs text-amber-600 dark:text-amber-400 mt-2">
                 <Info size={13} className="flex-shrink-0 mt-px" />
                 <span>Tracking is already built in for this page — <strong>no need to add a <code className="font-mono">tracker.js</code> script tag.</strong></span>
