@@ -810,7 +810,8 @@ export default function AnalyticsClient({
         body: JSON.stringify({ status: newStatus }),
       });
       if (!res.ok) {
-        toast.error("Failed to update status");
+        const err = await res.json().catch(() => null);
+        toast.error(err?.error || "Failed to update status");
         return;
       }
       const updated = await res.json();
