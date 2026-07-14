@@ -146,6 +146,46 @@ export function buildTrackingSnippet(
   // Accumulates field values across stepper steps so submit captures all steps' data
   var _accumulatedFormData = {};
   var _leadSent = false;
+  // Form (or null) containing the last-clicked submit-style button — scopes the
+  // validity check for JS-driven submits so unrelated forms can never block a lead
+  var _lastClickScopeForm = null;
+
+  function isFieldVisible(el) {
+    try {
+      if (el.checkVisibility) return el.checkVisibility({ checkVisibilityCSS: true });
+      // Legacy fallback: offsetParent is null for display:none but also for
+      // position:fixed (visible popups) — treat fixed as visible; unsure → visible
+      if (el.offsetParent !== null) return true;
+      var st = window.getComputedStyle ? getComputedStyle(el) : null;
+      return st ? (st.position === 'fixed' && st.display !== 'none') : true;
+    } catch(e) { return true; }
+  }
+
+  // True when every visible field passes the browser's HTML constraint validation
+  // (required, type=email, pattern…). Reads validity.valid directly so no invalid
+  // events fire on the host page. Hidden fields (other stepper steps, conditional
+  // fields) never block. With no scopeForm, fields inside any <form> are ignored —
+  // they belong to real forms whose own submit path governs them. Fails open: any
+  // uncertainty means send anyway (worst case = pre-gate behavior).
+  function fieldsLookValid(scopeForm) {
+    try {
+      // Deliberately no novalidate exemption: builders like Unbounce set novalidate
+      // at runtime and run their own validation off the same required/pattern
+      // attributes — validity.valid is still computed per-element regardless.
+      var els = scopeForm ? scopeForm.elements : document.querySelectorAll('input, select, textarea');
+      for (var i = 0; i < els.length; i++) {
+        var el = els[i];
+        if (!el || el.disabled) continue;
+        var t = (el.type || '').toLowerCase();
+        if (t === 'hidden' || t === 'submit' || t === 'button' || t === 'reset' || t === 'file') continue;
+        if (!scopeForm && el.form) continue;
+        if (!(el.willValidate && el.validity && !el.validity.valid)) continue;
+        if (!isFieldVisible(el)) continue;
+        return false;
+      }
+    } catch(e) {}
+    return true;
+  }
 
   function snapshotVisibleFormFields() {
     try {
@@ -191,6 +231,9 @@ export function buildTrackingSnippet(
 
   function captureFormLead(form) {
     if (_leadSent) return;
+    // Incomplete/invalid form → the site will reject this attempt; skip the send
+    // and leave _leadSent unlocked so the corrected re-submit still captures.
+    if (form && form.elements && !fieldsLookValid(form)) return;
     _leadSent = true;
     try {
       // Start with accumulated data from previous stepper steps
@@ -218,6 +261,7 @@ export function buildTrackingSnippet(
       if (_accumulatedFormData.hasOwnProperty(k) && _accumulatedFormData[k]) { hasData = true; break; }
     }
     if (!hasData) return;
+    if (!fieldsLookValid(_lastClickScopeForm)) return;
     _leadSent = true;
     sendFormLead(_accumulatedFormData);
   }
@@ -433,6 +477,7 @@ export function buildTrackingSnippet(
       if (!el || !el.closest) return;
       var btn = el.closest("button, [role='button'], input[type='submit'], input[type='button']");
       if (!btn) return;
+      _lastClickScopeForm = btn.form || (btn.closest ? btn.closest('form') : null);
       snapshotVisibleFormFields();
       if (!_leadSent) {
         var btnText = (btn.textContent || btn.value || '').trim();
@@ -513,6 +558,23 @@ export function stripSplitLabTrackerTags(html: string, appUrl: string): string {
       return tag;
     }
   );
+}
+
+/**
+ * Build a favicon link tag for the client's logo.
+ */
+export function buildFaviconTag(logoUrl: string): string {
+  const safeUrl = logoUrl.replace(/"/g, '&quot;');
+  return `<link rel="icon" href="${safeUrl}">`;
+}
+
+/**
+ * Remove favicon link tags (rel="icon" / rel="shortcut icon") from HTML so an
+ * injected client logo always wins. apple-touch-icon is left alone — it's for
+ * home-screen shortcuts, not the browser tab.
+ */
+export function stripFaviconTags(html: string): string {
+  return html.replace(/<link\b[^>]*\brel\s*=\s*["']?(?:shortcut\s+)?icon\b[^>]*>/gi, '');
 }
 
 /**

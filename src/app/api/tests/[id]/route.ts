@@ -71,7 +71,7 @@ export async function PATCH(
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const { data: testMeta } = await db.from('tests').select('workspace_id').eq('id', params.id).single();
+  const { data: testMeta } = await db.from('tests').select('workspace_id, url_path, status').eq('id', params.id).single();
   if (!testMeta) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   const wsRole = await resolveWorkspaceRole(testMeta.workspace_id, session.user.id, session.user.role);
   if (!wsRole || wsRole === 'viewer') return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
@@ -79,6 +79,29 @@ export async function PATCH(
   try {
     const body = await request.json();
     const { goals, weights, variant_updates, delete_variant_id, ...testFields } = updateSchema.parse(body);
+
+    // Block duplicate active url_path within the same workspace when this update
+    // would result in an active test (activation or path change while active)
+    const nextStatus = testFields.status ?? testMeta.status;
+    const nextPath = testFields.url_path ?? testMeta.url_path;
+    if (nextStatus === 'active' && (testFields.status !== undefined || testFields.url_path !== undefined)) {
+      const { data: pathConflict } = await db
+        .from('tests')
+        .select('id, name')
+        .eq('workspace_id', testMeta.workspace_id)
+        .eq('url_path', nextPath)
+        .eq('status', 'active')
+        .neq('id', params.id)
+        .limit(1)
+        .maybeSingle();
+
+      if (pathConflict) {
+        return NextResponse.json(
+          { error: `Another active test "${pathConflict.name}" is already running on path "${nextPath}". Pause it first.` },
+          { status: 409 }
+        );
+      }
+    }
 
     // Update test fields if any provided
     if (Object.keys(testFields).length > 0) {

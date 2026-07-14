@@ -27,6 +27,22 @@ interface Domain {
   vercel_verification?: VercelVerification[] | null;
 }
 
+// Disclaimer for the TXT record Name field — most DNS panels auto-append the
+// domain to the Name field, which silently doubles it if the full name is pasted.
+function TxtNameNote({ recordName }: { recordName: string }) {
+  const shortName = recordName.split('.')[0]; // e.g. "_vercel"
+  return (
+    <div className="mb-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-[11px] leading-relaxed text-amber-300">
+      <strong className="text-amber-200">Important:</strong> Most DNS providers automatically add your domain to the Name field. If yours does, enter just{' '}
+      <span className="font-mono text-amber-100">"{shortName}"</span> — entering the full{' '}
+      <span className="font-mono">{recordName}</span> would create a broken record at{' '}
+      <span className="font-mono text-red-400 break-all">{recordName}.{recordName.replace(`${shortName}.`, '')}</span>.
+      Some providers (like GoDaddy) will ask which you meant — choose{' '}
+      <span className="font-mono text-amber-100">{recordName}</span>.
+    </div>
+  );
+}
+
 interface Props {
   initialDomains: Domain[];
   workspaceId: string;
@@ -378,6 +394,7 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
               {txtRecords.length > 0 && (
                 <div className="mt-4">
                   <h4 className="text-xs font-medium text-slate-700 dark:text-slate-300 mb-2">TXT record (domain ownership verification):</h4>
+                  <TxtNameNote recordName={txtRecords[0].domain} />
                   <div className="rounded-lg border border-slate-700 overflow-hidden text-xs">
                     <div className="grid grid-cols-3 bg-slate-50 dark:bg-slate-800/60">
                       <div className="px-3 py-2 text-slate-500 font-medium border-r border-slate-200 dark:border-slate-700">Type</div>
@@ -497,6 +514,7 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
           {activeTxtRecords.length > 0 && (
             <div className="mt-4">
               <h4 className="text-xs font-medium text-slate-700 dark:text-slate-300 mb-2">Also add this TXT record to verify domain ownership:</h4>
+              <TxtNameNote recordName={activeTxtRecords[0].domain} />
               <div className="rounded-lg border border-amber-500/30 overflow-hidden text-xs">
                 <div className="grid grid-cols-3 bg-amber-500/10">
                   <div className="px-3 py-2 text-slate-500 font-medium border-r border-amber-500/20">Type</div>
