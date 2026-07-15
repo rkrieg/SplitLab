@@ -9,7 +9,6 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { cn } from '@/lib/utils';
-import { useSidebarCollapsed } from '@/lib/use-sidebar-collapsed';
 import Modal from '@/components/ui/Modal';
 import type { UTMRule, UTMCondition, FieldMapping } from './page';
 
@@ -244,7 +243,6 @@ function buildHtmlPickerScript(activeField: string): string {
 
 export default function UTMPickerClient({ clientId, page, initialRules }: Props) {
   const router = useRouter();
-  const sidebarCollapsed = useSidebarCollapsed();
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const isHtmlPage = !page.isAiPage;
 
@@ -929,7 +927,7 @@ export default function UTMPickerClient({ clientId, page, initialRules }: Props)
     : `/clients/${clientId}/pages`;
 
   return (
-    <div className="fixed inset-0 z-20 flex bg-slate-50 dark:bg-slate-900 transition-[left] duration-200" style={{ left: sidebarCollapsed ? '4rem' : '15rem' }}>
+    <div className="fixed inset-0 z-20 flex bg-slate-50 dark:bg-slate-900 transition-[left] duration-200" style={{ left: 'var(--sl-sidebar-w, 15rem)' }}>
 
       {/* ── Left sidebar ── */}
       <div className="w-[420px] flex-shrink-0 flex flex-col bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 overflow-hidden">
