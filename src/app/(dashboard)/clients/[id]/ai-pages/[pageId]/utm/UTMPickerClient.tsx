@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 import {
   ChevronLeft, ChevronDown, Plus, Trash2, Check, Loader2, Sparkles,
   ExternalLink, AlertTriangle, MousePointer2, X, Image as ImageIcon, Type,
@@ -243,6 +243,7 @@ function buildHtmlPickerScript(activeField: string): string {
 
 export default function UTMPickerClient({ clientId, page, initialRules }: Props) {
   const router = useRouter();
+  const pathname = usePathname();
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const isHtmlPage = !page.isAiPage;
 
@@ -922,7 +923,10 @@ export default function UTMPickerClient({ clientId, page, initialRules }: Props)
     );
   }
 
-  const backHref = page.isAiPage
+  // Back goes to whichever listing this route was entered from — the same
+  // component serves both /ai-pages/:id/utm and /pages/:id/utm, and page data
+  // (schema_json) is not a reliable signal (draft AI pages have none yet).
+  const backHref = pathname.includes('/ai-pages/')
     ? `/clients/${clientId}/ai-pages`
     : `/clients/${clientId}/pages`;
 
