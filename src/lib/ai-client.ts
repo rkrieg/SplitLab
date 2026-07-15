@@ -52,6 +52,7 @@ let anthropicClient: Anthropic | null = null;
 function getAnthropicClient(): Anthropic {
   if (!anthropicClient) {
     const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
+    console.log('[getAnthropicClient] ANTHROPIC_API_KEY:', apiKey ? `${apiKey.slice(0, 5)}.. ...${apiKey.slice(-5)} (length ${apiKey.length})` : 'NOT SET');
     if (!apiKey) throw new Error('ANTHROPIC_API_KEY environment variable is not set');
     anthropicClient = new Anthropic({ apiKey });
   }
