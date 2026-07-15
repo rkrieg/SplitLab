@@ -109,11 +109,17 @@ export default function Sidebar() {
     }
   }, [pathname]);
 
+  // Publish the real sidebar width as a CSS variable so full-screen overlay
+  // pages (AI builder, UTM picker) can align to it instead of keeping their
+  // own copy of the collapsed state that can drift out of sync.
+  useEffect(() => {
+    document.documentElement.style.setProperty('--sl-sidebar-w', collapsed ? '4rem' : '15rem');
+  }, [collapsed]);
+
   function toggleCollapsed() {
     const next = !collapsed;
     setCollapsed(next);
     localStorage.setItem('sl-sidebar-collapsed', String(next));
-    window.dispatchEvent(new CustomEvent('sl-sidebar-toggle', { detail: next }));
   }
 
   // Parse selected client from pathname
