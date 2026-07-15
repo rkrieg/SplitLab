@@ -46,6 +46,7 @@ function buildTrackerScript(appUrl: string): string {
   var STORAGE_KEY = "sl_tracking";
   var _sent = {};
   var _ctx = null;
+  var _scanMode = false;
 
   // ─── Utility ────────────────────────────────────────────────────────────────
 
@@ -73,14 +74,61 @@ function buildTrackerScript(appUrl: string): string {
     } catch(e) {}
   }
 
+  // Context storage is a per-test map: { [testId]: { vid, vh, ts, goals } }.
+  // A single-slot value here let a second test's arrival overwrite the first
+  // test's context, silently losing its pending url_reached conversions.
+  var CTX_TTL = 90 * 24 * 60 * 60 * 1000; // matches the 90-day sl_visitor cookie
+
+  function saveMap(m) {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(m)); } catch(e) {}
+  }
+
+  function loadMap() {
+    try {
+      var m = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
+      if (!m || typeof m !== "object") return {};
+      // Pre-map single-slot value ({tid, vid, vh, goals}) must be migrated
+      // before any validation or save, or returning visitors lose context
+      if (m.tid && m.vid && m.vh) {
+        var old = m;
+        m = {};
+        m[old.tid] = { vid: old.vid, vh: old.vh, ts: Date.now(), goals: old.goals || [] };
+        saveMap(m);
+      }
+      var now = Date.now();
+      var changed = false;
+      for (var k in m) {
+        var entry = m[k];
+        if (!entry || !entry.vid || !entry.vh || !entry.ts || now - entry.ts > CTX_TTL) {
+          delete m[k];
+          changed = true;
+        }
+      }
+      if (changed) saveMap(m);
+      return m;
+    } catch(e) { return {}; }
+  }
+
   function store(ctx) {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(ctx)); } catch(e) {}
+    try {
+      if (!ctx || !ctx.tid || !ctx.vid || !ctx.vh) return;
+      var m = loadMap();
+      m[ctx.tid] = { vid: ctx.vid, vh: ctx.vh, ts: Date.now(), goals: ctx.goals || [] };
+      saveMap(m);
+    } catch(e) {}
   }
 
   function load() {
     try {
-      var d = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
-      if (d && d.tid && d.vid && d.vh) return d;
+      // Current test = most-recent entry — preserves single-slot behavior so
+      // form/button conversions and leads keep attributing exactly as before
+      var m = loadMap();
+      var best = null;
+      var bestTid = null;
+      for (var tid in m) {
+        if (!best || m[tid].ts > best.ts) { best = m[tid]; bestTid = tid; }
+      }
+      if (best) return { tid: bestTid, vid: best.vid, vh: best.vh, goals: best.goals || [] };
     } catch(e) {}
     return null;
   }
@@ -857,16 +905,54 @@ function buildTrackerScript(appUrl: string): string {
     });
   }
 
+  // Fire OTHER tests' saved url_reached goals from the per-test map, each
+  // attributed to the variant/visitor stored when that test was seen. The
+  // current test's own goals are handled by checkUrlGoals(). Dedup is
+  // in-memory per page-load only (like _sent) so raw goal-hit counts in
+  // analytics are unchanged.
+  var _sentStored = {};
+  function checkStoredUrlGoals() {
+    if (_scanMode) return;
+    var m = loadMap();
+    var url = window.location.href;
+    var pathname = window.location.pathname + window.location.search;
+    var currentTid = _ctx && _ctx.tid;
+    for (var tid in m) {
+      if (tid === currentTid) continue;
+      var entry = m[tid];
+      (entry.goals || []).forEach(function(goal) {
+        if (goal.type !== "url_reached" || !goal.urlPattern) return;
+        if (_sentStored[goal.id]) return;
+        try {
+          var pattern = new RegExp(goal.urlPattern, "i");
+          if (pattern.test(url) || pattern.test(pathname)) {
+            _sentStored[goal.id] = true;
+            send({
+              testId: tid,
+              variantId: entry.vid,
+              visitorHash: entry.vh,
+              type: "conversion",
+              goalId: goal.id
+            });
+          }
+        } catch(e) {}
+      });
+    }
+  }
+
   function wireUrlGoals() {
-    if (!_ctx || !_ctx.goals || !_ctx.goals.length) return;
-    checkUrlGoals();
+    function checkAllUrlGoals() {
+      checkUrlGoals();
+      checkStoredUrlGoals();
+    }
+    checkAllUrlGoals();
     function wrapHistory(method) {
       var orig = history[method];
-      history[method] = function() { orig.apply(this, arguments); checkUrlGoals(); };
+      history[method] = function() { orig.apply(this, arguments); checkAllUrlGoals(); };
     }
     try { wrapHistory("pushState"); wrapHistory("replaceState"); } catch(e) {}
-    window.addEventListener("popstate", function() { checkUrlGoals(); });
-    window.addEventListener("hashchange", function() { checkUrlGoals(); });
+    window.addEventListener("popstate", function() { checkAllUrlGoals(); });
+    window.addEventListener("hashchange", function() { checkAllUrlGoals(); });
   }
 
   // ─── Detection: resolve context from URL params or localStorage ────────────
@@ -874,6 +960,7 @@ function buildTrackerScript(appUrl: string): string {
   function detect(callback) {
     var params = new URLSearchParams(window.location.search);
     var isScan = params.get("sl_scan") === "1";
+    _scanMode = isScan;
 
     // Method 1: Full params from SplitLab redirect (?sl_tid, ?sl_vid, ?sl_vh)
     var tid = params.get("sl_tid");
