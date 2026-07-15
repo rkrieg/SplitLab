@@ -52,7 +52,12 @@ Nothing errors — the second test just wipes the first test's memory. With only
 - `checkStoredUrlGoals()` checks all OTHER stored tests' `url_reached` goals on every page load and SPA navigation, sending each conversion with that test's own stored variant/visitor. Skips the current test (its own `checkUrlGoals()` covers it — no double-fire) and skips scan mode.
 - Entries expire after 90 days (matches `sl_visitor` cookie); dedup is in-memory per page-load only, so raw goal-hit counts are unchanged.
 
-Verified by simulation against the emitted script: chained A→B→`/thanks` credits Test A correctly, shared-goal-URL credits both tests, single-test flows/migration/TTL/scan/stand-down all behave as before. Expect conversion counts to **rise** after deploy — previously-lost conversions are now recorded.
+**Verification (both passed):**
+
+1. *Simulation* — the emitted tracker script was executed in a stubbed browser (shared in-memory localStorage across page loads, fake `/api/resolve`, sendBeacon capture): chained A→B→`/thanks` credits Test A correctly, shared-goal-URL credits both tests, and single-test flows / old-format migration / TTL pruning / scan mode / `__SL_SNIPPET__` stand-down all behave exactly as before.
+2. *Live on dev (2026-07-15)* — two redirect-mode tests on `dev.trysplitlab.com` pointing at `www.hunbalsiddiqui.com` (test pages in `test-pages/`): Test A → `/offer-a.html`, goal `/thanks`; Test B → `/offer-b.html`, goal `/signup-done`. One visitor entered Test A, then Test B without converting — `sl_tracking` held **both** entries (old code would have dropped Test A's here). Reaching `/thanks.html` fired a conversion with **Test A's** testId/variantId/goalId; reaching `/signup-done.html` fired **Test B's**. Both accepted with 200 and showed correctly in analytics.
+
+Expect conversion counts to **rise** after deploy — previously-lost conversions are now recorded.
 
 Code: `saveMap()` / `loadMap()` / `store()` / `load()` / `checkStoredUrlGoals()` in `src/app/tracker.js/route.ts`.
 
