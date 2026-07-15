@@ -49,6 +49,7 @@ import {
   Info,
   Loader2,
   AlertTriangle,
+  SlidersHorizontal,
   CheckCircle2,
   ClipboardList,
   Search,
@@ -2690,18 +2691,19 @@ export default function AnalyticsClient({
                                 <span className="text-slate-500">—</span>
                               )}
                             </td>
-                            {/* Open + Setup Goal Tracking */}
+                            {/* Set Up UTM + Setup Goal Tracking */}
                             <td className={`px-3 py-3.5 text-center ${rowBg}`}>
                               <div className="flex flex-col items-center gap-1">
-                                <button
-                                  onClick={() => openVariant(stat.variant.id)}
-                                  disabled={visitorOverCap}
-                                  className="flex items-center justify-center gap-1 w-full px-2 py-1 rounded-lg text-xs font-medium bg-slate-500/10 border border-slate-500/20 text-slate-400 hover:bg-slate-500/20 hover:text-slate-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                                  title={visitorOverCap ? "Visitor limit reached — upgrade your plan to resume testing" : `Open ${stat.variant.name}`}
-                                >
-                                  <ExternalLink size={11} />
-                                  Open
-                                </button>
+                                {stat.variant.pages?.id && (
+                                  <Link
+                                    href={`/clients/${clientId}/pages/${stat.variant.pages.id}/utm`}
+                                    className="flex items-center justify-center gap-1 w-full px-2 py-1 rounded-lg text-xs font-medium bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 hover:bg-indigo-500/20 transition-colors whitespace-nowrap"
+                                    title="Set up UTM parameters"
+                                  >
+                                    <SlidersHorizontal size={11} />
+                                    Set Up UTM
+                                  </Link>
+                                )}
                                 <button
                                   onClick={() => {
                                     if (getVerifiedStatus(stat.variant) === false) {
@@ -2731,15 +2733,25 @@ export default function AnalyticsClient({
                                 </button>
                               </div>
                             </td>
-                            {/* Edit icon */}
+                            {/* Open + Edit icons */}
                             <td className={`px-3 py-3.5 text-center ${rowBg}`}>
-                              <button
-                                onClick={() => startEditVariant(stat.variant)}
-                                className={`p-1 rounded transition-colors ${isEditing ? "bg-indigo-500/20 text-indigo-400" : "text-slate-400 dark:text-slate-600 hover:text-slate-700 dark:hover:text-slate-300"}`}
-                                title="Edit variant"
-                              >
-                                <Pencil size={13} />
-                              </button>
+                              <div className="flex items-center justify-center gap-2">
+                                <button
+                                  onClick={() => openVariant(stat.variant.id)}
+                                  disabled={visitorOverCap}
+                                  className="p-1 rounded transition-colors text-slate-400 dark:text-slate-600 hover:text-slate-700 dark:hover:text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed"
+                                  title={visitorOverCap ? "Visitor limit reached — upgrade your plan to resume testing" : `Open ${stat.variant.name}`}
+                                >
+                                  <ExternalLink size={13} />
+                                </button>
+                                <button
+                                  onClick={() => startEditVariant(stat.variant)}
+                                  className={`p-1 rounded transition-colors ${isEditing ? "bg-indigo-500/20 text-indigo-400" : "text-slate-400 dark:text-slate-600 hover:text-slate-700 dark:hover:text-slate-300"}`}
+                                  title="Edit variant"
+                                >
+                                  <Pencil size={13} />
+                                </button>
+                              </div>
                             </td>
                           </tr>
 
@@ -2767,7 +2779,7 @@ export default function AnalyticsClient({
                                     />
                                   </div>
                                   {stat.variant.pages?.id ? (
-                                    <div className="flex items-end">
+                                    <div className="flex items-end gap-2">
                                       <button
                                         onClick={() =>
                                           openHtmlEditor(stat.variant)
@@ -4821,6 +4833,10 @@ export default function AnalyticsClient({
               <div className="flex items-start gap-2 rounded-lg bg-amber-500/10 border border-amber-500/20 px-3 py-2.5 text-xs text-amber-600 dark:text-amber-400 m-4 mb-0">
                 <Info size={13} className="flex-shrink-0 mt-px" />
                 <span>Tracking is already built in for this page — <strong>no need to add a <code className="font-mono">tracker.js</code> script tag.</strong></span>
+              </div>
+              <div className="flex items-start gap-2 rounded-lg bg-red-500/10 border border-red-500/30 px-3 py-2.5 text-xs text-red-600 dark:text-red-400 mx-4 mt-2 mb-0">
+                <Info size={13} className="flex-shrink-0 mt-px" />
+                <span><strong>Saving new HTML will clear all UTM field mappings and personalization rules</strong> for this page. You will need to re-map elements and re-create rules in the UTM Personalization tab after saving.</span>
               </div>
               {loadingHtml ? (
                 <div className="flex items-center justify-center h-64">

@@ -68,6 +68,16 @@ export async function deleteFaviconByUrl(url: string): Promise<void> {
 }
 
 /**
+ * Download HTML from storage by path using the service role key (works on private buckets).
+ */
+export async function downloadHtmlByPath(filePath: string): Promise<string> {
+  const client = getStorageClient();
+  const { data, error } = await client.storage.from(BUCKET).download(filePath);
+  if (error || !data) throw new Error(`Storage download failed: ${error?.message}`);
+  return data.text();
+}
+
+/**
  * Download HTML content from Supabase Storage by public URL.
  */
 export async function downloadHtml(url: string): Promise<string> {
@@ -91,4 +101,47 @@ export async function deleteHtmlFile(fileName: string): Promise<void> {
 export function fileNameFromUrl(url: string): string {
   const parts = url.split(`/${BUCKET}/`);
   return parts[1] || '';
+}
+
+const IMAGE_BUCKET = 'ai-pages-images';
+
+/**
+ * Upload an image to the public ai-pages-images bucket.
+ * Path: {pageId}/images/{uuid}.{ext}
+ * Returns the public URL.
+ */
+export async function uploadImage(
+  pageId: string,
+  buffer: ArrayBuffer,
+  mimeType: string,
+  ext: string
+): Promise<string> {
+  const client = getStorageClient();
+  const uuid = crypto.randomUUID();
+  const filePath = `${pageId}/images/${uuid}.${ext}`;
+
+  const { error } = await client.storage
+    .from(IMAGE_BUCKET)
+    .upload(filePath, buffer, { contentType: mimeType, upsert: false });
+
+  if (error) throw new Error(`Image upload failed: ${error.message}`);
+
+  const { data } = client.storage.from(IMAGE_BUCKET).getPublicUrl(filePath);
+  return data.publicUrl;
+}
+
+/**
+ * Delete all images for a page from the public ai-pages-images bucket.
+ * Called when a page is deleted.
+ */
+export async function deletePageImages(pageId: string): Promise<void> {
+  const client = getStorageClient();
+  const { data: files } = await client.storage
+    .from(IMAGE_BUCKET)
+    .list(`${pageId}/images`);
+
+  if (!files || files.length === 0) return;
+
+  const paths = files.map(f => `${pageId}/images/${f.name}`);
+  await client.storage.from(IMAGE_BUCKET).remove(paths);
 }

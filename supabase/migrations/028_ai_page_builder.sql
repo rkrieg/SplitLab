@@ -1,0 +1,2 @@
+ALTER TABLE pages ADD COLUMN IF NOT EXISTS schema_json      JSONB;
+ALTER TABLE pages ADD COLUMN IF NOT EXISTS conversation_json JSONB;

@@ -2,15 +2,20 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
-import { uploadHtml, deleteHtmlFile, fileNameFromUrl } from '@/lib/storage';
+import { uploadHtml, deleteHtmlFile, deletePageImages, fileNameFromUrl } from '@/lib/storage';
 import { resolveWorkspaceRole } from '@/lib/workspace-auth';
 import { z } from 'zod';
 
 const updateSchema = z.object({
   name: z.string().min(1).max(255).optional(),
+  prompt: z.string().optional(),
   html_content: z.string().optional(),
+  html_url: z.string().url().optional(),
+  slug: z.string().optional(),
   tags: z.array(z.string()).optional(),
-  status: z.enum(['active']).optional(),
+  status: z.enum(['active', 'archived']).optional(),
+  schema_json: z.record(z.unknown()).optional(),
+  conversation_json: z.array(z.unknown()).optional(),
 });
 
 export async function GET(
@@ -26,7 +31,11 @@ export async function GET(
     .eq('id', params.id)
     .single();
 
-  if (error) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  if (error || !data) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+
+  const wsRole = await resolveWorkspaceRole(data.workspace_id, session.user.id, session.user.role);
+  if (!wsRole) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+
   return NextResponse.json(data);
 }
 
@@ -59,10 +68,24 @@ export async function PATCH(
       }
     }
 
+    // html_content = manual edit; html_url = AI rebuild that uploaded fresh HTML to storage.
+    // Either way the markup is replaced, so old selectors can't be trusted.
+    const htmlReplaced = Boolean(data.html_content || data.html_url);
+
     const updatePayload = {
       ...data,
       ...(storageUrl ? { html_url: storageUrl } : {}),
+      // HTML changed → old injected #sl-f-xxx IDs are gone; clear mappings and rules
+      ...(htmlReplaced ? { field_selectors_json: null } : {}),
+      // A rebuild replaces the storage file only — stale html_content from an earlier
+      // inline edit would shadow the new HTML in preview/serve, so drop it
+      ...(data.html_url && !data.html_content ? { html_content: null } : {}),
     };
+
+    // If HTML is being replaced, wipe personalization rules (selectors no longer valid)
+    if (htmlReplaced) {
+      await db.from('personalization_rules').delete().eq('page_id', params.id);
+    }
 
     const { data: updated, error } = await db
       .from('pages')
@@ -108,5 +131,8 @@ export async function DELETE(
 
   const { error } = await db.from('pages').delete().eq('id', params.id);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  try { await deletePageImages(params.id); } catch { /* ignore — bucket may be empty */ }
+
   return NextResponse.json({ ok: true });
 }

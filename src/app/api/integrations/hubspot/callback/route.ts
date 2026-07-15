@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
+import { resolveWorkspaceRole } from '@/lib/workspace-auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -35,6 +36,11 @@ export async function GET(req: NextRequest) {
     returnTo = decoded.returnTo ?? null;
   } catch {
     return NextResponse.redirect(new URL('/dashboard?hs_error=invalid_state', req.url));
+  }
+
+  const wsRole = await resolveWorkspaceRole(workspaceId, session.user.id, session.user.role);
+  if (!wsRole || wsRole === 'viewer') {
+    return NextResponse.redirect(new URL('/dashboard?hs_error=forbidden', req.url));
   }
 
   const clientId = process.env.HUBSPOT_CLIENT_ID;
