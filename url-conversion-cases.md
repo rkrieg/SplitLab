@@ -1,6 +1,6 @@
 # URL Conversion (`url_reached`) — Working / Not-Working Cases
 
-A quick-reference breakdown of every URL-conversion scenario across the three modes, split by **same-domain vs cross-domain** — because that split, not the mode, is what decides whether a conversion fires.
+A quick-reference breakdown of every URL-conversion scenario across the three modes, splitby  **same-domain vs cross-domain** — because that split, not the mode, is what decides whether a conversion fires.
 
 > **The one rule that explains everything**
 >
