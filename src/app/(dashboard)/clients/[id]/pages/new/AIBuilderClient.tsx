@@ -285,22 +285,29 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
     }
     setPhase('editing');
 
+    // Walk history by role rather than assuming strict user/assistant alternation —
+    // older pages saved through the clarifying-questions round contain a duplicated
+    // user entry, and pair-wise iteration would render assistant JSON payloads as
+    // user bubbles. Assistant entries are always raw JSON in storage, so they are
+    // replaced with friendly canned text.
     const restored: Message[] = [];
-    for (let i = 0; i < history.length; i += 2) {
-      const userMsg = history[i];
-      const assistantMsg = history[i + 1];
-      if (!userMsg) break;
-      const userEntry: Message = { role: 'user', content: userMsg.content };
-      if (Array.isArray(userMsg.image_urls) && userMsg.image_urls.length > 0) userEntry.image_urls = userMsg.image_urls;
-      restored.push(userEntry);
-      if (assistantMsg) {
-        const isFirst = i === 0;
+    let assistantSeen = false;
+    for (let i = 0; i < history.length; i++) {
+      const entry = history[i];
+      if (entry.role === 'user') {
+        const prev = history[i - 1];
+        if (prev && prev.role === 'user' && prev.content === entry.content) continue;
+        const userEntry: Message = { role: 'user', content: entry.content };
+        if (Array.isArray(entry.image_urls) && entry.image_urls.length > 0) userEntry.image_urls = entry.image_urls;
+        restored.push(userEntry);
+      } else {
         restored.push({
           role: 'assistant',
-          content: isFirst
-            ? `Got it! Built your ${VERTICAL_LABELS[initialPage.vertical] ?? initialPage.vertical} page.`
-            : 'Done! The page has been updated.',
+          content: assistantSeen
+            ? 'Done! The page has been updated.'
+            : `Got it! Built your ${VERTICAL_LABELS[initialPage.vertical] ?? initialPage.vertical} page.`,
         });
+        assistantSeen = true;
       }
     }
     restored.push({ role: 'assistant', content: 'Welcome back. Click any text in the preview to edit, or ask me to make changes.' });
@@ -618,10 +625,12 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
     e.preventDefault();
     const answersText = questions.map((q, i) => `${q}\n${answers[i] || '(no answer)'}`).join('\n\n');
     addMessage({ role: 'user', content: answersText });
+    // Do NOT include answersText here — runGenerate appends it as the final user
+    // entry itself; including it would duplicate the message and break the
+    // user/assistant alternation in the saved conversation.
     const history = [
       { role: 'user', content: prompt },
       { role: 'assistant', content: JSON.stringify({ type: 'questions', questions }) },
-      { role: 'user', content: answersText },
     ];
     await runGenerate(answersText, history);
   }
