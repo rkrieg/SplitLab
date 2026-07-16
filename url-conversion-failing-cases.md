@@ -4,27 +4,29 @@ Only the cases that **do not work** today, split by *why*. Same-domain works in 
 
 ---
 
-## A. The cross-domain linker — ✅ FIXED for HTML mode, ⏳ pending for redirect mode
+## A. The cross-domain linker — ✅ DONE (both modes, live-verified 2026-07-16)
 
-> **⚠️ UPDATED 2026-07-16 — this section is largely obsolete.** It used to read *"failing ONLY because `conversion-url-fixes` isn't merged."* That's no longer true: the linker has **landed on `url-conversion-v2`** and **HTML mode is live-verified end-to-end**. Two halves were needed, and framing it as one merge hid that:
+> **⚠️ This section is now obsolete as a *failing* case.** It used to read *"failing ONLY because `conversion-url-fixes` isn't merged."* Both halves have landed on `url-conversion-v2` and both are live-verified. Framing it as one merge hid that there were always two halves:
 >
 > | Mode | Sender (attaches params) | Receiver (fires the conversion) |
 > |---|---|---|
 > | HTML | inline snippet (`c55de6f` → `912ed86`) ✅ | tracker.js (`4022502`) ✅ |
-> | Redirect | tracker.js — **Phase 1B ported 2026-07-16** ⏳ live test pending | tracker.js (`4022502`) ✅ |
+> | Redirect | tracker.js — **Phase 1B, 2026-07-16** ✅ | tracker.js (`4022502`) ✅ |
 >
-> **The receiver is done for every mode.** Redirect mode's *sender* is now coded (build green, decorate unit-tested 13/13) but not yet live-verified.
+> **Nothing in the linker is outstanding.** Kept here only so the history isn't re-derived.
 >
-> **Scope limit:** Phase 1B covers links, forms and `window.open` only. Cross-domain `window.location.href` stays ❌ in **every** mode — `location` is uninterceptable. See the cross-cutting section in `docs/url-conversion-v2-plan.md`.
+> **Scope limit:** the linker covers links, forms and `window.open` — the interceptable navigations. Cross-domain `window.location.href` stays ❌ in **every** mode; `location` cannot be hooked by any script. That's tracked as a cross-cutting item in `docs/url-conversion-v2-plan.md`, not here.
 
 | Cross-domain case | HTML mode | Redirect mode |
 |---|---|---|
-| Link click `<a href>` (incl. new tab / middle-click) | ✅ **CONFIRMED live 2026-07-16** — conversion fired, dashboard incremented | ❌ Pending Phase 1B (sender) |
-| Form submit — **GET** (hidden inputs) | ✅ **CONFIRMED live end-to-end 2026-07-16** — browser serializes inputs added during the submit event; survived a 307; dashboard confirmed | ❌ Pending Phase 1B |
-| Form submit — **POST** (decorates `action`) | ⚠️ Decoration verified live; end-to-end not re-tested. Low risk — receiver proven, and it can't tell how params reached its URL | ❌ Pending Phase 1B |
-| `window.open(url)` | ⚠️ Patch verified live (`__sl_patched === true`); end-to-end not re-tested. Low risk, same reason | ❌ Pending Phase 1B |
+| Link click `<a href>` (incl. new tab / middle-click) | ✅ **CONFIRMED live 2026-07-16** — conversion fired, dashboard incremented | ✅ **CONFIRMED live 2026-07-16** — 302'd `sl_vid` reappeared in the destination origin's `localStorage`; no other source possible |
+| Form submit — **GET** (hidden inputs) | ✅ **CONFIRMED live end-to-end 2026-07-16** — browser serializes inputs added during the submit event; survived a 307; dashboard confirmed | ✅ **CONFIRMED live end-to-end 2026-07-16** — `?email=…&sl_tid=…&sl_vid=…&sl_vh=…`; dashboard confirmed |
+| Form submit — **POST** (decorates `action`) | ⚠️ Decoration verified live; end-to-end not re-tested. Low risk — receiver proven, and it can't tell how params reached its URL | ⚠️ Not tested. Low risk, same reason |
+| `window.open(url)` | ⚠️ Patch verified live (`__sl_patched === true`); end-to-end not re-tested. Low risk, same reason | ⚠️ Patch verified live (`__sl_patched === true`); end-to-end not re-tested |
 
 **Hard requirement, unchanged:** the destination domain must have tracker.js installed to read the params. No reader, no conversion.
+
+**Second hard requirement (redirect mode):** the redirect target must be a page SplitLab does **not** serve. `serve/route.ts:338` strips tracker.js tags from SplitLab-served pages and injects the inline snippet instead.
 
 ---
 
@@ -49,7 +51,7 @@ Merging `conversion-url-fixes` does **not** rescue these — they fail for their
 
 *(Updated 2026-07-16.)*
 
-- **Section A is no longer "blocked on a merge."** The linker is on `url-conversion-v2` and **HTML-mode cross-domain works end-to-end, live-verified** (link + GET form, both dashboard-confirmed). The remaining gap is **redirect mode's sender only** — Phase 1B. The receiver (tracker.js Method-1 goal fetch) is done for every mode.
+- **Section A is closed.** The linker is complete on `url-conversion-v2` and **cross-domain works end-to-end in BOTH HTML and redirect mode**, live-verified (link + GET form, dashboard-confirmed in each). Sender and receiver both exist for every mode. **Cross-domain redirect was the last fixable ❌ in the matrix.**
 - **Enable the commented-out `SplitLab.go(url)`** in `7b4fb22` (Phase 3) → fixes cross-domain `location.href` / `assign` / `replace`, but only if clients adopt it in their code.
 - **Everything else in section B** (meta refresh, no-tracker destinations, third-party widgets, proxy cross-origin) has **no code fix available on any branch** today.
 - **Proxy same-domain has moved out of the unknown column** — ✅ confirmed on Chrome *and* Safari (2026-07-16); ITP did not block the iframe's partitioned `localStorage`. See the note under section B.

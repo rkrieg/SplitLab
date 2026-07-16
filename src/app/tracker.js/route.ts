@@ -156,8 +156,9 @@ function buildTrackerScript(appUrl: string): string {
   // client's own page, which has no inline snippet — only this script — so
   // without this, a cross-domain jump from that page carried no context.
   //
-  // window.location.href stays unfixable here: the location object cannot be
-  // intercepted by any script. That needs SplitLab.go(url) (Phase 3).
+  // Links, forms and window.open are patchable, so they are handled below.
+  // window.location.href is not — but see watchNavigations(), which cancels the
+  // navigation it triggers rather than trying to intercept the location object.
 
   function decorate(url) {
     try {
@@ -219,6 +220,43 @@ function buildTrackerScript(appUrl: string): string {
       };
       patched.__sl_patched = true;
       window.open = patched;
+    } catch(e) {}
+  }
+
+  // The only hook that catches window.location.href = "https://otherdomain/...".
+  // The location object itself cannot be patched, but the Navigation API sees the
+  // navigation before it commits, so we cancel the undecorated jump and re-issue
+  // it decorated. Note intercept() is NOT usable here — canIntercept is always
+  // false cross-origin — but cancelable is true for non-traverse navigations,
+  // which is all we need.
+  //
+  // Chrome/Edge 102+, Safari 26.2+, Firefox 147+ (~87% of traffic). Everywhere
+  // else this is a no-op and cross-domain location.href keeps failing silently,
+  // exactly as it does today.
+  function watchNavigations() {
+    try {
+      if (!window.navigation || !window.navigation.addEventListener) return;
+      window.navigation.addEventListener("navigate", function(e) {
+        try {
+          // downloadRequest: a cross-domain <a download> would otherwise be
+          // decorated and re-navigated, turning a download into a page load.
+          // formData: leave form submits to decorateFormForSubmit above.
+          // Both read undefined on older impls — falsy, so the guard is fail-safe.
+          if (!e.cancelable || e.formData || e.downloadRequest) return;
+          // Skips traverse/reload, so back/forward are untouched.
+          if (e.navigationType !== "push" && e.navigationType !== "replace") return;
+          var dest = e.destination && e.destination.url;
+          if (!dest) return;
+          // decorate() early-returns on same-hostname, non-http(s) and
+          // already-tagged URLs, so same-domain navigation never gets cancelled.
+          // Links are already decorated on mousedown, so they land here as
+          // dec === dest and pass straight through — no double navigation.
+          var dec = decorate(dest);
+          if (dec === dest) return;
+          e.preventDefault();
+          window.location.href = dec;
+        } catch(err) {}
+      });
     } catch(e) {}
   }
 
@@ -1188,6 +1226,7 @@ function buildTrackerScript(appUrl: string): string {
       watchForNewFields();
       patchNetworkForJsSubmit();
       if (!_scanMode) patchWindowOpen();
+      if (!_scanMode) watchNavigations();
     }
     if (document.readyState === "loading") {
       document.addEventListener("DOMContentLoaded", start);
