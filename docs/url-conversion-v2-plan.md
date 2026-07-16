@@ -585,6 +585,24 @@ Evidence — `sl_tracking` **inside the iframe** on bytebaskets.com (`isTop: fal
 
 True when written. **Now obsolete for the cross-domain case** — should be corrected.
 
+### 🟡 KNOWN LIMITATION — the first ~1 second is undecorated (redirect + proxy)
+
+**Found live 2026-07-16. Real, pre-existing, deliberately NOT fixed.**
+
+**Symptom:** land via redirect or proxy and click a cross-domain link **immediately** — no conversion. Wait ~1s and click: converts. Confirmed live both ways.
+
+**Cause — and it is NOT what it first looks like.** Redirect and proxy hand tracker.js `sl_vid` + `sl_vh` but no `sl_tid`, so it takes **Method 2**, which **blocks on `/api/resolve` (~1.07s measured)**. The instinct is "`decorate()` returns early because `_ctx` is null" — that is true but irrelevant. **The real cause is that no listener exists yet.** Every caller of `decorate()` — `decorateFromEvent`, `decorateFormForSubmit`, `patchWindowOpen`, `watchNavigations` — is registered in `start()` ([route.ts:1242](../src/app/tracker.js/route.ts#L1242)), which runs from `boot()`, which is `detect()`'s **callback**. Nothing is listening until resolve returns.
+
+> **A fix was written, merged and reverted — it did not work.** Commit `368553b` added a `_bootVid`/`_bootVh` fallback so `decorate()` could build params without `_ctx`. **It was unreachable dead code** — `decorate()` is never called with `_ctx` null, because every call site is behind `start()`. Test 1 failed live, which is how this was caught. The fallback was stripped; only the `decorateFormForSubmit` improvement from that commit was kept (it reads params back out of the decorated URL, so it can never desync from `decorate()`).
+>
+> **Lesson:** trace the call sites before fixing a guard clause. The guard was a symptom.
+
+**Scope:** redirect + proxy. **HTML mode is immune** — the snippet registers listeners immediately and has `testId`/`variantId`/`visitorHash` baked in server-side, so it never waits. Affects the Phase 1B linker **and** `watchNavigations` equally.
+
+**Why not fixed:** the fix means registering the linker before `boot()`, which means splitting `wireAutoConversions()` — which also owns **lead capture**, button-click goals, form-field registration and `_leadSent`. Breaking lead capture is a *silent revenue bug* for clients, far worse than the window being closed. Weighed against: a visitor must land and click a cross-domain link in under a second, before reading anything. Only reproducible by deliberately clicking as fast as possible.
+
+**If it is ever worth doing:** extract `decorateFromEvent` + `mousedown`/`auxclick` + `watchNavigations` into a `wireLinker()` called from inside `detect()` once `_scanMode` is set, restore the `_bootVid` fallback (it becomes reachable then), and check `window.__SL_SNIPPET__` inside `decorate()` at call time rather than at registration — the snippet runs *after* the tracker tag, so the flag is not yet set at registration. Delegated `document` listeners need no DOM, so early registration is safe on that axis. Leave the `submit` and `click` listeners where they are — both are mixed with lead/goal logic, and nobody fills a form in under a second. Residual gap: keyboard-Enter on a link within the first second. Give it its own testing cycle, with lead capture as the primary regression.
+
 ### ⚠️ Testing trap that cost this session a wrong diagnosis — do not re-learn
 
 **An early proxy reading showed `sl_ctx` and `localStorage.sl_tracking === undefined`, which looked exactly like proxy failing. It was not — the next reading, from a confirmed-iframe context, showed `sl_tracking` present and the dashboard recorded the conversion.**

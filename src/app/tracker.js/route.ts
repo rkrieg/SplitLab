@@ -160,30 +160,26 @@ function buildTrackerScript(appUrl: string): string {
   // window.location.href is not — but see watchNavigations(), which cancels the
   // navigation it triggers rather than trying to intercept the location object.
 
-  // Captured in detect() before cleanUrl() strips them, so decoration works
-  // during the ~1s Method 2 spends blocked on /api/resolve. Without this, _ctx
-  // is still null and anything clicked in that window leaves undecorated and
-  // silently loses the conversion. sl_tid is the only value we lack that early,
-  // and the destination does not need it: sl_vid alone puts it into Method 2,
-  // which resolves the rest itself.
-  var _bootVid = null;
-  var _bootVh = null;
-
+  // KNOWN LIMITATION — decoration cannot happen until _ctx exists, and in
+  // redirect/proxy mode (Method 2) that means waiting ~1s on /api/resolve.
+  // Every caller of decorate() is wired up in start(), which runs from boot(),
+  // which is detect()'s callback — so for that first second no listener exists
+  // and a cross-domain click leaves undecorated and silently loses the
+  // conversion. Fixing it means registering the linker before boot(), which
+  // means splitting wireAutoConversions() — lead capture and button goals live
+  // there, so the blast radius is not worth a sub-second window a real visitor
+  // is unlikely to hit. HTML mode is immune (the snippet has context inline).
+  // See docs/url-conversion-v2-plan.md.
   function decorate(url) {
     try {
-      if (!url) return url;
-      // Prefer resolved context; fall back to the raw boot params before it lands.
-      var tid = _ctx ? _ctx.tid : null;
-      var vid = _ctx ? _ctx.vid : _bootVid;
-      var vh  = _ctx ? _ctx.vh  : _bootVh;
-      if (!vid) return url;
+      if (!_ctx || !url) return url;
       var u = new URL(String(url), window.location.href);
       if (u.protocol !== "http:" && u.protocol !== "https:") return url;
       if (u.hostname === window.location.hostname) return url;
       if (u.searchParams.get("sl_vid") || u.searchParams.get("sl_tid")) return url;
-      if (tid) u.searchParams.set("sl_tid", tid);
-      u.searchParams.set("sl_vid", vid);
-      if (vh) u.searchParams.set("sl_vh", vh);
+      u.searchParams.set("sl_tid", _ctx.tid);
+      u.searchParams.set("sl_vid", _ctx.vid);
+      u.searchParams.set("sl_vh", _ctx.vh);
       return u.toString();
     } catch(e) { return url; }
   }
@@ -1150,10 +1146,6 @@ function buildTrackerScript(appUrl: string): string {
     var tid = params.get("sl_tid");
     var vid = params.get("sl_vid");
     var vh  = params.get("sl_vh");
-    // Keep these before cleanUrl() strips them — decorate() falls back to them
-    // while Method 2 is still blocked on /api/resolve.
-    _bootVid = vid;
-    _bootVh = vh;
     if (tid && vid && vh) {
       cleanUrl(["sl_tid", "sl_vid", "sl_vh", "sl_scan"]);
       // Boot immediately with no goals, then fill them in. Blocking here on
