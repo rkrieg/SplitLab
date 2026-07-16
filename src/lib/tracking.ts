@@ -135,6 +135,123 @@ export function buildTrackingSnippet(
     }
   }
 
+  // ─── Cross-domain linker (mirrors tracker.js) ───────────────────────────────
+  // localStorage never crosses origins, so tag outbound cross-domain
+  // navigations with sl_tid/sl_vid/sl_vh; tracker.js on the destination
+  // rebuilds context from the params (detect Method 1) and strips them.
+  function decorate(url) {
+    try {
+      if (!url) return url;
+      var u = new URL(String(url), window.location.href);
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') return url;
+      if (u.hostname === window.location.hostname) return url;
+      if (u.searchParams.get('sl_vid') || u.searchParams.get('sl_tid')) return url;
+      u.searchParams.set('sl_tid', _SL.testId);
+      u.searchParams.set('sl_vid', _SL.variantId);
+      u.searchParams.set('sl_vh', _SL.visitorHash);
+      return u.toString();
+    } catch(e) { return url; }
+  }
+
+  function decorateFromEvent(e) {
+    var t = e.target;
+    if (!t || !t.closest) return;
+    var a = t.closest('a[href]');
+    if (!a) return;
+    try {
+      var dec = decorate(a.href);
+      if (dec !== a.href) a.href = dec;
+    } catch(err) {}
+  }
+
+  function decorateFormForSubmit(form) {
+    if (!form || !form.getAttribute) return;
+    var action = form.getAttribute('action');
+    if (!action) return;
+    var dec = decorate(action);
+    if (dec === action) return;
+    var method = (form.getAttribute('method') || 'get').toLowerCase();
+    if (method === 'get') {
+      // GET submits replace the action query string with the form fields,
+      // so carry the params as hidden inputs instead
+      ['sl_tid', 'sl_vid', 'sl_vh'].forEach(function(name) {
+        if (form.querySelector && form.querySelector("input[name='" + name + "']")) return;
+        var hidden = document.createElement('input');
+        hidden.type = 'hidden';
+        hidden.name = name;
+        hidden.value = name === 'sl_tid' ? _SL.testId : name === 'sl_vid' ? _SL.variantId : _SL.visitorHash;
+        form.appendChild(hidden);
+      });
+    } else {
+      form.setAttribute('action', dec);
+    }
+  }
+
+  function patchWindowOpen() {
+    try {
+      var origOpen = window.open;
+      if (!origOpen || origOpen.__sl_patched) return;
+      var patched = function() {
+        var args = Array.prototype.slice.call(arguments);
+        if (args[0]) args[0] = decorate(String(args[0]));
+        return origOpen.apply(window, args);
+      };
+      patched.__sl_patched = true;
+      window.open = patched;
+    } catch(e) {}
+  }
+
+  // The only hook that catches window.location.href = 'https://otherdomain/...'.
+  // The location object cannot be patched, but the Navigation API sees the
+  // navigation before it commits, so cancel the undecorated jump and re-issue it
+  // decorated. intercept() is unusable here (canIntercept is always false
+  // cross-origin) but cancelable is true for non-traverse navigations, which is
+  // all this needs. Live-verified in redirect mode 2026-07-16.
+  //
+  // Chrome/Edge 102+, Safari 26.2+, Firefox 147+ (~87% of traffic). Elsewhere
+  // this is a no-op and cross-domain location.href keeps failing as it does now.
+  function watchNavigations() {
+    try {
+      if (!window.navigation || !window.navigation.addEventListener) return;
+      window.navigation.addEventListener('navigate', function(e) {
+        try {
+          // downloadRequest: a cross-domain <a download> would otherwise be
+          // decorated and re-navigated, turning a download into a page load.
+          // formData: leave real submits to decorateFormForSubmit above.
+          // Both read undefined on older impls — falsy, so the guard is fail-safe.
+          if (!e.cancelable || e.formData || e.downloadRequest) return;
+          // Skips traverse/reload, so back/forward stay untouched.
+          if (e.navigationType !== 'push' && e.navigationType !== 'replace') return;
+          var dest = e.destination && e.destination.url;
+          if (!dest) return;
+          // decorate() early-returns on same-hostname, non-http(s) and
+          // already-tagged URLs, so same-domain navigation is never cancelled,
+          // and links decorated on mousedown arrive here as dec === dest and
+          // pass through — no double navigation.
+          var dec = decorate(dest);
+          if (dec === dest) return;
+          e.preventDefault();
+          // Mirror the original navigation type. Re-issuing a replace() as an
+          // href would push a history entry the page deliberately did not want,
+          // making a page reachable by the back button that replace() exists to
+          // make unreachable (post-payment, post-submit). Confirmed live.
+          if (e.navigationType === 'replace') window.location.replace(dec);
+          else window.location.href = dec;
+        } catch(err) {}
+      });
+    } catch(e) {}
+  }
+
+  if (!_isScan) {
+    // mousedown precedes every click variant; middle-click fires auxclick
+    // (not click) in some browsers — cover all three for new-tab opens
+    document.addEventListener('mousedown', decorateFromEvent, true);
+    document.addEventListener('auxclick', decorateFromEvent, true);
+    document.addEventListener('click', decorateFromEvent, true);
+    patchWindowOpen();
+    watchNavigations();
+  }
+
   // Auto-track pageview (skip on scan requests — sl_scan=1 means dashboard goal setup)
   if (!_isScan) {
     _SL.track('pageview');
@@ -468,6 +585,7 @@ export function buildTrackingSnippet(
 
     // Global form submit — captures all forms (not just goal-targeted ones)
     document.addEventListener('submit', function(e) {
+      if (!_isScan) decorateFormForSubmit(e.target);
       captureFormLead(e.target);
     }, true);
 
