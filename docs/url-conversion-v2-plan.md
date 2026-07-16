@@ -12,12 +12,6 @@
 
 ---
 
-## ⚠️ Backup first (do before anything)
-
-- [ ] Push the local-only linker branch so it's not one disk failure from gone:
-  `git push origin conversion-url-fixes` (commits `7b4fb22` + `c55de6f` are LOCAL ONLY right now)
-
----
 
 ## ✅ PRIORITY 0 — Verify same-domain PROXY mode (no code, just test)
 
@@ -220,9 +214,53 @@ What remains cross-domain is `window.location.href` (and `assign`/`replace`), un
 
 ### The problem in one line
 
-`window.location.href = "otherdomain.com/thanks"` **cannot be intercepted by any script.** There is no setter trap, no override, no event. So nothing can attach `sl_tid`/`sl_vid`/`sl_vh` before the browser leaves — and the destination has no context to rebuild from.
+`window.location.href = "otherdomain.com/thanks"` **cannot be intercepted by patching anything.** There is no setter trap, no override. So nothing can attach `sl_tid`/`sl_vid`/`sl_vh` before the browser leaves — and the destination has no context to rebuild from.
 
 This is **not** a SplitLab bug and **not** something Phase 1B fixed. Links, forms and `window.open` are all interceptable (function calls or DOM elements we can reach first). `location` is the one that isn't.
+
+### ⚠️ CORRECTION (R&D 2026-07-16) — this section's old verdict was WRONG
+
+> This section used to say cross-domain `location.href` is **"never auto-fixable in any mode."** **That is false, and has been false since Safari 26.2 shipped (12 Dec 2025).**
+>
+> The error was conflating two different things. The `location` **object** is indeed unpatchable — that part was always right. But the **navigation it triggers** is visible to the Navigation API *before it commits*, and can be vetoed. We don't need to intercept `location`; we need to cancel its navigation and re-issue our own.
+>
+> The two `NavigateEvent` properties that matter are **separate**, and everyone (including this doc) assumed they moved together:
+>
+> | Property | On a cross-origin `location.href = …` |
+> |---|---|
+> | `canIntercept` | **false** — `intercept()` is impossible cross-origin, permanently |
+> | `cancelable` | **true** — `preventDefault()` works fine |
+>
+> `cancelable` is false only for *some* **traverse** (back/forward) navigations. Cross-origin push/replace navigations are cancelable. From the [WICG explainer](https://github.com/WICG/navigation-api/blob/main/README.md): *"these restrictions allow canceling cross-origin non-back/forward navigations. Although this might be surprising, in general it doesn't grant additional power."*
+>
+> So the fix is `preventDefault()` + re-navigate — **not** `intercept()`. Phase 4 is real, and it needs no client code change.
+
+### Browser support — the actual numbers (caniuse, checked 2026-07-16)
+
+**87.37% global usage.** Everything `watchNavigations()` touches sits in that tier:
+
+| Feature used | Coverage |
+|---|---|
+| `window.navigation` + `navigate` event (base) | 87.37% |
+| `e.destination.url` | 87.37% |
+| `e.cancelable` / `e.preventDefault()` | plain `Event` — universal |
+| `e.formData`, `e.downloadRequest` | same NavigateEvent tier; **fail-safe** — `undefined` on older impls → falsy → guard simply doesn't trip |
+| ~~`intercept()` / `canIntercept`~~ | **not used** — impossible cross-origin anyway |
+| ~~`sourceElement`~~ | **deliberately avoided** — only 79.82% (Chrome 135+); would drag coverage down for nothing |
+
+| Browser | Supported from | Released |
+|---|---|---|
+| Chrome / Edge | 102 | May 2022 — effectively universal |
+| Opera | 88 | — |
+| Samsung Internet | 19.0 | — |
+| Safari (macOS + iOS) | **26.2** | 12 Dec 2025 |
+| Firefox | **147** | 13 Jan 2026 |
+
+**The ~12.6% gap is almost entirely Safari / iOS Safari below 26.2.** Chrome 102 is four years old; nothing else is a real factor. iOS Safari is welded to the OS version, so that tail persists for years — but shrinks every month with no work from us.
+
+**Why the gap is acceptable for an A/B product specifically:** variant assignment is SHA-256 of `visitorId+testId` ([utils.ts](../src/lib/utils.ts)) — **uncorrelated with browser**. Unsupported visitors split across variants in the same ratio as everyone else, so missed `location.href` conversions are lost **symmetrically**. The *winner determination stays valid*. What degrades is absolute conversion-rate accuracy (reads low) and statistical power (slower to 95%). Not a skewed comparison.
+
+**Caveat on the 87.37%:** caniuse's support tables come from MDN browser-compat-data (reliable, feature-tested), but the usage % comes from StatCounter — pageviews across its tracker network, not a random sample. Directionally sound, not a census. A client with a US/mobile-heavy audience has a *bigger* unsupported slice than 12.6%; a desktop B2B client has almost none. Doesn't change the decision.
 
 ### Where it stands, per mode
 
@@ -241,7 +279,7 @@ This is **not** a SplitLab bug and **not** something Phase 1B fixed. Links, form
 | **`SplitLab.go(url)`** — manual escape hatch; client writes `SplitLab.go(url)` instead of `location.href = url` | **Phase 3** | Every browser | Requires the client to change their code. Code exists in `7b4fb22`, commented out |
 | **`watchNavigations()`** — Navigation API `navigate` listener cancels the undecorated cross-domain jump and re-issues it decorated | **Phase 4** | Modern browsers only; older ones silently keep today's ❌ | Automatic, client changes nothing — but touches **all** navigation. Highest-risk change in the plan |
 
-**Recommended order:** Phase 3 first (safe, unblocks clients who can edit their code), then Phase 4 behind a proper regression pass (downloads, form navigations, back/forward, graceful fallback where the Navigation API is absent). They compose — `watchNavigations` handles it automatically where supported, `SplitLab.go` stays the fallback everywhere else.
+**DECISION 2026-07-16 — Phase 4 only. Phase 3 is parked.** `SplitLab.go` requires every client to edit their code, which is not part of the current flow. `watchNavigations()` fixes 87.37% of traffic with **zero** client involvement, so it carries essentially all the practical value on its own. Phase 3 stays written down as the eventual floor under the remaining ~12.6%, but it is **not** being built now.
 
 ### Cases that stay ❌ even after both
 
@@ -285,7 +323,7 @@ Hooks: `mousedown` + `auxclick` + `click` (all **capture phase**, so they run be
 - [x] **Test the skip rules:** same-domain link is **not** decorated; `mailto:` / `tel:` / `#anchor` untouched; already-decorated URL isn't double-tagged. **✅ ALL PASS live on dev (2026-07-16)** — see Stage 1 below.
 - [ ] **Regression: same-domain HTML cases H1–H5 still pass** — especially H2/H5 (chained hosted tests via `sl_ctx`) and H3 (no double-fire).
 - [x] **Regression: dashboard goal scan** (`?sl_scan=1`) — linker stays dormant. **✅ PASS live on dev (2026-07-16)** — with `sl_scan=1` every decoration assertion inverted (nothing tagged: link, hunbalsiddiqui link, POST action, GET hidden inputs all clean) and `window.open.__sl_patched === undefined`, i.e. `window.open` was never wrapped. The `!_isScan` gate holds; the goal scanner is unaffected.
-- [ ] Update `url-conversion-cases.md §2` + `url-conversion-failing-cases.md §A`: HTML cross-domain link / form / `window.open` → ✅.
+- [x] Update `url-conversion-cases.md §2` + `url-conversion-failing-cases.md §A`: HTML cross-domain link / form / `window.open` → ✅. **DONE 2026-07-16** — duplicate of the same todo in Phase 1A; both files carry the ✅ rows.
 
 ### Stage 1 — decoration, LIVE on dev 2026-07-16: **13/13 PASS** ✅
 
@@ -348,37 +386,105 @@ Same harness reloaded with `?sl_scan=1`. Every decoration assertion inverted exa
 
 ---
 
-## PHASE 3 — Enable `SplitLab.go` / `SplitLab.decorate` (manual escape hatch)
+## ⏸️ PHASE 3 — `SplitLab.go` / `SplitLab.decorate` — **PARKED (not in current flow)**
 
-Uncomment the public API in **both** files (currently disabled — see `docs/url-conversion-tasks.md` lines 2403-2408).
-
-- [ ] Uncomment `decorate` + `go` in tracker.js public API and the snippet equivalent.
-- [ ] `npm run build`
-- [ ] **Test:** a page that calls `SplitLab.go(otherdomain/url)` for a cross-domain jump → params carry, conversion fires.
-- [ ] Document for clients: "use `SplitLab.go(url)` instead of `window.location.href = url` for cross-domain."
-- [ ] Update `url-conversion-failing-cases.md §B` (cross-domain `location.href` → manual fix now available).
----
-
-## PHASE 4 — `watchNavigations()` (Navigation API — auto `location.href`) — HIGHEST RISK
-
-The enhanced-only piece (top of `docs/url-conversion-tasks.md`, not in the committed branch). Intercepts **every** navigation, so test hard.
-
-- [ ] Port `watchNavigations()` into tracker.js + snippet; call it in boot.
-- [ ] `npm run build`
-- [ ] **Test (Chrome):** cross-domain `window.location.href` auto-decorates and conversion fires — client code unchanged.
-- [ ] **Test `location.assign()` / `location.replace()`** cross-domain — also caught.
-- [ ] **Regression (critical):** normal same-site navigation, downloads (`downloadRequest`), form navigations, and back/forward are **untouched** and nothing double-navigates.
-- [ ] **Test old browser (Safari/Firefox):** falls back gracefully to manual `SplitLab.go` (no breakage when Navigation API absent).
-- [ ] Update `url-conversion-cases.md §4` table: cross-domain `location.href` → ✅ auto (modern) / manual (old).
+> **Deliberately deferred 2026-07-16.** Requires clients to rewrite `location.href = url` as `SplitLab.go(url)` — manual client setup is out of scope for the current flow. Phase 4 covers 87.37% automatically with no client involvement.
+>
+> Kept here because it remains the only thing that can ever cover the ~12.6% Navigation-API gap (Safari/iOS < 26.2). Revisit if a real client reports low iOS numbers. Code exists and is ready: `docs/url-conversion-tasks.md` L1117-1118 (`decorate` + `go`, currently not exposed in tracker.js's curated public API at [route.ts:1201](../src/app/tracker.js/route.ts#L1201)).
 
 ---
 
-## PHASE 5 — Proxy cross-domain (only what's achievable)
+## 🎯 PHASE 4 + 5 — `watchNavigations()` (Navigation API) across ALL modes — **ACTIVE**
 
-Depends on Priority 0 + Phases 1–4 results.
+**Merged deliberately.** Phase 5 (proxy cross-domain) was always "does the inside-iframe linker work?" — and the script inside the iframe *is* tracker.js. So Phase 4's tracker.js change **is** the proxy change. Testing them separately would mean running the same code twice.
 
-- [ ] If proxy same-domain works: test whether the **inside-iframe linker** decorates a cross-domain jump from the client's site to another tracker-equipped domain (Phases 1–3 apply inside the iframe too).
-- [ ] Document the hard limits that remain unsolvable: iframe → pure third-party (Calendly), sealed cross-origin iframe. Update `url-conversion-cases.md §3` / failing-cases §B accordingly.
+### Why this is smaller than the old "HIGHEST RISK" label suggested
+
+The old framing said this "intercepts **every** navigation." It doesn't — the reference implementation bails out of almost everything before doing any work. See the guard chain below. The risk is real but it's concentrated in **one** place: cancel-then-re-navigate.
+
+### The code (from `docs/url-conversion-tasks.md` L146-165 — enhanced layer, never committed)
+
+```js
+function watchNavigations() {
+  try {
+    if (!window.navigation || !window.navigation.addEventListener) return;
+    window.navigation.addEventListener("navigate", function(e) {
+      try {
+        if (!e.cancelable || e.formData || e.downloadRequest) return;
+        if (e.navigationType !== "push" && e.navigationType !== "replace") return;
+        var dest = e.destination && e.destination.url;
+        var dec = decorate(dest);
+        if (!dest || dec === dest) return;
+        e.preventDefault();
+        window.location.href = dec;
+      } catch(err) {}
+    });
+  } catch(e) {}
+}
+```
+
+**The guard chain, and what each line buys — the reference author already handled the regressions I'd flagged:**
+
+| Guard | Why it's there |
+|---|---|
+| `!window.navigation` | Feature detect → the ~12.6% keep today's exact behaviour. No breakage, silent no-op |
+| `!e.cancelable` | Non-cancelable traverses (some back/forward) — can't touch them, don't try |
+| `e.downloadRequest` | **The download regression.** `<a href="https://cdn.other.com/f.pdf" download>` is `http:` + cross-hostname, so `decorate()` *would* tag it — and cancel-then-navigate would turn a download into a navigation. This guard is what prevents it. **New to Phase 4**: today's mousedown linker decorates the href but never cancels, so downloads still work |
+| `e.formData` | Defers form submits to the proven Phase 1B/2 hidden-input path. No double-handling |
+| `navigationType` push/replace only | Skips traverse/reload entirely — back/forward untouched |
+| `dec === dest` | `decorate()` already early-returns on same-hostname / non-http(s) / already-tagged. **Same-domain navigation never reaches `preventDefault()`** — this is why "touches all navigation" overstated it |
+
+**Fail-safe note:** on an impl lacking `downloadRequest`/`formData`, those read `undefined` → falsy → guard doesn't trip. No crash, no throw. Both are also wrapped in `try/catch` twice over.
+
+### Known risks — the two that are genuinely new
+
+1. **`preventDefault()` + re-navigate = two navigations.** The re-issued nav loses user-activation context, and it converts a `replace` into a `push` (we always use `location.href`). Back-button behaviour can change on `location.replace()` cross-domain. **Accepted** — mirroring `navigationType` would mean `location.replace(dec)`, worth doing only if a test shows it matters.
+2. **Double-decoration with the existing linker.** A cross-domain *link* click gets decorated by `mousedown` first, so by the time `navigate` fires, `dec === dest` → early return. Should be self-resolving; **must be verified, not assumed** (this exact assumption was wrong once already in Phase 1B).
+
+### Todos — implement
+
+- [ ] Port `watchNavigations()` into **tracker.js** ([route.ts](../src/app/tracker.js/route.ts)) — covers **redirect + proxy** (it's what runs inside the iframe). Call from `start()` in boot, gated `if (!_scanMode)` like the rest of the linker.
+- [ ] `npm run build`
+- [ ] `node --check` the **emitted** tracker — the build only type-checks the route; a syntax error inside the template string passes the build (learned the hard way in 1B).
+- [ ] **Live-test tracker.js half green BEFORE touching the snippet.** Rig is already proven: `hunbalsiddiqui.com` → `bytebaskets.com`, test `/cross-domain-url-conversion-testing-redirect/268c387d-9ff0-462f-8ef8-2111298425f8`.
+- [ ] Then port to the **inline snippet** ([tracking.ts](../src/lib/tracking.ts)) — covers **HTML mode**. Note the asymmetry: snippet does `window.SplitLab = _SL` at [L604](../src/lib/tracking.ts#L604); tracker.js exposes a curated object. Different shape of edit.
+- [ ] `npm run build` again.
+
+### Todos — test matrix (3 modes × browsers)
+
+Add a `location.href` button to `hunbalsiddiqui.com`: `<button onclick="window.location.href='https://bytebaskets.com/'">`.
+
+**Per mode — the core case:**
+
+- [ ] **Redirect mode** (tracker.js): cross-domain `location.href` → conversion fires, dashboard increments, **client code unchanged**.
+- [ ] **HTML mode** (snippet): same, from a SplitLab-hosted page. ⚠️ Remember `serve/route.ts:338` strips tracker.js tags from SplitLab-served pages — Page B must NOT be SplitLab-hosted for the redirect test.
+- [ ] **Proxy mode** (tracker.js inside iframe): cross-domain `location.href` from inside the iframe. **This is the Phase 5 question.** Genuinely unknown — if params travel in the URL, the storage-partition problem stops mattering and the destination reads them normally. Plausible but do not promise it.
+- [ ] `location.assign()` / `location.replace()` cross-domain — caught by the same listener (both are push/replace navigationType).
+
+**Per browser — proving both sides of the feature detect:**
+
+- [ ] **Chrome** (supported, ≥102) — the happy path. Primary rig.
+- [ ] **Safari ≥26.2** (supported) — confirms the Dec-2025 impl actually behaves. Safari is missing `precommitHandler`; we don't use it, but verify.
+- [ ] **Safari <26.2 or Firefox <147** (UNSUPPORTED) — **the critical negative test.** Must degrade *silently* to today's behaviour: no console error, links/forms/`window.open` still decorate and still convert. Proves the feature detect. If no old Safari is available, simulate: `delete window.navigation` before tracker.js loads.
+- [ ] Firefox ≥147 — expected ✅, same mechanism.
+
+**Regressions — the ones that can actually break:**
+
+- [ ] 🔴 **Download regression** — cross-domain `<a href="https://…/file.pdf" download>` still **downloads**, does not navigate. This is the single highest-value regression test in the phase; it's the one thing Phase 4 can newly break.
+- [ ] 🔴 **Double-decoration** — cross-domain *link* click: confirm exactly ONE navigation and ONE conversion (mousedown decorates → `dec === dest` → listener early-returns). Verify; do not assume.
+- [ ] **Same-domain navigation untouched** — `location.href` to same origin never hits `preventDefault()`. Confirm no double-navigation.
+- [ ] **Back/forward** untouched (`navigationType` guard).
+- [ ] **Cross-domain GET form** still works — `e.formData` guard means the hidden-input path still owns it. Confirm no interference with Phase 1B/2.
+- [ ] **Scan mode** (`?sl_scan=1`) — listener dormant, no navigation cancelled. Would break dashboard goal-scanning badly if it fires.
+- [ ] **`window.open`** still decorates (patched path, not a `navigate` event).
+
+### Todos — document
+
+- [ ] `url-conversion-cases.md §4` + §2: cross-domain `location.href` → ✅ auto on 87.37%, ❌ below that.
+- [ ] `url-conversion-failing-cases.md §B`: `location.href` row is no longer "no automatic fix" — correct it.
+- [ ] `url-conversion-cases.md §3` + failing-cases §B: proxy cross-domain — record whatever the live test actually shows.
+- [ ] Correct the "never auto-fixable" claim wherever it survives (this doc's cross-cutting section is already fixed).
+- [ ] Document the remaining hard limits: iframe → pure third-party (Calendly), meta refresh dropping the query string, destination without tracker.js.
 
 ---
 
@@ -387,12 +493,15 @@ Depends on Priority 0 + Phases 1–4 results.
 Re-verify every row of `url-conversion-cases.md` on `url-conversion-v2` after all phases:
 
 - [ ] HTML same-domain **H1–H5** ✅
-- [ ] HTML cross-domain (link/form/window.open/`location.href`) — new
+- [x] HTML cross-domain **link + GET form** — ✅ **CONFIRMED live 2026-07-16** (Phase 1A/2; dashboard incremented). `window.open` + POST + middle-click still open (low risk). `location.href` ❌ by design — see the cross-cutting section
 - [x] Redirect same-domain **R1–R5** — ✅ **CONFIRMED live 2026-07-16** (see Phase 1A; R5 chained-tests proven with two coexisting map entries)
 - [x] Redirect cross-domain **link + GET form** — ✅ **CONFIRMED live 2026-07-16** (Phase 1B; hunbalsiddiqui.com → bytebaskets.com, dashboard incremented). `window.open` patch verified, POST untested (low risk). `location.href` ❌ by design — see the cross-cutting section
-- [ ] Proxy same-domain (Chrome/Firefox/Safari) — from Priority 0
-- [ ] Proxy cross-domain — documented limits
+- [x] Proxy same-domain — ✅ **CONFIRMED live 2026-07-16 on Chrome AND Safari** (Priority 0; ITP did not block the iframe's partitioned localStorage). Firefox not explicitly tested — expected ✅, same mechanism
+- [ ] Proxy cross-domain — documented limits (now folded into Phase 4+5)
 - [ ] Confirm no double-fire, no double-pageview, no double-lead across all modes
+- [ ] **Cross-domain `location.href` — all 3 modes** (Phase 4+5). Was ❌-by-design in every row above; that verdict is now obsolete
+- [ ] **Unsupported-browser negative test** — Navigation API absent → silent fallback, nothing breaks
+- [ ] **Downloads still download** (cross-domain, `download` attribute) — the one thing Phase 4 can newly break
 
 ---
 
@@ -407,6 +516,9 @@ Re-verify every row of `url-conversion-cases.md` on `url-conversion-v2` after al
 
 ## Risk notes
 
-- Phases 1–3 are proven code from the branch (additive, low risk).
-- Phase 4 (`watchNavigations`) is **new, unreviewed, affects all navigation** — keep it last and isolated so Phases 1–3 ship safely even if it's deferred.
-- Every cross-domain hop **requires tracker.js on the destination** — no params-reader, no conversion.
+- Phases 1–2 are proven code from the branch (additive, low risk) and are **complete + live-verified**.
+- Phase 3 is **parked** — manual client setup, out of the current flow.
+- Phase 4+5 (`watchNavigations`) is **new and unreviewed**, but the old "affects all navigation" label was an overstatement: the guard chain early-returns on same-domain, downloads, forms, traverse, and unsupported browsers. The genuine risk is one line — `preventDefault()` + re-navigate. Keep it last and isolated regardless, so Phases 1–2 ship safely if it's deferred.
+- **Test the tracker.js half green before porting to the snippet.** One file at a time; the rig is already proven for redirect mode.
+- Every cross-domain hop **requires tracker.js on the destination** — no params-reader, no conversion. Unchanged by Phase 4.
+- The ~12.6% Navigation-API gap fails **silently** — no error, the conversion just doesn't fire. That's why the unsupported-browser negative test is mandatory, not optional.
