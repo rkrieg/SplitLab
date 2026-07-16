@@ -160,16 +160,30 @@ function buildTrackerScript(appUrl: string): string {
   // window.location.href is not — but see watchNavigations(), which cancels the
   // navigation it triggers rather than trying to intercept the location object.
 
+  // Captured in detect() before cleanUrl() strips them, so decoration works
+  // during the ~1s Method 2 spends blocked on /api/resolve. Without this, _ctx
+  // is still null and anything clicked in that window leaves undecorated and
+  // silently loses the conversion. sl_tid is the only value we lack that early,
+  // and the destination does not need it: sl_vid alone puts it into Method 2,
+  // which resolves the rest itself.
+  var _bootVid = null;
+  var _bootVh = null;
+
   function decorate(url) {
     try {
-      if (!_ctx || !url) return url;
+      if (!url) return url;
+      // Prefer resolved context; fall back to the raw boot params before it lands.
+      var tid = _ctx ? _ctx.tid : null;
+      var vid = _ctx ? _ctx.vid : _bootVid;
+      var vh  = _ctx ? _ctx.vh  : _bootVh;
+      if (!vid) return url;
       var u = new URL(String(url), window.location.href);
       if (u.protocol !== "http:" && u.protocol !== "https:") return url;
       if (u.hostname === window.location.hostname) return url;
       if (u.searchParams.get("sl_vid") || u.searchParams.get("sl_tid")) return url;
-      u.searchParams.set("sl_tid", _ctx.tid);
-      u.searchParams.set("sl_vid", _ctx.vid);
-      u.searchParams.set("sl_vh", _ctx.vh);
+      if (tid) u.searchParams.set("sl_tid", tid);
+      u.searchParams.set("sl_vid", vid);
+      if (vh) u.searchParams.set("sl_vh", vh);
       return u.toString();
     } catch(e) { return url; }
   }
@@ -183,7 +197,7 @@ function buildTrackerScript(appUrl: string): string {
 
   function decorateFormForSubmit(form) {
     try {
-      if (!_ctx || !form || !form.getAttribute) return;
+      if (!form || !form.getAttribute) return;
       // Read action via getAttribute — an input named "action" shadows form.action
       var action = form.getAttribute("action");
       if (!action) return;
@@ -195,12 +209,19 @@ function buildTrackerScript(appUrl: string): string {
         // so carry the params as hidden inputs instead. Hidden inputs are
         // invisible to every form consumer here (fieldKey skips type=hidden),
         // so neither lead capture nor the fields: selector sees them.
+        //
+        // Read the values back out of the decorated URL rather than off _ctx, so
+        // this always carries exactly what decorate() decided — including the
+        // early case where sl_tid is not known yet and must be omitted.
+        var decParams = new URL(dec, window.location.href).searchParams;
         ["sl_tid", "sl_vid", "sl_vh"].forEach(function(name) {
+          var val = decParams.get(name);
+          if (!val) return;
           if (form.querySelector && form.querySelector("input[name='" + name + "']")) return;
           var hidden = document.createElement("input");
           hidden.type = "hidden";
           hidden.name = name;
-          hidden.value = name === "sl_tid" ? _ctx.tid : name === "sl_vid" ? _ctx.vid : _ctx.vh;
+          hidden.value = val;
           form.appendChild(hidden);
         });
       } else {
@@ -1129,6 +1150,10 @@ function buildTrackerScript(appUrl: string): string {
     var tid = params.get("sl_tid");
     var vid = params.get("sl_vid");
     var vh  = params.get("sl_vh");
+    // Keep these before cleanUrl() strips them — decorate() falls back to them
+    // while Method 2 is still blocked on /api/resolve.
+    _bootVid = vid;
+    _bootVh = vh;
     if (tid && vid && vh) {
       cleanUrl(["sl_tid", "sl_vid", "sl_vh", "sl_scan"]);
       // Boot immediately with no goals, then fill them in. Blocking here on
