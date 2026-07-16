@@ -201,6 +201,42 @@ export function buildTrackingSnippet(
     } catch(e) {}
   }
 
+  // The only hook that catches window.location.href = 'https://otherdomain/...'.
+  // The location object cannot be patched, but the Navigation API sees the
+  // navigation before it commits, so cancel the undecorated jump and re-issue it
+  // decorated. intercept() is unusable here (canIntercept is always false
+  // cross-origin) but cancelable is true for non-traverse navigations, which is
+  // all this needs. Live-verified in redirect mode 2026-07-16.
+  //
+  // Chrome/Edge 102+, Safari 26.2+, Firefox 147+ (~87% of traffic). Elsewhere
+  // this is a no-op and cross-domain location.href keeps failing as it does now.
+  function watchNavigations() {
+    try {
+      if (!window.navigation || !window.navigation.addEventListener) return;
+      window.navigation.addEventListener('navigate', function(e) {
+        try {
+          // downloadRequest: a cross-domain <a download> would otherwise be
+          // decorated and re-navigated, turning a download into a page load.
+          // formData: leave real submits to decorateFormForSubmit above.
+          // Both read undefined on older impls — falsy, so the guard is fail-safe.
+          if (!e.cancelable || e.formData || e.downloadRequest) return;
+          // Skips traverse/reload, so back/forward stay untouched.
+          if (e.navigationType !== 'push' && e.navigationType !== 'replace') return;
+          var dest = e.destination && e.destination.url;
+          if (!dest) return;
+          // decorate() early-returns on same-hostname, non-http(s) and
+          // already-tagged URLs, so same-domain navigation is never cancelled,
+          // and links decorated on mousedown arrive here as dec === dest and
+          // pass through — no double navigation.
+          var dec = decorate(dest);
+          if (dec === dest) return;
+          e.preventDefault();
+          window.location.href = dec;
+        } catch(err) {}
+      });
+    } catch(e) {}
+  }
+
   if (!_isScan) {
     // mousedown precedes every click variant; middle-click fires auxclick
     // (not click) in some browsers — cover all three for new-tab opens
@@ -208,6 +244,7 @@ export function buildTrackingSnippet(
     document.addEventListener('auxclick', decorateFromEvent, true);
     document.addEventListener('click', decorateFromEvent, true);
     patchWindowOpen();
+    watchNavigations();
   }
 
   // Auto-track pageview (skip on scan requests — sl_scan=1 means dashboard goal setup)

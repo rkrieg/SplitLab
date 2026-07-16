@@ -441,14 +441,53 @@ function watchNavigations() {
 1. **`preventDefault()` + re-navigate = two navigations.** The re-issued nav loses user-activation context, and it converts a `replace` into a `push` (we always use `location.href`). Back-button behaviour can change on `location.replace()` cross-domain. **Accepted** — mirroring `navigationType` would mean `location.replace(dec)`, worth doing only if a test shows it matters.
 2. **Double-decoration with the existing linker.** A cross-domain *link* click gets decorated by `mousedown` first, so by the time `navigate` fires, `dec === dest` → early return. Should be self-resolving; **must be verified, not assumed** (this exact assumption was wrong once already in Phase 1B).
 
+### ✅ PREMISE CONFIRMED LIVE (2026-07-16) — the whole phase rested on this
+
+The one claim no unit test could reach: **does a real browser fire `navigate` with `cancelable: true` for a cross-origin `location.href`?** Taken from the spec + WICG explainer, never observed. **Now observed.**
+
+Probe run on hunbalsiddiqui.com (Chrome), landed via the live redirect test:
+
+```
+navigate → https://bytebaskets.com/?sl_tid=268c387d-…&sl_vid=3083bb9b-…&sl_vh=10e7f550-…
+         | cancelable: true | canIntercept: false | type: push
+```
+
+**Read the URL, not just the flags.** The probe set a *bare* `https://bytebaskets.com/`. The logged destination carries all three params ⇒ `watchNavigations` had already run: cancelled the undecorated jump and re-issued it decorated.
+
+**Why the probe saw the decorated URL** (worth understanding — it looks wrong at first): the re-navigation fires `navigate` **#2 synchronously, nested inside #1**. The probe's `{once:true}` listener was consumed by #2 (decorated), and by the time #1 unwound it was spent. Accidental, but it means the full cancel-and-re-issue cycle completed.
+
+- `cancelable: true` ✅ — premise holds
+- `canIntercept: false` ✅ — exactly as predicted; why we cancel instead of intercepting
+- `type: push` ✅ — passes the navigationType guard
+
+**This retires the "❌ never auto-fixable in any mode" verdict** these docs carried for weeks.
+
+### ✅ REDIRECT MODE — cross-domain `location.href` CONFIRMED LIVE (2026-07-16)
+
+Decisive evidence — **bytebaskets.com's** `localStorage.sl_tracking` after a bare `location.href` jump:
+
+```json
+{"268c387d-9ff0-462f-8ef8-2111298425f8":{"vid":"3083bb9b-8bb8-4065-90bb-dbb9f998d837",
+ "vh":"10e7f550-d2aa-464b-9bbe-93747f51bb3b","ts":1784210411941,
+ "goals":[{"id":"f5381b6d-…","type":"url_reached","urlPattern":"https://bytebaskets.com/"}]}}
+```
+
+- `vh` is **byte-identical to the probe's `sl_vh`** ⇒ this entry came from that navigation, not a leftover.
+- `vid` = the 302-minted variant, now on a **different origin**. `localStorage` never crosses origins ⇒ it travelled in the URL, and the only thing that put params on a bare `location.href` is `watchNavigations`.
+- `goals` non-empty ⇒ **Method 1** ran (`fetchGoalsLate`), which requires `tid && vid && vh` all present.
+- `ts` ≈ 2026-07-16T14:00:11Z.
+
 ### Todos — implement
 
-- [ ] Port `watchNavigations()` into **tracker.js** ([route.ts](../src/app/tracker.js/route.ts)) — covers **redirect + proxy** (it's what runs inside the iframe). Call from `start()` in boot, gated `if (!_scanMode)` like the rest of the linker.
-- [ ] `npm run build`
-- [ ] `node --check` the **emitted** tracker — the build only type-checks the route; a syntax error inside the template string passes the build (learned the hard way in 1B).
-- [ ] **Live-test tracker.js half green BEFORE touching the snippet.** Rig is already proven: `hunbalsiddiqui.com` → `bytebaskets.com`, test `/cross-domain-url-conversion-testing-redirect/268c387d-9ff0-462f-8ef8-2111298425f8`.
-- [ ] Then port to the **inline snippet** ([tracking.ts](../src/lib/tracking.ts)) — covers **HTML mode**. Note the asymmetry: snippet does `window.SplitLab = _SL` at [L604](../src/lib/tracking.ts#L604); tracker.js exposes a curated object. Different shape of edit.
-- [ ] `npm run build` again.
+- [x] Port `watchNavigations()` into **tracker.js** ([route.ts](../src/app/tracker.js/route.ts)) — covers **redirect + proxy** (it's what runs inside the iframe). Called from `start()` in boot, gated `if (!_scanMode)`. **DONE** — also corrected the stale "unfixable, needs SplitLab.go" comment above `decorate()`.
+- [x] `npm run build` — **PASSES**.
+- [x] `node --check` the **emitted** tracker — **SYNTAX OK** (48,395 bytes). The build only type-checks the route; a syntax error inside the template string would pass it (learned the hard way in 1B).
+- [x] **Unit-test the guard chain against the emitted function** — **13/13 PASS**. Covers both 🔴 risks: download not touched, already-decorated passes through. Simulation only — stubbed `window.navigation`; proves guard logic, not browser behaviour.
+- [x] **Live-test tracker.js half green BEFORE touching the snippet** — **✅ PASS** (see above). Rig: `hunbalsiddiqui.com` → `bytebaskets.com`, test `/cross-domain-url-conversion-testing-redirect/268c387d-9ff0-462f-8ef8-2111298425f8`.
+- [x] Port to the **inline snippet** ([tracking.ts](../src/lib/tracking.ts)) — covers **HTML mode**. Direct mirror; gated on the existing `if (!_isScan)` block next to `patchWindowOpen()`. **DONE.**
+- [x] `npm run build` again — **PASSES**.
+- [x] **Syntax-check the emitted *snippet*** (same template-string trap) — transpiled `tracking.ts`, invoked `buildTrackingSnippet`, `node --check` on the result: **SYNTAX OK** (25,629 bytes).
+- [x] **Guard suite against the emitted snippet** (separate file, separate code path — not inherited from tracker.js) — **13/13 PASS**.
 
 ### Todos — test matrix (3 modes × browsers)
 
@@ -456,10 +495,20 @@ Add a `location.href` button to `hunbalsiddiqui.com`: `<button onclick="window.l
 
 **Per mode — the core case:**
 
-- [ ] **Redirect mode** (tracker.js): cross-domain `location.href` → conversion fires, dashboard increments, **client code unchanged**.
+- [x] **Redirect mode** (tracker.js): cross-domain `location.href` → **✅ PASS live 2026-07-16**, client code unchanged (fired from console, which is identical to source-code execution — same page context, same navigate event). Context provably arrived; see the `sl_tracking` evidence above. ⬜ **Dashboard conversion count still to confirm** — `sendBeacon` is fire-and-forget, so "context arrived" ≠ "conversion recorded".
 - [ ] **HTML mode** (snippet): same, from a SplitLab-hosted page. ⚠️ Remember `serve/route.ts:338` strips tracker.js tags from SplitLab-served pages — Page B must NOT be SplitLab-hosted for the redirect test.
 - [ ] **Proxy mode** (tracker.js inside iframe): cross-domain `location.href` from inside the iframe. **This is the Phase 5 question.** Genuinely unknown — if params travel in the URL, the storage-partition problem stops mattering and the destination reads them normally. Plausible but do not promise it.
 - [ ] `location.assign()` / `location.replace()` cross-domain — caught by the same listener (both are push/replace navigationType).
+- [ ] 🎯 **Conditional redirect driven by form input** — the most common real-world shape of this bug, raised 2026-07-16:
+  ```js
+  form.addEventListener('submit', e => {
+    e.preventDefault();
+    window.location.href = input.value === 'yes'
+      ? 'https://bytebaskets.com/thanks' : 'https://bytebaskets.com/other';
+  });
+  ```
+  **Looks like it should collide with our `formData` guard, but does not.** The client's `preventDefault()` means the form never submits — no form navigation ever happens. The `location.href` that follows is a **plain script navigation**, so `e.formData` is `null`, the guard does not trip, and `watchNavigations` decorates it. `formData` is only non-null for *actual* form-submission navigations reaching the browser. The two paths never overlap: hidden inputs own real submits, `watchNavigations` owns JS redirects.
+  **This was NOT previously covered** — today it silently loses the conversion. Needs real source on Page B (unlike the bare `location.href` case, which the console proves). Harmless side effect: our submit listener still appends hidden `sl_*` inputs before the client cancels; nothing reads them.
 
 **Per browser — proving both sides of the feature detect:**
 
