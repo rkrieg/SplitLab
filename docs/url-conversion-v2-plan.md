@@ -19,7 +19,7 @@
 
 ---
 
-## PRIORITY 0 — Verify same-domain PROXY mode (no code, just test)
+## ✅ PRIORITY 0 — Verify same-domain PROXY mode (no code, just test)
 
 This is the biggest open unknown. `url-conversion-cases.md §3` marks it ⚠️ "should work, not yet live-tested." Settle it before writing any code.
 
@@ -71,13 +71,63 @@ Port `decorate()`, `decorateLink()`, `patchWindowOpen()`, `mousedown`/`auxclick`
 
 ## PHASE 2 — HTML-mode cross-domain linker (inline snippet) — from `c55de6f`
 
-Same decoration inside `buildTrackingSnippet` (`src/lib/tracking.ts`) for SplitLab-hosted pages.
+**Why this is needed (root cause, code-verified 2026-07-16):** `localStorage` is **per-origin**. The snippet stores context in `sl_ctx` ([tracking.ts:76-103](../src/lib/tracking.ts#L76-L103)), and `checkStoredUrlGoals()` ([tracking.ts:111](../src/lib/tracking.ts#L111)) reads it back after any navigation. Same-domain that just works — the context is already in that origin, no interception needed. Cross-domain the destination origin sees an **empty** `sl_ctx`: no test, no variant, no goal ⇒ no conversion. The file's own comment says it at [tracking.ts:73](../src/lib/tracking.ts#L73): *"localStorage is per-origin: this does NOT work across different domains."* Fix = carry context in the URL (`sl_tid`/`sl_vid`/`sl_vh`); destination tracker.js rebuilds it via detect **Method 1** and strips the params.
 
-- [ ] Cherry-pick / hand-port `c55de6f`.
-- [ ] `npm run build`
-- [ ] **Test** hosted page → external domain via link / form / `window.open`: params carry, conversion fires on destination (destination needs tracker.js).
-- [ ] Regression: same-domain HTML cases **H1–H5** still pass.
-- [ ] Update the two case docs (HTML cross-domain row → ✅).
+**What `c55de6f` adds** — 76 lines, **purely additive** (`+76 / −0`), only inside `buildTrackingSnippet`. Verified: cherry-picks **cleanly** onto `url-conversion-v2`, and does **not** touch `sl_ctx` / `checkStoredUrlGoals` / the per-test map.
+
+| Function | Job |
+|---|---|
+| `decorate(url)` | Appends `sl_tid`/`sl_vid`/`sl_vh`. Skips: non-http(s), **same hostname**, already-decorated |
+| `decorateFromEvent(e)` | `closest('a[href])` → rewrite `href` before the browser follows it |
+| `decorateFormForSubmit(form)` | POST → rewrite `action`; GET → **hidden inputs** (GET wipes the action query string) |
+| `patchWindowOpen()` | Wraps `window.open`, decorates arg 0, `__sl_patched` guards double-wrap |
+
+Hooks: `mousedown` + `auxclick` + `click` (all **capture phase**, so they run before the navigation; `auxclick` covers middle-click new-tab). Form hook goes on the existing global `submit` listener. Everything is gated behind `if (!_isScan)` so dashboard goal-scanning is unaffected.
+
+### Todos
+
+- [x] Cherry-pick `c55de6f` onto `url-conversion-v2` — **DONE**, `git cherry-pick -n c55de6f`, clean auto-merge, no conflicts. **Staged, NOT committed** (per instruction).
+- [x] Confirm the diff is `+76 / −0` on `src/lib/tracking.ts` only, and `sl_ctx` + `checkStoredUrlGoals` are byte-identical. **VERIFIED** — `git diff --numstat` = `76  0  src/lib/tracking.ts`; deletion-line count is literally **0**; lines 60-135 (the `sl_ctx` map + `checkStoredUrlGoals`) diff **IDENTICAL** against HEAD.
+- [x] `npm run build` — **PASSES**.
+- [ ] **Test cross-domain link** hosted page → second domain: `sl_tid/sl_vid/sl_vh` land in the destination URL, conversion fires `200` with correct test/variant/goal.
+- [ ] **Test new-tab / middle-click** on the same link (this is what `auxclick` exists for).
+- [ ] **Test cross-domain form** — POST (decorated `action`) **and** GET (hidden inputs) separately; they take different code paths.
+- [ ] **Test `window.open(url)`** cross-domain.
+- [ ] **Test the skip rules:** same-domain link is **not** decorated (no params leak onto internal URLs); `mailto:` / `tel:` / `#anchor` untouched; an already-decorated URL isn't double-tagged. *(Code-verified below; still worth one live confirmation.)*
+- [ ] **Regression: same-domain HTML cases H1–H5 still pass** — especially H2/H5 (chained hosted tests via `sl_ctx`) and H3 (no double-fire).
+- [ ] **Regression: dashboard goal scan** (`?sl_scan=1`) still works — linker must stay dormant.
+- [ ] Update `url-conversion-cases.md §2` + `url-conversion-failing-cases.md §A`: HTML cross-domain link / form / `window.open` → ✅.
+
+### Edge-case audit (code-read 2026-07-16, before any live test)
+
+**The one that mattered:** `decorateFormForSubmit` appends **hidden inputs** to GET forms at submit time, and it runs on the *same* global `submit` listener, **immediately before** `captureFormLead(e.target)` ([tracking.ts:546](../src/lib/tracking.ts#L546)). So the question was whether `sl_tid`/`sl_vid`/`sl_vh` could leak into lead data or corrupt the `fields:` goal selector. Traced every consumer — **all six skip `type === 'hidden'`**:
+
+| Consumer | Risk if it saw our inputs | Skips hidden? |
+|---|---|---|
+| `captureFormLead` | `sl_tid` sent as a lead field | ✅ |
+| `fieldsLookValid` | gates lead sending | ✅ |
+| `snapshotVisibleFormFields` | stepper accumulation | ✅ |
+| `registerFormFields` | dashboard field list | ✅ |
+| `fieldKey` → `formFieldSignature` | **`fields:` selector would change ⇒ goal stops matching** | ✅ (both copies, L410 + L727) |
+
+**Verdict: no leak, no selector drift.** The hidden inputs are invisible to every existing code path.
+
+**Other guards confirmed:**
+- **Idempotent** — [L148](../src/lib/tracking.ts#L148) returns early if `sl_vid`/`sl_tid` already present ⇒ repeated mousedown/click on the same link can't double-tag.
+- **`mailto:` / `tel:` / `javascript:`** — [L146](../src/lib/tracking.ts#L146) http(s)-only ⇒ untouched.
+- **`#anchor` / same-domain** — [L147](../src/lib/tracking.ts#L147) hostname equality ⇒ no param leak onto internal URLs.
+- **Scan mode** — both the listener block ([L204](../src/lib/tracking.ts#L204)) and the form hook are behind `!_isScan` ⇒ dashboard goal-scan stays dormant.
+- **Double-wrap** — `__sl_patched` flag ⇒ `window.open` can't be wrapped twice.
+- **Everything wrapped in `try/catch`** returning the original url ⇒ a throw can't block a navigation.
+- **Keyboard nav (Tab+Enter)** fires `click` but **not** `mousedown` — this is exactly why all three listeners exist. Covered.
+
+### Notes / watch-outs
+
+- **`window.location.href` is NOT fixed by this phase.** `location` cannot be intercepted by any script — no setter trap, no override. Stays ❌ until Phase 3 (manual `SplitLab.go`) or Phase 4 (`watchNavigations`).
+- **Destination must have tracker.js.** Params with no reader = no conversion. This is why the second domain is a hard blocker.
+- **Subdomain jumps get decorated.** The check is `u.hostname === window.location.hostname`, so `app.site.com` → `site.com` counts as cross-domain and gets tagged. Harmless (destination strips them) but worth knowing when reading URLs during testing.
+- **`a.href` is mutated permanently in the DOM** ([L163](../src/lib/tracking.ts#L163)) — after a mousedown, a right-click → "Copy link address" yields the decorated URL, and the params stay if the navigation is cancelled. Cosmetic only (idempotent, destination strips them), but it's a visible side effect worth knowing about.
+- **Decoration can't help a link whose own click handler `preventDefault()`s and then does `location.href = …`** — we rewrite the `href`, but the site never uses it. Same `location` wall as always.
 
 ---
 
