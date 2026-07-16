@@ -25,8 +25,27 @@ Key structural fact: on a custom domain, **every path** is rewritten by middlewa
 
 ## Not working cases ❌
 
-1. **Redirect variant with proxy mode ON (iframe wrapper)** — the wrapper URL never changes as the visitor navigates inside the iframe, and browsers partition third-party iframe storage. Note: `proxy_mode` **defaults to ON**; working case 3 above only applies when it's explicitly off.
-2. **Cross-origin navigation** — HTML variant linking out to the client's real site: the custom domain's localStorage isn't visible there, and `sl_vid` isn't appended to outbound links on this branch. *(A fix exists on an unmerged branch — see detailed explanation below.)*
+1. **Cross-origin navigation** — HTML variant linking out to the client's real site: the custom domain's localStorage isn't visible there, and `sl_vid` isn't appended to outbound links on this branch. *(A fix exists on an unmerged branch — see detailed explanation below.)*
+
+## Partly working — proxy mode (iframe), depends on the browser ⚠️
+
+Earlier drafts listed proxy mode as flatly not-working. That is **too pessimistic** given tracker.js is **mandatory** in every client's own source code. Re-analysed from code below. Note: `proxy_mode` **defaults to ON**.
+
+In proxy mode SplitLab serves a wrapper page from the custom domain containing `<iframe src="destination?sl_vid=…&sl_vh=…">` (`serve/route.ts:234-254`). The wrapper's own injected snippet is useless for `url_reached` — it only ever sees the unchanging wrapper URL. The work is done by **tracker.js running inside the iframe**, on the client's own site:
+
+1. Iframe loads `clientsite.com/offer?sl_vid=X&sl_vh=Y`. Only `sl_vid`+`sl_vh` are passed (no `sl_tid`), so tracker.js takes **Method 2** (`tracker.js:974-1011`): resolves the test + goals via `/api/resolve` and `store()`s context using the passed `sl_vh`.
+2. Visitor clicks an internal link `/thanks` (no params) → same-origin full navigation **inside the iframe** → tracker.js reboots, takes **Method 4** `load()` (`tracker.js:1037-1038`), reads the stored context, matches `/thanks`, and fires the conversion to `/api/event`. The wrapper's cross-origin blindness never matters — the tracker is *inside* the box, reading its own URL.
+
+**Why "partly":** the iframe is a third-party frame, so its `localStorage` is **partitioned** — but partitioned ≠ broken. The bucket is keyed to the top-level site (the custom domain), which never changes in proxy mode, so it stays **stable across every internal navigation**. The real variable is whether the browser *grants* storage to a third-party iframe at all:
+
+| Case | Verdict |
+|---|---|
+| Proxy → client's **own multi-page** site, Chrome / Firefox | **Should work** — partition is stable across internal nav |
+| Proxy → client's own site, **Safari ITP** | **Fragile** — Safari may deny third-party-iframe `localStorage` without the Storage Access API |
+| Proxy, iframe navigates to a **different** origin (clientsite → calendly) | **Broken** — new partition, no context (genuine cross-domain) |
+| Proxy → pure **third-party** destination (Calendly) with no tracker | **Impossible** — sealed cross-origin iframe, nothing to read the params |
+
+**Status: code-level analysis only — NOT yet live-tested** (unlike the redirect-mode cases below, which were verified on dev). The Safari question in particular can only be settled by a live test. Potential hardening if live testing shows gaps: invoke the Storage Access API inside the iframe, or add a `postMessage` bridge so the iframe reports conversions to the wrapper.
 
 ## Missed conversions — detailed explanations
 
@@ -52,7 +71,12 @@ Nothing errors — the second test just wipes the first test's memory. With only
 - `checkStoredUrlGoals()` checks all OTHER stored tests' `url_reached` goals on every page load and SPA navigation, sending each conversion with that test's own stored variant/visitor. Skips the current test (its own `checkUrlGoals()` covers it — no double-fire) and skips scan mode.
 - Entries expire after 90 days (matches `sl_visitor` cookie); dedup is in-memory per page-load only, so raw goal-hit counts are unchanged.
 
-Verified by simulation against the emitted script: chained A→B→`/thanks` credits Test A correctly, shared-goal-URL credits both tests, single-test flows/migration/TTL/scan/stand-down all behave as before. Expect conversion counts to **rise** after deploy — previously-lost conversions are now recorded.
+**Verification (both passed):**
+
+1. *Simulation* — the emitted tracker script was executed in a stubbed browser (shared in-memory localStorage across page loads, fake `/api/resolve`, sendBeacon capture): chained A→B→`/thanks` credits Test A correctly, shared-goal-URL credits both tests, and single-test flows / old-format migration / TTL pruning / scan mode / `__SL_SNIPPET__` stand-down all behave exactly as before.
+2. *Live on dev (2026-07-15)* — two redirect-mode tests on `dev.trysplitlab.com` pointing at `www.hunbalsiddiqui.com` (test pages in `test-pages/`): Test A → `/offer-a.html`, goal `/thanks`; Test B → `/offer-b.html`, goal `/signup-done`. One visitor entered Test A, then Test B without converting — `sl_tracking` held **both** entries (old code would have dropped Test A's here). Reaching `/thanks.html` fired a conversion with **Test A's** testId/variantId/goalId; reaching `/signup-done.html` fired **Test B's**. Both accepted with 200 and showed correctly in analytics.
+
+Expect conversion counts to **rise** after deploy — previously-lost conversions are now recorded.
 
 Code: `saveMap()` / `loadMap()` / `store()` / `load()` / `checkStoredUrlGoals()` in `src/app/tracker.js/route.ts`.
 
@@ -90,7 +114,7 @@ Safety rails in `decorate()`: only `http:`/`https:` URLs, same-hostname URLs ski
 ### NOT covered ❌
 
 1. **JS-driven redirects via `window.location.href = url`** (also `location.assign()` / `location.replace()`) — the `location` object cannot be intercepted or monkey-patched by any script, so these navigations leave undecorated. The planned solution is a manual escape hatch in tracker.js — `SplitLab.go(url)` (which does `window.location.href = decorate(url)`) plus a public `SplitLab.decorate(url)` — the page's own JS calls it instead of setting `location.href` directly, the same way GA handles this. **The code for this already exists in `7b4fb22` but is commented out/disabled** — it needs to be enabled (and possibly complemented by the Navigation API where supported) as part of v2.
-2. **PROXY mode cross-domain — completely unaddressed.** None of the linker work applies to proxy-mode redirect variants: the visitor stays on the wrapper URL while the real site runs inside the iframe, the iframe's storage is partitioned by the browser, and no decoration happens on navigations inside the iframe. Cross-domain conversion tracking for proxy mode remains entirely unsolved.
+2. **PROXY mode — see the dedicated "Partly working — proxy mode" section above.** None of the *linker* work applies inside the iframe. But for the client's **own** multi-page site (tracker.js mandatory), conversions can still fire via tracker.js *inside* the iframe reading its own same-origin URL — code-level working, browser-dependent (Safari fragile). Genuinely unsolved only when the iframe navigates to a **different** origin, or the destination is pure third-party with no tracker.
 3. Other undecoratable navigation paths (same root cause as #1): `<meta http-equiv="refresh">`, server-side redirects from the destination page, and navigations triggered inside third-party widgets.
 
 ### Status
@@ -104,7 +128,7 @@ Same-domain cases above are verified; cross-domain has only been code-reviewed, 
 ### Not handled at all
 
 1. **JS redirects** — `window.location.href` / `location.assign()` / `location.replace()` cannot be intercepted by any script. The `SplitLab.go(url)` / `SplitLab.decorate(url)` escape hatch exists in `7b4fb22` but is **commented out**; enable it and document it for clients.
-2. **Proxy mode cross-domain — the entire category.** The linker doesn't touch the iframe: inner-page navigations can't be decorated, iframe storage is partitioned by browsers, and the wrapper URL never changes. Completely unsolved.
+2. **Proxy mode — reclassified; see "Partly working — proxy mode" above.** The linker doesn't touch the iframe, but tracker.js inside the iframe handles the client's own same-origin pages (code-level working, Safari-fragile, not yet live-tested). Still unsolved for iframe→different-origin hops and pure third-party destinations.
 3. **Meta-refresh and server-side redirects** on the destination — `sl_*` params survive only if the redirect forwards the query string, which most don't.
 4. **Destination domain without tracker.js** — decoration is useless if nothing on the destination reads the params. Every cross-domain hop requires tracker.js installed there; no fallback exists.
 5. **Third-party embedded widgets** (Calendly/Typeform iframes on the destination page) — the conversion happens inside a cross-origin iframe and never surfaces as a URL on the destination domain, so `url_reached` can't see it.

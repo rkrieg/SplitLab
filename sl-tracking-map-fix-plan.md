@@ -1,6 +1,14 @@
 # Plan: Fix chained-tests context overwrite in tracker.js
 
-**Status: IMPLEMENTED on `url-conversion-v2` (2026-07-15) — all steps done, verified by simulation against the emitted tracker script.**
+**Status: IMPLEMENTED AND LIVE-VERIFIED on `url-conversion-v2` (2026-07-15).** All steps done. Verified twice: (1) by simulation against the emitted tracker script, and (2) live on dev — two chained redirect tests against `www.hunbalsiddiqui.com` (pages in `test-pages/`); both tests' URL conversions recorded with correct attribution, single-test flow unaffected.
+
+## What was done, and why (summary)
+
+**The bug:** tracker.js kept the visitor's test context in one localStorage slot. A visitor who entered Test A and later Test B (same client domain) had Test A's context erased; when they then reached Test A's conversion URL, the conversion silently vanished. The loss was biased — the earlier test always lost — which could flip an A/B test's result. `url_reached` was the main victim because it is the only goal type that depends on remembered context across page navigations.
+
+**The fix:** storage became a per-test map (one entry per test, like the inline snippet's `sl_ctx` has always been), with: automatic migration of the old single-slot format on the visitor's next page load; a `checkStoredUrlGoals()` pass that checks every stored test's URL goals on each page and SPA navigation, attributing each conversion to that test's own stored variant/visitor; 90-day expiry per entry; and per-page-load dedup. The current test is picked as the most-recent entry, preserving the old attribution behavior for forms and leads; its own goals are skipped in the stored pass to prevent double-firing.
+
+**Why this design:** the correct pattern already existed in `src/lib/tracking.ts` for SplitLab-hosted pages — this was a port, not new design. Blast radius is tracker.js only; the ctx shape handed to the rest of the script is unchanged, so all other capture paths behave identically.
 
 ## The bug
 
