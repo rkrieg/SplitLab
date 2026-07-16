@@ -86,7 +86,15 @@ The only blocking piece. Replaces the `goals: []` line with an XHR to `/api/reso
 > run 1: 1.95s (cold)   run 2: 1.07s   run 3: 1.07s   run 4: 1.10s   run 5: 1.28s
 > ```
 >
-> `connect` was only 30-70ms while `ttfb` was the whole ~1.07s — the latency is `/api/resolve` itself (Supabase query), not the network. **~1 second is far too long to block on**, and it would have delayed **every redirect-mode pageview**, not just cross-domain ones — losing them outright whenever a visitor bounces inside that first second. Redirect-mode visitors have just been 302'd, so a sub-second bounce is entirely normal. `7b4fb22` almost certainly never measured this.
+> `connect` was only 30-70ms while `ttfb` was the whole ~1.07s — the latency is `/api/resolve` itself (Supabase query), not the network.
+>
+> **🔴 CORRECTION (2026-07-16, from live evidence).** The original justification written here claimed blocking "would have delayed **every redirect-mode pageview**". **That was wrong.** [serve/route.ts:285-286](../src/app/api/serve/route.ts#L285-L286) shows redirect mode sets **only** `sl_vid` + `sl_vh` — never `sl_tid`. Method 1 requires `tid && vid && vh`, so **redirect mode never reaches Method 1 at all**; it has always taken **Method 2**, which has always been blocking. Confirmed live: a redirect-mode test's `resolve` XHR is initiated from `tracker.js:1011` — the Method 2 branch, not ours.
+>
+> **So `7b4fb22`'s blocking version would NOT have regressed redirect mode.** Method 1 is only reached when all three params arrive together, which happens **only** via our cross-domain link decoration — a brand-new path, so no regression was possible either way.
+>
+> **Non-blocking is still the right call, but for a smaller reason:** cross-domain arrivals get their pageview immediately instead of ~1s late (and keep it on a fast bounce). It's an improvement on a new path, not a fix for a regression. Keeping it — the cost is a few lines and the benefit is real — but the plan should not overstate it.
+>
+> **Separate pre-existing finding (not ours, not in scope):** redirect mode's pageview genuinely *is* ~1s late today, because Method 2 blocks on `/api/resolve`. Observed live. Worth a future ticket; unchanged by this work.
 >
 > **Our version instead:** `callback()` fires **immediately** with `goals: []` (pageview timing identical to today), and `fetchGoalsLate(vid)` fills goals in afterwards, then re-runs `checkUrlGoals()`. `url_reached` still fires — roughly a second later, which is irrelevant for a URL-match goal. **No pageview risk.**
 >
@@ -96,10 +104,14 @@ The only blocking piece. Replaces the `goals: []` line with an XHR to `/api/reso
 - [x] **Per-test map fix intact** — `STORAGE_KEY = "sl_tracking"` and the map logic untouched.
 - [x] **Method-1 context does get persisted** — `boot()` calls `store(_ctx)` ([tracker.js:1063](../src/app/tracker.js/route.ts#L1063)), so the goals fetched here land in `sl_tracking` and later same-domain navigations on the destination keep working.
 - [x] `npm run build` — **passes**.
-- [ ] ⚠️ **Deploy to dev** — the fix was **local-only/uncommitted**; `HEAD` had no `xhr0`, which is exactly why the 2026-07-16 Stage 2 attempt failed. It must be committed + pushed before re-testing.
-- [ ] **Re-run Phase 2 Stage 2** — HTML hosted page → `hunbalsiddiqui.com/thanks.html`: conversion fires `200` with correct test/variant/goal.
+- [x] ⚠️ **Deploy to dev** — **DONE.** The fix had been local-only/uncommitted, which is exactly why the first Stage 2 attempt failed. Now live (verified: deployed `tracker.js` has `fetchGoalsLate` at L933 and the `__SL_SNIPPET__` guard at L945).
+- [x] **Re-run Phase 2 Stage 2** — **✅ PASS live 2026-07-16. THE FEATURE WORKS.** HTML hosted page → `hunbalsiddiqui.com/thanks.html`: conversion fired and the dashboard conversion count incremented.
+  - Params survived a **307 redirect** (`hunbalsiddiqui.com` → `www.hunbalsiddiqui.com`) with the query string intact — a real risk that turned out fine.
+  - Method 1 was correctly entered (`sl_tid` present), and the `resolve` XHR was initiated from `tracker.js:952` = **our `fetchGoalsLate`**, confirming the new path ran.
+  - Exactly two `event` calls: pageview + conversion. No double-fire.
 - [ ] **Regression R1–R5** (same-domain redirect) — tracker.js changed, so re-verify the map fix still holds.
-- [ ] **Regression: redirect-mode 302** — the original Method-1 path. Confirm the pageview still fires **immediately** (no ~1s delay — that was the whole point of going non-blocking) and exactly **once**.
+- [x] **Regression: redirect-mode 302** — **✅ PASS live 2026-07-16, nothing broken.** But note it does **not** exercise this change: redirect mode takes **Method 2** (`sl_vid`+`sl_vh`, no `sl_tid`), initiator `tracker.js:1011`. Its ~1s `resolve` block is pre-existing Method-2 behaviour, untouched by us.
+- [x] **Method-1 timing (the real test of the non-blocking rework)** — **✅ PASS live 2026-07-16.** On the decorated arrival, `event` completed in 866ms while `resolve` was still running (1.38s) — the pageview did not wait on the fetch, so the non-blocking path works.
 - [ ] **Regression: no double-fire** — the goals arriving late trigger a second `checkUrlGoals()`. `_sent` should dedup; confirm one conversion, not two, when the landing page itself matches the goal pattern.
 - [ ] **Regression: `/api/resolve` slow or down** — pageview must still fire on time; a failed fetch just leaves `goals: []` (today's behaviour). Confirm an outage degrades rather than breaks.
 - [ ] **Regression: Method-1 + `sl_scan=1`** — `fetchGoalsLate` is scan-guarded; confirm scanning still fires no conversions.
