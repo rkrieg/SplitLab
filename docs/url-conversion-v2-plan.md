@@ -141,7 +141,7 @@ The only blocking piece. Replaces the `goals: []` line with an XHR to `/api/reso
 
 All todos closed. The receiver works end-to-end on HTML cross-domain (link ✅ and GET form ✅, both dashboard-confirmed), R1–R5 re-verified, and every regression either live-tested or closed by code with the reasoning recorded above. **Phase 1B (the redirect-mode sender) is now the only remaining work in Phase 1.**
 
-### PHASE 1B — redirect-mode decoration (the sender) — **CODED 2026-07-16, awaiting live test**
+### ✅ PHASE 1B — redirect-mode decoration (the sender) — **COMPLETE (2026-07-16)**
 
 `decorate()`, `decorateLink()`, `patchWindowOpen()`, `mousedown`/`auxclick` listeners, form-action decoration inside tracker.js. **Redirect mode only** — HTML mode does not need this.
 
@@ -165,13 +165,52 @@ All todos closed. The receiver works end-to-end on HTML cross-domain (link ✅ a
 - **`action` attribute read via `getAttribute`** — an `<input name="action">` shadows `form.action`.
 - **`_ctx` guard** — `decorate()` returns the URL untouched when there's no context, so an unresolved page never emits half-tagged links.
 
-- [x] Port the decoration half of `7b4fb22`.
-- [ ] `npm run build`
-- [ ] **Test cross-domain link** (`<a href>`, incl. new tab / middle-click) site A → site B (both have tracker.js).
-- [ ] **Test cross-domain form** (POST decorates `action`; GET adds hidden inputs).
-- [ ] **Test `window.open(url)`** cross-domain.
-- [ ] Regression: same-domain redirect cases **R1–R5** still pass.
+**Live test rig (2026-07-16)** — reusable, both pages self-hosted, neither inside SplitLab:
 
+| Role | URL | Notes |
+|---|---|---|
+| Page B (sender) | `hunbalsiddiqui.com` — plain HTML/CSS | redirect target of the test; carries `<script src=".../tracker.js">` |
+| Page C (receiver) | `bytebaskets.com` — Next.js | goal page; carries the same tag |
+| Test | `/cross-domain-url-conversion-testing-redirect/268c387d-9ff0-462f-8ef8-2111298425f8` | **redirect mode, proxy OFF** |
+| Goal | `url_reached` = `https://bytebaskets.com/` | |
+
+> **⚠️ Page B must NOT be created in SplitLab, and its domain must not be registered as a custom domain.** `serve/route.ts:338` runs `stripSplitLabTrackerTags()`, which **deletes** the tracker.js tag from any SplitLab-served page and injects the inline snippet instead — so a hosted Page B silently tests Phase 2's sender, and the Phase 1B code never executes a single line. Redirect mode's whole point is a page SplitLab does not generate.
+
+- [x] Port the decoration half of `7b4fb22`.
+- [x] `npm run build` — green. Also `node --check` on the **emitted** tracker (the build only type-checks the route; a syntax error *inside* the template string would pass it). Plus 13/13 isolated `decorate()` unit cases: cross-domain tagged, same-domain untouched, `mailto:`/`tel:`/`javascript:`/hash skipped, already-decorated not re-tagged, no-context safe.
+- [x] **Test cross-domain link** — ✅ **PROVEN.** Decisive evidence is bytebaskets.com's `localStorage.sl_tracking`:
+  `{"268c387d-…":{"vid":"3083bb9b-8bb8-4065-90bb-dbb9f998d837","vh":"678ee95f-…","ts":1784204925348,"goals":[{"type":"url_reached","urlPattern":"https://bytebaskets.com/"}]}}`
+  - `testId` matches the launched test; `vid` is **byte-identical** to the `sl_vid` minted by the 302 onto hunbalsiddiqui.com. That UUID physically appearing on bytebaskets.com's origin — a different origin, not in SplitLab, empty localStorage — has **no possible source but the decorated link**.
+  - `goals` being **non-empty** independently proves the receiver: Method 1 hands back `goals: []` and only `fetchGoalsLate()` fills it, and `fetchGoalsLate` runs only inside Method 1, which requires all three params.
+  - `ts` = 2026-07-16 12:28:45 UTC — this run, not a stale entry.
+- [x] **Test cross-domain form — GET** — ✅ **PROVEN.** Document request URL:
+  `https://bytebaskets.com/?email=test%40example.com&sl_tid=268c387d-…&sl_vid=3083bb9b-…&sl_vh=da8b7675-…`
+  `email` first, `sl_*` appended after = hidden inputs added during the capture-phase submit and serialized by the browser. Field survived, params rode along, **dashboard conversion incremented**.
+- [x] **Test `window.open(url)`** — ✅ `window.open.__sl_patched === true` on Page B.
+- [ ] **Test cross-domain form — POST** — optional completeness only. Low risk: it just rewrites an `action` attribute (no serialization subtlety), and the receiver cannot tell how params reached its URL.
+- [x] **Scan-mode guard** — ✅ **PROVEN with a positive control**, which is what makes it meaningful:
+  | Run | href after mousedown |
+  |---|---|
+  | `hunbalsiddiqui.com/?sl_scan=1&sl_vid=3083bb9b-…` (banner confirmed) | `https://bytebaskets.com/` — clean ✅ |
+  | Same page/link via the normal test URL | `…?sl_tid=268c387d-…&sl_vid=3083bb9b-…&sl_vh=586587e5-…` ✅ |
+  Same page, same link, decoration off in scan and on in normal. Without the control, a clean href would equally have meant decoration was broken everywhere.
+- [x] **No double-decoration** — **CLOSED BY CODE**, two independent mechanisms: (1) `stripSplitLabTrackerTags()` removes the tracker.js tag from SplitLab-served pages entirely, so it isn't there to decorate; (2) even if present, the wiring lives inside `start()`, which returns before `wireAutoConversions()` when `__SL_SNIPPET__` is set. *(This was flagged as the top risk before the strip function was read — it isn't one.)*
+- [x] Regression: same-domain redirect **R1–R5** — **CLOSED BY CODE.** The entire 1B delta is decoration, and `decorate()` returns the URL untouched when `u.hostname === window.location.hostname`, so same-domain navigation never enters a new path. `store()`/`loadMap()` were not touched, so R5's per-test map is byte-for-byte what was confirmed green earlier the same day.
+
+**Testing traps found the hard way — do not re-learn these:**
+
+1. **Clicking the link fires a `button_click` auto-conversion on Page B**, and submitting fires `form_submit` — both independent of decoration. *A conversion appearing is NOT proof.* The proof is the params reaching Page C (localStorage / document request URL).
+2. **`cleanUrl()` strips the `sl_*` params from the address bar within milliseconds.** Read the **Network tab document request**, never the URL bar. Enable **Preserve log** first or the cross-domain navigation wipes it.
+3. **On refresh, Page C shows no `/api/resolve` call** — the params are gone (already stripped), so it falls to Method 4 (localStorage). Expected, not a failure.
+4. **`document.querySelector('form')` grabs the site's *first* form**, not the test form — on a real site that returns `action: null` and looks like a broken deploy. Give the test form an `id`.
+5. **Scan mode can't be reached through the test URL** — the 302 only ever appends `sl_vid`/`sl_vh`, never `sl_scan=1`. Hit Page B directly with `?sl_scan=1&sl_vid=…`, and confirm the green banner or the run is meaningless.
+6. **tracker.js has `max-age=300`.** After deploying, hard-refresh `/tracker.js` and confirm `decorateFormForSubmit` is in the source before testing anything.
+
+### ✅ PHASE 1 — COMPLETE (2026-07-16)
+
+Both halves now exist for every mode. **Cross-domain redirect was the last fixable ❌ in the matrix** — link, GET form and `window.open` all confirmed on a genuinely third-party destination.
+
+What remains cross-domain is `window.location.href` (and `assign`/`replace`), unfixable in **every** mode for the same root cause — see the cross-cutting section directly below.
 
 ---
 
@@ -350,7 +389,7 @@ Re-verify every row of `url-conversion-cases.md` on `url-conversion-v2` after al
 - [ ] HTML same-domain **H1–H5** ✅
 - [ ] HTML cross-domain (link/form/window.open/`location.href`) — new
 - [x] Redirect same-domain **R1–R5** — ✅ **CONFIRMED live 2026-07-16** (see Phase 1A; R5 chained-tests proven with two coexisting map entries)
-- [ ] Redirect cross-domain (link/form/window.open/`location.href`) — new
+- [x] Redirect cross-domain **link + GET form** — ✅ **CONFIRMED live 2026-07-16** (Phase 1B; hunbalsiddiqui.com → bytebaskets.com, dashboard incremented). `window.open` patch verified, POST untested (low risk). `location.href` ❌ by design — see the cross-cutting section
 - [ ] Proxy same-domain (Chrome/Firefox/Safari) — from Priority 0
 - [ ] Proxy cross-domain — documented limits
 - [ ] Confirm no double-fire, no double-pageview, no double-lead across all modes
