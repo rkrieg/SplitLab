@@ -510,8 +510,101 @@ Add a `location.href` button to `hunbalsiddiqui.com`: `<button onclick="window.l
 - [x] **Redirect mode** (tracker.js): cross-domain `location.href` → **✅ PASS live end-to-end 2026-07-16, DASHBOARD CONFIRMED.** Client code unchanged. Proven three ways: console, a real `onclick` button, and `location.assign()`.
   - **`location.assign()` run (~15:14:46Z, `vh: cc76f2d4-…`) is the decisive one — the dashboard conversion count incremented.** Every run before it proved only that context *arrived*; `sendBeacon` is fire-and-forget, so nothing had yet proven a conversion was *recorded*. This closes the chain: `location.href`/`assign()` → cancelled → decorated → cross-origin → Method 1 rebuild → goal match → **conversion in analytics**.
 - [x] `location.assign()` cross-domain — **✅ PASS live, dashboard confirmed** (see above).
-- [ ] **HTML mode** (snippet): same, from a SplitLab-hosted page. ⚠️ Remember `serve/route.ts:338` strips tracker.js tags from SplitLab-served pages — Page B must NOT be SplitLab-hosted for the redirect test.
-- [ ] **Proxy mode** (tracker.js inside iframe): cross-domain `location.href` from inside the iframe. **This is the Phase 5 question.** Genuinely unknown — if params travel in the URL, the storage-partition problem stops mattering and the destination reads them normally. Plausible but do not promise it.
+- [x] `location.replace()` cross-domain — **✅ PASS live, dashboard confirmed.** See the navigation-type fix below.
+- [x] 🎯 **Conditional redirect driven by form input — ✅ PASS live, dashboard confirmed (2026-07-16, `vh: aabebdc1-…`).** The highest-risk assumption in the phase, and it held: `e.formData` **is** `null` after the client's own `preventDefault()`, so the guard does not eat the validate-then-branch pattern. This was reasoned from spec only until now.
+
+### ✅ REDIRECT MODE — COMPLETE (2026-07-16)
+
+Every cross-domain `location.href` case passes live with the dashboard incrementing. Three clean runs, distinct `vh` each (`b40260fe`, `9a976f33`, `aabebdc1`), all re-run **after** the navigation-type fix.
+
+| Case | Result |
+|---|---|
+| `location.href` | ✅ dashboard confirmed |
+| `location.assign()` | ✅ dashboard confirmed |
+| `location.replace()` | ✅ dashboard confirmed + history semantics preserved |
+| Conditional redirect from form branch | ✅ dashboard confirmed |
+| 🔴 Plain link — converts **exactly once** | ✅ **PASS live** — no double-count. The double-decoration risk is closed: `mousedown` decorates the `href` first, so `watchNavigations` sees `dec === dest` and early-returns. Previously assumed, then unit-tested, now live-proven |
+| Same-domain `location.href` — untouched | ✅ **PASS live** — landed on `https://www.hunbalsiddiqui.com/` with **no `sl_*` params**. `decorate()`'s same-hostname early-return holds; internal navigation is never cancelled or decorated |
+| Download (`<a download>` cross-domain) | ⬜ Not run. **Near-zero risk — the test as designed cannot exercise the guard** (see below) |
+
+> **Why same-domain carries no params — and why that is correct, not a gap.**
+> Asked during testing: *if a goal is a same-domain URL, how is it tracked with no params?* It does not need them. Context lives in that origin's `localStorage` (`sl_tracking`, [route.ts:46](../src/app/tracker.js/route.ts#L46)); after any same-origin navigation tracker.js reboots, `loadMap()` ([route.ts:86](../src/app/tracker.js/route.ts#L86)) reads it straight back, and the goals are checked normally. Params exist **only** to carry context across an origin boundary that `localStorage` cannot cross. Decorating same-domain URLs would be pure noise in the client's address bar. This is the one rule at the top of this doc, and R1–R5 confirmed it live.
+
+> **Download guard — corrected assessment (2026-07-16).** Originally flagged 🔴 "the single highest-value regression test." **That was wrong.** Browsers ignore the `download` attribute on **cross-origin** URLs, so such a link never becomes a download navigation, `e.downloadRequest` stays `null`, and the guard never trips. Following it through, the guard is near-unreachable: same-origin downloads are already protected by `decorate()`'s hostname early-return; cross-origin `Content-Disposition: attachment` is decided by the *response*, long after `navigate` fires, so the download still happens and the extra params are ignored. **Keep the guard** — it is free, defensive, and spec-sanctioned — but it is belt-and-braces, not load-bearing.
+
+### 🔧 Navigation-type fix (2026-07-16) — found by live test, not by review
+
+**Symptom:** after `location.replace()` cross-domain, the back button returned to the page — which `replace()` exists to prevent.
+
+**Cause:** we cancel the visitor's navigation and re-issue our own. Re-issuing everything with `location.href` **downgraded every `replace` into a push**. Conversions were unaffected; the client's history semantics were not.
+
+**Why it was worth fixing** (the argument that settled it): this is not us preserving the client's code out of politeness — *we* cancelled the navigation, so re-issuing it as the wrong kind is **our** bug. Intercept a letter to stamp it, re-post it the same class. The concrete harm: a checkout doing `replace('/thanks')` so back cannot reach the payment form; install SplitLab and back reaches it again. Nobody would suspect the A/B tool.
+
+**Fix** — mirror the type ([route.ts:231](../src/app/tracker.js/route.ts#L231), [tracking.ts:231](../src/lib/tracking.ts#L231)):
+```js
+if (e.navigationType === "replace") window.location.replace(dec);
+else window.location.href = dec;
+```
+
+**Unexpected bonus:** browsers classify an early, no-user-gesture `location.href` as **`replace`** to stop sites trapping people in history. Without this fix we were overriding that safety behaviour too. The fix is more correct than the reasoning that motivated it.
+
+**Verified:** ✅ live — back now skips the page entirely (landed on the SplitLab link before it). Unit suite rewritten to model the **nested** navigate event our own re-navigation fires — the real risk was an infinite loop (replace → navigate → replace → …), which the old suite could not see because it never simulated the follow-on event. Terminates at exactly 1 re-entry; **16/16 on both emitted files**.
+- [x] **HTML mode** (snippet): **✅ PASS live end-to-end, dashboard confirmed (2026-07-16).** SplitLab-hosted page (Paste HTML), test `b8fc1df6-3f6e-48ef-a6d1-9b6f8bdacacb`, goal `url_reached` = `https://bytebaskets.com/`. Three clean runs, distinct `vh` each. ⚠️ `serve/route.ts:338` strips tracker.js tags from SplitLab-served pages — so the *same* source file works for both modes, but Page B must NOT be SplitLab-hosted for the **redirect** test.
+
+### ✅ HTML MODE — COMPLETE (2026-07-16)
+
+Proven **independently** of tracker.js — the snippet is a separate file with its own `decorate()` and its own listeners, so the redirect-mode result does not transfer.
+
+| Case | `vh` | Result |
+|---|---|---|
+| `location.href` cross-domain | `7a8e3b58-…` | ✅ dashboard confirmed |
+| Conditional redirect from form branch | `80331b98-…` | ✅ dashboard confirmed |
+| 🔴 Plain link — exactly once | `6bfd418d-…` | ✅ **+1, no double-count** |
+
+Double-decoration is now closed in **both** files by live test, not by inference.
+
+**Test-rig notes:** use **Paste HTML**, not Paste a URL (that creates a redirect variant — see the `checkFrameable` trap above). Open via the raw test URL `/<slug>/<testId>` in incognito, never the dashboard Open button (`sl_vh` injection suppresses events). Verify the snippet loaded with `!!window.SplitLab` — there is no external script to check, the snippet is inline.
+- [x] **Proxy mode** (tracker.js inside iframe): **✅ PASS live end-to-end, dashboard confirmed (2026-07-16).** Test `609c84aa-a5b8-4cc5-9c5f-70a0ea69103c`, proxy ON, iframe → `www.hunbalsiddiqui.com/cross-domain.html`, top frame `dev.trysplitlab.com`. **Phase 5 is answered: proxy cross-domain works, for the first time ever.**
+
+### ✅ PROXY MODE — COMPLETE (2026-07-16) — and it overturns a documented hard limit
+
+Evidence — `sl_tracking` **inside the iframe** on bytebaskets.com (`isTop: false`, `topHost: CROSS-ORIGIN (blocked)` — frame identity confirmed):
+
+```json
+{"609c84aa-a5b8-4cc5-9c5f-70a0ea69103c":{"vid":"5bc7c37d-3201-4f74-861f-61552e8bf932",
+ "vh":"ebcd5d25-4f9b-45c9-ac6e-ee6bdd53dd7e","ts":1784218882081,
+ "goals":[{"id":"2ff01d08-…","type":"url_reached","urlPattern":"https://bytebaskets.com/"}]}}
+```
+
+`goals` non-empty ⇒ Method 1 ⇒ all three params arrived. Dashboard incremented.
+
+**Why the "partitioned storage kills proxy" reasoning was wrong.** The partition only matters if context has to **persist across** the boundary. It does not — it rides in the **URL**. The iframe's tracker.js decorates the outbound jump; the destination reads the params and rebuilds context in its own (partitioned, but perfectly writable) storage. The partition was never the obstacle; the *absence of a sender* was.
+
+**This makes a code comment stale** — [serve/route.ts:200-203](../src/app/api/serve/route.ts#L200-L203), directly above the proxy branch:
+> *"`url_reached` goals are unreliable here — the wrapper URL never changes as the visitor navigates inside the iframe, and modern browsers partition third-party iframe storage, so tracker.js inside the iframe may lose its context. **Don't promise URL tracking for proxy variants.**"*
+
+True when written. **Now obsolete for the cross-domain case** — should be corrected.
+
+### ⚠️ Testing trap that cost this session a wrong diagnosis — do not re-learn
+
+**An early proxy reading showed `sl_ctx` and `localStorage.sl_tracking === undefined`, which looked exactly like proxy failing. It was not — the next reading, from a confirmed-iframe context, showed `sl_tracking` present and the dashboard recorded the conversion.**
+
+The `sl_ctx` sighting was never fully explained. What is certain from the code: `sl_ctx` is written **only** by the snippet (`tracking.ts`), `sl_tracking` **only** by tracker.js — zero overlap, verified by grep — and the snippet only runs on SplitLab-served origins. The observed `sl_ctx` held the proxy test's own id and variant (`5b…` = `5bc7c37d`), matching what the wrapper snippet on the SplitLab domain would write. Proxy has **two** contexts and DevTools defaults to `top`:
+
+| Frame | Origin | Storage key | Written by |
+|---|---|---|---|
+| **top** (wrapper) | SplitLab domain | **`sl_ctx`** | the inline snippet (`proxyTrackingSnippet`, [serve/route.ts:230](../src/app/api/serve/route.ts#L230)) |
+| **iframe** | client's real origin | **`sl_tracking`** | tracker.js |
+
+Reading `top` gives `sl_ctx` and `localStorage.sl_tracking === undefined` — which **looks exactly like proxy failing**. It is not; it is the wrong frame. Compounding it: `sl_ctx` on a non-SplitLab domain spawned a whole (wrong) theory that bytebaskets.com had become SplitLab-served and the rig was broken.
+
+**Always take one atomic reading** rather than several commands that may cross contexts:
+```js
+({ host: location.hostname, isTop: window === window.top,
+   topHost: (()=>{try{return top.location.hostname}catch(e){return 'CROSS-ORIGIN (blocked)'}})(),
+   keys: Object.keys(localStorage), url: location.href })
+```
+`isTop: false` + `topHost: CROSS-ORIGIN (blocked)` is what proves you are in the iframe. And dump **all** keys (`JSON.stringify(localStorage)`) — probing two named keys is what hid the answer.
 - [ ] `location.assign()` / `location.replace()` cross-domain — caught by the same listener (both are push/replace navigationType).
 - [ ] 🎯 **Conditional redirect driven by form input** — the most common real-world shape of this bug, raised 2026-07-16:
   ```js
@@ -526,16 +619,17 @@ Add a `location.href` button to `hunbalsiddiqui.com`: `<button onclick="window.l
 
 **Per browser — proving both sides of the feature detect:**
 
-- [ ] **Chrome** (supported, ≥102) — the happy path. Primary rig.
-- [ ] **Safari ≥26.2** (supported) — confirms the Dec-2025 impl actually behaves. Safari is missing `precommitHandler`; we don't use it, but verify.
-- [ ] **Safari <26.2 or Firefox <147** (UNSUPPORTED) — **the critical negative test.** Must degrade *silently* to today's behaviour: no console error, links/forms/`window.open` still decorate and still convert. Proves the feature detect. If no old Safari is available, simulate: `delete window.navigation` before tracker.js loads.
-- [ ] Firefox ≥147 — expected ✅, same mechanism.
+- [x] **Chrome** (supported, ≥102) — **✅ PASS**, primary rig for all three modes.
+- [x] **Edge** (Chromium, ≥102) — **✅ PASS** on `location.href`.
+- [x] **Firefox ≥147** — **✅ PASS** on `location.href`. Confirms Gecko's Jan-2026 implementation behaves, not just Chromium's.
+- [ ] **Safari ≥26.2** (supported) — confirms the Dec-2025 WebKit impl actually behaves. Safari is missing `precommitHandler`; we don't use it, but verify. **The only untested engine — Chromium and Gecko are both green, WebKit is a third independent implementation.**
+- [ ] **UNSUPPORTED tier** (Safari <26.2, Firefox <147, Chrome <102) — **the critical negative test.** Must degrade *silently*: no console error, links/forms/`window.open` still decorate and still convert. Simulate by deleting `window.navigation` **before** tracker.js loads.
 
 **Regressions — the ones that can actually break:**
 
-- [ ] 🔴 **Download regression** — cross-domain `<a href="https://…/file.pdf" download>` still **downloads**, does not navigate. This is the single highest-value regression test in the phase; it's the one thing Phase 4 can newly break.
-- [ ] 🔴 **Double-decoration** — cross-domain *link* click: confirm exactly ONE navigation and ONE conversion (mousedown decorates → `dec === dest` → listener early-returns). Verify; do not assume.
-- [ ] **Same-domain navigation untouched** — `location.href` to same origin never hits `preventDefault()`. Confirm no double-navigation.
+- [x] ~~🔴 **Download regression**~~ — **downgraded, not run.** The test as designed cannot exercise the guard (browsers ignore `download` cross-origin) and the guard turns out near-unreachable. See the corrected assessment above. Behaviour is identical with and without Phase 4, because the `mousedown` linker already decorated such links.
+- [x] 🔴 **Double-decoration** — **✅ PASS live (redirect mode)**, exactly one conversion. Closed.
+- [x] **Same-domain navigation untouched** — **✅ PASS live (redirect mode)**, no `sl_*` params, no double-navigation.
 - [ ] **Back/forward** untouched (`navigationType` guard).
 - [ ] **Cross-domain GET form** still works — `e.formData` guard means the hidden-input path still owns it. Confirm no interference with Phase 1B/2.
 - [ ] **Scan mode** (`?sl_scan=1`) — listener dormant, no navigation cancelled. Would break dashboard goal-scanning badly if it fires.
