@@ -146,6 +146,82 @@ function buildTrackerScript(appUrl: string): string {
     } catch(e) {}
   }
 
+  // ─── Cross-domain linker (mirrors the inline snippet in src/lib/tracking.ts) ─
+  // localStorage never crosses origins, so the only way context survives a jump
+  // to another domain is inside the URL. Tag outbound cross-domain navigations
+  // with sl_tid/sl_vid/sl_vh; tracker.js on the destination rebuilds context
+  // from them (detect Method 1) and cleanUrl() strips them there.
+  //
+  // This is the sender half for redirect mode: SplitLab 302s the visitor to the
+  // client's own page, which has no inline snippet — only this script — so
+  // without this, a cross-domain jump from that page carried no context.
+  //
+  // window.location.href stays unfixable here: the location object cannot be
+  // intercepted by any script. That needs SplitLab.go(url) (Phase 3).
+
+  function decorate(url) {
+    try {
+      if (!_ctx || !url) return url;
+      var u = new URL(String(url), window.location.href);
+      if (u.protocol !== "http:" && u.protocol !== "https:") return url;
+      if (u.hostname === window.location.hostname) return url;
+      if (u.searchParams.get("sl_vid") || u.searchParams.get("sl_tid")) return url;
+      u.searchParams.set("sl_tid", _ctx.tid);
+      u.searchParams.set("sl_vid", _ctx.vid);
+      u.searchParams.set("sl_vh", _ctx.vh);
+      return u.toString();
+    } catch(e) { return url; }
+  }
+
+  function decorateLink(a) {
+    try {
+      var dec = decorate(a.href);
+      if (dec !== a.href) a.href = dec;
+    } catch(e) {}
+  }
+
+  function decorateFormForSubmit(form) {
+    try {
+      if (!_ctx || !form || !form.getAttribute) return;
+      // Read action via getAttribute — an input named "action" shadows form.action
+      var action = form.getAttribute("action");
+      if (!action) return;
+      var dec = decorate(action);
+      if (dec === action) return;
+      var method = (form.getAttribute("method") || "get").toLowerCase();
+      if (method === "get") {
+        // GET submits replace the action's query string with the form fields,
+        // so carry the params as hidden inputs instead. Hidden inputs are
+        // invisible to every form consumer here (fieldKey skips type=hidden),
+        // so neither lead capture nor the fields: selector sees them.
+        ["sl_tid", "sl_vid", "sl_vh"].forEach(function(name) {
+          if (form.querySelector && form.querySelector("input[name='" + name + "']")) return;
+          var hidden = document.createElement("input");
+          hidden.type = "hidden";
+          hidden.name = name;
+          hidden.value = name === "sl_tid" ? _ctx.tid : name === "sl_vid" ? _ctx.vid : _ctx.vh;
+          form.appendChild(hidden);
+        });
+      } else {
+        form.setAttribute("action", dec);
+      }
+    } catch(e) {}
+  }
+
+  function patchWindowOpen() {
+    try {
+      var origOpen = window.open;
+      if (!origOpen || origOpen.__sl_patched) return;
+      var patched = function() {
+        var args = Array.prototype.slice.call(arguments);
+        if (args[0]) args[0] = decorate(String(args[0]));
+        return origOpen.apply(window, args);
+      };
+      patched.__sl_patched = true;
+      window.open = patched;
+    } catch(e) {}
+  }
+
   // ─── Scan mode ─────────────────────────────────────────────────────────────
 
   var _scanBanner = null;
@@ -827,6 +903,8 @@ function buildTrackerScript(appUrl: string): string {
 
     document.addEventListener("submit", function(e) {
       var form = e.target;
+      // Capture phase, so this runs before the browser serializes the form
+      if (!_scanMode) decorateFormForSubmit(form);
       _leadSent = true; // prevent JS-submit patch from double-sending
       captureFormLead(form);
       var formNth = form ? formDocumentIndex(form) : -1;
@@ -840,9 +918,23 @@ function buildTrackerScript(appUrl: string): string {
       });
     }, true);
 
+    // Decorate cross-domain links before the browser follows them. mousedown
+    // precedes every click variant, and middle-click fires auxclick (not click)
+    // in some browsers — cover all three so new-tab opens are decorated too.
+    function decorateFromEvent(e) {
+      if (_scanMode) return;
+      var t = e.target;
+      if (!t || !t.closest) return;
+      var a = t.closest("a[href]");
+      if (a) decorateLink(a);
+    }
+    document.addEventListener("mousedown", decorateFromEvent, true);
+    document.addEventListener("auxclick", decorateFromEvent, true);
+
     document.addEventListener("click", function(e) {
       var el = e.target;
       if (!el || !el.closest) return;
+      decorateFromEvent(e);
 
       // Check for tel: link clicks (call conversions)
       var link = el.closest("a[href^='tel:']");
@@ -1095,6 +1187,7 @@ function buildTrackerScript(appUrl: string): string {
       registerFormFields();
       watchForNewFields();
       patchNetworkForJsSubmit();
+      if (!_scanMode) patchWindowOpen();
     }
     if (document.readyState === "loading") {
       document.addEventListener("DOMContentLoaded", start);

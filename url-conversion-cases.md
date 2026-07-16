@@ -31,7 +31,7 @@ All verified via code + simulation.
 | R2 | `window.location.href = "/thanks"` | ✅ Works |
 | R3 | Typed URL / bookmark / meta refresh | ✅ Works |
 | R4 | SPA pushState / replaceState to `/thanks` | ✅ Works |
-| R5 | Chained tests (A then B, then A's goal URL) | ✅ Works (the per-test map fix on `url-conversion-v2`) |
+| R5 | Chained tests (A then B, then A's goal URL) | ✅ **CONFIRMED live 2026-07-16** — two tests coexisted as separate `sl_tracking` keys; A's entry untouched by B's write (`ts` unchanged), and A's goal URL fired A's own variant. The per-test map fix on `url-conversion-v2` holds after the tracker.js change |
 
 **Why R2 works:** after the full page load on the same origin, tracker.js re-boots and reads `sl_tracking` from that origin's `localStorage` — it never needs to touch `location.href` at all. We don't intercept the navigation; we simply don't need to.
 
@@ -41,11 +41,19 @@ All verified via code + simulation.
 
 Context has to be *carried* in the URL, so it now depends on **how** the visitor leaves the page.
 
+> **✅ UPDATE 2026-07-16 — cross-domain now WORKS from HTML mode.** Live-verified end to end on dev: a hosted page's link to `hunbalsiddiqui.com/thanks.html` fired the conversion and the dashboard count incremented. Two pieces landed on `url-conversion-v2`:
+> 1. **Sender** — the inline snippet decorates outbound links / form actions / `window.open` with `sl_tid`/`sl_vid`/`sl_vh` (commit `912ed86`). Verified 13/13 on a dedicated harness.
+> 2. **Receiver** — tracker.js Method 1 now fetches the variant's goals from `/api/resolve` instead of using `goals: []`, so the destination has patterns to match (commit `4022502`, non-blocking so the pageview never waits).
+>
+> **Both halves are required** — the sender alone attaches params that nothing reads.
+
 | Navigation to a **different** domain | Result |
 |---|---|
-| Link click `<a href>` / new tab / middle-click | ❌ on this branch — ✅ only after the unmerged `conversion-url-fixes` linker |
-| Form submit (POST / GET) | ❌ on this branch — ✅ after linker |
-| `window.open(url)` | ❌ on this branch — ✅ after linker |
+| Link click `<a href>` (HTML mode) | ✅ **CONFIRMED live (2026-07-16)** — conversion fired, dashboard count incremented |
+| Form submit — **GET** (HTML mode) | ✅ **CONFIRMED live end-to-end 2026-07-16** — hidden inputs added during the submit event **are** serialized by the browser into the query string; survived a 307; destination entered Method 1 (`resolve` initiator `tracker.js:952` = `fetchGoalsLate`, which requires all three params); conversion fired and dashboard confirmed |
+| Form submit — **POST** (HTML mode) | ⚠️ Decoration verified live (`action` rewritten); end-to-end not re-tested. Low risk — receiver is proven and can't tell how params reached its URL |
+| `window.open(url)` (HTML mode) | ⚠️ Patch verified live (`__sl_patched === true`); end-to-end conversion not yet re-tested |
+| Link / GET form / POST form / `window.open` from **Redirect mode** | ⏳ **Phase 1B coded 2026-07-16** — sender ported into tracker.js (`decorate`/`decorateLink`/`decorateFormForSubmit`/`patchWindowOpen` + mousedown/auxclick/click). Build green, 13/13 decorate unit cases green. **Live test still pending** |
 | `window.location.href = otherdomain.com/...` | ❌ **Cannot be fixed automatically** — `location` is uninterceptable; needs manual `SplitLab.go(url)` (exists in `7b4fb22`, commented out) |
 | `location.assign()` / `location.replace()` | ❌ Same as above |
 | meta refresh / server-side redirect | ❌ Only survives if it forwards the query string |
