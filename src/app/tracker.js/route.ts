@@ -46,7 +46,6 @@ function buildTrackerScript(appUrl: string): string {
   var STORAGE_KEY = "sl_tracking";
   var _sent = {};
   var _ctx = null;
-  var _scanMode = false;
 
   // ─── Utility ────────────────────────────────────────────────────────────────
 
@@ -74,61 +73,14 @@ function buildTrackerScript(appUrl: string): string {
     } catch(e) {}
   }
 
-  // Context storage is a per-test map: { [testId]: { vid, vh, ts, goals } }.
-  // A single-slot value here let a second test's arrival overwrite the first
-  // test's context, silently losing its pending url_reached conversions.
-  var CTX_TTL = 90 * 24 * 60 * 60 * 1000; // matches the 90-day sl_visitor cookie
-
-  function saveMap(m) {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(m)); } catch(e) {}
-  }
-
-  function loadMap() {
-    try {
-      var m = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
-      if (!m || typeof m !== "object") return {};
-      // Pre-map single-slot value ({tid, vid, vh, goals}) must be migrated
-      // before any validation or save, or returning visitors lose context
-      if (m.tid && m.vid && m.vh) {
-        var old = m;
-        m = {};
-        m[old.tid] = { vid: old.vid, vh: old.vh, ts: Date.now(), goals: old.goals || [] };
-        saveMap(m);
-      }
-      var now = Date.now();
-      var changed = false;
-      for (var k in m) {
-        var entry = m[k];
-        if (!entry || !entry.vid || !entry.vh || !entry.ts || now - entry.ts > CTX_TTL) {
-          delete m[k];
-          changed = true;
-        }
-      }
-      if (changed) saveMap(m);
-      return m;
-    } catch(e) { return {}; }
-  }
-
   function store(ctx) {
-    try {
-      if (!ctx || !ctx.tid || !ctx.vid || !ctx.vh) return;
-      var m = loadMap();
-      m[ctx.tid] = { vid: ctx.vid, vh: ctx.vh, ts: Date.now(), goals: ctx.goals || [] };
-      saveMap(m);
-    } catch(e) {}
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(ctx)); } catch(e) {}
   }
 
   function load() {
     try {
-      // Current test = most-recent entry — preserves single-slot behavior so
-      // form/button conversions and leads keep attributing exactly as before
-      var m = loadMap();
-      var best = null;
-      var bestTid = null;
-      for (var tid in m) {
-        if (!best || m[tid].ts > best.ts) { best = m[tid]; bestTid = tid; }
-      }
-      if (best) return { tid: bestTid, vid: best.vid, vh: best.vh, goals: best.goals || [] };
+      var d = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
+      if (d && d.tid && d.vid && d.vh) return d;
     } catch(e) {}
     return null;
   }
@@ -143,146 +95,6 @@ function buildTrackerScript(appUrl: string): string {
         var clean = window.location.pathname + (qs ? "?" + qs : "") + window.location.hash;
         history.replaceState(null, "", clean);
       }
-    } catch(e) {}
-  }
-
-  // ─── Cross-domain linker (mirrors the inline snippet in src/lib/tracking.ts) ─
-  // localStorage never crosses origins, so the only way context survives a jump
-  // to another domain is inside the URL. Tag outbound cross-domain navigations
-  // with sl_tid/sl_vid/sl_vh; tracker.js on the destination rebuilds context
-  // from them (detect Method 1) and cleanUrl() strips them there.
-  //
-  // This is the sender half for redirect mode: SplitLab 302s the visitor to the
-  // client's own page, which has no inline snippet — only this script — so
-  // without this, a cross-domain jump from that page carried no context.
-  //
-  // Links, forms and window.open are patchable, so they are handled below.
-  // window.location.href is not — but see watchNavigations(), which cancels the
-  // navigation it triggers rather than trying to intercept the location object.
-
-  // Captured in detect() before cleanUrl() strips them, so decoration works
-  // during the ~1s Method 2 spends blocked on /api/resolve. Without this, _ctx
-  // is still null and anything clicked in that window leaves undecorated and
-  // silently loses the conversion. sl_tid is the only value we lack that early,
-  // and the destination does not need it: sl_vid alone puts it into Method 2,
-  // which resolves the rest itself.
-  var _bootVid = null;
-  var _bootVh = null;
-
-  function decorate(url) {
-    try {
-      if (!url) return url;
-      // Prefer resolved context; fall back to the raw boot params before it lands.
-      var tid = _ctx ? _ctx.tid : null;
-      var vid = _ctx ? _ctx.vid : _bootVid;
-      var vh  = _ctx ? _ctx.vh  : _bootVh;
-      if (!vid) return url;
-      var u = new URL(String(url), window.location.href);
-      if (u.protocol !== "http:" && u.protocol !== "https:") return url;
-      if (u.hostname === window.location.hostname) return url;
-      if (u.searchParams.get("sl_vid") || u.searchParams.get("sl_tid")) return url;
-      if (tid) u.searchParams.set("sl_tid", tid);
-      u.searchParams.set("sl_vid", vid);
-      if (vh) u.searchParams.set("sl_vh", vh);
-      return u.toString();
-    } catch(e) { return url; }
-  }
-
-  function decorateLink(a) {
-    try {
-      var dec = decorate(a.href);
-      if (dec !== a.href) a.href = dec;
-    } catch(e) {}
-  }
-
-  function decorateFormForSubmit(form) {
-    try {
-      if (!form || !form.getAttribute) return;
-      // Read action via getAttribute — an input named "action" shadows form.action
-      var action = form.getAttribute("action");
-      if (!action) return;
-      var dec = decorate(action);
-      if (dec === action) return;
-      var method = (form.getAttribute("method") || "get").toLowerCase();
-      if (method === "get") {
-        // GET submits replace the action's query string with the form fields,
-        // so carry the params as hidden inputs instead. Hidden inputs are
-        // invisible to every form consumer here (fieldKey skips type=hidden),
-        // so neither lead capture nor the fields: selector sees them.
-        //
-        // Read the values back out of the decorated URL rather than off _ctx, so
-        // this always carries exactly what decorate() decided — including the
-        // early case where sl_tid is not known yet and must be omitted.
-        var decParams = new URL(dec, window.location.href).searchParams;
-        ["sl_tid", "sl_vid", "sl_vh"].forEach(function(name) {
-          var val = decParams.get(name);
-          if (!val) return;
-          if (form.querySelector && form.querySelector("input[name='" + name + "']")) return;
-          var hidden = document.createElement("input");
-          hidden.type = "hidden";
-          hidden.name = name;
-          hidden.value = val;
-          form.appendChild(hidden);
-        });
-      } else {
-        form.setAttribute("action", dec);
-      }
-    } catch(e) {}
-  }
-
-  function patchWindowOpen() {
-    try {
-      var origOpen = window.open;
-      if (!origOpen || origOpen.__sl_patched) return;
-      var patched = function() {
-        var args = Array.prototype.slice.call(arguments);
-        if (args[0]) args[0] = decorate(String(args[0]));
-        return origOpen.apply(window, args);
-      };
-      patched.__sl_patched = true;
-      window.open = patched;
-    } catch(e) {}
-  }
-
-  // The only hook that catches window.location.href = "https://otherdomain/...".
-  // The location object itself cannot be patched, but the Navigation API sees the
-  // navigation before it commits, so we cancel the undecorated jump and re-issue
-  // it decorated. Note intercept() is NOT usable here — canIntercept is always
-  // false cross-origin — but cancelable is true for non-traverse navigations,
-  // which is all we need.
-  //
-  // Chrome/Edge 102+, Safari 26.2+, Firefox 147+ (~87% of traffic). Everywhere
-  // else this is a no-op and cross-domain location.href keeps failing silently,
-  // exactly as it does today.
-  function watchNavigations() {
-    try {
-      if (!window.navigation || !window.navigation.addEventListener) return;
-      window.navigation.addEventListener("navigate", function(e) {
-        try {
-          // downloadRequest: a cross-domain <a download> would otherwise be
-          // decorated and re-navigated, turning a download into a page load.
-          // formData: leave form submits to decorateFormForSubmit above.
-          // Both read undefined on older impls — falsy, so the guard is fail-safe.
-          if (!e.cancelable || e.formData || e.downloadRequest) return;
-          // Skips traverse/reload, so back/forward are untouched.
-          if (e.navigationType !== "push" && e.navigationType !== "replace") return;
-          var dest = e.destination && e.destination.url;
-          if (!dest) return;
-          // decorate() early-returns on same-hostname, non-http(s) and
-          // already-tagged URLs, so same-domain navigation never gets cancelled.
-          // Links are already decorated on mousedown, so they land here as
-          // dec === dest and pass straight through — no double navigation.
-          var dec = decorate(dest);
-          if (dec === dest) return;
-          e.preventDefault();
-          // Mirror the original navigation type. Re-issuing a replace() as an
-          // href would push a history entry the page deliberately did not want,
-          // making a page reachable by the back button that replace() exists to
-          // make unreachable (post-payment, post-submit). Confirmed live.
-          if (e.navigationType === "replace") window.location.replace(dec);
-          else window.location.href = dec;
-        } catch(err) {}
-      });
     } catch(e) {}
   }
 
@@ -967,8 +779,6 @@ function buildTrackerScript(appUrl: string): string {
 
     document.addEventListener("submit", function(e) {
       var form = e.target;
-      // Capture phase, so this runs before the browser serializes the form
-      if (!_scanMode) decorateFormForSubmit(form);
       _leadSent = true; // prevent JS-submit patch from double-sending
       captureFormLead(form);
       var formNth = form ? formDocumentIndex(form) : -1;
@@ -982,23 +792,9 @@ function buildTrackerScript(appUrl: string): string {
       });
     }, true);
 
-    // Decorate cross-domain links before the browser follows them. mousedown
-    // precedes every click variant, and middle-click fires auxclick (not click)
-    // in some browsers — cover all three so new-tab opens are decorated too.
-    function decorateFromEvent(e) {
-      if (_scanMode) return;
-      var t = e.target;
-      if (!t || !t.closest) return;
-      var a = t.closest("a[href]");
-      if (a) decorateLink(a);
-    }
-    document.addEventListener("mousedown", decorateFromEvent, true);
-    document.addEventListener("auxclick", decorateFromEvent, true);
-
     document.addEventListener("click", function(e) {
       var el = e.target;
       if (!el || !el.closest) return;
-      decorateFromEvent(e);
 
       // Check for tel: link clicks (call conversions)
       var link = el.closest("a[href^='tel:']");
@@ -1061,108 +857,31 @@ function buildTrackerScript(appUrl: string): string {
     });
   }
 
-  // Fire OTHER tests' saved url_reached goals from the per-test map, each
-  // attributed to the variant/visitor stored when that test was seen. The
-  // current test's own goals are handled by checkUrlGoals(). Dedup is
-  // in-memory per page-load only (like _sent) so raw goal-hit counts in
-  // analytics are unchanged.
-  var _sentStored = {};
-  function checkStoredUrlGoals() {
-    if (_scanMode) return;
-    var m = loadMap();
-    var url = window.location.href;
-    var pathname = window.location.pathname + window.location.search;
-    var currentTid = _ctx && _ctx.tid;
-    for (var tid in m) {
-      if (tid === currentTid) continue;
-      var entry = m[tid];
-      (entry.goals || []).forEach(function(goal) {
-        if (goal.type !== "url_reached" || !goal.urlPattern) return;
-        if (_sentStored[goal.id]) return;
-        try {
-          var pattern = new RegExp(goal.urlPattern, "i");
-          if (pattern.test(url) || pattern.test(pathname)) {
-            _sentStored[goal.id] = true;
-            send({
-              testId: tid,
-              variantId: entry.vid,
-              visitorHash: entry.vh,
-              type: "conversion",
-              goalId: goal.id
-            });
-          }
-        } catch(e) {}
-      });
-    }
-  }
-
   function wireUrlGoals() {
-    function checkAllUrlGoals() {
-      checkUrlGoals();
-      checkStoredUrlGoals();
-    }
-    checkAllUrlGoals();
+    if (!_ctx || !_ctx.goals || !_ctx.goals.length) return;
+    checkUrlGoals();
     function wrapHistory(method) {
       var orig = history[method];
-      history[method] = function() { orig.apply(this, arguments); checkAllUrlGoals(); };
+      history[method] = function() { orig.apply(this, arguments); checkUrlGoals(); };
     }
     try { wrapHistory("pushState"); wrapHistory("replaceState"); } catch(e) {}
-    window.addEventListener("popstate", function() { checkAllUrlGoals(); });
-    window.addEventListener("hashchange", function() { checkAllUrlGoals(); });
+    window.addEventListener("popstate", function() { checkUrlGoals(); });
+    window.addEventListener("hashchange", function() { checkUrlGoals(); });
   }
 
   // ─── Detection: resolve context from URL params or localStorage ────────────
 
-  // Method 1 params can arrive from a cross-domain decorated link, not just a
-  // SplitLab 302, so this page may hold url_reached goals it has to match — but
-  // the params alone don't carry them. Fetch them *after* boot and re-run the
-  // URL check, so the pageview never waits on the network. Skipped in scan mode
-  // to keep Method-1 scanning free of conversions, exactly as it is today.
-  function fetchGoalsLate(vid) {
-    if (_scanMode) return;
-    try {
-      var xhrG = new XMLHttpRequest();
-      xhrG.open("GET", RESOLVE_URL + "?vid=" + encodeURIComponent(vid), true);
-      xhrG.withCredentials = false;
-      xhrG.onload = function() {
-        try {
-          var data = JSON.parse(xhrG.responseText);
-          // __SL_SNIPPET__ too: if the goals land before DOM-ready, boot() has
-          // not stood down yet and _ctx is still set — firing here would double
-          // up with the inline snippet on a SplitLab-served page.
-          if (!_ctx || window.__SL_SNIPPET__) return;
-          if (!data.goals || !data.goals.length) return;
-          _ctx.goals = data.goals;
-          store(_ctx);
-          checkUrlGoals();
-        } catch(e) {}
-      };
-      xhrG.send();
-    } catch(e) {}
-  }
-
   function detect(callback) {
     var params = new URLSearchParams(window.location.search);
     var isScan = params.get("sl_scan") === "1";
-    _scanMode = isScan;
 
     // Method 1: Full params from SplitLab redirect (?sl_tid, ?sl_vid, ?sl_vh)
     var tid = params.get("sl_tid");
     var vid = params.get("sl_vid");
     var vh  = params.get("sl_vh");
-    // Keep these before cleanUrl() strips them — decorate() falls back to them
-    // while Method 2 is still blocked on /api/resolve.
-    _bootVid = vid;
-    _bootVh = vh;
     if (tid && vid && vh) {
       cleanUrl(["sl_tid", "sl_vid", "sl_vh", "sl_scan"]);
-      // Boot immediately with no goals, then fill them in. Blocking here on
-      // /api/resolve (~1s) would delay every redirect-mode pageview and lose it
-      // outright on a fast bounce. fetchGoalsLate() re-checks url_reached once
-      // the goals land, so nothing is missed.
-      callback({ tid: tid, vid: vid, vh: vh, goals: [] });
-      fetchGoalsLate(vid);
-      return;
+      return callback({ tid: tid, vid: vid, vh: vh, goals: [] });
     }
 
     // Method 2: Variant ID only (?sl_vid=xxx) — resolve test ID + goals via API
@@ -1255,8 +974,6 @@ function buildTrackerScript(appUrl: string): string {
       registerFormFields();
       watchForNewFields();
       patchNetworkForJsSubmit();
-      if (!_scanMode) patchWindowOpen();
-      if (!_scanMode) watchNavigations();
     }
     if (document.readyState === "loading") {
       document.addEventListener("DOMContentLoaded", start);

@@ -170,16 +170,7 @@ export async function POST(request: NextRequest) {
       metadata: data.metadata || {},
     });
 
-    if (error) {
-      // Foreign-key violation (Postgres 23503): the test/variant/goal was deleted
-      // but a visitor still holds its context in the 90-day sl_tracking localStorage
-      // map, so checkStoredUrlGoals() posted a conversion for it. The row is gone —
-      // silently drop it instead of 500ing. Any other DB error still surfaces.
-      if ((error as { code?: string }).code === '23503') {
-        return NextResponse.json({ ok: true, stale: true }, { headers });
-      }
-      throw error;
-    }
+    if (error) throw error;
 
     return NextResponse.json({ ok: true }, { headers });
   } catch (err) {
