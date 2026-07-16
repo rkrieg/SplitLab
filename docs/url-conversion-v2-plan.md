@@ -74,7 +74,7 @@ Observed live: current proxy test (`3d975c36…`) fired pageview + conversion **
 
 **Split into 1A (receiver) and 1B (sender)** — deliberately, because only 1A is needed by every mode. Doing 1A alone unblocks HTML cross-domain without touching redirect-mode behaviour at all.
 
-### PHASE 1A — Method-1 goal fetch (the receiver) — **CODE DONE, awaiting live test**
+### ✅ PHASE 1A — Method-1 goal fetch (the receiver) — **COMPLETE (2026-07-16)**
 
 The only blocking piece. Replaces the `goals: []` line with an XHR to `/api/resolve` so a destination that receives decorated params can actually match `url_reached` patterns.
 
@@ -125,22 +125,90 @@ The only blocking piece. Replaces the `goals: []` line with an XHR to `/api/reso
 - [x] **Adjacent check — does a `form_submit` conversion survive the navigation?** **✅ CLOSED BY CODE 2026-07-16.** A `form_submit` goal fires `_SL.track('conversion', …)` on the source page ([L525](../src/lib/tracking.ts#L525)) and the page then navigates away, so a cancellable XHR would lose it. It isn't one: `send()` ([L38-L52](../src/lib/tracking.ts#L38-L52)) uses `navigator.sendBeacon`, falling back to `fetch(..., { keepalive: true })` — both survive unload by design. No risk, no test needed.
 - [x] **Regression: redirect-mode 302** — **✅ PASS live 2026-07-16, nothing broken.** But note it does **not** exercise this change: redirect mode takes **Method 2** (`sl_vid`+`sl_vh`, no `sl_tid`), initiator `tracker.js:1011`. Its ~1s `resolve` block is pre-existing Method-2 behaviour, untouched by us.
 - [x] **Method-1 timing (the real test of the non-blocking rework)** — **✅ PASS live 2026-07-16.** On the decorated arrival, `event` completed in 866ms while `resolve` was still running (1.38s) — the pageview did not wait on the fetch, so the non-blocking path works.
-- [ ] **Regression: no double-fire** — the goals arriving late trigger a second `checkUrlGoals()`. `_sent` should dedup; confirm one conversion, not two, when the landing page itself matches the goal pattern.
-- [ ] **Regression: `/api/resolve` slow or down** — pageview must still fire on time; a failed fetch just leaves `goals: []` (today's behaviour). Confirm an outage degrades rather than breaks.
-- [ ] **Regression: Method-1 + `sl_scan=1`** — `fetchGoalsLate` is scan-guarded; confirm scanning still fires no conversions.
-- [ ] Update `url-conversion-cases.md §2` + `url-conversion-failing-cases.md §A`: HTML cross-domain link / form / `window.open` → ✅.
+- [x] **Regression: no double-fire** — **✅ CONFIRMED live 2026-07-16 (twice), and structurally impossible anyway.**
+  - **Live:** both the cross-domain link test and the GET-form test landed on `thanks.html`, which **is** the goal URL — precisely the scenario this item describes. Each produced **exactly two `event` pings: pageview + one conversion.**
+  - **Structural:** on Method 1, `detect()` calls back with `goals: []`, so boot's `checkUrlGoals()` has nothing to match and **can never fire**. Only the post-`fetchGoalsLate` check can. That's **one** firing opportunity, with `_sent` dedup behind it as depth.
+  - The `__SL_SNIPPET__` guard ([L977](../src/app/tracker.js/route.ts#L977)) covers the other double-fire shape — tracker.js standing down on a SplitLab-served page where the inline snippet is already firing.
+- [x] **Regression: `/api/resolve` slow or down** — **✅ CLOSED BY CODE + partial live evidence 2026-07-16. Degrades, never breaks.**
+  - **The pageview is never at risk:** `callback()` fires synchronously *before* `fetchGoalsLate()` is called ([L1002-L1004](../src/app/tracker.js/route.ts#L1002-L1004)), so the pageview has already gone regardless of what the XHR does. **Live-observed** in the Method-1 timing test: `event` completed at 866ms while `resolve` was still in flight at 1.38s.
+  - **Every failure mode lands on `goals: []`** = today's exact behaviour: network failure ⇒ `onload` never fires (no `onerror` handler is registered); HTTP 5xx ⇒ `onload` fires but `JSON.parse` of an error body throws into the inner `try/catch` ([L972-L982](../src/app/tracker.js/route.ts#L972-L982)), or `if (!data.goals || !data.goals.length) return` catches it; slow ⇒ conversion simply fires late, which is irrelevant for a URL-match goal. The whole function is wrapped in an outer `try/catch` too.
+- [x] **Regression: Method-1 + `sl_scan=1`** — **✅ CLOSED BY CODE 2026-07-16. The combination is essentially unreachable.**
+  - Scan mode makes the linker **dormant** (`!_isScan`, proven live in Stage 3) ⇒ no decoration ⇒ no `sl_tid` ⇒ Method 1 (which needs `tid && vid && vh`) is **never entered under scan**. The dashboard scanner reaches HTML pages via `/api/serve` + the snippet, not via tracker.js Method 1.
+  - `if (_scanMode) return` at [L966](../src/app/tracker.js/route.ts#L966) is defensive depth on an unreachable path, not a live guard.
+- [x] Update `url-conversion-cases.md §2` + `url-conversion-failing-cases.md §A`: HTML cross-domain link / form / `window.open` → ✅. **DONE 2026-07-16** — both files updated.
 
-### PHASE 1B — redirect-mode decoration (the sender) — **NOT DONE, deferred**
+### ✅ PHASE 1A — COMPLETE (2026-07-16)
+
+All todos closed. The receiver works end-to-end on HTML cross-domain (link ✅ and GET form ✅, both dashboard-confirmed), R1–R5 re-verified, and every regression either live-tested or closed by code with the reasoning recorded above. **Phase 1B (the redirect-mode sender) is now the only remaining work in Phase 1.**
+
+### PHASE 1B — redirect-mode decoration (the sender) — **CODED 2026-07-16, awaiting live test**
 
 `decorate()`, `decorateLink()`, `patchWindowOpen()`, `mousedown`/`auxclick` listeners, form-action decoration inside tracker.js. **Redirect mode only** — HTML mode does not need this.
 
-- [ ] Port the decoration half of `7b4fb22`.
+> **Scope limit — read before testing.** Phase 1B fixes cross-domain redirect for **links, forms, and `window.open`** — the navigations a script can intercept. It does **not** fix `window.location.href = "otherdomain.com/..."`, because the `location` object cannot be hooked by any script. See the *`window.location.href` across all modes* section below.
+
+**What was ported (and what was deliberately not):**
+
+| Ported | Why |
+|---|---|
+| `decorate()` / `decorateLink()` / `decorateFormForSubmit()` / `patchWindowOpen()` | The sender half — mirrors the inline snippet exactly |
+| `mousedown` + `auxclick` + `click` listeners | mousedown precedes every click variant; middle-click fires `auxclick`, not `click` |
+| **NOT** `watchNavigations()` | Phase 4 — highest risk, touches all navigation |
+| **NOT** `SplitLab.go` / `SplitLab.decorate` | Phase 3 — stays unexposed until deliberately enabled |
+
+**Edge cases handled in the port:**
+- **Scan mode** — every decoration path is behind `if (!_scanMode)`, so a scan session never tags outbound URLs (mirrors the snippet's `if (!_isScan)`).
+- **Snippet stand-down** — decoration wiring lives inside `start()`, which returns early when `window.__SL_SNIPPET__` is set, so a SplitLab-hosted page decorates once (snippet only), never twice. `patchWindowOpen()` also keeps its own `__sl_patched` guard.
+- **Capture-phase submit** — `decorateFormForSubmit` runs on the capture-phase `submit` listener, before the browser serializes the form.
+- **GET vs POST forms** — GET gets hidden inputs (a decorated `action` query string would be discarded); POST rewrites `action`.
+- **`fields:` selector safety** — the hidden `sl_*` inputs are invisible to `fieldKey()` (skips `type === 'hidden'`), so the goal signature cannot drift. Independently, the signature is read at goal-wiring time, before any submit.
+- **`action` attribute read via `getAttribute`** — an `<input name="action">` shadows `form.action`.
+- **`_ctx` guard** — `decorate()` returns the URL untouched when there's no context, so an unresolved page never emits half-tagged links.
+
+- [x] Port the decoration half of `7b4fb22`.
 - [ ] `npm run build`
 - [ ] **Test cross-domain link** (`<a href>`, incl. new tab / middle-click) site A → site B (both have tracker.js).
 - [ ] **Test cross-domain form** (POST decorates `action`; GET adds hidden inputs).
 - [ ] **Test `window.open(url)`** cross-domain.
 - [ ] Regression: same-domain redirect cases **R1–R5** still pass.
 
+
+---
+
+## 🔴 CROSS-CUTTING — `window.location.href` is unfixed in **every** mode
+
+**Not owned by any phase so far. Tracked here so it doesn't fall through the gaps.**
+
+### The problem in one line
+
+`window.location.href = "otherdomain.com/thanks"` **cannot be intercepted by any script.** There is no setter trap, no override, no event. So nothing can attach `sl_tid`/`sl_vid`/`sl_vh` before the browser leaves — and the destination has no context to rebuild from.
+
+This is **not** a SplitLab bug and **not** something Phase 1B fixed. Links, forms and `window.open` are all interceptable (function calls or DOM elements we can reach first). `location` is the one that isn't.
+
+### Where it stands, per mode
+
+| Mode | same-domain `location.href` | cross-domain `location.href` |
+|---|---|---|
+| HTML (inline snippet) | ✅ works — context is in that origin's `localStorage`, no interception needed | ❌ **unfixed** |
+| Redirect (tracker.js) | ✅ works — same reason (R2 confirmed) | ❌ **unfixed** — Phase 1B does *not* cover this |
+| Proxy (inside iframe) | ✅ works — confirmed Chrome + Safari | ❌ unfixed, plus the iframe hits a new storage partition anyway |
+
+**Same-domain is fine everywhere** — no interception is required, because the context never had to travel. Cross-domain is ❌ in all three.
+
+### The two possible fixes (both already scoped, neither done)
+
+| Fix | Phase | Covers | Cost |
+|---|---|---|---|
+| **`SplitLab.go(url)`** — manual escape hatch; client writes `SplitLab.go(url)` instead of `location.href = url` | **Phase 3** | Every browser | Requires the client to change their code. Code exists in `7b4fb22`, commented out |
+| **`watchNavigations()`** — Navigation API `navigate` listener cancels the undecorated cross-domain jump and re-issues it decorated | **Phase 4** | Modern browsers only; older ones silently keep today's ❌ | Automatic, client changes nothing — but touches **all** navigation. Highest-risk change in the plan |
+
+**Recommended order:** Phase 3 first (safe, unblocks clients who can edit their code), then Phase 4 behind a proper regression pass (downloads, form navigations, back/forward, graceful fallback where the Navigation API is absent). They compose — `watchNavigations` handles it automatically where supported, `SplitLab.go` stays the fallback everywhere else.
+
+### Cases that stay ❌ even after both
+
+- `location.assign()` / `location.replace()` cross-domain — same root cause; Phase 4 covers them where the Navigation API exists, otherwise `SplitLab.go`.
+- `<meta http-equiv="refresh">` / server-side redirects that drop the query string.
+- Destination has no tracker.js — nothing reads the params regardless of how they got there.
 
 ---
 

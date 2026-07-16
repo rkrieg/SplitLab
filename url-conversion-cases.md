@@ -53,7 +53,7 @@ Context has to be *carried* in the URL, so it now depends on **how** the visitor
 | Form submit — **GET** (HTML mode) | ✅ **CONFIRMED live end-to-end 2026-07-16** — hidden inputs added during the submit event **are** serialized by the browser into the query string; survived a 307; destination entered Method 1 (`resolve` initiator `tracker.js:952` = `fetchGoalsLate`, which requires all three params); conversion fired and dashboard confirmed |
 | Form submit — **POST** (HTML mode) | ⚠️ Decoration verified live (`action` rewritten); end-to-end not re-tested. Low risk — receiver is proven and can't tell how params reached its URL |
 | `window.open(url)` (HTML mode) | ⚠️ Patch verified live (`__sl_patched === true`); end-to-end conversion not yet re-tested |
-| Any of the above from **Redirect mode** | ❌ Still pending — the sender half for tracker.js (Phase 1B) is deliberately not ported yet |
+| Link / GET form / POST form / `window.open` from **Redirect mode** | ⏳ **Phase 1B coded 2026-07-16** — sender ported into tracker.js (`decorate`/`decorateLink`/`decorateFormForSubmit`/`patchWindowOpen` + mousedown/auxclick/click). Build green, 13/13 decorate unit cases green. **Live test still pending** |
 | `window.location.href = otherdomain.com/...` | ❌ **Cannot be fixed automatically** — `location` is uninterceptable; needs manual `SplitLab.go(url)` (exists in `7b4fb22`, commented out) |
 | `location.assign()` / `location.replace()` | ❌ Same as above |
 | meta refresh / server-side redirect | ❌ Only survives if it forwards the query string |
