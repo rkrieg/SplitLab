@@ -971,7 +971,11 @@ function buildTrackerScript(appUrl: string): string {
       xhrG.onload = function() {
         try {
           var data = JSON.parse(xhrG.responseText);
-          if (!_ctx || !data.goals || !data.goals.length) return;
+          // __SL_SNIPPET__ too: if the goals land before DOM-ready, boot() has
+          // not stood down yet and _ctx is still set — firing here would double
+          // up with the inline snippet on a SplitLab-served page.
+          if (!_ctx || window.__SL_SNIPPET__) return;
+          if (!data.goals || !data.goals.length) return;
           _ctx.goals = data.goals;
           store(_ctx);
           checkUrlGoals();
