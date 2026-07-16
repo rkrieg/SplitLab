@@ -578,6 +578,17 @@ Evidence — `sl_tracking` **inside the iframe** on bytebaskets.com (`isTop: fal
 
 `goals` non-empty ⇒ Method 1 ⇒ all three params arrived. Dashboard incremented.
 
+| Case | Result |
+|---|---|
+| `location.href` cross-domain | ✅ dashboard confirmed (Chrome, Edge, Firefox) |
+| Conditional redirect from form branch | ✅ dashboard confirmed |
+| Same-domain `location.href` | ✅ **correctly did NOT convert, and provably never decorated** — iframe reading (`isTop: false`) returned `url: "https://www.hunbalsiddiqui.com/"`, `hasSlParams: false` |
+| Plain link, clicked immediately | 🟡 does not convert — the <1s window, see the known limitation above. Converts when clicked after ~1s |
+
+**The same-domain result is worth noting:** inside the iframe, `decorate()` compares against `window.location.hostname`, which is the **iframe's** host (`www.hunbalsiddiqui.com`), not the top frame's (`dev.trysplitlab.com`). That was the one place the two-frame setup could plausibly have confused the same-hostname check. It did not.
+
+> **Why "no conversion" alone would not have proven this**, and how it was closed: a clean URL is ambiguous, because `cleanUrl()` strips `sl_tid`/`sl_vid`/`sl_vh` on arrival by design — so "never decorated" and "decorated then stripped" look identical. The disambiguator is the **pair**: clean URL **and** a silent dashboard. Had an internal link been wrongly decorated, tracker.js would have rebuilt context from those params and fired the `bytebaskets.com` goal. It did not. Verified with an atomic reading including `isTop: false`, so the frame identity is not in question either.
+
 **Why the "partitioned storage kills proxy" reasoning was wrong.** The partition only matters if context has to **persist across** the boundary. It does not — it rides in the **URL**. The iframe's tracker.js decorates the outbound jump; the destination reads the params and rebuilds context in its own (partitioned, but perfectly writable) storage. The partition was never the obstacle; the *absence of a sender* was.
 
 **This makes a code comment stale** — [serve/route.ts:200-203](../src/app/api/serve/route.ts#L200-L203), directly above the proxy branch:
