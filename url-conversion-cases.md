@@ -59,9 +59,12 @@ The client's own site runs **inside** the iframe. tracker.js (mandatory in the c
 
 | Case | Result |
 |---|---|
-| Client's own multi-page site (Chrome / Firefox) | ⚠️ Should work (tracker inside iframe) — **not yet live-tested** |
-| Same, Safari | ⚠️ Fragile (Safari ITP may block third-party-iframe storage) |
+| Client's own multi-page site (Chrome) | ✅ **CONFIRMED live (2026-07-16)** — link click + `window.location.href` inside the iframe both fired the conversion (200, correct test/variant/goal) |
+| Same, **Safari** | ✅ **CONFIRMED live (2026-07-16)** — conversion fired. ITP did **not** block the iframe's `localStorage`; no Storage Access API needed |
+| Same, Firefox | ⚠️ Expected ✅ (stable partition, same mechanism as Chrome/Safari) — not explicitly tested |
 | Iframe jumps to a **different** origin / pure third-party (Calendly) | ❌ Broken / impossible |
+
+**Verdict:** proxy same-domain is **working**, not merely "should work" — the earlier ⚠️ was resolved by live testing on both engines. The partitioned iframe storage is stable because the top-level site (the custom domain) never changes during a proxy session, so tracker.js inside the iframe keeps its context across internal navigations.
 
 ---
 

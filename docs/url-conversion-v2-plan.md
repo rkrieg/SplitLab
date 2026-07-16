@@ -19,22 +19,23 @@
 
 ---
 
-## PRIORITY 0 — Verify same-domain PROXY mode (no code, just test)
+## ✅ PRIORITY 0 — Verify same-domain PROXY mode (no code, just test)
 
 This is the biggest open unknown. `url-conversion-cases.md §3` marks it ⚠️ "should work, not yet live-tested." Settle it before writing any code.
 
-- [ ] Set a **proxy-mode** test pointing at your own multi-page site (e.g. hunbalsiddiqui.com/offer-a.html), goal = reach `/thanks.html`. Destination already has `dev.trysplitlab.com/tracker.js`. 
-- [ ] Open the test URL (proxy wrapper) in **Chrome**. Click the internal link to `/thanks.html` **inside the iframe**.
-- [ ] Watch Network for `POST /api/event 200` with a `conversion` payload (correct testId/variantId/goalId). (worked till here)
-- [ ] Repeat the click via `window.location.href = "/thanks.html"` inside the iframe (Case A, same-origin) — confirm it still fires.
-- [ ] Repeat the whole test in **Safari** — this is the fragile one (ITP may block third-party-iframe `localStorage`).
-- [ ] **Record results in `url-conversion-cases.md §3`**: flip ⚠️ → ✅ or ❌ per browser. Update `url-conversion-failing-cases.md` if proxy-same-domain proves broken.
+- [x] Set a **proxy-mode** test pointing at your own multi-page site (e.g. hunbalsiddiqui.com/offer-a.html), goal = reach `/thanks.html`. Destination already has `dev.trysplitlab.com/tracker.js`.
+- [x] Open the test URL (proxy wrapper) in **Chrome**. Click the internal link to `/thanks.html` **inside the iframe**.
+- [x] Watch Network for `POST /api/event 200` with a `conversion` payload (correct testId/variantId/goalId). **✅ fired 200, correct test/variant/goal.**
+- [x] Repeat the click via `window.location.href = "/thanks.html"` inside the iframe (Case A, same-origin) — confirm it still fires. **✅ fired.**
+- [x] Repeat the whole test in **Safari** — this is the fragile one (ITP may block third-party-iframe `localStorage`). **✅ PASSED — conversion fired. Safari ITP did NOT block the iframe's localStorage.**
+- [x] **Record results in `url-conversion-cases.md §3`**: Chrome ✅ CONFIRMED, Safari ✅ CONFIRMED.
 
-**Expected:** Chrome/Firefox ✅ (stable partition), Safari ❓ (unknown — the reason we test).
+**Result:** ✅ **Proxy same-domain CONFIRMED on Chrome AND Safari (2026-07-16)** — tracker.js inside the iframe reads its partitioned localStorage and fires `url_reached` conversions. The predicted Safari-ITP storage-blocking risk did **not** materialise. No Storage Access API / postMessage bridge needed.
+**Note:** the stale-entry 500s seen during this test are the Priority 0.5 bug (deleted tests in `sl_tracking`); the current test itself fired 200.
 
 ---
 
-## PRIORITY 0.5 — Fix `/api/event` 500 on conversions for deleted tests
+## ✅ PRIORITY 0.5 — Fix `/api/event` 500 on conversions for deleted tests — DONE
 
 **What's happening (surfaced during the Priority 0 proxy test):** the `sl_tracking` localStorage map keeps each test's context for 90 days. Our `checkStoredUrlGoals()` cross-test checker fires a conversion for **every** stored test whose `url_reached` pattern matches the current URL. If one of those stored tests was **deleted** from the DB, `/api/event` tries to insert an `events` row whose `test_id` / `variant_id` / `goal_id` reference no-longer-existing rows → Postgres **foreign-key violation (code `23503`)** → the route's `if (error) throw error` → **HTTP 500**.
 
@@ -45,9 +46,11 @@ Observed live: current proxy test (`3d975c36…`) fired pageview + conversion **
 - [x] Add the `23503` guard around the `events` insert (only that error code → 200; everything else still throws → 500). **DONE** — `src/app/api/event/route.ts`.
 - [x] `npm run build` — **passes**.
 - [x] Code-verified against schema (`events.test_id`/`variant_id` are NOT NULL FK `ON DELETE CASCADE` → deleted test ⇒ `23503`); guard catches only `23503`, Zod still 400, other errors still 500, normal path untouched.
-- [ ] **Live-verify (morning):** re-run the proxy test with stale entries present → the previously-500 conversions now return 200 `{ stale: true }`.
-- [ ] **Live-verify (morning):** a fresh valid conversion still returns plain 200.
-- [ ] Note: clearing `localStorage.removeItem('sl_tracking')` in the test browser drops stale entries locally; the server guard is the real production fix.
+- [x] **LIVE-VERIFIED on dev (2026-07-16):** conversions for the **deleted** tests `05ad1943…` (goal `077571ee…`) and `7aa0293c…` (goal `c573884d…`) now return **200** — the exact payloads that returned **500** before the guard. Confirms the `23503` soft no-op works in production conditions.
+- [x] **Fresh valid conversion still returns 200** — current test `3d975c36…` pageview + conversion both 200. Normal path untouched.
+- [x] Confirmed dev **does** deploy from `url-conversion-v2` (an earlier assumption that it served `development` was wrong).
+
+**Note — why the server guard is the right fix:** the stale entries kept firing even *after* `localStorage.removeItem('sl_tracking')` on the destination origin. You cannot rely on clearing visitors' browsers; the server has to shrug these off. Response bodies aren't visible in DevTools for these calls because tracker.js uses `navigator.sendBeacon` (fire-and-forget) — status codes are still accurate.
 
 ---
 
@@ -68,13 +71,63 @@ Port `decorate()`, `decorateLink()`, `patchWindowOpen()`, `mousedown`/`auxclick`
 
 ## PHASE 2 — HTML-mode cross-domain linker (inline snippet) — from `c55de6f`
 
-Same decoration inside `buildTrackingSnippet` (`src/lib/tracking.ts`) for SplitLab-hosted pages.
+**Why this is needed (root cause, code-verified 2026-07-16):** `localStorage` is **per-origin**. The snippet stores context in `sl_ctx` ([tracking.ts:76-103](../src/lib/tracking.ts#L76-L103)), and `checkStoredUrlGoals()` ([tracking.ts:111](../src/lib/tracking.ts#L111)) reads it back after any navigation. Same-domain that just works — the context is already in that origin, no interception needed. Cross-domain the destination origin sees an **empty** `sl_ctx`: no test, no variant, no goal ⇒ no conversion. The file's own comment says it at [tracking.ts:73](../src/lib/tracking.ts#L73): *"localStorage is per-origin: this does NOT work across different domains."* Fix = carry context in the URL (`sl_tid`/`sl_vid`/`sl_vh`); destination tracker.js rebuilds it via detect **Method 1** and strips the params.
 
-- [ ] Cherry-pick / hand-port `c55de6f`.
-- [ ] `npm run build`
-- [ ] **Test** hosted page → external domain via link / form / `window.open`: params carry, conversion fires on destination (destination needs tracker.js).
-- [ ] Regression: same-domain HTML cases **H1–H5** still pass.
-- [ ] Update the two case docs (HTML cross-domain row → ✅).
+**What `c55de6f` adds** — 76 lines, **purely additive** (`+76 / −0`), only inside `buildTrackingSnippet`. Verified: cherry-picks **cleanly** onto `url-conversion-v2`, and does **not** touch `sl_ctx` / `checkStoredUrlGoals` / the per-test map.
+
+| Function | Job |
+|---|---|
+| `decorate(url)` | Appends `sl_tid`/`sl_vid`/`sl_vh`. Skips: non-http(s), **same hostname**, already-decorated |
+| `decorateFromEvent(e)` | `closest('a[href])` → rewrite `href` before the browser follows it |
+| `decorateFormForSubmit(form)` | POST → rewrite `action`; GET → **hidden inputs** (GET wipes the action query string) |
+| `patchWindowOpen()` | Wraps `window.open`, decorates arg 0, `__sl_patched` guards double-wrap |
+
+Hooks: `mousedown` + `auxclick` + `click` (all **capture phase**, so they run before the navigation; `auxclick` covers middle-click new-tab). Form hook goes on the existing global `submit` listener. Everything is gated behind `if (!_isScan)` so dashboard goal-scanning is unaffected.
+
+### Todos
+
+- [x] Cherry-pick `c55de6f` onto `url-conversion-v2` — **DONE**, `git cherry-pick -n c55de6f`, clean auto-merge, no conflicts. **Staged, NOT committed** (per instruction).
+- [x] Confirm the diff is `+76 / −0` on `src/lib/tracking.ts` only, and `sl_ctx` + `checkStoredUrlGoals` are byte-identical. **VERIFIED** — `git diff --numstat` = `76  0  src/lib/tracking.ts`; deletion-line count is literally **0**; lines 60-135 (the `sl_ctx` map + `checkStoredUrlGoals`) diff **IDENTICAL** against HEAD.
+- [x] `npm run build` — **PASSES**.
+- [ ] **Test cross-domain link** hosted page → second domain: `sl_tid/sl_vid/sl_vh` land in the destination URL, conversion fires `200` with correct test/variant/goal.
+- [ ] **Test new-tab / middle-click** on the same link (this is what `auxclick` exists for).
+- [ ] **Test cross-domain form** — POST (decorated `action`) **and** GET (hidden inputs) separately; they take different code paths.
+- [ ] **Test `window.open(url)`** cross-domain.
+- [ ] **Test the skip rules:** same-domain link is **not** decorated (no params leak onto internal URLs); `mailto:` / `tel:` / `#anchor` untouched; an already-decorated URL isn't double-tagged. *(Code-verified below; still worth one live confirmation.)*
+- [ ] **Regression: same-domain HTML cases H1–H5 still pass** — especially H2/H5 (chained hosted tests via `sl_ctx`) and H3 (no double-fire).
+- [ ] **Regression: dashboard goal scan** (`?sl_scan=1`) still works — linker must stay dormant.
+- [ ] Update `url-conversion-cases.md §2` + `url-conversion-failing-cases.md §A`: HTML cross-domain link / form / `window.open` → ✅.
+
+### Edge-case audit (code-read 2026-07-16, before any live test)
+
+**The one that mattered:** `decorateFormForSubmit` appends **hidden inputs** to GET forms at submit time, and it runs on the *same* global `submit` listener, **immediately before** `captureFormLead(e.target)` ([tracking.ts:546](../src/lib/tracking.ts#L546)). So the question was whether `sl_tid`/`sl_vid`/`sl_vh` could leak into lead data or corrupt the `fields:` goal selector. Traced every consumer — **all six skip `type === 'hidden'`**:
+
+| Consumer | Risk if it saw our inputs | Skips hidden? |
+|---|---|---|
+| `captureFormLead` | `sl_tid` sent as a lead field | ✅ |
+| `fieldsLookValid` | gates lead sending | ✅ |
+| `snapshotVisibleFormFields` | stepper accumulation | ✅ |
+| `registerFormFields` | dashboard field list | ✅ |
+| `fieldKey` → `formFieldSignature` | **`fields:` selector would change ⇒ goal stops matching** | ✅ (both copies, L410 + L727) |
+
+**Verdict: no leak, no selector drift.** The hidden inputs are invisible to every existing code path.
+
+**Other guards confirmed:**
+- **Idempotent** — [L148](../src/lib/tracking.ts#L148) returns early if `sl_vid`/`sl_tid` already present ⇒ repeated mousedown/click on the same link can't double-tag.
+- **`mailto:` / `tel:` / `javascript:`** — [L146](../src/lib/tracking.ts#L146) http(s)-only ⇒ untouched.
+- **`#anchor` / same-domain** — [L147](../src/lib/tracking.ts#L147) hostname equality ⇒ no param leak onto internal URLs.
+- **Scan mode** — both the listener block ([L204](../src/lib/tracking.ts#L204)) and the form hook are behind `!_isScan` ⇒ dashboard goal-scan stays dormant.
+- **Double-wrap** — `__sl_patched` flag ⇒ `window.open` can't be wrapped twice.
+- **Everything wrapped in `try/catch`** returning the original url ⇒ a throw can't block a navigation.
+- **Keyboard nav (Tab+Enter)** fires `click` but **not** `mousedown` — this is exactly why all three listeners exist. Covered.
+
+### Notes / watch-outs
+
+- **`window.location.href` is NOT fixed by this phase.** `location` cannot be intercepted by any script — no setter trap, no override. Stays ❌ until Phase 3 (manual `SplitLab.go`) or Phase 4 (`watchNavigations`).
+- **Destination must have tracker.js.** Params with no reader = no conversion. This is why the second domain is a hard blocker.
+- **Subdomain jumps get decorated.** The check is `u.hostname === window.location.hostname`, so `app.site.com` → `site.com` counts as cross-domain and gets tagged. Harmless (destination strips them) but worth knowing when reading URLs during testing.
+- **`a.href` is mutated permanently in the DOM** ([L163](../src/lib/tracking.ts#L163)) — after a mousedown, a right-click → "Copy link address" yields the decorated URL, and the params stay if the navigation is cancelled. Cosmetic only (idempotent, destination strips them), but it's a visible side effect worth knowing about.
+- **Decoration can't help a link whose own click handler `preventDefault()`s and then does `location.href = …`** — we rewrite the `href`, but the site never uses it. Same `location` wall as always.
 
 ---
 
