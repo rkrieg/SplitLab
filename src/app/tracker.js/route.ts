@@ -254,7 +254,12 @@ function buildTrackerScript(appUrl: string): string {
           var dec = decorate(dest);
           if (dec === dest) return;
           e.preventDefault();
-          window.location.href = dec;
+          // Mirror the original navigation type. Re-issuing a replace() as an
+          // href would push a history entry the page deliberately did not want,
+          // making a page reachable by the back button that replace() exists to
+          // make unreachable (post-payment, post-submit). Confirmed live.
+          if (e.navigationType === "replace") window.location.replace(dec);
+          else window.location.href = dec;
         } catch(err) {}
       });
     } catch(e) {}

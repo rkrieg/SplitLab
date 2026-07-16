@@ -477,6 +477,18 @@ Decisive evidence — **bytebaskets.com's** `localStorage.sl_tracking` after a b
 - `goals` non-empty ⇒ **Method 1** ran (`fetchGoalsLate`), which requires `tid && vid && vh` all present.
 - `ts` ≈ 2026-07-16T14:00:11Z.
 
+**Re-confirmed with a real button on a real page (2026-07-16, ~15:10Z)** — the run above fired `location.href` from the console; this one used `<button onclick="window.location.href='https://bytebaskets.com/'">` on self-hosted `www.hunbalsiddiqui.com/cross-domain.html` (tracker.js tag, redirect mode, proxy OFF), test `579167ba-88c9-451d-966d-a8b5ab5ca821`:
+
+```json
+{"579167ba-88c9-451d-966d-a8b5ab5ca821":{"vid":"fee8dd5d-c838-44d0-b4c1-f29d31125b53",
+ "vh":"8f37b0da-1b3a-4a39-bb03-6dd3a1c79ea3","ts":1784214605592,
+ "goals":[{"id":"ebd5c20b-…","type":"url_reached","urlPattern":"https://bytebaskets.com/"}]}}
+```
+
+Same signature: `vid` on a foreign origin, `goals` non-empty ⇒ Method 1 ⇒ all three params arrived. Console and source-code execution are identical to the browser (same page context, same navigate event), so this mainly retires any doubt that the console was a special case.
+
+> ⚠️ **Trap for the next person:** the "Paste a URL" page-creation flow auto-detects proxy — `const proxyMode = await checkFrameable(normalizedUrl)` ([PagesClient.tsx:120](<../src/app/(dashboard)/clients/[id]/pages/PagesClient.tsx#L120>)). A test created that way against a frameable domain silently becomes **proxy**, not redirect. Always open the test and confirm the proxy toggle before labelling a result. (Test `579167ba` was verified redirect/proxy-OFF by the user.)
+
 ### Todos — implement
 
 - [x] Port `watchNavigations()` into **tracker.js** ([route.ts](../src/app/tracker.js/route.ts)) — covers **redirect + proxy** (it's what runs inside the iframe). Called from `start()` in boot, gated `if (!_scanMode)`. **DONE** — also corrected the stale "unfixable, needs SplitLab.go" comment above `decorate()`.
@@ -495,7 +507,9 @@ Add a `location.href` button to `hunbalsiddiqui.com`: `<button onclick="window.l
 
 **Per mode — the core case:**
 
-- [x] **Redirect mode** (tracker.js): cross-domain `location.href` → **✅ PASS live 2026-07-16**, client code unchanged (fired from console, which is identical to source-code execution — same page context, same navigate event). Context provably arrived; see the `sl_tracking` evidence above. ⬜ **Dashboard conversion count still to confirm** — `sendBeacon` is fire-and-forget, so "context arrived" ≠ "conversion recorded".
+- [x] **Redirect mode** (tracker.js): cross-domain `location.href` → **✅ PASS live end-to-end 2026-07-16, DASHBOARD CONFIRMED.** Client code unchanged. Proven three ways: console, a real `onclick` button, and `location.assign()`.
+  - **`location.assign()` run (~15:14:46Z, `vh: cc76f2d4-…`) is the decisive one — the dashboard conversion count incremented.** Every run before it proved only that context *arrived*; `sendBeacon` is fire-and-forget, so nothing had yet proven a conversion was *recorded*. This closes the chain: `location.href`/`assign()` → cancelled → decorated → cross-origin → Method 1 rebuild → goal match → **conversion in analytics**.
+- [x] `location.assign()` cross-domain — **✅ PASS live, dashboard confirmed** (see above).
 - [ ] **HTML mode** (snippet): same, from a SplitLab-hosted page. ⚠️ Remember `serve/route.ts:338` strips tracker.js tags from SplitLab-served pages — Page B must NOT be SplitLab-hosted for the redirect test.
 - [ ] **Proxy mode** (tracker.js inside iframe): cross-domain `location.href` from inside the iframe. **This is the Phase 5 question.** Genuinely unknown — if params travel in the URL, the storage-partition problem stops mattering and the destination reads them normally. Plausible but do not promise it.
 - [ ] `location.assign()` / `location.replace()` cross-domain — caught by the same listener (both are push/replace navigationType).
