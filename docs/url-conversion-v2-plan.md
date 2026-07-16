@@ -23,14 +23,31 @@
 
 This is the biggest open unknown. `url-conversion-cases.md §3` marks it ⚠️ "should work, not yet live-tested." Settle it before writing any code.
 
-- [ ] Set a **proxy-mode** test pointing at your own multi-page site (e.g. hunbalsiddiqui.com/offer-a.html), goal = reach `/thanks.html`. Destination already has `dev.trysplitlab.com/tracker.js`.
+- [ ] Set a **proxy-mode** test pointing at your own multi-page site (e.g. hunbalsiddiqui.com/offer-a.html), goal = reach `/thanks.html`. Destination already has `dev.trysplitlab.com/tracker.js`. 
 - [ ] Open the test URL (proxy wrapper) in **Chrome**. Click the internal link to `/thanks.html` **inside the iframe**.
-- [ ] Watch Network for `POST /api/event 200` with a `conversion` payload (correct testId/variantId/goalId).
+- [ ] Watch Network for `POST /api/event 200` with a `conversion` payload (correct testId/variantId/goalId). (worked till here)
 - [ ] Repeat the click via `window.location.href = "/thanks.html"` inside the iframe (Case A, same-origin) — confirm it still fires.
 - [ ] Repeat the whole test in **Safari** — this is the fragile one (ITP may block third-party-iframe `localStorage`).
 - [ ] **Record results in `url-conversion-cases.md §3`**: flip ⚠️ → ✅ or ❌ per browser. Update `url-conversion-failing-cases.md` if proxy-same-domain proves broken.
 
 **Expected:** Chrome/Firefox ✅ (stable partition), Safari ❓ (unknown — the reason we test).
+
+---
+
+## PRIORITY 0.5 — Fix `/api/event` 500 on conversions for deleted tests
+
+**What's happening (surfaced during the Priority 0 proxy test):** the `sl_tracking` localStorage map keeps each test's context for 90 days. Our `checkStoredUrlGoals()` cross-test checker fires a conversion for **every** stored test whose `url_reached` pattern matches the current URL. If one of those stored tests was **deleted** from the DB, `/api/event` tries to insert an `events` row whose `test_id` / `variant_id` / `goal_id` reference no-longer-existing rows → Postgres **foreign-key violation (code `23503`)** → the route's `if (error) throw error` → **HTTP 500**.
+
+Observed live: current proxy test (`3d975c36…`) fired pageview + conversion **200** (feature works ✅), but two stale entries from earlier deleted tests (`05ad1943…`, `7aa0293c…`) fired conversions that **500'd**. Harmless to the visitor (fire-and-forget `sendBeacon`), but real 500 noise in production for any visitor holding a stale entry.
+
+**Fix:** in `src/app/api/event/route.ts`, treat an FK violation (`23503`) on the events insert as a **soft no-op → 200 `{ ok: true, stale: true }`** instead of throwing 500. The stored entry points at a deleted test; dropping it silently is correct.
+
+- [x] Add the `23503` guard around the `events` insert (only that error code → 200; everything else still throws → 500). **DONE** — `src/app/api/event/route.ts`.
+- [x] `npm run build` — **passes**.
+- [x] Code-verified against schema (`events.test_id`/`variant_id` are NOT NULL FK `ON DELETE CASCADE` → deleted test ⇒ `23503`); guard catches only `23503`, Zod still 400, other errors still 500, normal path untouched.
+- [ ] **Live-verify (morning):** re-run the proxy test with stale entries present → the previously-500 conversions now return 200 `{ stale: true }`.
+- [ ] **Live-verify (morning):** a fresh valid conversion still returns plain 200.
+- [ ] Note: clearing `localStorage.removeItem('sl_tracking')` in the test browser drops stale entries locally; the server guard is the real production fix.
 
 ---
 
