@@ -54,17 +54,67 @@ Observed live: current proxy test (`3d975c36…`) fired pageview + conversion **
 
 ---
 
-## PHASE 1 — Redirect-mode cross-domain linker (tracker.js) — from `7b4fb22`
+## PHASE 1 — tracker.js: the RECEIVER (all modes) + redirect-mode linker — from `7b4fb22`
 
-Port `decorate()`, `decorateLink()`, `patchWindowOpen()`, `mousedown`/`auxclick` listeners, form-action decoration, and Method-1 goal fetch. **Purely additive — does not touch the per-test map fix.**
+> **⚠️ Phase naming corrected 2026-07-16.** The old title said "Redirect-mode …", which is misleading and caused a wasted test cycle. The real split is **sender vs receiver**, not redirect vs HTML:
+>
+> | Mode | Sender (attaches params) | Receiver (fires the conversion) |
+> |---|---|---|
+> | HTML | inline snippet `tracking.ts` — **Phase 2** | **tracker.js — Phase 1** |
+> | Redirect | tracker.js on the client's page — **Phase 1** | **tracker.js — Phase 1** |
+> | Proxy | whichever runs inside the iframe | **tracker.js — Phase 1** |
+>
+> **tracker.js is the receiver for every mode**, because it is what runs on the destination site. So `7b4fb22` contains two independent things:
+> 1. **Decoration (sender)** — genuinely redirect-mode only. HTML mode doesn't need it.
+> 2. **Method-1 goal fetch (receiver)** — needed by **every** mode. This is the blocking piece.
+>
+> **Why this matters:** on `url-conversion-v2`, [tracker.js Method 1](../src/app/tracker.js/route.ts#L971) does `return callback({ tid, vid, vh, goals: [] })` — **goals is empty**. Only Method 2 (`/api/resolve`) fetches goals. So a decorated cross-domain link lands on the destination, tracker.js rebuilds context correctly… and has **no goals to match**, so `url_reached` can never fire. `7b4fb22` replaces that line with an XHR to `RESOLVE_URL` — its own comment says *"Fetch goals so url_reached patterns can fire on this page too (params may arrive via cross-domain link decoration, not just a SplitLab 302)"*.
+>
+> **Consequence: Phase 2 alone can never produce a cross-domain conversion.** It attaches params perfectly (Stage 1: 13/13 PASS) but nothing on the far side reads them. **Live-confirmed 2026-07-16** — Stage 2 failed for exactly this reason, not a linker bug.
 
-- [ ] Cherry-pick or hand-port `7b4fb22` onto `url-conversion-v2`; resolve any minor textual conflict against the map code.
+**Split into 1A (receiver) and 1B (sender)** — deliberately, because only 1A is needed by every mode. Doing 1A alone unblocks HTML cross-domain without touching redirect-mode behaviour at all.
+
+### PHASE 1A — Method-1 goal fetch (the receiver) — **CODE DONE, awaiting live test**
+
+The only blocking piece. Replaces the `goals: []` line with an XHR to `/api/resolve` so a destination that receives decorated params can actually match `url_reached` patterns.
+
+- [x] Hand-port **only** the Method-1 goal-fetch hunk from `7b4fb22` — **DONE**, `src/app/tracker.js/route.ts`, then **reworked to be non-blocking** (see below).
+
+> **⚠️ Deviation from `7b4fb22` — deliberate, and it matters.** The original commit made Method 1 **await** `/api/resolve` before `callback()`, turning a synchronous boot into a blocking one. Measured live on dev 2026-07-16:
+>
+> ```
+> run 1: 1.95s (cold)   run 2: 1.07s   run 3: 1.07s   run 4: 1.10s   run 5: 1.28s
+> ```
+>
+> `connect` was only 30-70ms while `ttfb` was the whole ~1.07s — the latency is `/api/resolve` itself (Supabase query), not the network. **~1 second is far too long to block on**, and it would have delayed **every redirect-mode pageview**, not just cross-domain ones — losing them outright whenever a visitor bounces inside that first second. Redirect-mode visitors have just been 302'd, so a sub-second bounce is entirely normal. `7b4fb22` almost certainly never measured this.
+>
+> **Our version instead:** `callback()` fires **immediately** with `goals: []` (pageview timing identical to today), and `fetchGoalsLate(vid)` fills goals in afterwards, then re-runs `checkUrlGoals()`. `url_reached` still fires — roughly a second later, which is irrelevant for a URL-match goal. **No pageview risk.**
+>
+> Safe because: `track()` dedups via `_sent`, so the second URL check cannot double-fire; `_ctx` is set synchronously at the top of `boot()`, so it always exists when the XHR returns; `store(_ctx)` re-persists the goals into `sl_tracking`; a resolve failure simply leaves `goals: []` — today's exact behaviour; and `if (_scanMode) return` keeps Method-1 scan behaviour byte-for-byte unchanged.
+- [x] **Verify it is receiver-only, no sender.** Confirmed: `grep` for `decorate` / `decorateLink` / `patchWindowOpen` / `auxclick` / `SplitLab.go` / `watchNavigations` in tracker.js returns **NONE**. Decoration deliberately **not** ported — HTML mode doesn't need it (its sender is the snippet, Phase 2).
+- [x] **Diff is `+31 / −1`**, confined to the Method-1 branch of `detect()` plus the new `fetchGoalsLate()` helper. Nothing else in tracker.js touched.
+- [x] **Per-test map fix intact** — `STORAGE_KEY = "sl_tracking"` and the map logic untouched.
+- [x] **Method-1 context does get persisted** — `boot()` calls `store(_ctx)` ([tracker.js:1063](../src/app/tracker.js/route.ts#L1063)), so the goals fetched here land in `sl_tracking` and later same-domain navigations on the destination keep working.
+- [x] `npm run build` — **passes**.
+- [ ] ⚠️ **Deploy to dev** — the fix was **local-only/uncommitted**; `HEAD` had no `xhr0`, which is exactly why the 2026-07-16 Stage 2 attempt failed. It must be committed + pushed before re-testing.
+- [ ] **Re-run Phase 2 Stage 2** — HTML hosted page → `hunbalsiddiqui.com/thanks.html`: conversion fires `200` with correct test/variant/goal.
+- [ ] **Regression R1–R5** (same-domain redirect) — tracker.js changed, so re-verify the map fix still holds.
+- [ ] **Regression: redirect-mode 302** — the original Method-1 path. Confirm the pageview still fires **immediately** (no ~1s delay — that was the whole point of going non-blocking) and exactly **once**.
+- [ ] **Regression: no double-fire** — the goals arriving late trigger a second `checkUrlGoals()`. `_sent` should dedup; confirm one conversion, not two, when the landing page itself matches the goal pattern.
+- [ ] **Regression: `/api/resolve` slow or down** — pageview must still fire on time; a failed fetch just leaves `goals: []` (today's behaviour). Confirm an outage degrades rather than breaks.
+- [ ] **Regression: Method-1 + `sl_scan=1`** — `fetchGoalsLate` is scan-guarded; confirm scanning still fires no conversions.
+- [ ] Update `url-conversion-cases.md §2` + `url-conversion-failing-cases.md §A`: HTML cross-domain link / form / `window.open` → ✅.
+
+### PHASE 1B — redirect-mode decoration (the sender) — **NOT DONE, deferred**
+
+`decorate()`, `decorateLink()`, `patchWindowOpen()`, `mousedown`/`auxclick` listeners, form-action decoration inside tracker.js. **Redirect mode only** — HTML mode does not need this.
+
+- [ ] Port the decoration half of `7b4fb22`.
 - [ ] `npm run build`
-- [ ] **Test cross-domain link** (`<a href>`, incl. new tab / middle-click) site A → site B (both have tracker.js): params `sl_tid/sl_vid/sl_vh` land on B, conversion fires.
+- [ ] **Test cross-domain link** (`<a href>`, incl. new tab / middle-click) site A → site B (both have tracker.js).
 - [ ] **Test cross-domain form** (POST decorates `action`; GET adds hidden inputs).
 - [ ] **Test `window.open(url)`** cross-domain.
-- [ ] Regression: same-domain redirect cases **R1–R5** still pass (map fix intact).
-- [ ] Update `url-conversion-cases.md §2` and `url-conversion-failing-cases.md §A`: flip these to ✅.
+- [ ] Regression: same-domain redirect cases **R1–R5** still pass.
 
 
 ---
@@ -89,14 +139,42 @@ Hooks: `mousedown` + `auxclick` + `click` (all **capture phase**, so they run be
 - [x] Cherry-pick `c55de6f` onto `url-conversion-v2` — **DONE**, `git cherry-pick -n c55de6f`, clean auto-merge, no conflicts. **Staged, NOT committed** (per instruction).
 - [x] Confirm the diff is `+76 / −0` on `src/lib/tracking.ts` only, and `sl_ctx` + `checkStoredUrlGoals` are byte-identical. **VERIFIED** — `git diff --numstat` = `76  0  src/lib/tracking.ts`; deletion-line count is literally **0**; lines 60-135 (the `sl_ctx` map + `checkStoredUrlGoals`) diff **IDENTICAL** against HEAD.
 - [x] `npm run build` — **PASSES**.
-- [ ] **Test cross-domain link** hosted page → second domain: `sl_tid/sl_vid/sl_vh` land in the destination URL, conversion fires `200` with correct test/variant/goal.
+- [ ] ⛔ **BLOCKED ON PHASE 1** — **Test cross-domain link** hosted page → second domain: params land ✅ (proven), but the conversion **cannot** fire until tracker.js Method 1 fetches goals. Attempted live 2026-07-16 against `hunbalsiddiqui.com/thanks.html` (tracker.js installed, `url_reached` goal set): **no conversion**, exactly as the `goals: []` line predicts. Re-run immediately after cherry-picking `7b4fb22`.
 - [ ] **Test new-tab / middle-click** on the same link (this is what `auxclick` exists for).
 - [ ] **Test cross-domain form** — POST (decorated `action`) **and** GET (hidden inputs) separately; they take different code paths.
 - [ ] **Test `window.open(url)`** cross-domain.
-- [ ] **Test the skip rules:** same-domain link is **not** decorated (no params leak onto internal URLs); `mailto:` / `tel:` / `#anchor` untouched; an already-decorated URL isn't double-tagged. *(Code-verified below; still worth one live confirmation.)*
+- [x] **Test the skip rules:** same-domain link is **not** decorated; `mailto:` / `tel:` / `#anchor` untouched; already-decorated URL isn't double-tagged. **✅ ALL PASS live on dev (2026-07-16)** — see Stage 1 below.
 - [ ] **Regression: same-domain HTML cases H1–H5 still pass** — especially H2/H5 (chained hosted tests via `sl_ctx`) and H3 (no double-fire).
-- [ ] **Regression: dashboard goal scan** (`?sl_scan=1`) still works — linker must stay dormant.
+- [x] **Regression: dashboard goal scan** (`?sl_scan=1`) — linker stays dormant. **✅ PASS live on dev (2026-07-16)** — with `sl_scan=1` every decoration assertion inverted (nothing tagged: link, hunbalsiddiqui link, POST action, GET hidden inputs all clean) and `window.open.__sl_patched === undefined`, i.e. `window.open` was never wrapped. The `!_isScan` gate holds; the goal scanner is unaffected.
 - [ ] Update `url-conversion-cases.md §2` + `url-conversion-failing-cases.md §A`: HTML cross-domain link / form / `window.open` → ✅.
+
+### Stage 1 — decoration, LIVE on dev 2026-07-16: **13/13 PASS** ✅
+
+Harness: `linker-test.html` (repo root), served as an HTML-mode test via `dev.trysplitlab.com/linker-html/e877ed20-…`. Every assertion runs client-side without navigating, so decoration is observed directly.
+
+| Check | Result |
+|---|---|
+| cross-domain link decorated (3 params) | ✅ |
+| same-domain link **NOT** decorated | ✅ (`dev.trysplitlab.com/internal`, clean) |
+| `mailto:` / `tel:` / `#anchor` untouched | ✅ |
+| second cross-domain host (hunbalsiddiqui.com) decorated | ✅ |
+| idempotent — no double-tag on repeat mousedown | ✅ |
+| `window.open.__sl_patched === true` | ✅ |
+| click-only path (keyboard Tab+Enter) decorated | ✅ |
+| POST form: `action` decorated | ✅ |
+| GET form: `action` **NOT** rewritten | ✅ |
+| GET form: 3 hidden inputs added | ✅ (`sl_tid,sl_vh,sl_vid`) |
+| GET form: hidden inputs **not duplicated** on re-submit | ✅ (count stays 3) |
+
+**Confirms the two riskiest paths:** GET vs POST are genuinely separate branches and both behave correctly, and the hidden-input guard prevents accumulation across repeat submits.
+
+### Stage 3 — scan-mode regression, LIVE on dev 2026-07-16: **PASS** ✅
+
+Same harness reloaded with `?sl_scan=1`. Every decoration assertion inverted exactly as required — cross-domain link, second-host link, POST `action`, GET hidden inputs (`count: 0`), click-only path: **all undecorated**. `window.open.__sl_patched` = `undefined`, so the patch never applied. The four negative assertions (same-domain / `mailto:` / `tel:` / `#anchor` must NOT decorate) stayed PASS in both modes, as they should.
+
+**Verdict:** the `!_isScan` gate is airtight — dashboard goal scanning is unaffected by the linker.
+
+**Still open:** Stage 2 — the real cross-domain conversion actually firing on the destination. Stage 1 only proves params are *attached*; Stage 2 proves the destination tracker.js *reads* them and posts the conversion.
 
 ### Edge-case audit (code-read 2026-07-16, before any live test)
 

@@ -957,6 +957,30 @@ function buildTrackerScript(appUrl: string): string {
 
   // ─── Detection: resolve context from URL params or localStorage ────────────
 
+  // Method 1 params can arrive from a cross-domain decorated link, not just a
+  // SplitLab 302, so this page may hold url_reached goals it has to match — but
+  // the params alone don't carry them. Fetch them *after* boot and re-run the
+  // URL check, so the pageview never waits on the network. Skipped in scan mode
+  // to keep Method-1 scanning free of conversions, exactly as it is today.
+  function fetchGoalsLate(vid) {
+    if (_scanMode) return;
+    try {
+      var xhrG = new XMLHttpRequest();
+      xhrG.open("GET", RESOLVE_URL + "?vid=" + encodeURIComponent(vid), true);
+      xhrG.withCredentials = false;
+      xhrG.onload = function() {
+        try {
+          var data = JSON.parse(xhrG.responseText);
+          if (!_ctx || !data.goals || !data.goals.length) return;
+          _ctx.goals = data.goals;
+          store(_ctx);
+          checkUrlGoals();
+        } catch(e) {}
+      };
+      xhrG.send();
+    } catch(e) {}
+  }
+
   function detect(callback) {
     var params = new URLSearchParams(window.location.search);
     var isScan = params.get("sl_scan") === "1";
@@ -968,7 +992,13 @@ function buildTrackerScript(appUrl: string): string {
     var vh  = params.get("sl_vh");
     if (tid && vid && vh) {
       cleanUrl(["sl_tid", "sl_vid", "sl_vh", "sl_scan"]);
-      return callback({ tid: tid, vid: vid, vh: vh, goals: [] });
+      // Boot immediately with no goals, then fill them in. Blocking here on
+      // /api/resolve (~1s) would delay every redirect-mode pageview and lose it
+      // outright on a fast bounce. fetchGoalsLate() re-checks url_reached once
+      // the goals land, so nothing is missed.
+      callback({ tid: tid, vid: vid, vh: vh, goals: [] });
+      fetchGoalsLate(vid);
+      return;
     }
 
     // Method 2: Variant ID only (?sl_vid=xxx) — resolve test ID + goals via API
