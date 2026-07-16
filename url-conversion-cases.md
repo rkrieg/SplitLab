@@ -31,7 +31,7 @@ All verified via code + simulation.
 | R2 | `window.location.href = "/thanks"` | ✅ Works |
 | R3 | Typed URL / bookmark / meta refresh | ✅ Works |
 | R4 | SPA pushState / replaceState to `/thanks` | ✅ Works |
-| R5 | Chained tests (A then B, then A's goal URL) | ✅ Works (the per-test map fix on `url-conversion-v2`) |
+| R5 | Chained tests (A then B, then A's goal URL) | ✅ **CONFIRMED live 2026-07-16** — two tests coexisted as separate `sl_tracking` keys; A's entry untouched by B's write (`ts` unchanged), and A's goal URL fired A's own variant. The per-test map fix on `url-conversion-v2` holds after the tracker.js change |
 
 **Why R2 works:** after the full page load on the same origin, tracker.js re-boots and reads `sl_tracking` from that origin's `localStorage` — it never needs to touch `location.href` at all. We don't intercept the navigation; we simply don't need to.
 
@@ -50,7 +50,8 @@ Context has to be *carried* in the URL, so it now depends on **how** the visitor
 | Navigation to a **different** domain | Result |
 |---|---|
 | Link click `<a href>` (HTML mode) | ✅ **CONFIRMED live (2026-07-16)** — conversion fired, dashboard count incremented |
-| Form submit (POST / GET) (HTML mode) | ⚠️ Decoration verified live (POST rewrites `action`; GET adds hidden inputs); end-to-end conversion not yet re-tested |
+| Form submit — **GET** (HTML mode) | ✅ **CONFIRMED live end-to-end 2026-07-16** — hidden inputs added during the submit event **are** serialized by the browser into the query string; survived a 307; destination entered Method 1 (`resolve` initiator `tracker.js:952` = `fetchGoalsLate`, which requires all three params); conversion fired and dashboard confirmed |
+| Form submit — **POST** (HTML mode) | ⚠️ Decoration verified live (`action` rewritten); end-to-end not re-tested. Low risk — receiver is proven and can't tell how params reached its URL |
 | `window.open(url)` (HTML mode) | ⚠️ Patch verified live (`__sl_patched === true`); end-to-end conversion not yet re-tested |
 | Any of the above from **Redirect mode** | ❌ Still pending — the sender half for tracker.js (Phase 1B) is deliberately not ported yet |
 | `window.location.href = otherdomain.com/...` | ❌ **Cannot be fixed automatically** — `location` is uninterceptable; needs manual `SplitLab.go(url)` (exists in `7b4fb22`, commented out) |
