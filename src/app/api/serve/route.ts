@@ -16,6 +16,10 @@ export async function GET(request: NextRequest) {
   const isScan = searchParams.get('sl_scan') === '1';
   const forcedVid = searchParams.get('sl_vid') || null;
   const forcedVh = searchParams.get('sl_vh') || null;
+  // Visitor-facing URL forwarded by the shareable-link route ([slug]/[testId]),
+  // which fetches us server-side so we can't see it ourselves. Used as sl_purl
+  // in proxy mode when there's no custom domain.
+  const publicUrl = searchParams.get('public_url') || '';
 
   try {
     const previewTestId = searchParams.get('preview_test_id') || null;
@@ -238,11 +242,13 @@ export async function GET(request: NextRequest) {
         // tracker.js runs inside the iframe, so window.location.href there is the
         // redirect_url — never the wrapper URL the visitor actually sees, which it
         // can't read cross-origin. Hand the wrapper URL down so form leads report
-        // the page the visitor was really on. Skipped in preview mode, where there
-        // is no custom domain and `domain` is empty.
+        // the page the visitor was really on: the custom domain when one served
+        // this request, else the shareable-link URL forwarded via public_url.
         if (domain) {
           const proto = request.headers.get('x-forwarded-proto') || new URL(request.url).protocol.replace(':', '');
           iframeUrlObj.searchParams.set('sl_purl', `${proto}://${domain}${urlPath}`);
+        } else if (publicUrl) {
+          iframeUrlObj.searchParams.set('sl_purl', publicUrl);
         }
         const iframeUrl = iframeUrlObj.toString();
         const iframeHtml = `<!DOCTYPE html>
