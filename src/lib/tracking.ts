@@ -213,7 +213,11 @@ export function buildTrackingSnippet(
         variantId: _SL.variantId,
         visitorHash: _SL.visitorHash,
         formFields: fields,
-        utm: utm
+        utm: utm,
+        // Read at submit time, before the site navigates to any thank-you page,
+        // so this is the page the form was actually on.
+        pageUrl: window.location.href,
+        pageTitle: document.title || ''
       });
       if (navigator.sendBeacon) {
         try {

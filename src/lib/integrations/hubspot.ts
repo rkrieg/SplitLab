@@ -255,6 +255,8 @@ export async function syncLeadToHubSpot(params: {
     utm_term?: string | null;
     gclid?: string | null;
     fbclid?: string | null;
+    page_url?: string | null;
+    page_title?: string | null;
   };
 }): Promise<SyncResult> {
   const { accessToken, fieldMappings, formFields, systemData, portalId, formGuid } = params;
@@ -285,8 +287,13 @@ export async function syncLeadToHubSpot(params: {
           body: JSON.stringify({
             submittedAt: Date.now(),
             fields,
+            // pageUri drives the "Conversion Page" column in HubSpot's submissions
+            // table — without it every submission reads "Unavailable". undefined
+            // (not null) so the key is dropped entirely when we have no value.
             context: {
               ipAddress: systemData.ip_address ?? undefined,
+              pageUri: systemData.page_url ?? undefined,
+              pageName: systemData.page_title ?? undefined,
             },
           }),
         }

@@ -620,7 +620,11 @@ function buildTrackerScript(appUrl: string): string {
         variantId: _ctx.vid,
         visitorHash: _ctx.vh,
         formFields: fields,
-        utm: utm
+        utm: utm,
+        // Read at submit time, before the site navigates to any thank-you page,
+        // so this is the page the form was actually on.
+        pageUrl: window.location.href,
+        pageTitle: document.title || ""
       });
       var FORM_LEADS_URL = API_BASE + "/api/form-leads";
       if (navigator.sendBeacon) {
@@ -660,7 +664,11 @@ function buildTrackerScript(appUrl: string): string {
       variantId: _ctx.vid,
       visitorHash: _ctx.vh,
       formFields: _accumulatedFormData,
-      utm: utm
+      utm: utm,
+      // Read at submit time, before the site navigates to any thank-you page,
+      // so this is the page the form was actually on.
+      pageUrl: window.location.href,
+      pageTitle: document.title || ""
     });
     var FORM_LEADS_URL = API_BASE + "/api/form-leads";
     try {
