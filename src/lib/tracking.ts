@@ -201,6 +201,16 @@ export function buildTrackingSnippet(
     } catch(e) {}
   }
 
+  // HubSpot visitor token, set by the portal tracking script the serve route
+  // injects when the workspace has HubSpot connected. Passing it as hutk lets
+  // HubSpot attribute the lead to the session its own tracker recorded.
+  function readHutk() {
+    try {
+      var m = document.cookie.match(/(?:^|;\\s*)hubspotutk=([^;]+)/);
+      return m ? m[1] : null;
+    } catch(e) { return null; }
+  }
+
   function sendFormLead(fields) {
     try {
       var sp = new URLSearchParams(window.location.search);
@@ -217,7 +227,8 @@ export function buildTrackingSnippet(
         // Read at submit time, before the site navigates to any thank-you page,
         // so this is the page the form was actually on.
         pageUrl: window.location.href,
-        pageTitle: document.title || ''
+        pageTitle: document.title || '',
+        hutk: readHutk()
       });
       if (navigator.sendBeacon) {
         try {
