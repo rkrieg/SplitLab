@@ -257,6 +257,7 @@ export async function syncLeadToHubSpot(params: {
     fbclid?: string | null;
     page_url?: string | null;
     page_title?: string | null;
+    hutk?: string | null;
   };
 }): Promise<SyncResult> {
   const { accessToken, fieldMappings, formFields, systemData, portalId, formGuid } = params;
@@ -290,11 +291,23 @@ export async function syncLeadToHubSpot(params: {
             // pageUri drives the "Conversion Page" column in HubSpot's submissions
             // table — without it every submission reads "Unavailable". undefined
             // (not null) so the key is dropped entirely when we have no value.
-            context: {
-              ipAddress: systemData.ip_address ?? undefined,
-              pageUri: systemData.page_url ?? undefined,
-              pageName: systemData.page_title ?? undefined,
-            },
+            // When we have HubSpot's own visitor token (hubspotutk cookie — only
+            // captured on HTML variants, where we inject the portal's tracking
+            // code), send it alone and let HubSpot fill page/source data from the
+            // session its tracker recorded, like a native form — no domain
+            // registration needed. A self-asserted pageUri from an unregistered
+            // domain diverts the lead to spam, so it's only the cookieless
+            // fallback (ad-blockers, Safari ITP), where the trade-off is inverted.
+            context: systemData.hutk
+              ? {
+                  ipAddress: systemData.ip_address ?? undefined,
+                  hutk: systemData.hutk,
+                }
+              : {
+                  ipAddress: systemData.ip_address ?? undefined,
+                  pageUri: systemData.page_url ?? undefined,
+                  pageName: systemData.page_title ?? undefined,
+                },
           }),
         }
       );

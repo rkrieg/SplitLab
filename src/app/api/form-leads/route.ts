@@ -23,7 +23,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   }
 
-  const { testId, variantId, visitorHash, formFields, utm, pageUrl, pageTitle } = body as {
+  const { testId, variantId, visitorHash, formFields, utm, pageUrl, pageTitle, hutk } = body as {
     testId?: string;
     variantId?: string;
     visitorHash?: string;
@@ -31,6 +31,7 @@ export async function POST(request: NextRequest) {
     utm?: Record<string, string>;
     pageUrl?: string;
     pageTitle?: string;
+    hutk?: string;
   };
 
   if (!testId || typeof testId !== 'string') {
@@ -65,6 +66,10 @@ export async function POST(request: NextRequest) {
     typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : null;
   const pageUrlClean = clean(pageUrl, 2048);
   const pageTitleClean = clean(pageTitle, 255);
+  // HubSpot visitor token (hubspotutk cookie, a 32-char hex value). Only forwarded
+  // to HubSpot as context.hutk — never stored. Strict shape check since this is
+  // attacker-controllable input.
+  const hutkClean = typeof hutk === 'string' && /^[a-f0-9]{32}$/i.test(hutk.trim()) ? hutk.trim() : null;
 
   const { error } = await db.from('form_leads').insert({
     test_id:      testId,
@@ -111,6 +116,7 @@ export async function POST(request: NextRequest) {
       fbclid:       utm?.fbclid ?? null,
       page_url:     pageUrlClean,
       page_title:   pageTitleClean,
+      hutk:         hutkClean,
     },
   }));
 
@@ -135,6 +141,7 @@ interface DispatchParams {
     fbclid?: string | null;
     page_url?: string | null;
     page_title?: string | null;
+    hutk?: string | null;
   };
 }
 

@@ -353,7 +353,7 @@ ${proxyTrackingSnippet}
     html = stripSplitLabTrackerTags(html, APP_URL);
 
     // 7. Fetch workspace scripts + page-scoped scripts + test-scoped scripts + UTM personalization rules
-    const [{ data: workspaceScripts }, { data: pageScripts }, { data: testScripts }, { data: utmRules }, utmPageRow] = await Promise.all([
+    const [{ data: workspaceScripts }, { data: pageScripts }, { data: testScripts }, { data: utmRules }, utmPageRow, { data: hubspotIntegration }] = await Promise.all([
       db.from('scripts').select('*').eq('workspace_id', workspaceId).eq('is_active', true).is('page_id', null).is('test_id', null),
       selectedVariant.page_id
         ? db.from('scripts').select('*').eq('workspace_id', workspaceId).eq('is_active', true).eq('page_id', selectedVariant.page_id)
@@ -365,12 +365,21 @@ ${proxyTrackingSnippet}
       selectedVariant.page_id
         ? db.from('pages').select('field_selectors_json').eq('id', selectedVariant.page_id).single()
         : Promise.resolve({ data: null }),
+      db.from('workspace_integrations').select('config').eq('workspace_id', workspaceId).eq('type', 'hubspot').eq('enabled', true).limit(1),
     ]);
     const fieldSelectors = (utmPageRow?.data as { field_selectors_json?: Record<string, { selector: string; type: 'text' | 'image'; label: string }> } | null)?.field_selectors_json ?? null;
     const scripts = [...(workspaceScripts || []), ...(pageScripts || []), ...(testScripts || [])];
 
     const testHeadScriptsHtml = (test as { head_scripts?: string }).head_scripts || '';
     const headScripts: string[] = testHeadScriptsHtml ? [testHeadScriptsHtml] : [];
+
+    // HubSpot connected on this workspace: inject the portal's tracking code so
+    // the hubspotutk cookie is set first-party and the snippet can pass hutk with
+    // form leads — gives HubSpot native session attribution like Unbounce does.
+    const hubId = (hubspotIntegration?.[0]?.config as { hub_id?: number | string | null } | null)?.hub_id;
+    if (hubId && /^\d+$/.test(String(hubId))) {
+      headScripts.push(`<script type="text/javascript" id="hs-script-loader" async defer src="https://js.hs-scripts.com/${hubId}.js"></script>`);
+    }
     const bodyEndScripts: string[] = [];
 
     for (const script of scripts) {
