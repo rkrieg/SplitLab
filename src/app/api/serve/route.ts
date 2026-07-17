@@ -235,6 +235,15 @@ export async function GET(request: NextRequest) {
         iframeUrlObj.searchParams.set('sl_vid', selectedVariant.id);
         iframeUrlObj.searchParams.set('sl_vh', visitorId);
         if (isScan) iframeUrlObj.searchParams.set('sl_scan', '1');
+        // tracker.js runs inside the iframe, so window.location.href there is the
+        // redirect_url — never the wrapper URL the visitor actually sees, which it
+        // can't read cross-origin. Hand the wrapper URL down so form leads report
+        // the page the visitor was really on. Skipped in preview mode, where there
+        // is no custom domain and `domain` is empty.
+        if (domain) {
+          const proto = request.headers.get('x-forwarded-proto') || new URL(request.url).protocol.replace(':', '');
+          iframeUrlObj.searchParams.set('sl_purl', `${proto}://${domain}${urlPath}`);
+        }
         const iframeUrl = iframeUrlObj.toString();
         const iframeHtml = `<!DOCTYPE html>
 <html lang="en">
