@@ -15,6 +15,43 @@ export const dynamic = 'force-dynamic';
 // up to ~10-12s, so 60s leaves comfortable headroom without holding instances open unnecessarily.
 export const maxDuration = 60;
 
+// Params that have their own form_leads column. They must never also appear in
+// extra_params — one source of truth per param, so the two cannot disagree.
+const LEGACY_PARAM_KEYS = new Set([
+  'utm_source', 'utm_medium', 'utm_content', 'utm_term', 'utm_campaign', 'gclid', 'fbclid',
+]);
+
+const MAX_EXTRA_PARAMS = 40;
+const MAX_EXTRA_KEY_LEN = 100;
+const MAX_EXTRA_VALUE_LEN = 500;
+const MAX_EXTRA_SERIALIZED = 8192;
+
+// The client already applies these caps. Re-applying them here is the point:
+// the payload arrives from a browser over an unauthenticated public endpoint,
+// so it is attacker-controlled and cannot be trusted.
+function sanitizeExtraParams(input: unknown): Record<string, string> {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
+  const out: Record<string, string> = {};
+  let count = 0;
+
+  for (const [rawKey, rawValue] of Object.entries(input as Record<string, unknown>)) {
+    if (count >= MAX_EXTRA_PARAMS) break;
+    if (typeof rawValue !== 'string' || !rawValue) continue;
+    const key = rawKey.toLowerCase();
+    if (key.length > MAX_EXTRA_KEY_LEN) continue;
+    // Ours — echoing these back would confuse the tracker's detection chain.
+    if (key.startsWith('sl_')) continue;
+    // Belongs in its own column; storing it here too would duplicate.
+    if (LEGACY_PARAM_KEYS.has(key)) continue;
+    out[key] = rawValue.slice(0, MAX_EXTRA_VALUE_LEN);
+    count++;
+  }
+
+  // Final belt-and-braces bound on what reaches the jsonb column.
+  if (JSON.stringify(out).length > MAX_EXTRA_SERIALIZED) return {};
+  return out;
+}
+
 export async function POST(request: NextRequest) {
   let body: Record<string, unknown>;
   try {
@@ -23,12 +60,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   }
 
-  const { testId, variantId, visitorHash, formFields, utm } = body as {
+  const { testId, variantId, visitorHash, formFields, utm, extraParams } = body as {
     testId?: string;
     variantId?: string;
     visitorHash?: string;
     formFields?: Record<string, string>;
     utm?: Record<string, string>;
+    extraParams?: Record<string, string>;
   };
 
   if (!testId || typeof testId !== 'string') {
@@ -56,6 +94,7 @@ export async function POST(request: NextRequest) {
     null;
 
   const submittedAt = new Date().toISOString();
+  const safeExtraParams = sanitizeExtraParams(extraParams);
 
   const { error } = await db.from('form_leads').insert({
     test_id:      testId,
@@ -71,6 +110,7 @@ export async function POST(request: NextRequest) {
     gclid:        utm?.gclid || null,
     fbclid:       utm?.fbclid || null,
     form_fields:  formFields || {},
+    extra_params: safeExtraParams,
   });
 
   if (error) {
@@ -98,6 +138,7 @@ export async function POST(request: NextRequest) {
       utm_term:     utm?.utm_term ?? null,
       gclid:        utm?.gclid ?? null,
       fbclid:       utm?.fbclid ?? null,
+      extraParams:  safeExtraParams,
     },
   }));
 
@@ -120,6 +161,7 @@ interface DispatchParams {
     utm_term?: string | null;
     gclid?: string | null;
     fbclid?: string | null;
+    extraParams?: Record<string, string>;
   };
 }
 
@@ -207,7 +249,9 @@ async function handleHubSpot(
   });
 
   if (result.ok) {
-    console.log('[hubspot-sync] ok — testId:', params);
+    // Was logging the whole params object — every lead's name, email and phone
+    // in plaintext in Vercel logs. The label always said testId.
+    console.log('[hubspot-sync] ok — testId:', params.testId);
     await db.rpc('increment_integration_synced', { p_mapping_id: mapping.id });
   } else {
     console.error('[hubspot-sync] failed:', result.error);
@@ -269,6 +313,8 @@ async function handleWebhook(
     utm_campaign: params.systemData.utm_campaign,
     utm_content:  params.systemData.utm_content,
     utm_term:     params.systemData.utm_term,
+    gclid:        params.systemData.gclid,
+    fbclid:       params.systemData.fbclid,
   };
 
   const result = await fireWebhook({
