@@ -6,9 +6,15 @@
 | Todo | Code | Verification |
 |---|---|---|
 | **Todo 1** — forward params through redirect + proxy | ✅ Done | ✅ Verified live against active rigs — redirect `Location` carried 13/13 + `sl_vid`/`sl_vh` once each, no `domain`/`path`/`preview_test_id` leaked; proxy iframe `src` likewise |
-| **Todo 2** — remember params for the visit | ✅ Done | ✅ Logic verified — real shipped `tracker.js` run in a stubbed DOM, 17/17 (page-2 non-wipe, last-touch, PII exclusion, expiry, blocked storage, `sl_tracking` untouched). Browser matrix still pending |
-| **Todo 3** — arbitrary params + `extra_params` | ✅ Done | ⚠️ **Migration 035 not yet applied to any database.** End-to-end untested |
-| **Todo 4** — cross-domain forwarding | ✅ Done | ⏳ Needs the browser matrix below |
+| **Todo 2** — remember params for the visit | ✅ Done | ✅ Logic verified via stubbed-DOM harness, **and live end-to-end in all three modes** (proxy Journey C, redirect Journey A, HTML Journey B — all 2026-07-20): page-1-has-params/page-2-doesn't is fixed, no-empty-overwrite holds across reloads, params survive the full A→B→A round trip |
+| **Todo 3** — arbitrary params + `extra_params` | ✅ Done | ✅ **Verified live end-to-end in proxy and HTML modes** (2026-07-20) — 7 legacy columns + 6 `extra_params` = all 13, no duplication; `fbc_id` distinct from `fbclid`; hidden `utm_term`/`utm_source`/`hsa_grp` read; `csrf_token`, `form_build_id`, `session_id` and password all absent; multi-step form accumulates all steps; JS/div form sends exactly one lead. Migration 035 applied |
+| **Todo 4** — cross-domain forwarding | ✅ Done | ⏳ **Still zero verification.** Needs the browser matrix below |
+
+**Live test log, 2026-07-20:**
+- **Journey C (proxy mode)** passed end-to-end — iframe `src` carried 13/13, `sl_params` persisted across a same-domain navigation *inside the iframe's partitioned storage*, and the lead row was correct. Exercises Todos 1, 2, 3 in the mode the docs flagged as most fragile.
+- **Journey A (redirect mode, true 302 — confirmed via DB, `proxy_mode: false`)** passed end-to-end — `Location` header carried 13/13 + `sl_vid`/`sl_vh`, params survived a same-domain nav to a clean-URL page, lead row correct, and a repeat visit with `?utm_source=direct` correctly overrode the stored value. Confirms `cleanUrl()` strips `sl_tid`/`sl_vid`/`sl_vh`/`sl_scan` from the address bar via `history.replaceState` post-boot — so a URL snapshot taken after boot will never show them even on a real 302; that is expected, not a sign the params weren't sent.
+- **Journey B (HTML mode)** passed end-to-end — arrival showed 13/13 remembered; navigating to a clean-URL Page B kept 13/13 remembered with 0 params in the URL (the literal complaint, fixed); a plain reload on the clean URL did not wipe storage; main form submit produced a correct lead row (7 legacy columns + `extra_params`, no `csrf_token`/`form_build_id`/password); multi-step form accumulated all 3 steps into one lead; JS/div form sent exactly one lead; round trip back to Page A still showed 13/13 remembered. Two rig-only bugs were found and fixed along the way (HTML-comment eating the tracker snippet; `window.SplitLab.isActive` API-shape mismatch — logged as pre-existing bug #6, out of scope for this PR).
+- Both journeys still show `host=dev.trysplitlab.com` leaking — expected until the Todo 1 deny-list fix (below) is pushed to dev.
 
 > ### ⚠️ Deploy order — the one way this loses data
 >
@@ -200,6 +206,26 @@ Merge inbound params into both destination URLs, with a deny-list of our own con
 | `preview_test_id` | Dashboard-only, read at [`L21`](../src/app/api/serve/route.ts#L21). Must not escape to a client destination. |
 | `sl_tid` | Not read by serve today, but reserved. Exclude for symmetry with `decorate()`. |
 
+### ⚠️ `host` — injected by Vercel, invisible on localhost
+
+**Found during live testing 2026-07-20, after the deny-list was written from code review.**
+
+[`vercel.json`](../vercel.json) contains:
+
+```json
+{ "source": "/(.*)", "has": [{ "type": "host", "value": "(?<host>.*)" }], "destination": "/$1" }
+```
+
+`(?<host>.*)` is a **named capture group**, and Vercel appends named groups from `has` conditions to the destination **as query parameters**. So on every deployed environment — and *only* on deployed environments — each request silently gains `?host=<hostname>` before any of our code sees it.
+
+That param has always been there. It was harmless while nothing forwarded the query string; **Todo 1 made it leak** to the client's destination as `&host=dev.trysplitlab.com`.
+
+**`host` is therefore on the deny-list**, alongside `domain` and `path`.
+
+> **The transferable lesson:** a deny-list derived from reading the source has a structural blind spot — it cannot know about params injected by the *platform* between the browser and the handler. Local verification passed completely clean; only a real deployment surfaced this. Any future addition to the forwarding logic should be re-checked on a deployed URL, not just locally.
+
+> **Separate follow-up (not done here):** that rewrite is a no-op — it rewrites `/(.*)` → `/$1`, and nothing in the current source reads a `host` query param. Its only observable effect is injecting the param. Worth its own ticket to remove, but it is global to every route so the blast radius is far wider than this change.
+
 **Precedence rule:** if `redirect_url` already contains a param the visitor also has, **the saved `redirect_url` wins**. The client configured it deliberately; a visitor-supplied param must not be able to override it. Implement as "only set if not already present."
 
 **Cap the forward** at ~30 params and ~2000 chars total to prevent a crafted URL from producing an over-long `Location` header.
@@ -302,6 +328,33 @@ Keep a param if **any** of:
 **Limits:** max 40 params, key ≤ 100 chars, value ≤ 500 chars, total serialized ≤ 8KB. Server re-applies these — never trust the client payload.
 
 > **Rule 4 is deliberately not a bare `_id$` regex.** A blanket suffix match would sweep up `user_id`, `session_id`, `order_id` — session identifiers and PII that must not land in an analytics table. Keep it an explicit list.
+
+### What is guaranteed, and what silently isn't
+
+**All 13 params from Renny's URL are covered** — verified live 2026-07-20:
+
+| Param | Matched by | Stored in |
+|---|---|---|
+| `utm_source` `utm_medium` `utm_campaign` `utm_content` | **prefix** rule 1 | own columns |
+| `hsa_acc` `hsa_cam` `hsa_grp` `hsa_ad` `hsa_src` `hsa_net` `hsa_ver` | **prefix** rule 2 | `extra_params` |
+| `fbc_id` | **explicit name**, rule 3 | `extra_params` |
+| `h_ad_id` | **explicit name**, rule 4 | `extra_params` |
+
+**Anything outside the four rules is dropped with no error, no log, and no dashboard warning.** That is the deliberate cost of an allowlist — a blanket capture would put `email=`, `session=` and `order_id=` into a table that gets CSV-exported and pushed to HubSpot.
+
+**Where the real drift risk sits — and where it doesn't:**
+
+- **Prefix rules are self-extending.** A new `hsa_whatever` or `utm_whatever` is captured automatically, no code change. Since `hsa_*` and `utm_*` are how Meta and Google actually structure templates, most future additions are already handled.
+- **The two explicit names are hardcoded to one agency's convention.** `fbc_id` and `h_ad_id` exist in the lists *only* because that agency invented them. If their template changes to `fb_adset` or `gc_id`, that param goes missing silently — the same failure mode as the original complaint, one layer down.
+
+> **`fbc_id` is misfiled, deliberately noted rather than fixed.** It sits in `CLICK_ID_PARAMS`, but the client's template binds it to `{{adset.id}}` — it holds an **adset ID**, not a click token, so it belongs with `EXTRA_ID_PARAMS`. Both lists feed the same capture rule, so there is **no functional difference**; the grouping just reads misleadingly. Grouped by how the name looks rather than what it contains, which is the exact trap this doc warns about elsewhere.
+
+**Follow-up options if template drift becomes a real problem** (none in scope here):
+1. A per-workspace list of extra param names, editable in settings, so a template change needs no deploy.
+2. Broader prefix rules (`ad_*`, `fb_*`, `g_*`) — wider net, still not blanket.
+3. Log-only detection of unmatched params (names only, never values) so drift is *visible* instead of silent.
+
+**Scope of the guarantee, stated plainly:** *"we capture the 13 params in the URL Renny supplied in July 2026, plus anything `utm_*`/`hsa_*`, plus 14 known click IDs"* — **not** *"we capture ad params."*
 
 ### Schema — **additive only**
 
@@ -621,13 +674,13 @@ Do not merge until every cell is green. **All three modes, every time** — a to
 
 | | HTML | Redirect | Proxy |
 |---|---|---|---|
-| Arrival keeps 13/13 params | ☐ | ☐ | ☐ |
-| Same-domain page 1 → page 2 → submit | ☐ | ☐ | ☐ |
+| Arrival keeps 13/13 params | ✅ | ✅ | ✅ |
+| Same-domain page 1 → page 2 → submit | ✅ | ✅ | ✅ |
 | Cross-domain click | ☐ | ☐ | ☐ |
 | Cross-domain form | ☐ | ☐ | ☐ |
-| Lead row correct in dashboard | ☐ | ☐ | ☐ |
+| Lead row correct in dashboard | ✅ | ✅ | ✅ |
 | `url_reached` conversion still fires | ☐ | ☐ | ☐ |
-| Existing 7 columns unchanged | ☐ | ☐ | ☐ |
+| Existing 7 columns unchanged | ✅ | ✅ | ✅ |
 
 ---
 
@@ -644,4 +697,38 @@ Do not merge until every cell is green. **All three modes, every time** — a to
 
 1. **Unescaped search filter** — [`api/tests/[id]/form-leads/route.ts:53`](../src/app/api/tests/[id]/form-leads/route.ts#L53) interpolates `search` into a PostgREST `ilike` filter. `,` and `)` are structural in that grammar, so ordinary input can error or alter the filter tree. Behind auth and scoped by `test_id`, so not a data-exfil path — but a real correctness bug.
 2. **PII in logs** — [`api/form-leads/route.ts:210`](../src/app/api/form-leads/route.ts#L210) does `console.log('[hubspot-sync] ok — testId:', params)`, logging the whole object including `formFields` — every lead's name, email, and phone in plaintext in Vercel logs. Almost certainly meant to be `params.testId`.
-3. **Webhook/HubSpot system-field mismatch** — `webhook.ts` `SYSTEM_FIELD_KEYS` omits `gclid`/`fbclid`; `hubspot.ts` `SYSTEM_FIELDS` includes them. Natural to fix inside Todo 3.
+3. **Webhook/HubSpot system-field mismatch** — `webhook.ts` `SYSTEM_FIELD_KEYS` omits `gclid`/`fbclid`; `hubspot.ts` `SYSTEM_FIELDS` includes them. Natural to fix inside Todo 3. **✅ Fixed in this pass**, along with #2 (the PII log).
+
+## Found during live testing, 2026-07-20 — both pre-existing, both out of scope
+
+4. **`snapshotVisibleFormFields()` is page-scoped, not form-scoped.** [`tracker.js:769`](../src/app/tracker.js/route.ts#L769) does `document.querySelectorAll("input, select, textarea")` across the **whole page**, and `captureFormLead` merges that accumulator in. On a page with more than one form, submitting *any* form attributes **every field on the page** to that lead.
+
+   Surfaced when the `utm-test-b.html` rig submitted its main form and the lead row came back carrying `step1_firstname`, `step2_email`, `step3_budget`, `js_name` and `js_email` from two other forms. The page-wide scan is deliberate — it is how multi-step forms survive when steps live in separate containers — but the blast radius is wider than intended. **Any client with a newsletter box beside a lead form is silently getting contaminated lead data today.**
+
+5. **`snapshotVisibleFormFields()` does not check visibility, despite the name.** It skips hidden *input types* (`type="hidden"`), never hidden *elements*. Fields inside a `display:none` container are captured as though the visitor filled them in — confirmed live: steps 2 and 3 were never displayed, and both were captured. Either the name or the behaviour is wrong; the name is the safer thing to change, since the current behaviour is what makes multi-step accumulation work.
+
+   > Note both are **read-side** issues in the same function, and #4 is the one with real client impact. Neither is caused by, nor worsened by, any todo here — Todo 3 only changed which *hidden inputs* are read, not the page-wide scan.
+
+6. **The public `window.SplitLab` API has two different, incompatible shapes depending on mode.** [`tracker.js`](../src/app/tracker.js/route.ts) (redirect/proxy — external script) exposes:
+
+   ```js
+   window.SplitLab = {
+     track: function(type, goalId, meta) { ... },
+     getContext: function() { return _ctx; },
+     isActive: function() { return !!_ctx; }
+   };
+   ```
+
+   labelled in its own source as **"Public API (optional manual use)"** — i.e. documented as safe for a client's own page code to call. [`tracking.ts`](../src/lib/tracking.ts) (HTML mode — inline snippet) instead does:
+
+   ```js
+   window.SplitLab = _SL;
+   ```
+
+   `_SL` is the raw internal state object: it has `track()` and `send()`, but **no `isActive()`, no `getContext()`**.
+
+   **Consequence:** a client who reads the documented API and calls `window.SplitLab.isActive()` on their own page gets a clean boolean in redirect/proxy mode and a **thrown `TypeError: window.SplitLab.isActive is not a function`** in HTML mode — same client, same integration code, mode-dependent crash.
+
+   Surfaced live 2026-07-20: the `utm-test-a.html`/`utm-test-b.html` rigs called `window.SplitLab.isActive()` in their own diagnostics, which worked fine in Journeys A and C (both hit `tracker.js`) and threw on every 1.5s poll in Journey B (HTML mode, hits `tracking.ts`). The rig's own fix was to check `typeof isActive === "function"` before calling it and fall back to reading `testId` presence — the same defensive pattern any real client integration would need, which is precisely the smell that the two shapes should be unified instead of worked around.
+
+   Not caused by, nor touched by, any todo in this document — pre-existing, and out of scope here.
