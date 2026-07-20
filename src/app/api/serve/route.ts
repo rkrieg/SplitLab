@@ -16,6 +16,12 @@ const COOKIE_NAME = 'sl_visitor';
 const NO_FORWARD_PARAMS = new Set([
   'domain',          // injected by middleware, leaks internals
   'path',            // injected by middleware
+  // Injected by VERCEL, not by us, and only in deployed environments — the
+  // vercel.json rewrite matches the host header with a named capture group
+  // `(?<host>.*)`, and Vercel appends named groups to the destination as query
+  // params. Invisible on localhost, so it will not show up in local testing.
+  // Always present in production; leaks our own hostname to the client's site.
+  'host',
   'sl_vid',          // set explicitly below; also read as forcedVid, so a
   'sl_vh',           // forwarded value could pin the wrong variant
   'sl_scan',         // handled explicitly via isScan
