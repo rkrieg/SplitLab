@@ -27,6 +27,10 @@ const SYSTEM_FIELD_KEYS = [
   'utm_campaign',
   'utm_content',
   'utm_term',
+  // Were missing here while hubspot.ts SYSTEM_FIELDS has had them all along —
+  // webhook users simply could not map the click IDs.
+  'gclid',
+  'fbclid',
 ] as const;
 
 export { SYSTEM_FIELD_KEYS };

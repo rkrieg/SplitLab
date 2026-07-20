@@ -1,0 +1,11 @@
+-- Capture arbitrary ad-tracking params (hsa_*, fbc_id, h_ad_id, …) on form leads.
+--
+-- ADDITIVE ONLY. form_leads is in production: the 7 existing columns
+-- (utm_source, utm_medium, utm_content, utm_term, utm_campaign, gclid, fbclid)
+-- are untouched and keep being populated exactly as before. extra_params holds
+-- ONLY params that have no dedicated column — never a duplicate of those 7, so
+-- the two can never disagree.
+--
+-- DEFAULT '{}' means every historical row reads back as an empty object:
+-- no backfill, no downtime.
+ALTER TABLE form_leads ADD COLUMN extra_params jsonb NOT NULL DEFAULT '{}';

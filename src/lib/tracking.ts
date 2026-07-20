@@ -135,20 +135,144 @@ export function buildTrackingSnippet(
     }
   }
 
+  // ─── Tracking params (mirrors tracker.js — keep the two in sync) ────────────
+  //
+  // Capture used to read window.location.search at submit time only, so an ad
+  // landing on page 1 with the form on page 2 saved a lead with blank UTMs.
+  // Params are now stored on every page load and read back at submit.
+  //
+  // Deliberately a SEPARATE key from sl_ctx, which holds variant assignment.
+  var PARAMS_KEY = 'sl_params';
+  var PARAMS_TTL = 90 * 24 * 60 * 60 * 1000;
+
+  // Params with a dedicated form_leads column — everything else goes to
+  // extra_params. Never both; dual-write would let the two disagree.
+  var LEGACY_PARAM_KEYS = ['utm_source','utm_medium','utm_content','utm_term','utm_campaign','gclid','fbclid'];
+
+  // NOTE: fbc_id is NOT fbclid. Facebook sends both; different params.
+  var CLICK_ID_PARAMS = {
+    gclid:1, fbclid:1, fbc_id:1, fbp:1, msclkid:1, ttclid:1, li_fat_id:1,
+    twclid:1, dclid:1, wbraid:1, gbraid:1, epik:1, sccid:1, irclickid:1
+  };
+
+  // Explicit list, NOT a bare /_id$/ regex — that would sweep up user_id,
+  // session_id and order_id, putting PII into an analytics table.
+  var EXTRA_ID_PARAMS = {
+    h_ad_id:1, ad_id:1, adset_id:1, campaign_id:1, creative_id:1, placement_id:1
+  };
+
+  var MAX_PARAMS = 40, MAX_PARAM_KEY = 100, MAX_PARAM_VALUE = 500, MAX_PARAMS_SERIALIZED = 8192;
+
+  function isTrackingParam(name) {
+    if (!name) return false;
+    var n = String(name).toLowerCase();
+    // Ours — also what keeps decorateFormForSubmit's sl_* hidden inputs out.
+    if (n.indexOf('sl_') === 0) return false;
+    if (n.indexOf('utm_') === 0) return true;
+    if (n.indexOf('hsa_') === 0) return true;
+    if (CLICK_ID_PARAMS[n] === 1) return true;
+    if (EXTRA_ID_PARAMS[n] === 1) return true;
+    return false;
+  }
+
+  function collectTrackingParams(sp) {
+    var out = {}, count = 0;
+    try {
+      sp.forEach(function(value, key) {
+        if (count >= MAX_PARAMS) return;
+        if (!isTrackingParam(key)) return;
+        if (!value || key.length > MAX_PARAM_KEY) return;
+        out[key] = value.length > MAX_PARAM_VALUE ? value.slice(0, MAX_PARAM_VALUE) : value;
+        count++;
+      });
+    } catch(e) {}
+    return out;
+  }
+
+  function saveParams(p) {
+    try {
+      var body = JSON.stringify({ p: p, ts: Date.now() });
+      if (body.length > MAX_PARAMS_SERIALIZED) return;
+      localStorage.setItem(PARAMS_KEY, body);
+    } catch(e) {}
+  }
+
+  function loadParams() {
+    try {
+      var raw = JSON.parse(localStorage.getItem(PARAMS_KEY) || 'null');
+      if (!raw || !raw.p || !raw.ts) return {};
+      if (Date.now() - raw.ts > PARAMS_TTL) return {};
+      return raw.p;
+    } catch(e) { return {}; }
+  }
+
+  function captureParamsFromUrl() {
+    try {
+      var found = collectTrackingParams(new URLSearchParams(window.location.search));
+      // Never write an empty set — otherwise page 2 wipes page 1's params,
+      // which is the exact bug being fixed.
+      if (!Object.keys(found).length) return;
+      // Last touch: a new inbound URL replaces the WHOLE set, so Monday's
+      // hsa_ad can never mix with Thursday's utm_campaign.
+      saveParams(found);
+    } catch(e) {}
+  }
+
+  // Stored params, overlaid with the live URL (same-page beats remembered).
+  function trackingParams() {
+    var out = {}, k;
+    var stored = loadParams();
+    for (k in stored) { if (stored.hasOwnProperty(k)) out[k] = stored[k]; }
+    var live = collectTrackingParams(new URLSearchParams(window.location.search));
+    for (k in live) { if (live.hasOwnProperty(k)) out[k] = live[k]; }
+    return out;
+  }
+
+  function splitTrackingParams(all) {
+    var utm = {}, extra = {}, k;
+    for (k in all) {
+      if (!all.hasOwnProperty(k)) continue;
+      if (LEGACY_PARAM_KEYS.indexOf(k) >= 0) utm[k] = all[k];
+      else extra[k] = all[k];
+    }
+    return { utm: utm, extra: extra };
+  }
+
+  // Runs immediately, not from init() — must not depend on DOM readiness.
+  captureParamsFromUrl();
+
   // ─── Cross-domain linker (mirrors tracker.js) ───────────────────────────────
   // localStorage never crosses origins, so tag outbound cross-domain
   // navigations with sl_tid/sl_vid/sl_vh; tracker.js on the destination
   // rebuilds context from the params (detect Method 1) and strips them.
+  var MAX_DECORATED_URL = 2000;
+
   function decorate(url) {
     try {
       if (!url) return url;
       var u = new URL(String(url), window.location.href);
       if (u.protocol !== 'http:' && u.protocol !== 'https:') return url;
       if (u.hostname === window.location.hostname) return url;
+      // Already tagged — this guard stops watchNavigations double-appending.
       if (u.searchParams.get('sl_vid') || u.searchParams.get('sl_tid')) return url;
       u.searchParams.set('sl_tid', _SL.testId);
       u.searchParams.set('sl_vid', _SL.variantId);
       u.searchParams.set('sl_vh', _SL.visitorHash);
+
+      // Carry the visitor's ad params across the origin boundary too —
+      // localStorage cannot, so the URL is the only channel.
+      var p = trackingParams(), k;
+      var len = u.toString().length;
+      for (k in p) {
+        if (!p.hasOwnProperty(k)) continue;
+        if (u.searchParams.has(k)) continue; // explicit beats inherited
+        var cost = k.length + p[k].length + 2;
+        // Tracking integrity beats attribution completeness — sl_* is already
+        // set, so an over-long URL drops extras and keeps context.
+        if (len + cost > MAX_DECORATED_URL) break;
+        u.searchParams.set(k, p[k]);
+        len += cost;
+      }
       return u.toString();
     } catch(e) { return url; }
   }
@@ -173,13 +297,24 @@ export function buildTrackingSnippet(
     var method = (form.getAttribute('method') || 'get').toLowerCase();
     if (method === 'get') {
       // GET submits replace the action query string with the form fields,
-      // so carry the params as hidden inputs instead
-      ['sl_tid', 'sl_vid', 'sl_vh'].forEach(function(name) {
+      // so carry the params as hidden inputs instead. Read them back out of the
+      // decorated URL so this always carries exactly what decorate() decided.
+      var decParams = new URL(dec, window.location.href).searchParams;
+      var origParams = new URL(action, window.location.href).searchParams;
+      decParams.forEach(function(val, name) {
+        if (!val) return;
+        // Only what decorate() added — never re-emit the action's own params.
+        if (origParams.has(name)) return;
         if (form.querySelector && form.querySelector("input[name='" + name + "']")) return;
         var hidden = document.createElement('input');
         hidden.type = 'hidden';
         hidden.name = name;
-        hidden.value = name === 'sl_tid' ? _SL.testId : name === 'sl_vid' ? _SL.variantId : _SL.visitorHash;
+        hidden.value = val;
+        // Marks this as OURS so lead capture skips it. Required: these carry
+        // the client's own param names (utm_source etc), so the 'sl_' name rule
+        // cannot exclude them — without the marker we would inject a param here
+        // and capture it straight back as if the page had supplied it.
+        hidden.setAttribute('data-sl', '1');
         form.appendChild(hidden);
       });
     } else {
@@ -318,19 +453,24 @@ export function buildTrackingSnippet(
     } catch(e) {}
   }
 
-  function sendFormLead(fields) {
+  function sendFormLead(fields, hiddenParams) {
     try {
-      var sp = new URLSearchParams(window.location.search);
-      var utm = {};
-      ['utm_source','utm_medium','utm_content','utm_term','utm_campaign','gclid','fbclid'].forEach(function(k) {
-        if (sp.get(k)) utm[k] = sp.get(k);
-      });
+      // Stored + live URL, then hidden inputs fill any remaining gaps — a live
+      // or stored value is more reliable than a possibly-stale hidden field.
+      var all = trackingParams();
+      if (hiddenParams) {
+        for (var hk in hiddenParams) {
+          if (hiddenParams.hasOwnProperty(hk) && !all[hk]) all[hk] = hiddenParams[hk];
+        }
+      }
+      var split = splitTrackingParams(all);
       var payload = JSON.stringify({
         testId: _SL.testId,
         variantId: _SL.variantId,
         visitorHash: _SL.visitorHash,
         formFields: fields,
-        utm: utm
+        utm: split.utm,
+        extraParams: split.extra
       });
       if (navigator.sendBeacon) {
         try {
@@ -358,16 +498,32 @@ export function buildTrackingSnippet(
       var k;
       for (k in _accumulatedFormData) { if (_accumulatedFormData.hasOwnProperty(k)) fields[k] = _accumulatedFormData[k]; }
       // Overlay current form's fields (name || id || placeholder as key)
+      var hiddenParams = {};
       var elements = form ? form.elements : [];
       for (var i = 0; i < elements.length; i++) {
         var el = elements[i];
         var t = (el.type || '').toLowerCase();
-        if (t === 'password' || t === 'hidden' || t === 'submit' || t === 'button' || t === 'reset' || t === 'file') continue;
+        if (t === 'hidden') {
+          // The standard landing-page UTM-passthrough pattern is hidden inputs
+          // filled from the query string, so blanket-skipping them discarded
+          // the client's own solution. Read ONLY names matching the tracking
+          // rules — hidden inputs also carry CSRF tokens and session IDs — and
+          // route them to extra_params, never to form_fields.
+          try {
+            // Ours, appended by decorateFormForSubmit. Skipping these is what
+            // stops the inject-then-recapture loop.
+            if (el.getAttribute && el.getAttribute('data-sl') === '1') continue;
+            var hn = el.name || '';
+            if (isTrackingParam(hn) && el.value) hiddenParams[hn] = el.value;
+          } catch(e) {}
+          continue;
+        }
+        if (t === 'password' || t === 'submit' || t === 'button' || t === 'reset' || t === 'file') continue;
         if ((t === 'checkbox' || t === 'radio') && !el.checked) continue;
         var fkey = el.name || el.id || el.getAttribute('placeholder') || null;
         if (fkey) fields[fkey] = el.value || '';
       }
-      sendFormLead(fields);
+      sendFormLead(fields, hiddenParams);
     } catch(e) {}
   }
 

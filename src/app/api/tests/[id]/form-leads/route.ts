@@ -67,9 +67,20 @@ export async function GET(
     )
   );
 
+  // Kept SEPARATE from fieldKeys on purpose. fieldKeys means "what the visitor
+  // typed" and feeds the HubSpot/webhook field-mapping dropdown via
+  // form-field-keys — merging ad params into it would pollute the list of
+  // mappable form fields and corrupt that meaning permanently.
+  const extraParamKeys = Array.from(
+    new Set(
+      (leads ?? []).flatMap((l) => Object.keys((l.extra_params as Record<string, string>) || {}))
+    )
+  ).sort();
+
   return NextResponse.json({
     leads: leads ?? [],
     fieldKeys,
+    extraParamKeys,
     total: count ?? 0,
     page,
     limit,
