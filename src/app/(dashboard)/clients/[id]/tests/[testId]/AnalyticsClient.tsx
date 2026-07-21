@@ -4400,9 +4400,9 @@ export default function AnalyticsClient({
                       <p className="text-slate-500 dark:text-slate-400 text-xs mt-0.5">
                         Goals enabled from the scanner above appear here automatically. Add a URL-based goal manually for pages you don&apos;t want to scan (e.g. a thank-you page).
                       </p>
-                      <p className="text-xs mt-2 px-3 py-2 rounded-lg border border-amber-300 dark:border-amber-500/40 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400">
+                      {/* <p className="text-xs mt-2 px-3 py-2 rounded-lg border border-amber-300 dark:border-amber-500/40 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400">
                         URL-based goals work on HTML variants and URL variants in Redirect mode only — Proxy mode can&apos;t detect page changes. To switch a URL variant from Proxy to Redirect, edit it in Overview tab and change its mode from Proxy to Redirect.
-                      </p>
+                      </p> */}
                     </div>
                     <button
                       type="button"
