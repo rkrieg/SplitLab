@@ -9,6 +9,61 @@ import { buildUtmSwapScript } from '@/lib/utm-swap-script';
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 const COOKIE_NAME = 'sl_visitor';
 
+// Params that must never be forwarded to a client destination. Everything else
+// passes through — see docs/url-params-todo.md "Deny-list here, allowlist in
+// Todos 2/3". Forwarding is liberal (the destination is the client's own page,
+// and an unrecognised param may be one it needs); storing is conservative.
+const NO_FORWARD_PARAMS = new Set([
+  'domain',          // injected by middleware, leaks internals
+  'path',            // injected by middleware
+  // Injected by VERCEL, not by us, and only in deployed environments — the
+  // vercel.json rewrite matches the host header with a named capture group
+  // `(?<host>.*)`, and Vercel appends named groups to the destination as query
+  // params. Invisible on localhost, so it will not show up in local testing.
+  // Always present in production; leaks our own hostname to the client's site.
+  'host',
+  'sl_vid',          // set explicitly below; also read as forcedVid, so a
+  'sl_vh',           // forwarded value could pin the wrong variant
+  'sl_scan',         // handled explicitly via isScan
+  'sl_tid',          // not read here, reserved — excluded for symmetry with decorate()
+  'preview_test_id', // dashboard-only, must not escape to a destination
+]);
+
+const MAX_FORWARDED_PARAMS = 30;
+const MAX_FORWARDED_QUERY_CHARS = 2000;
+
+// Merges the visitor's inbound query string into a destination URL.
+//
+// Without this, SplitLab is itself the thing stripping the UTMs: both the 302
+// and the proxy iframe src are built fresh from `redirect_url`, so ad params
+// died at our redirect and every lead saved with blank attribution.
+//
+// Precedence: a param already on `target` always wins. The client configured
+// `redirect_url` deliberately; a visitor-supplied param must not override it.
+function forwardInboundParams(target: URL, inbound: URLSearchParams): void {
+  let forwarded = 0;
+  let budget = MAX_FORWARDED_QUERY_CHARS - target.search.length;
+
+  // Snapshot via forEach — the tsconfig target predates for..of over iterators,
+  // and this also avoids reading `inbound` while mutating `target`.
+  const entries: Array<[string, string]> = [];
+  inbound.forEach((value, key) => { entries.push([key, value]); });
+
+  for (const [key, value] of entries) {
+    if (forwarded >= MAX_FORWARDED_PARAMS) break;
+    if (NO_FORWARD_PARAMS.has(key)) continue;
+    // Explicit beats inherited — never overwrite what the destination already has.
+    if (target.searchParams.has(key)) continue;
+
+    const cost = key.length + value.length + 2; // "&key=value"
+    if (cost > budget) break;
+
+    target.searchParams.set(key, value);
+    budget -= cost;
+    forwarded++;
+  }
+}
+
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const domain = searchParams.get('domain') || '';
@@ -236,6 +291,9 @@ export async function GET(request: NextRequest) {
         );
 
         const iframeUrlObj = new URL(selectedVariant.redirect_url);
+        // Forward first, then set our own params — the deny-list keeps sl_* out
+        // of the forward, so ours are still set exactly once, below.
+        forwardInboundParams(iframeUrlObj, searchParams);
         iframeUrlObj.searchParams.set('sl_vid', selectedVariant.id);
         iframeUrlObj.searchParams.set('sl_vh', visitorId);
         if (isScan) iframeUrlObj.searchParams.set('sl_scan', '1');
@@ -297,6 +355,7 @@ ${proxyTrackingSnippet}
       // same-domain destinations are supported — cross-domain (Calendly etc.)
       // would need sl_vid appended to outbound links, which isn't built yet.
       const redirectUrl = new URL(selectedVariant.redirect_url);
+      forwardInboundParams(redirectUrl, searchParams);
       redirectUrl.searchParams.set('sl_vid', selectedVariant.id);
       redirectUrl.searchParams.set('sl_vh', visitorId);
       if (isScan) redirectUrl.searchParams.set('sl_scan', '1');

@@ -46,6 +46,7 @@ function buildTrackerScript(appUrl: string): string {
   var STORAGE_KEY = "sl_tracking";
   var _sent = {};
   var _ctx = null;
+  var _scanMode = false;
   // Proxy mode only: the wrapper URL the visitor sees, handed down via ?sl_purl
   // because this script runs inside the iframe and can't read the parent URL.
   // Deliberately NOT stored with _ctx — _ctx is persisted to localStorage and
@@ -79,14 +80,61 @@ function buildTrackerScript(appUrl: string): string {
     } catch(e) {}
   }
 
+  // Context storage is a per-test map: { [testId]: { vid, vh, ts, goals } }.
+  // A single-slot value here let a second test's arrival overwrite the first
+  // test's context, silently losing its pending url_reached conversions.
+  var CTX_TTL = 90 * 24 * 60 * 60 * 1000; // matches the 90-day sl_visitor cookie
+
+  function saveMap(m) {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(m)); } catch(e) {}
+  }
+
+  function loadMap() {
+    try {
+      var m = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
+      if (!m || typeof m !== "object") return {};
+      // Pre-map single-slot value ({tid, vid, vh, goals}) must be migrated
+      // before any validation or save, or returning visitors lose context
+      if (m.tid && m.vid && m.vh) {
+        var old = m;
+        m = {};
+        m[old.tid] = { vid: old.vid, vh: old.vh, ts: Date.now(), goals: old.goals || [] };
+        saveMap(m);
+      }
+      var now = Date.now();
+      var changed = false;
+      for (var k in m) {
+        var entry = m[k];
+        if (!entry || !entry.vid || !entry.vh || !entry.ts || now - entry.ts > CTX_TTL) {
+          delete m[k];
+          changed = true;
+        }
+      }
+      if (changed) saveMap(m);
+      return m;
+    } catch(e) { return {}; }
+  }
+
   function store(ctx) {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(ctx)); } catch(e) {}
+    try {
+      if (!ctx || !ctx.tid || !ctx.vid || !ctx.vh) return;
+      var m = loadMap();
+      m[ctx.tid] = { vid: ctx.vid, vh: ctx.vh, ts: Date.now(), goals: ctx.goals || [] };
+      saveMap(m);
+    } catch(e) {}
   }
 
   function load() {
     try {
-      var d = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
-      if (d && d.tid && d.vid && d.vh) return d;
+      // Current test = most-recent entry — preserves single-slot behavior so
+      // form/button conversions and leads keep attributing exactly as before
+      var m = loadMap();
+      var best = null;
+      var bestTid = null;
+      for (var tid in m) {
+        if (!best || m[tid].ts > best.ts) { best = m[tid]; bestTid = tid; }
+      }
+      if (best) return { tid: bestTid, vid: best.vid, vh: best.vh, goals: best.goals || [] };
     } catch(e) {}
     return null;
   }
@@ -101,6 +149,297 @@ function buildTrackerScript(appUrl: string): string {
         var clean = window.location.pathname + (qs ? "?" + qs : "") + window.location.hash;
         history.replaceState(null, "", clean);
       }
+    } catch(e) {}
+  }
+
+  // ─── Tracking params (mirrors the inline snippet in src/lib/tracking.ts) ────
+  //
+  // Capture used to read window.location.search at submit time only, so an ad
+  // landing on page 1 with the form on page 2 saved a lead with blank UTMs —
+  // "the traffic didn't convert" when it actually had. Params are now stored on
+  // every page load and read back at submit.
+  //
+  // Deliberately a SEPARATE key from sl_tracking: that holds variant assignment
+  // and feeds the Method 1-4 detection chain. Polluting it risks the boot path.
+  var PARAMS_KEY = "sl_params";
+  var PARAMS_TTL = 90 * 24 * 60 * 60 * 1000; // matches sl_visitor / sl_tracking
+
+  // Params with a dedicated form_leads column. These keep their exact existing
+  // behaviour; everything else goes to extra_params. Never both — dual-write
+  // would let the two disagree.
+  var LEGACY_PARAM_KEYS = ["utm_source","utm_medium","utm_content","utm_term","utm_campaign","gclid","fbclid"];
+
+  // NOTE: fbc_id is NOT fbclid. Facebook ads send both; they are different
+  // params and reading one as the other silently drops attribution.
+  var CLICK_ID_PARAMS = {
+    gclid:1, fbclid:1, fbc_id:1, fbp:1, msclkid:1, ttclid:1, li_fat_id:1,
+    twclid:1, dclid:1, wbraid:1, gbraid:1, epik:1, sccid:1, irclickid:1
+  };
+
+  // Explicit list, NOT a bare /_id$/ regex — a suffix match would sweep up
+  // user_id, session_id and order_id, putting session identifiers and PII into
+  // an analytics table we export to CSV and push to HubSpot.
+  var EXTRA_ID_PARAMS = {
+    h_ad_id:1, ad_id:1, adset_id:1, campaign_id:1, creative_id:1, placement_id:1
+  };
+
+  var MAX_PARAMS = 40, MAX_PARAM_KEY = 100, MAX_PARAM_VALUE = 500, MAX_PARAMS_SERIALIZED = 8192;
+
+  function isTrackingParam(name) {
+    if (!name) return false;
+    var n = String(name).toLowerCase();
+    // Ours. Echoing these back would confuse the detection chain, and it is what
+    // stops decorateFormForSubmit's hidden sl_* inputs being captured as leads.
+    if (n.indexOf("sl_") === 0) return false;
+    if (n.indexOf("utm_") === 0) return true;
+    if (n.indexOf("hsa_") === 0) return true; // machine-readable ad/adset/campaign IDs
+    if (CLICK_ID_PARAMS[n] === 1) return true;
+    if (EXTRA_ID_PARAMS[n] === 1) return true;
+    return false;
+  }
+
+  function collectTrackingParams(sp) {
+    var out = {}, count = 0;
+    try {
+      sp.forEach(function(value, key) {
+        if (count >= MAX_PARAMS) return;
+        if (!isTrackingParam(key)) return;
+        if (!value || key.length > MAX_PARAM_KEY) return;
+        out[key] = value.length > MAX_PARAM_VALUE ? value.slice(0, MAX_PARAM_VALUE) : value;
+        count++;
+      });
+    } catch(e) {}
+    return out;
+  }
+
+  function saveParams(p) {
+    try {
+      var body = JSON.stringify({ p: p, ts: Date.now() });
+      if (body.length > MAX_PARAMS_SERIALIZED) return;
+      localStorage.setItem(PARAMS_KEY, body);
+    } catch(e) {}
+  }
+
+  function loadParams() {
+    try {
+      var raw = JSON.parse(localStorage.getItem(PARAMS_KEY) || "null");
+      if (!raw || !raw.p || !raw.ts) return {};
+      if (Date.now() - raw.ts > PARAMS_TTL) return {};
+      return raw.p;
+    } catch(e) { return {}; }
+  }
+
+  // Runs on every page load, before boot and independent of _ctx.
+  function captureParamsFromUrl() {
+    try {
+      var found = collectTrackingParams(new URLSearchParams(window.location.search));
+      var keys = Object.keys(found);
+      // Never write an empty set — otherwise page 2 wipes page 1's params,
+      // which is the exact bug being fixed.
+      if (!keys.length) return;
+      // Last touch: a new inbound URL replaces the WHOLE set. Merging
+      // param-by-param across visits would mix Monday's hsa_ad with Thursday's
+      // utm_campaign and describe an ad that never existed.
+      saveParams(found);
+    } catch(e) {}
+  }
+
+  // Stored params, overlaid with anything on the live URL (same-page is more
+  // specific than remembered).
+  function trackingParams() {
+    var out = {}, k;
+    var stored = loadParams();
+    for (k in stored) { if (stored.hasOwnProperty(k)) out[k] = stored[k]; }
+    var live = collectTrackingParams(new URLSearchParams(window.location.search));
+    for (k in live) { if (live.hasOwnProperty(k)) out[k] = live[k]; }
+    return out;
+  }
+
+  // Splits into the 7 dedicated columns vs everything else (extra_params).
+  function splitTrackingParams(all) {
+    var utm = {}, extra = {}, k;
+    for (k in all) {
+      if (!all.hasOwnProperty(k)) continue;
+      if (LEGACY_PARAM_KEYS.indexOf(k) >= 0) utm[k] = all[k];
+      else extra[k] = all[k];
+    }
+    return { utm: utm, extra: extra };
+  }
+
+  // ─── Cross-domain linker (mirrors the inline snippet in src/lib/tracking.ts) ─
+  // localStorage never crosses origins, so the only way context survives a jump
+  // to another domain is inside the URL. Tag outbound cross-domain navigations
+  // with sl_tid/sl_vid/sl_vh; tracker.js on the destination rebuilds context
+  // from them (detect Method 1) and cleanUrl() strips them there.
+  //
+  // This is the sender half for redirect mode: SplitLab 302s the visitor to the
+  // client's own page, which has no inline snippet — only this script — so
+  // without this, a cross-domain jump from that page carried no context.
+  //
+  // Links, forms and window.open are patchable, so they are handled below.
+  // window.location.href is not — but see watchNavigations(), which cancels the
+  // navigation it triggers rather than trying to intercept the location object.
+
+  // KNOWN LIMITATION — decoration cannot happen until _ctx exists, and in
+  // redirect/proxy mode (Method 2) that means waiting ~1s on /api/resolve.
+  // Every caller of decorate() is wired up in start(), which runs from boot(),
+  // which is detect()'s callback — so for that first second no listener exists
+  // and a cross-domain click leaves undecorated and silently loses the
+  // conversion. Fixing it means registering the linker before boot(), which
+  // means splitting wireAutoConversions() — lead capture and button goals live
+  // there, so the blast radius is not worth a sub-second window a real visitor
+  // is unlikely to hit. HTML mode is immune (the snippet has context inline).
+  // See docs/url-conversion-v2-plan.md.
+  var MAX_DECORATED_URL = 2000;
+
+  function decorate(url) {
+    try {
+      if (!url) return url;
+      var u = new URL(String(url), window.location.href);
+      // Correctness guards — these apply to BOTH payloads below.
+      if (u.protocol !== "http:" && u.protocol !== "https:") return url;
+      if (u.hostname === window.location.hostname) return url;
+      // Already tagged. This guard is what stops SplitLab.go and
+      // watchNavigations double-appending — do not weaken it.
+      if (u.searchParams.get("sl_vid") || u.searchParams.get("sl_tid")) return url;
+
+      var changed = false;
+
+      // Variant context genuinely needs _ctx — the values ARE _ctx.
+      if (_ctx) {
+        u.searchParams.set("sl_tid", _ctx.tid);
+        u.searchParams.set("sl_vid", _ctx.vid);
+        u.searchParams.set("sl_vh", _ctx.vh);
+        changed = true;
+      }
+
+      // Tracking params do NOT need _ctx — they live in localStorage. Gating
+      // them on _ctx would drop attribution during the ~1s /api/resolve boot
+      // window, and for the whole session if /api/resolve fails outright.
+      // Attribution should still work when variant tracking doesn't.
+      var p = trackingParams(), k;
+      var len = u.toString().length;
+      for (k in p) {
+        if (!p.hasOwnProperty(k)) continue;
+        if (u.searchParams.has(k)) continue; // explicit beats inherited
+        var cost = k.length + p[k].length + 2;
+        // Tracking integrity beats attribution completeness: sl_* is already
+        // set above, so an over-long URL drops extras and keeps context.
+        if (len + cost > MAX_DECORATED_URL) break;
+        u.searchParams.set(k, p[k]);
+        len += cost;
+        changed = true;
+      }
+
+      // Returning the original string when nothing changed keeps
+      // watchNavigations' dec === dest check true, so it never re-navigates.
+      if (!changed) return url;
+      return u.toString();
+    } catch(e) { return url; }
+  }
+
+  function decorateLink(a) {
+    try {
+      var dec = decorate(a.href);
+      if (dec !== a.href) a.href = dec;
+    } catch(e) {}
+  }
+
+  function decorateFormForSubmit(form) {
+    try {
+      if (!form || !form.getAttribute) return;
+      // Read action via getAttribute — an input named "action" shadows form.action
+      var action = form.getAttribute("action");
+      if (!action) return;
+      var dec = decorate(action);
+      if (dec === action) return;
+      var method = (form.getAttribute("method") || "get").toLowerCase();
+      if (method === "get") {
+        // GET submits replace the action's query string with the form fields,
+        // so carry the params as hidden inputs instead. Hidden inputs are
+        // invisible to every form consumer here (fieldKey skips type=hidden),
+        // so neither lead capture nor the fields: selector sees them.
+        //
+        // Read the values back out of the decorated URL rather than off _ctx, so
+        // this always carries exactly what decorate() decided — including the
+        // early case where sl_tid is not known yet and must be omitted.
+        var decParams = new URL(dec, window.location.href).searchParams;
+        var origParams = new URL(action, window.location.href).searchParams;
+        decParams.forEach(function(val, name) {
+          if (!val) return;
+          // Only what decorate() added — never re-emit the action's own params.
+          if (origParams.has(name)) return;
+          if (form.querySelector && form.querySelector("input[name='" + name + "']")) return;
+          var hidden = document.createElement("input");
+          hidden.type = "hidden";
+          hidden.name = name;
+          hidden.value = val;
+          // Marks this as OURS, so lead capture skips it. Required: these carry
+          // the client's own param names (utm_source etc), so the "sl_" name
+          // rule cannot exclude them — without the marker we would inject a
+          // param here and capture it back as if the page had supplied it.
+          hidden.setAttribute("data-sl", "1");
+          form.appendChild(hidden);
+        });
+      } else {
+        form.setAttribute("action", dec);
+      }
+    } catch(e) {}
+  }
+
+  function patchWindowOpen() {
+    try {
+      var origOpen = window.open;
+      if (!origOpen || origOpen.__sl_patched) return;
+      var patched = function() {
+        var args = Array.prototype.slice.call(arguments);
+        if (args[0]) args[0] = decorate(String(args[0]));
+        return origOpen.apply(window, args);
+      };
+      patched.__sl_patched = true;
+      window.open = patched;
+    } catch(e) {}
+  }
+
+  // The only hook that catches window.location.href = "https://otherdomain/...".
+  // The location object itself cannot be patched, but the Navigation API sees the
+  // navigation before it commits, so we cancel the undecorated jump and re-issue
+  // it decorated. Note intercept() is NOT usable here — canIntercept is always
+  // false cross-origin — but cancelable is true for non-traverse navigations,
+  // which is all we need.
+  //
+  // Chrome/Edge 102+, Safari 26.2+, Firefox 147+ (~87% of traffic). Everywhere
+  // else this is a no-op and cross-domain location.href keeps failing silently,
+  // exactly as it does today.
+  function watchNavigations() {
+    try {
+      if (!window.navigation || !window.navigation.addEventListener) return;
+      window.navigation.addEventListener("navigate", function(e) {
+        try {
+          // downloadRequest: a cross-domain <a download> would otherwise be
+          // decorated and re-navigated, turning a download into a page load.
+          // formData: leave form submits to decorateFormForSubmit above.
+          // Both read undefined on older impls — falsy, so the guard is fail-safe.
+          if (!e.cancelable || e.formData || e.downloadRequest) return;
+          // Skips traverse/reload, so back/forward are untouched.
+          if (e.navigationType !== "push" && e.navigationType !== "replace") return;
+          var dest = e.destination && e.destination.url;
+          if (!dest) return;
+          // decorate() early-returns on same-hostname, non-http(s) and
+          // already-tagged URLs, so same-domain navigation never gets cancelled.
+          // Links are already decorated on mousedown, so they land here as
+          // dec === dest and pass straight through — no double navigation.
+          var dec = decorate(dest);
+          if (dec === dest) return;
+          e.preventDefault();
+          // Mirror the original navigation type. Re-issuing a replace() as an
+          // href would push a history entry the page deliberately did not want,
+          // making a page reachable by the back button that replace() exists to
+          // make unreachable (post-payment, post-submit). Confirmed live.
+          if (e.navigationType === "replace") window.location.replace(dec);
+          else window.location.href = dec;
+        } catch(err) {}
+      });
     } catch(e) {}
   }
 
@@ -607,26 +946,47 @@ function buildTrackerScript(appUrl: string): string {
       var fields = {};
       var k;
       for (k in _accumulatedFormData) { if (_accumulatedFormData.hasOwnProperty(k)) fields[k] = _accumulatedFormData[k]; }
+      var hiddenParams = {};
       var elements = form.elements;
       for (var i = 0; i < elements.length; i++) {
         var el = elements[i];
         var t = (el.type || "").toLowerCase();
-        if (t === "password" || t === "hidden" || t === "submit" || t === "button" || t === "reset" || t === "file") continue;
+        if (t === "hidden") {
+          // The standard landing-page pattern for UTM passthrough is hidden
+          // inputs populated from the query string, so blanket-skipping them
+          // discarded the client's own solution.
+          //
+          // Do NOT read hidden inputs generally — they also carry CSRF tokens,
+          // session IDs and internal state. Only names matching the tracking
+          // rules, and only into extra_params, never into form_fields.
+          try {
+            // Ours, appended by decorateFormForSubmit. Skipping these is what
+            // stops the inject-then-recapture loop.
+            if (el.getAttribute && el.getAttribute("data-sl") === "1") continue;
+            var hn = el.name || "";
+            if (isTrackingParam(hn) && el.value) hiddenParams[hn] = el.value;
+          } catch(e) {}
+          continue;
+        }
+        if (t === "password" || t === "submit" || t === "button" || t === "reset" || t === "file") continue;
         if ((t === "checkbox" || t === "radio") && !el.checked) continue;
         var fkey = el.name || el.id || el.getAttribute("placeholder") || null;
         if (fkey) fields[fkey] = el.value || "";
       }
-      var sp = new URLSearchParams(window.location.search);
-      var utm = {};
-      ["utm_source","utm_medium","utm_content","utm_term","utm_campaign","gclid","fbclid"].forEach(function(k) {
-        if (sp.get(k)) utm[k] = sp.get(k);
-      });
+      // Hidden inputs fill gaps only — a live URL or stored value is the more
+      // reliable source and must not be overwritten by a stale hidden field.
+      var all = trackingParams();
+      for (var hk in hiddenParams) {
+        if (hiddenParams.hasOwnProperty(hk) && !all[hk]) all[hk] = hiddenParams[hk];
+      }
+      var split = splitTrackingParams(all);
       var payload = JSON.stringify({
         testId: _ctx.tid,
         variantId: _ctx.vid,
         visitorHash: _ctx.vh,
         formFields: fields,
-        utm: utm,
+        utm: split.utm,
+        extraParams: split.extra,
         // Read at submit time, before the site navigates to any thank-you page,
         // so this is the page the visitor converted on. _purl wins in proxy mode.
         pageUrl: _purl || window.location.href,
@@ -660,17 +1020,14 @@ function buildTrackerScript(appUrl: string): string {
     if (!hasData) return;
     _leadSent = true;
 
-    var sp = new URLSearchParams(window.location.search);
-    var utm = {};
-    ["utm_source","utm_medium","utm_content","utm_term","utm_campaign","gclid","fbclid"].forEach(function(key) {
-      if (sp.get(key)) utm[key] = sp.get(key);
-    });
+    var split2 = splitTrackingParams(trackingParams());
     var payload = JSON.stringify({
       testId: _ctx.tid,
       variantId: _ctx.vid,
       visitorHash: _ctx.vh,
       formFields: _accumulatedFormData,
-      utm: utm,
+      utm: split2.utm,
+      extraParams: split2.extra,
       // Read at submit time, before the site navigates to any thank-you page,
       // so this is the page the visitor converted on. _purl wins in proxy mode.
       pageUrl: _purl || window.location.href,
@@ -793,6 +1150,8 @@ function buildTrackerScript(appUrl: string): string {
 
     document.addEventListener("submit", function(e) {
       var form = e.target;
+      // Capture phase, so this runs before the browser serializes the form
+      if (!_scanMode) decorateFormForSubmit(form);
       _leadSent = true; // prevent JS-submit patch from double-sending
       captureFormLead(form);
       var formNth = form ? formDocumentIndex(form) : -1;
@@ -806,9 +1165,23 @@ function buildTrackerScript(appUrl: string): string {
       });
     }, true);
 
+    // Decorate cross-domain links before the browser follows them. mousedown
+    // precedes every click variant, and middle-click fires auxclick (not click)
+    // in some browsers — cover all three so new-tab opens are decorated too.
+    function decorateFromEvent(e) {
+      if (_scanMode) return;
+      var t = e.target;
+      if (!t || !t.closest) return;
+      var a = t.closest("a[href]");
+      if (a) decorateLink(a);
+    }
+    document.addEventListener("mousedown", decorateFromEvent, true);
+    document.addEventListener("auxclick", decorateFromEvent, true);
+
     document.addEventListener("click", function(e) {
       var el = e.target;
       if (!el || !el.closest) return;
+      decorateFromEvent(e);
 
       // Check for tel: link clicks (call conversions)
       var link = el.closest("a[href^='tel:']");
@@ -871,23 +1244,90 @@ function buildTrackerScript(appUrl: string): string {
     });
   }
 
+  // Fire OTHER tests' saved url_reached goals from the per-test map, each
+  // attributed to the variant/visitor stored when that test was seen. The
+  // current test's own goals are handled by checkUrlGoals(). Dedup is
+  // in-memory per page-load only (like _sent) so raw goal-hit counts in
+  // analytics are unchanged.
+  var _sentStored = {};
+  function checkStoredUrlGoals() {
+    if (_scanMode) return;
+    var m = loadMap();
+    var url = window.location.href;
+    var pathname = window.location.pathname + window.location.search;
+    var currentTid = _ctx && _ctx.tid;
+    for (var tid in m) {
+      if (tid === currentTid) continue;
+      var entry = m[tid];
+      (entry.goals || []).forEach(function(goal) {
+        if (goal.type !== "url_reached" || !goal.urlPattern) return;
+        if (_sentStored[goal.id]) return;
+        try {
+          var pattern = new RegExp(goal.urlPattern, "i");
+          if (pattern.test(url) || pattern.test(pathname)) {
+            _sentStored[goal.id] = true;
+            send({
+              testId: tid,
+              variantId: entry.vid,
+              visitorHash: entry.vh,
+              type: "conversion",
+              goalId: goal.id
+            });
+          }
+        } catch(e) {}
+      });
+    }
+  }
+
   function wireUrlGoals() {
-    if (!_ctx || !_ctx.goals || !_ctx.goals.length) return;
-    checkUrlGoals();
+    function checkAllUrlGoals() {
+      checkUrlGoals();
+      checkStoredUrlGoals();
+    }
+    checkAllUrlGoals();
     function wrapHistory(method) {
       var orig = history[method];
-      history[method] = function() { orig.apply(this, arguments); checkUrlGoals(); };
+      history[method] = function() { orig.apply(this, arguments); checkAllUrlGoals(); };
     }
     try { wrapHistory("pushState"); wrapHistory("replaceState"); } catch(e) {}
-    window.addEventListener("popstate", function() { checkUrlGoals(); });
-    window.addEventListener("hashchange", function() { checkUrlGoals(); });
+    window.addEventListener("popstate", function() { checkAllUrlGoals(); });
+    window.addEventListener("hashchange", function() { checkAllUrlGoals(); });
   }
 
   // ─── Detection: resolve context from URL params or localStorage ────────────
 
+  // Method 1 params can arrive from a cross-domain decorated link, not just a
+  // SplitLab 302, so this page may hold url_reached goals it has to match — but
+  // the params alone don't carry them. Fetch them *after* boot and re-run the
+  // URL check, so the pageview never waits on the network. Skipped in scan mode
+  // to keep Method-1 scanning free of conversions, exactly as it is today.
+  function fetchGoalsLate(vid) {
+    if (_scanMode) return;
+    try {
+      var xhrG = new XMLHttpRequest();
+      xhrG.open("GET", RESOLVE_URL + "?vid=" + encodeURIComponent(vid), true);
+      xhrG.withCredentials = false;
+      xhrG.onload = function() {
+        try {
+          var data = JSON.parse(xhrG.responseText);
+          // __SL_SNIPPET__ too: if the goals land before DOM-ready, boot() has
+          // not stood down yet and _ctx is still set — firing here would double
+          // up with the inline snippet on a SplitLab-served page.
+          if (!_ctx || window.__SL_SNIPPET__) return;
+          if (!data.goals || !data.goals.length) return;
+          _ctx.goals = data.goals;
+          store(_ctx);
+          checkUrlGoals();
+        } catch(e) {}
+      };
+      xhrG.send();
+    } catch(e) {}
+  }
+
   function detect(callback) {
     var params = new URLSearchParams(window.location.search);
     var isScan = params.get("sl_scan") === "1";
+    _scanMode = isScan;
     // Read before any cleanUrl() below strips it back out of the address bar.
     _purl = params.get("sl_purl") || null;
 
@@ -897,7 +1337,13 @@ function buildTrackerScript(appUrl: string): string {
     var vh  = params.get("sl_vh");
     if (tid && vid && vh) {
       cleanUrl(["sl_tid", "sl_vid", "sl_vh", "sl_scan", "sl_purl"]);
-      return callback({ tid: tid, vid: vid, vh: vh, goals: [] });
+      // Boot immediately with no goals, then fill them in. Blocking here on
+      // /api/resolve (~1s) would delay every redirect-mode pageview and lose it
+      // outright on a fast bounce. fetchGoalsLate() re-checks url_reached once
+      // the goals land, so nothing is missed.
+      callback({ tid: tid, vid: vid, vh: vh, goals: [] });
+      fetchGoalsLate(vid);
+      return;
     }
 
     // Method 2: Variant ID only (?sl_vid=xxx) — resolve test ID + goals via API
@@ -990,6 +1436,8 @@ function buildTrackerScript(appUrl: string): string {
       registerFormFields();
       watchForNewFields();
       patchNetworkForJsSubmit();
+      if (!_scanMode) patchWindowOpen();
+      if (!_scanMode) watchNavigations();
     }
     if (document.readyState === "loading") {
       document.addEventListener("DOMContentLoaded", start);
@@ -1007,6 +1455,11 @@ function buildTrackerScript(appUrl: string): string {
     getContext: function() { return _ctx; },
     isActive: function() { return !!_ctx; }
   };
+
+  // Remember the visitor's tracking params before anything else. Deliberately
+  // ahead of detect(): this must not depend on _ctx, on /api/resolve
+  // succeeding, or on the variant being assigned at all.
+  captureParamsFromUrl();
 
   // Auto-detect and boot — no init() call needed
   detect(boot);
