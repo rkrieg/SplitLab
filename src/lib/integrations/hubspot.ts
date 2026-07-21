@@ -255,6 +255,9 @@ export async function syncLeadToHubSpot(params: {
     utm_term?: string | null;
     gclid?: string | null;
     fbclid?: string | null;
+    page_url?: string | null;
+    page_title?: string | null;
+    hutk?: string | null;
   };
 }): Promise<SyncResult> {
   const { accessToken, fieldMappings, formFields, systemData, portalId, formGuid } = params;
@@ -285,8 +288,23 @@ export async function syncLeadToHubSpot(params: {
           body: JSON.stringify({
             submittedAt: Date.now(),
             fields,
+            // pageUri drives the "Conversion Page" column in HubSpot's submissions
+            // table — without it every submission reads "Unavailable". undefined
+            // (not null) so the key is dropped entirely when we have no value.
+            // pageUri is the ONLY source of the Conversion Page column — verified
+            // empirically: a hutk-only submission left it Unavailable even though
+            // HubSpot's session knew the page (it appeared in Original Source
+            // Drill-Down 1). hutk (hubspotutk cookie, only captured on HTML
+            // variants where we inject the portal tracking code) adds native
+            // session attribution and, alone, bypasses the unregistered-domain
+            // spam flag. Sending both is under test: if pageUri still trips the
+            // spam filter despite a valid hutk, domain registration stays
+            // mandatory for the Conversion Page column.
             context: {
               ipAddress: systemData.ip_address ?? undefined,
+              pageUri: systemData.page_url ?? undefined,
+              pageName: systemData.page_title ?? undefined,
+              hutk: systemData.hutk ?? undefined,
             },
           }),
         }
