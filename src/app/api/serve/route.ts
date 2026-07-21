@@ -71,6 +71,10 @@ export async function GET(request: NextRequest) {
   const isScan = searchParams.get('sl_scan') === '1';
   const forcedVid = searchParams.get('sl_vid') || null;
   const forcedVh = searchParams.get('sl_vh') || null;
+  // Visitor-facing URL forwarded by the shareable-link route ([slug]/[testId]),
+  // which fetches us server-side so we can't see it ourselves. Used as sl_purl
+  // in proxy mode when there's no custom domain.
+  const publicUrl = searchParams.get('public_url') || '';
 
   try {
     const previewTestId = searchParams.get('preview_test_id') || null;
@@ -293,6 +297,17 @@ export async function GET(request: NextRequest) {
         iframeUrlObj.searchParams.set('sl_vid', selectedVariant.id);
         iframeUrlObj.searchParams.set('sl_vh', visitorId);
         if (isScan) iframeUrlObj.searchParams.set('sl_scan', '1');
+        // tracker.js runs inside the iframe, so window.location.href there is the
+        // redirect_url — never the wrapper URL the visitor actually sees, which it
+        // can't read cross-origin. Hand the wrapper URL down so form leads report
+        // the page the visitor was really on: the custom domain when one served
+        // this request, else the shareable-link URL forwarded via public_url.
+        if (domain) {
+          const proto = request.headers.get('x-forwarded-proto') || new URL(request.url).protocol.replace(':', '');
+          iframeUrlObj.searchParams.set('sl_purl', `${proto}://${domain}${urlPath}`);
+        } else if (publicUrl) {
+          iframeUrlObj.searchParams.set('sl_purl', publicUrl);
+        }
         const iframeUrl = iframeUrlObj.toString();
         const iframeHtml = `<!DOCTYPE html>
 <html lang="en">
@@ -397,7 +412,7 @@ ${proxyTrackingSnippet}
     html = stripSplitLabTrackerTags(html, APP_URL);
 
     // 7. Fetch workspace scripts + page-scoped scripts + test-scoped scripts + UTM personalization rules
-    const [{ data: workspaceScripts }, { data: pageScripts }, { data: testScripts }, { data: utmRules }, utmPageRow] = await Promise.all([
+    const [{ data: workspaceScripts }, { data: pageScripts }, { data: testScripts }, { data: utmRules }, utmPageRow, { data: hubspotIntegration }] = await Promise.all([
       db.from('scripts').select('*').eq('workspace_id', workspaceId).eq('is_active', true).is('page_id', null).is('test_id', null),
       selectedVariant.page_id
         ? db.from('scripts').select('*').eq('workspace_id', workspaceId).eq('is_active', true).eq('page_id', selectedVariant.page_id)
@@ -409,12 +424,21 @@ ${proxyTrackingSnippet}
       selectedVariant.page_id
         ? db.from('pages').select('field_selectors_json').eq('id', selectedVariant.page_id).single()
         : Promise.resolve({ data: null }),
+      db.from('workspace_integrations').select('config').eq('workspace_id', workspaceId).eq('type', 'hubspot').eq('enabled', true).limit(1),
     ]);
     const fieldSelectors = (utmPageRow?.data as { field_selectors_json?: Record<string, { selector: string; type: 'text' | 'image'; label: string }> } | null)?.field_selectors_json ?? null;
     const scripts = [...(workspaceScripts || []), ...(pageScripts || []), ...(testScripts || [])];
 
     const testHeadScriptsHtml = (test as { head_scripts?: string }).head_scripts || '';
     const headScripts: string[] = testHeadScriptsHtml ? [testHeadScriptsHtml] : [];
+
+    // HubSpot connected on this workspace: inject the portal's tracking code so
+    // the hubspotutk cookie is set first-party and the snippet can pass hutk with
+    // form leads — gives HubSpot native session attribution like Unbounce does.
+    const hubId = (hubspotIntegration?.[0]?.config as { hub_id?: number | string | null } | null)?.hub_id;
+    if (hubId && /^\d+$/.test(String(hubId))) {
+      headScripts.push(`<script type="text/javascript" id="hs-script-loader" async defer src="https://js.hs-scripts.com/${hubId}.js"></script>`);
+    }
     const bodyEndScripts: string[] = [];
 
     for (const script of scripts) {

@@ -47,6 +47,12 @@ function buildTrackerScript(appUrl: string): string {
   var _sent = {};
   var _ctx = null;
   var _scanMode = false;
+  // Proxy mode only: the wrapper URL the visitor sees, handed down via ?sl_purl
+  // because this script runs inside the iframe and can't read the parent URL.
+  // Deliberately NOT stored with _ctx — _ctx is persisted to localStorage and
+  // reloaded for returning visitors, which would attach a stale wrapper URL to a
+  // lead submitted somewhere else entirely. Page-load lifetime only.
+  var _purl = null;
 
   // ─── Utility ────────────────────────────────────────────────────────────────
 
@@ -980,7 +986,11 @@ function buildTrackerScript(appUrl: string): string {
         visitorHash: _ctx.vh,
         formFields: fields,
         utm: split.utm,
-        extraParams: split.extra
+        extraParams: split.extra,
+        // Read at submit time, before the site navigates to any thank-you page,
+        // so this is the page the visitor converted on. _purl wins in proxy mode.
+        pageUrl: _purl || window.location.href,
+        pageTitle: document.title || ""
       });
       var FORM_LEADS_URL = API_BASE + "/api/form-leads";
       if (navigator.sendBeacon) {
@@ -1017,7 +1027,11 @@ function buildTrackerScript(appUrl: string): string {
       visitorHash: _ctx.vh,
       formFields: _accumulatedFormData,
       utm: split2.utm,
-      extraParams: split2.extra
+      extraParams: split2.extra,
+      // Read at submit time, before the site navigates to any thank-you page,
+      // so this is the page the visitor converted on. _purl wins in proxy mode.
+      pageUrl: _purl || window.location.href,
+      pageTitle: document.title || ""
     });
     var FORM_LEADS_URL = API_BASE + "/api/form-leads";
     try {
@@ -1314,13 +1328,15 @@ function buildTrackerScript(appUrl: string): string {
     var params = new URLSearchParams(window.location.search);
     var isScan = params.get("sl_scan") === "1";
     _scanMode = isScan;
+    // Read before any cleanUrl() below strips it back out of the address bar.
+    _purl = params.get("sl_purl") || null;
 
     // Method 1: Full params from SplitLab redirect (?sl_tid, ?sl_vid, ?sl_vh)
     var tid = params.get("sl_tid");
     var vid = params.get("sl_vid");
     var vh  = params.get("sl_vh");
     if (tid && vid && vh) {
-      cleanUrl(["sl_tid", "sl_vid", "sl_vh", "sl_scan"]);
+      cleanUrl(["sl_tid", "sl_vid", "sl_vh", "sl_scan", "sl_purl"]);
       // Boot immediately with no goals, then fill them in. Blocking here on
       // /api/resolve (~1s) would delay every redirect-mode pageview and lose it
       // outright on a fast bounce. fetchGoalsLate() re-checks url_reached once
@@ -1332,7 +1348,7 @@ function buildTrackerScript(appUrl: string): string {
 
     // Method 2: Variant ID only (?sl_vid=xxx) — resolve test ID + goals via API
     if (vid && !tid) {
-      cleanUrl(["sl_vid", "sl_scan"]);
+      cleanUrl(["sl_vid", "sl_scan", "sl_purl"]);
       if (isScan) showScanBanner();
       var tempVh = vh || uuid();
       var xhr = new XMLHttpRequest();
@@ -1372,7 +1388,7 @@ function buildTrackerScript(appUrl: string): string {
     // Method 3: Shorthand (?sl_variant=xxx)
     var variantId = params.get("sl_variant");
     if (variantId) {
-      cleanUrl(["sl_variant", "sl_scan"]);
+      cleanUrl(["sl_variant", "sl_scan", "sl_purl"]);
       var xhr2 = new XMLHttpRequest();
       xhr2.open("GET", RESOLVE_URL + "?vid=" + encodeURIComponent(variantId), true);
       xhr2.withCredentials = false;

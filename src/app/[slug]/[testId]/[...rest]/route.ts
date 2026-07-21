@@ -19,6 +19,10 @@ export async function GET(
 
   const serveUrl = new URL(`${APP_URL}/api/serve`);
   serveUrl.searchParams.set('preview_test_id', testId);
+  // The visitor-facing URL of this shareable link. /api/serve can't see it (we
+  // fetch server-side), but proxy mode needs it as the iframe's sl_purl so form
+  // leads report this URL instead of the underlying redirect_url's domain.
+  serveUrl.searchParams.set('public_url', request.nextUrl.href);
 
   // Forward any extra query params (e.g. UTM tags)
   request.nextUrl.searchParams.forEach((value, key) => {
