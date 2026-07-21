@@ -141,6 +141,9 @@ interface FormLead {
   gclid: string | null;
   fbclid: string | null;
   form_fields: Record<string, string>;
+  // Ad params with no dedicated column (hsa_*, fbc_id, h_ad_id, …).
+  // Historical rows predate the column and read back as {} via its DB default.
+  extra_params: Record<string, string> | null;
   test_variants: { name: string } | null;
 }
 
@@ -422,6 +425,9 @@ export default function AnalyticsClient({
   // Form Leads
   const [formLeads, setFormLeads] = useState<FormLead[]>([]);
   const [formLeadsFieldKeys, setFormLeadsFieldKeys] = useState<string[]>([]);
+  // Separate from formLeadsFieldKeys — ad params must never be offered as
+  // mappable "form fields" in the HubSpot/webhook dropdown.
+  const [formLeadsExtraParamKeys, setFormLeadsExtraParamKeys] = useState<string[]>([]);
   const [formLeadsTotal, setFormLeadsTotal] = useState(0);
   const [formLeadsPage, setFormLeadsPage] = useState(1);
   const [formLeadsLoading, setFormLeadsLoading] = useState(false);
@@ -1346,6 +1352,7 @@ export default function AnalyticsClient({
       const data = await res.json();
       setFormLeads(data.leads || []);
       setFormLeadsFieldKeys(data.fieldKeys || []);
+      setFormLeadsExtraParamKeys(data.extraParamKeys || []);
       setFormLeadsTotal(data.total || 0);
       setFormLeadsPage(page);
     } catch {
@@ -1757,9 +1764,13 @@ export default function AnalyticsClient({
   function exportFormLeadsCsv() {
     if (formLeads.length === 0) return;
     const fixedCols = ['submitted_at', 'variant', 'visitor_hash', 'ip_address', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'gclid', 'fbclid', 'user_agent'];
-    const allCols = [...fixedCols, ...formLeadsFieldKeys];
+    const allCols = [...fixedCols, ...formLeadsFieldKeys, ...formLeadsExtraParamKeys];
+    const extraCols = new Set(formLeadsExtraParamKeys);
     const rows = formLeads.map((l) => allCols.map((col) => {
       if (col === 'variant') return l.test_variants?.name ?? '';
+      // Checked before `col in l` — an ad param must resolve from extra_params
+      // even if it ever collides with a property name on the lead object.
+      if (extraCols.has(col)) return String(l.extra_params?.[col] ?? '');
       if (col in l) return String((l as unknown as Record<string, unknown>)[col] ?? '');
       return String(l.form_fields?.[col] ?? '');
     }));
@@ -3460,6 +3471,11 @@ export default function AnalyticsClient({
                         ))}
                         <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap">UTM Source</th>
                         <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap">UTM Campaign</th>
+                        {formLeadsExtraParamKeys.map((key) => (
+                          <th key={key} className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap font-mono text-xs">
+                            {key}
+                          </th>
+                        ))}
                         <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap">IP</th>
                       </tr>
                     </thead>
@@ -3482,6 +3498,11 @@ export default function AnalyticsClient({
                           ))}
                           <td className="px-4 py-2.5 text-slate-500 text-xs">{lead.utm_source ?? "—"}</td>
                           <td className="px-4 py-2.5 text-slate-500 text-xs">{lead.utm_campaign ?? "—"}</td>
+                          {formLeadsExtraParamKeys.map((key) => (
+                            <td key={key} className="px-4 py-2.5 text-slate-500 text-xs font-mono max-w-[160px] truncate" title={lead.extra_params?.[key] ?? ''}>
+                              {lead.extra_params?.[key] ?? <span className="text-slate-400">—</span>}
+                            </td>
+                          ))}
                           <td className="px-4 py-2.5 text-slate-400 text-xs font-mono">{lead.ip_address ?? "—"}</td>
                         </tr>
                       ))}
@@ -3556,6 +3577,15 @@ export default function AnalyticsClient({
                     <CheckCircle2 size={13} /> Connected
                   </span>
                 )}
+              </div>
+
+              <div className="px-5 pt-4">
+                <div className="flex items-start gap-2 rounded-lg bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 px-3 py-2.5 text-xs text-amber-800 dark:text-amber-300">
+                  <Info size={14} className="shrink-0 mt-0.5 text-amber-700 dark:text-amber-300" />
+                  <p>
+                    One-time setup: in HubSpot, go to <strong>Settings → Tracking &amp; Analytics → Tracking Code → Advanced Tracking</strong>, and add your domain so submissions come through. Add the root domain to accept leads from it and all its subdomains — or just a specific subdomain if that's the only one you want accepted.
+                  </p>
+                </div>
               </div>
 
               <div className="px-5 py-4">
@@ -4379,9 +4409,9 @@ export default function AnalyticsClient({
                       <p className="text-slate-500 dark:text-slate-400 text-xs mt-0.5">
                         Goals enabled from the scanner above appear here automatically. Add a URL-based goal manually for pages you don&apos;t want to scan (e.g. a thank-you page).
                       </p>
-                      <p className="text-xs mt-2 px-3 py-2 rounded-lg border border-amber-300 dark:border-amber-500/40 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400">
+                      {/* <p className="text-xs mt-2 px-3 py-2 rounded-lg border border-amber-300 dark:border-amber-500/40 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400">
                         URL-based goals work on HTML variants and URL variants in Redirect mode only — Proxy mode can&apos;t detect page changes. To switch a URL variant from Proxy to Redirect, edit it in Overview tab and change its mode from Proxy to Redirect.
-                      </p>
+                      </p> */}
                     </div>
                     <button
                       type="button"
