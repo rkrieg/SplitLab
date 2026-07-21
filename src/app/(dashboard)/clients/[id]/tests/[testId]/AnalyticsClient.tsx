@@ -3580,8 +3580,8 @@ export default function AnalyticsClient({
               </div>
 
               <div className="px-5 pt-4">
-                <div className="flex items-start gap-2 text-xs text-slate-500 bg-slate-100 dark:bg-slate-800/50 rounded-lg px-3 py-2.5">
-                  <Info size={14} className="shrink-0 mt-0.5 text-slate-400" />
+                <div className="flex items-start gap-2 text-xs text-white bg-amber-500 dark:bg-amber-600 rounded-lg px-3 py-2.5">
+                  <Info size={14} className="shrink-0 mt-0.5 text-white" />
                   <p>
                     One-time setup: in HubSpot, go to <strong>Settings → Tracking &amp; Analytics → Tracking Code → Advanced Tracking</strong>, and add your domain so submissions come through. Add the root domain to accept leads from it and all its subdomains — or just a specific subdomain if that's the only one you want accepted.
                   </p>
