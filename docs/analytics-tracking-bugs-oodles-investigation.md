@@ -174,7 +174,33 @@ $$;
 ```
 
 Then `analytics/route.ts` calls `db.rpc('test_variant_stats', {...})` instead of the raw
-`select`. **Not yet implemented** — pending.
+`select`.
+
+**Implemented (2026-07-22):** migration `037_test_variant_stats_rpc.sql` adds
+`test_variant_stats(p_test_id, p_from, p_to)`, returning one aggregated row per variant
+(`views`, `unique_visitors`, `conversions`, `goal_hits`) instead of shipping raw event rows into
+JS. `analytics/route.ts` now calls this via `db.rpc(...)`. The RPC preserves the existing
+goal-membership filter (a conversion only counts if its `goal_id` still belongs to one of the
+test's current `conversion_goals`, matching the old `goalIds.has(...)` check, including the
+edge case where a test has zero goals defined). **Migration file is written but not yet applied
+to the database** — user opted to apply it manually rather than have it run automatically.
+The API route will 500 (`rpcError.message`) until the migration is applied.
+
+**Same defect found in the Reporting tab (2026-07-22):** `src/app/api/tests/[id]/reporting/route.ts`
+had an identical unbounded `select` on `events` (line 45-54 pre-fix), with no `.range()`,
+`.limit()`, or `.order()` — exposed to the same 1,000-row PostgREST cap. Fixed via migration
+`038_test_variant_daily_stats_rpc.sql`, adding `test_variant_daily_stats(p_test_id, p_from,
+p_to)` which returns one row per **(date, variant)** bucket instead of raw events, keeping the
+result set small (days × variants) regardless of event volume. `reporting/route.ts` now calls
+this RPC for the chart's daily series, and separately calls `test_variant_stats` (migration 037)
+for the summary-card totals — totals intentionally use a whole-range dedup query rather than
+summing the daily buckets' `unique_visitors`, since summing per-day uniques would double-count
+any visitor who returns on a second day within the selected range. Also fixed: `totals.cvr` and
+the daily `_cvr`/`overall_cvr` fields previously divided unique conversions by raw views
+(same mismatched-dedup bug as Bug 2); now divide by unique visitors. The existing "Visitors"
+summary card was relabeled "Unique Visitors" for clarity (it was already computing the correct
+unique-visitor dedup — only the label was ambiguous). **Also not yet applied to the database**
+— same manual-apply note as migration 037.
 
 ---
 
@@ -199,6 +225,19 @@ correctness/consistency with how CVR is presented elsewhere (e.g. client-facing 
 
 **Fix:** denominator should be `count(distinct visitor_hash) filter (where type = 'pageview')`,
 not raw pageview count.
+
+**Implemented (2026-07-22):** as part of the Bug 1 RPC migration, `cvr` is now
+`conversions / uniqueVisitors` (both unique-visitor-deduped) instead of
+`conversions / views` (mismatched dedup levels). `confidencePercent()` and `findWinner()` in
+`src/lib/stats.ts` now also receive `uniqueVisitors` as the chi-square trial count instead of
+raw `views` — each visitor is one Bernoulli trial for significance purposes, not each
+pageview/reload. This can shift which variant shows as the reported winner and its confidence
+%, since the trial-count denominator changed for every variant. A "Unique Visitors" column was
+added to the dashboard table, CSV export, and the header summary tile's CVR calc, alongside the
+existing "Views" (raw pageview count) column — both are now shown so raw traffic volume and
+unique-visitor volume remain separately visible. The Reporting tab
+(`/api/tests/[id]/reporting`) was intentionally left untouched — it already computes its own
+independent unique-visitor stat and wasn't part of this fix's scope.
 
 ---
 
@@ -425,6 +464,200 @@ UTC, or (b) accept a timezone/offset parameter from the client and shift the `T0
 `T23:59:59Z` boundaries accordingly so "today" matches the viewer's actual local day. Option (b)
 is the better user-facing fix but requires plumbing a timezone through the API; option (a) is a
 fast, honest stopgap. **Not yet implemented — pending.**
+
+---
+
+## Manual Click-Test — click pipeline confirmed reliable, surfaced a new contamination bug (2026-07-22)
+
+**Why we ran this:** after ruling out a dead CSS/text selector (goal's `selector` matches the
+live HTML byte-for-byte, confirmed against the AD variant's actual page source), the remaining
+open question was whether `sendBeacon` delivery could be silently failing on real clicks —
+unverifiable from the DB alone, since a failed beacon leaves no trace. Needed a live,
+reproducible test.
+
+**Method:** 6 manual test runs, each in a fresh browser session, using the `sl_vid` query param
+(`src/app/api/serve/route.ts` line 72) to force landing on variant AD specifically:
+
+```
+https://start.oodlesofleads.com/oodles?sl_vid=a881ed31-f33f-4a1e-af8a-c312fa78cb2a
+```
+
+(`a881ed31-f33f-4a1e-af8a-c312fa78cb2a` = AD's variant UUID, confirmed via the `conversion_goals`
+row whose `selector` matches AD's goal.) Each run: load page → note `sl_visitor` cookie value →
+click the "See If Your Area Is Open →" CTA → record which CTA location was clicked (hero section,
+"One Contractor Per Area" section, or closing "Let's See If Your Area Is Still Available"
+section — page has multiple CTAs with identical text).
+
+**Result: 6/6 runs succeeded, 100% reproduction rate.** Every run produced a `pageview` row on
+`variant_id = a881ed31-...` (AD) followed by **exactly 5 conversion rows** (one per goal_id,
+matching the known Bug 3a mechanism precisely) within ~0.1-0.5s of the click, regardless of which
+of the multiple identical-text CTAs was clicked.
+
+**Conclusion: the client-side click → `sendBeacon` → `/api/event` → DB pipeline is reliable.**
+Both previously open hypotheses (dead selector, beacon delivery failure) are now **ruled out** —
+the code works exactly as designed, every time, for a real click on this exact page.
+
+### New finding: internal/QA traffic is indistinguishable from real conversions (CONFIRMED, MEDIUM IMPACT)
+
+One of the 6 test runs (Test-6) was run non-incognito by mistake, reusing an existing browser
+cookie instead of getting a fresh one. That accident surfaced a real bug: the `sl_visitor` cookie
+that came back, `09d8958a-5b9a-4329-82f7-df047d868476`, had a prior history that predates this
+test entirely:
+
+| When | Variant | Type | Note |
+|---|---|---|---|
+| 2026-07-10 14:07:59 | `44cb0680...` (not AD) | pageview | |
+| 2026-07-10 16:03:21 | `44cb0680...` | pageview | |
+| 2026-07-10 16:03:27-28 | `44cb0680...` | conversion ×5 | one real click, Bug 3a fanned to 5 |
+| 2026-07-10 16:08:28-29 | `44cb0680...` | conversion ×5 | a second real click, same pattern |
+| 2026-07-22 11:02:56 | `a881ed31...` (AD) | pageview | today's Test-6 |
+| 2026-07-22 11:06:53 | `a881ed31...` | conversion ×5 | today's Test-6 click |
+
+The July 10th timestamps (14:07-16:08) line up almost exactly with when the `conversion_goals`
+rows were created for this test (14:23-14:26 per the goals table) — this is very likely whoever
+built/QA'd the goals that day, browsing the live page non-incognito. This is the same
+`09d8958a...` visitor already flagged in Bug 3a's evidence above as having "10 clicks... likely 2
+real physical clicks × 5 duplicate-fired events each" — meaning **this non-customer cookie was
+already counted as one of the whole-test's "15 unique converting visitors"** in the original data
+snapshot, before this investigation ever started.
+
+**Problem:** `events` has no `is_preview` / `is_test` / internal-traffic flag of any kind. Every
+write — including a team member idly reloading the live page to check it looks right, or the
+`sl_vid`-forced QA runs done for *this investigation itself* — lands in the exact same table as
+real customer visits, completely indistinguishable in any query. Given how small the real
+conversion counts are for this test (4-15 unique converters total across all analysis), even one
+persistent non-incognito team cookie meaningfully inflates the numbers everyone has been trying to
+reconcile against Unbounce.
+
+**Immediate consequence:** this investigation's own 6 test runs today added 6 real pageviews +
+30 real conversion events to variant AD's live numbers. Any future comparison query must exclude
+these hashes or it will show inflated results:
+
+```sql
+and visitor_hash not in (
+  '695ed276-9a7e-4600-aa48-b6a93b342a5a',
+  '2ddcf79f-100a-4d43-9bbb-c156f6daec1d',
+  '86e75fa8-06e6-473d-b2b2-0eaaccb6dccd',
+  '20e10b3e-065c-4bb2-803f-729a508b9ae3',
+  '2b784745-bd42-4caa-8717-b274783cbfd0',
+  '09d8958a-5b9a-4329-82f7-df047d868476'
+)
+```
+
+**Fix (not yet implemented):** tag events originating from `sl_vid`-forced requests (these are
+by definition QA/preview, never real traffic — `serve/route.ts` already knows `forcedVid` is set)
+with an `is_preview` flag, and give team members a way to explicitly mark a browser session as
+internal (e.g. a `sl_internal` cookie set from an authenticated dashboard session) so casual
+non-incognito checks don't silently pollute client-facing analytics. Dashboard aggregates should
+default to excluding flagged rows.
+
+---
+
+## Bug 8 — Cross-domain conversion mints a phantom "new visitor" for every real click-through (CONFIRMED, HIGH IMPACT — inflates visitors in lockstep with conversions)
+
+**Discovery:** while re-running the manual click tests (Bug 3a verification above), `unique_visitors`
+and `unique_conversions` were observed incrementing **together** on a single click — not just the
+expected conversion increment. Isolated with a clean single-load-then-click test (no back-navigation
+involved): loading the page correctly added 1 unique visitor; the click *by itself* then added
+**both** another unique visitor *and* the expected unique conversion.
+
+**Root-caused via Vercel request logs.** Immediately after a click's 5 conversion `POST /api/event`
+calls, the logs show:
+
+```
+11:40:28  GET  www.trysplitlab.com/api/resolve?vid=a881ed31-f33f-4a1e-af8a-c312fa78cb2a
+11:40:29  POST www.trysplitlab.com/api/event
+11:40:31  POST www.trysplitlab.com/api/register-form-fields  ×2
+```
+
+The `/api/resolve` call is `tracker.js` (`src/app/tracker.js/route.ts`) running on the **destination**
+page, `oodlesofleads.com/booking` — cross-domain attribution tracking is installed and firing there.
+The `POST /api/event` two seconds later is `tracker.js`'s own unconditional pageview call
+(`boot()`/`start()`, fires `track("pageview")` on every load regardless of whether the test has any
+`url_reached` goal configured — confirmed by reading the code, `track()` only checks for an existing
+`_ctx` and a dedup key, nothing about goals). That pageview landed in the `events` table under a
+**brand-new `visitor_hash`**, against the **same `test_id`/`variant_id`** as the original page —
+i.e. one real person, one real click, now counted as 2 distinct "unique visitors."
+
+**Why the identity isn't preserved across the domain hop:** `decorate()` (`src/lib/tracking.ts`,
+line ~250) is supposed to tag any outbound cross-domain link with three params together —
+`sl_tid`, `sl_vid`, `sl_vh` — specifically so the destination's `tracker.js` can pick up `sl_vh`
+and continue tracking as the *same* visitor (`detect()`'s "Method 1"). But `tracker.js` has a
+fallback ("Method 2"): if the URL carries `sl_vid` alone, without `sl_tid`/`sl_vh`, it does
+`var tempVh = vh || uuid();` — mints a fresh identity instead of reusing anything.
+
+**Confirmed live which path fires:** captured the actual destination URL after clicking:
+
+```
+Entry:       https://start.oodlesofleads.com/oodles?sl_vid=a881ed31-f33f-4a1e-af8a-c312fa78cb2a
+Destination: https://oodlesofleads.com/booking?sl_vid=a881ed31-f33f-4a1e-af8a-c312fa78cb2a
+```
+
+Only `sl_vid` made it across — `sl_tid` and `sl_vh` are both missing. This is exactly Method 2's
+trigger condition, so the fresh-UUID fallback is confirmed as the mechanism.
+
+**Open sub-question — why `decorate()` didn't add all three:** the CTA's raw HTML has no query
+params at all (`<a href="https://oodlesofleads.com/booking">`), and `decorate()` never has a code
+path that adds `sl_vid` without also adding `sl_tid`/`sl_vh` in the same pass — so either (a) the
+`mousedown`/`click`-triggered href mutation silently failed to apply for this button, or (b)
+`oodlesofleads.com`'s own page JS rebuilds/overwrites the href at click time (common with
+funnel-builder click handlers), replacing SplitLab's decoration — and `sl_vid` only survived
+because the destination page separately carries the referring page's query string forward on its
+own (`sl_vid` happened to already be in the SplitLab dashboard's `sl_vid=`-forced test URL, which
+is unrelated to `decorate()`). Not yet isolated which of the two it is — next step is inspecting
+the CTA's live `href` attribute immediately after a `mousedown` (before navigation completes) to
+see whether `decorate()` ran at all.
+
+**Impact:** this fires on every real click-through that lands the visitor on a page with
+`tracker.js` installed, not just test runs — meaning it's a plausible, ongoing, silent contributor
+to `unique_visitors` inflation that scales precisely with real conversion volume (the more people
+actually convert, the more phantom visitors get added), independent of the QA-contamination issue
+documented above. **Not yet fixed.**
+
+**Fix direction (not yet implemented):** determine and fix why `decorate()`'s href mutation isn't
+reliably landing before navigation for this CTA (or add a safeguard against destination-page JS
+stomping the decorated href), so `sl_tid`+`sl_vh` reliably accompany `sl_vid` cross-domain and
+`tracker.js`'s Method 1 (identity reuse) fires instead of Method 2 (fresh mint).
+
+---
+
+## Bug 1/2 Fix Verification — dev synthetic-load test (2026-07-22)
+
+**Why:** correctness of the RPC's aggregation math doesn't require >1,000 rows, but proving the
+row-cap fix itself does — dev traffic for any single test rarely reaches that volume naturally.
+
+**Method:** ran `docs/synthetic-events-test.sql` against dev test `d893ddb6-9eec-4bd9-b973-
+54e69cbd5204`, inserting ~1,600 synthetic `pageview` rows + ~130 synthetic `conversion` rows
+(all `visitor_hash` prefixed `synthetic-` for easy identification/cleanup) directly onto that
+test's existing variant, on top of its small pre-existing real baseline (3 pageviews, 1
+conversion with a real `goal_id`).
+
+**Result — the row cap is real and severe:**
+
+| Query | Views | Unique Visitors | Conversions |
+|---|---|---|---|
+| Ground truth (uncapped, `goal_id is not null` scoped) | 1,603 | 1,603 | 1 |
+| Simulated old behavior (`limit 1000`, no `order by`) | 976 | 976 | — |
+| `test_variant_stats()` RPC (the fix) | 1,603 | 1,603 | 1 |
+
+The capped simulation undercounted views by **39%** (976 vs 1,603) — a direct, reproduced
+confirmation that Bug 1 silently truncates real data, not just a theoretical risk. The RPC
+matches ground truth exactly. (Note: the synthetic conversions were inserted without a
+`goal_id`, so they're correctly excluded from both the ground-truth and RPC conversion counts —
+only the 1 real conversion, which has a real `goal_id`, counts. This was confirmed by checking
+`conversion_goals` for the test and re-running the ground-truth query with the same
+`goal_id is not null` filter the RPC applies, which resolved an initial apples-to-oranges
+mismatch during testing.)
+
+**Cleanup query (reusable for future dev verification runs):**
+```sql
+delete from events
+where test_id = '<test_id>'
+  and visitor_hash like 'synthetic-%';
+```
+Scoped to both `test_id` and the `synthetic-` prefix, so it only ever removes rows this kind of
+test run added — real data for the test (and everything else in the database) is untouched. Kept
+in `docs/synthetic-events-test.sql` for reuse on future migrations/verifications.
 
 ---
 

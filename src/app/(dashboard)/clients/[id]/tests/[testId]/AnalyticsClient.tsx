@@ -99,6 +99,7 @@ interface Goal {
 interface VariantStat {
   variant: Variant;
   views: number;
+  uniqueVisitors: number;
   conversions: number;
   goalHits: number;
   cvr: number;
@@ -221,6 +222,7 @@ export default function AnalyticsClient({
   // Analytics
   const [stats, setStats] = useState<VariantStat[]>([]);
   const [totalViews, setTotalViews] = useState(0);
+  const [totalUniqueVisitors, setTotalUniqueVisitors] = useState(0);
   const [totalConversions, setTotalConversions] = useState(0);
   const [loading, setLoading] = useState(true);
   const [from, setFrom] = useState("");
@@ -661,6 +663,7 @@ export default function AnalyticsClient({
       if (data.test) setTest(data.test);
       setStats(data.variantStats ?? []);
       setTotalViews(data.totalViews ?? 0);
+      setTotalUniqueVisitors(data.totalUniqueVisitors ?? 0);
       setTotalConversions(data.totalConversions ?? 0);
     } catch {
       toast.error("Failed to load analytics");
@@ -725,13 +728,14 @@ export default function AnalyticsClient({
   }, []); // intentionally runs once on mount — autoCheckedRef prevents duplicates
 
   const winner = stats.find((s) => s.isWinner);
-  const overallCvr = totalViews > 0 ? totalConversions / totalViews : 0;
+  const overallCvr = totalUniqueVisitors > 0 ? totalConversions / totalUniqueVisitors : 0;
 
   function exportCsv() {
     const headers = [
       "Variant",
       "Control",
       "Views",
+      "Unique Visitors",
       "Conversions",
       "Goal Hits",
       "CVR",
@@ -742,6 +746,7 @@ export default function AnalyticsClient({
       s.variant.name,
       s.variant.is_control ? "Yes" : "No",
       s.views,
+      s.uniqueVisitors,
       s.conversions,
       s.goalHits,
       formatPercent(s.cvr * 100),
@@ -2472,6 +2477,9 @@ export default function AnalyticsClient({
                       Views
                     </th>
                     <th className="text-right px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">
+                      Unique Visitors
+                    </th>
+                    <th className="text-right px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">
                       Conversions
                     </th>
                     <th className="text-right px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">
@@ -2492,7 +2500,7 @@ export default function AnalyticsClient({
                   {loading ? (
                     <tr>
                       <td
-                        colSpan={10}
+                        colSpan={11}
                         className="px-5 py-10 text-center text-slate-400"
                       >
                         <RefreshCw
@@ -2505,7 +2513,7 @@ export default function AnalyticsClient({
                   ) : stats.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={10}
+                        colSpan={11}
                         className="px-5 py-10 text-center text-slate-400"
                       >
                         No data yet. Publish this page to start collecting
@@ -2662,6 +2670,11 @@ export default function AnalyticsClient({
                             <td
                               className={`px-5 py-3.5 text-right text-slate-700 dark:text-slate-300 ${rowBg}`}
                             >
+                              {stat.uniqueVisitors.toLocaleString()}
+                            </td>
+                            <td
+                              className={`px-5 py-3.5 text-right text-slate-700 dark:text-slate-300 ${rowBg}`}
+                            >
                               {stat.conversions.toLocaleString()}
                             </td>
                             <td
@@ -2771,7 +2784,7 @@ export default function AnalyticsClient({
                           {isEditing && (
                             <tr>
                               <td
-                                colSpan={10}
+                                colSpan={11}
                                 className="border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 px-6 py-4"
                               >
                                 <div className="grid grid-cols-2 gap-4 max-w-2xl">
@@ -3001,7 +3014,7 @@ export default function AnalyticsClient({
                       >
                         <option value="conversions">Conversions Over Time</option>
                         <option value="cvr">Conversion Rate Over Time</option>
-                        <option value="visitors">Visitors Over Time</option>
+                        <option value="visitors">Unique Visitors Over Time</option>
                         <option value="views">Views Over Time</option>
                       </select>
                     </div>
@@ -3079,7 +3092,7 @@ export default function AnalyticsClient({
                   {reportingLoaded && (
                     <div className="px-5 pb-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
                       {[
-                        { label: "Visitors", value: reportingTotals.visitors.toLocaleString(), icon: <Users size={14} className="text-indigo-400" /> },
+                        { label: "Unique Visitors", value: reportingTotals.visitors.toLocaleString(), icon: <Users size={14} className="text-indigo-400" /> },
                         { label: "Views", value: reportingTotals.views.toLocaleString(), icon: <Eye size={14} className="text-sky-400" /> },
                         { label: "Conversions", value: reportingTotals.conversions.toLocaleString(), icon: <TrendingUp size={14} className="text-green-400" /> },
                         { label: "Conv. Rate", value: `${reportingTotals.cvr}%`, icon: <Activity size={14} className="text-amber-400" /> },
