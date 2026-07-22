@@ -39,68 +39,46 @@ export async function GET(
     is_control: boolean;
   }>;
 
-  const goalIds = new Set((test.conversion_goals || []).map((g: { id: string }) => g.id));
+  // Server-side aggregation (Postgres RPC) — one row per (date, variant) bucket
+  // instead of every raw event, avoiding Supabase's default 1,000-row PostgREST
+  // cap that used to silently truncate/randomize this chart on busy tests.
+  const { data: rpcRows, error: rpcError } = await db.rpc('test_variant_daily_stats', {
+    p_test_id: params.id,
+    p_from: from ? `${from}T00:00:00Z` : null,
+    p_to: to ? `${to}T23:59:59Z` : null,
+  });
 
-  // Build events query
-  let query = db
-    .from('events')
-    .select('variant_id, type, goal_id, visitor_hash, created_at')
-    .eq('test_id', params.id);
+  if (rpcError) return NextResponse.json({ error: rpcError.message }, { status: 500 });
 
-  if (from) query = query.gte('created_at', `${from}T00:00:00Z`);
-  if (to) query = query.lte('created_at', `${to}T23:59:59Z`);
-  if (variantId && variantId !== 'all') query = query.eq('variant_id', variantId);
+  type DailyRow = { day: string; variant_id: string; views: number; unique_visitors: number; conversions: number };
+  let rows = (rpcRows || []) as DailyRow[];
+  if (variantId && variantId !== 'all') rows = rows.filter((r) => r.variant_id === variantId);
 
-  const { data: events } = await query;
-
-  if (!events || events.length === 0) {
+  if (rows.length === 0) {
     return NextResponse.json({ variants, daily: [], totals: { visitors: 0, views: 0, conversions: 0, cvr: 0 } });
   }
 
-  // Group events by date (YYYY-MM-DD) and variant_id
-  type DayVariantBucket = {
-    views: number;
-    conversionVisitors: Set<string>;
-    visitors: Set<string>;
-  };
-
-  const buckets = new Map<string, Map<string, DayVariantBucket>>();
-
-  for (const ev of events) {
-    const date = ev.created_at.slice(0, 10); // YYYY-MM-DD
-    const vid = ev.variant_id as string;
-
-    if (!buckets.has(date)) buckets.set(date, new Map());
-    const dayMap = buckets.get(date)!;
-
-    if (!dayMap.has(vid)) dayMap.set(vid, { views: 0, conversionVisitors: new Set(), visitors: new Set() });
-    const bucket = dayMap.get(vid)!;
-
-    if (ev.type === 'pageview') {
-      bucket.views++;
-      bucket.visitors.add(ev.visitor_hash as string);
-    } else if (
-      ev.type === 'conversion' &&
-      ev.goal_id !== null &&
-      (goalIds.size === 0 || goalIds.has(ev.goal_id as string))
-    ) {
-      bucket.conversionVisitors.add(ev.visitor_hash as string);
-    }
+  // Group by date
+  const buckets = new Map<string, DailyRow[]>();
+  for (const r of rows) {
+    const date = r.day;
+    if (!buckets.has(date)) buckets.set(date, []);
+    buckets.get(date)!.push(r);
   }
 
   // Build sorted daily array
   const sortedDates = Array.from(buckets.keys()).sort();
 
   const daily = sortedDates.map((date) => {
-    const dayMap = buckets.get(date)!;
+    const dayRows = buckets.get(date)!;
     const row: Record<string, unknown> = { date };
 
     for (const variant of variants) {
-      const b = dayMap.get(variant.id);
-      const views = b?.views ?? 0;
-      const visitors = b?.visitors.size ?? 0;
-      const conversions = b?.conversionVisitors.size ?? 0;
-      const cvr = views > 0 ? parseFloat(((conversions / views) * 100).toFixed(2)) : 0;
+      const r = dayRows.find((dr) => dr.variant_id === variant.id);
+      const views = Number(r?.views || 0);
+      const visitors = Number(r?.unique_visitors || 0);
+      const conversions = Number(r?.conversions || 0);
+      const cvr = visitors > 0 ? parseFloat(((conversions / visitors) * 100).toFixed(2)) : 0;
 
       row[`${variant.id}_views`] = views;
       row[`${variant.id}_visitors`] = visitors;
@@ -109,52 +87,45 @@ export async function GET(
     }
 
     // Overall (sum across all variants for that day)
-    let overallViews = 0;
-    let overallVisitors = new Set<string>();
-    let overallConversions = new Set<string>();
-
-    dayMap.forEach((b) => {
-      overallViews += b.views;
-      b.visitors.forEach((v) => overallVisitors.add(v));
-      b.conversionVisitors.forEach((v) => overallConversions.add(v));
-    });
+    const overallViews = dayRows.reduce((s, r) => s + Number(r.views || 0), 0);
+    const overallVisitors = dayRows.reduce((s, r) => s + Number(r.unique_visitors || 0), 0);
+    const overallConversions = dayRows.reduce((s, r) => s + Number(r.conversions || 0), 0);
 
     row['overall_views'] = overallViews;
-    row['overall_visitors'] = overallVisitors.size;
-    row['overall_conversions'] = overallConversions.size;
-    row['overall_cvr'] = overallViews > 0
-      ? parseFloat(((overallConversions.size / overallViews) * 100).toFixed(2))
+    row['overall_visitors'] = overallVisitors;
+    row['overall_conversions'] = overallConversions;
+    row['overall_cvr'] = overallVisitors > 0
+      ? parseFloat(((overallConversions / overallVisitors) * 100).toFixed(2))
       : 0;
 
     return row;
   });
 
-  // Summary totals
-  let totalViews = 0;
-  const totalVisitorSet = new Set<string>();
-  const totalConversionSet = new Set<string>();
+  // Summary totals — dedup across the *entire* date range, not per-day. Summing
+  // the daily buckets' unique_visitors would double-count anyone who returns on
+  // a second day, so this reuses test_variant_stats (whole-range dedup) instead.
+  const { data: totalsRpcRows, error: totalsRpcError } = await db.rpc('test_variant_stats', {
+    p_test_id: params.id,
+    p_from: from ? `${from}T00:00:00Z` : null,
+    p_to: to ? `${to}T23:59:59Z` : null,
+  });
 
-  for (const ev of events) {
-    if (ev.type === 'pageview') {
-      totalViews++;
-      totalVisitorSet.add(ev.visitor_hash as string);
-    } else if (
-      ev.type === 'conversion' &&
-      ev.goal_id !== null &&
-      (goalIds.size === 0 || goalIds.has(ev.goal_id as string))
-    ) {
-      totalConversionSet.add(ev.visitor_hash as string);
-    }
-  }
+  if (totalsRpcError) return NextResponse.json({ error: totalsRpcError.message }, { status: 500 });
 
-  const totalConversions = totalConversionSet.size;
-  const cvr = totalViews > 0 ? parseFloat(((totalConversions / totalViews) * 100).toFixed(2)) : 0;
+  type TotalsRow = { variant_id: string; views: number; unique_visitors: number; conversions: number };
+  let totalsRows = (totalsRpcRows || []) as TotalsRow[];
+  if (variantId && variantId !== 'all') totalsRows = totalsRows.filter((r) => r.variant_id === variantId);
+
+  const totalViews = totalsRows.reduce((s, r) => s + Number(r.views || 0), 0);
+  const totalVisitors = totalsRows.reduce((s, r) => s + Number(r.unique_visitors || 0), 0);
+  const totalConversions = totalsRows.reduce((s, r) => s + Number(r.conversions || 0), 0);
+  const cvr = totalVisitors > 0 ? parseFloat(((totalConversions / totalVisitors) * 100).toFixed(2)) : 0;
 
   return NextResponse.json({
     variants,
     daily,
     totals: {
-      visitors: totalVisitorSet.size,
+      visitors: totalVisitors,
       views: totalViews,
       conversions: totalConversions,
       cvr,
