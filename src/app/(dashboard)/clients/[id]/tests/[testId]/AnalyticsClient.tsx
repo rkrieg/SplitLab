@@ -1255,7 +1255,7 @@ export default function AnalyticsClient({
         body: JSON.stringify({
           goals: editGoals.map((g) => ({
             ...(g.id ? { id: g.id } : {}),
-            name: g.name,
+            name: g.type === "url_reached" ? `URL: ${g.url_pattern}` : g.name,
             type: g.type,
             selector: g.selector || null,
             url_pattern: g.url_pattern || null,
@@ -2529,7 +2529,9 @@ export default function AnalyticsClient({
                         scanResults.variants.some((vs) => vs.variant_id === stat.variant.id);
                       const variantHasGoals = editGoals.some(
                         (g) =>
-                          g.name.trim() !== "" &&
+                          (g.type === "url_reached"
+                            ? (g.url_pattern || "").trim() !== ""
+                            : g.name.trim() !== "") &&
                           (g.variant_id == null || g.variant_id === stat.variant.id),
                       );
 
@@ -4483,14 +4485,14 @@ export default function AnalyticsClient({
                       <div className="flex items-center gap-2">
                         <input
                           type="text"
-                          value={g.name}
+                          value={g.url_pattern || ""}
                           onChange={(e) => {
                             const c = [...editGoals];
-                            c[i] = { ...c[i], name: e.target.value };
+                            c[i] = { ...c[i], url_pattern: e.target.value };
                             setEditGoals(c);
                           }}
-                          className="input-base flex-1"
-                          placeholder="Goal name"
+                          className="input-base flex-1 font-mono text-xs"
+                          placeholder="/thank-you"
                           required
                         />
                         <span className="text-xs bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 px-2 py-1.5 rounded-lg flex-shrink-0 whitespace-nowrap">
@@ -4505,19 +4507,6 @@ export default function AnalyticsClient({
                         >
                           <X size={14} />
                         </button>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="text"
-                          value={g.url_pattern || ""}
-                          onChange={(e) => {
-                            const c = [...editGoals];
-                            c[i] = { ...c[i], url_pattern: e.target.value };
-                            setEditGoals(c);
-                          }}
-                          className="input-base flex-1 font-mono text-xs"
-                          placeholder="/thank-you"
-                        />
                       </div>
                       <p className="text-slate-500 dark:text-slate-500 text-[11px]">
                         Matches if the visitor&apos;s URL <span className="font-medium">contains</span> this text anywhere — e.g. <code className="font-mono">/booking</code> matches <code className="font-mono">/booking</code>, <code className="font-mono">/booking-confirmed</code>, and <code className="font-mono">/booking?utm_source=fb</code>. Enter the path only — no need to add search params.

@@ -142,6 +142,51 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
   function getSubdomainPart(domain: string) { const p = domain.split('.'); return p.length <= 2 ? '' : p.slice(0, -2).join('.'); }
 
   function copyToClipboard(text: string) { navigator.clipboard.writeText(text); toast.success('Copied to clipboard'); }
+
+  function buildClientInstructions(d: Domain) {
+    const dnsName = getDomainName(d.domain);
+    const isRoot = isRootDomain(d.domain);
+    const txtRecords = verifyTxtRecords[d.id] ?? d.vercel_verification ?? [];
+    const cnameTarget = d.cname_target || appHostname;
+
+    const lines = [
+      `To connect your domain with Splitlab, add this DNS record at your domain provider (GoDaddy, Namecheap, Cloudflare, etc.):`,
+      '',
+      `Type: CNAME`,
+      `Name: ${dnsName}`,
+      `Value: ${cnameTarget}`,
+    ];
+
+    if (isRoot) {
+      lines.push(
+        '',
+        `Type: A`,
+        `Name: @`,
+        `Value: ${appARecord}`,
+      );
+    }
+
+    if (txtRecords.length > 0) {
+      lines.push(
+        '',
+        `Also add this TXT record to verify domain ownership:`,
+        '',
+        `Type: TXT`,
+        `Name: ${txtRecords[0].domain}`,
+        `Value: ${txtRecords[0].value}`,
+        '',
+      );
+    }
+
+    lines.push('', `DNS changes can take a few minutes up to a few hours to take effect.`);
+
+    return lines.join('\n');
+  }
+
+  function copyClientInstructions(d: Domain) {
+    navigator.clipboard.writeText(buildClientInstructions(d));
+    toast.success('Instructions copied — ready to paste to your client');
+  }
   function resetAddModal() { setAddBaseDomain(''); setAddMode('root'); setAddSubdomain(''); setAddDomainError(null); }
 
   function openEditModal(d: Domain) {
@@ -474,9 +519,18 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
         )}
 
         <div className="border-t border-slate-200 dark:border-slate-800 px-5 py-4">
-          <h4 className="text-xs font-medium text-slate-700 dark:text-slate-300 mb-3">
-            Point your domain to SplitLab by adding this DNS record at your registrar (GoDaddy, Namecheap, Cloudflare, etc.)
-          </h4>
+          <div className="flex items-start justify-between gap-3 mb-3">
+            <h4 className="text-xs font-medium text-slate-700 dark:text-slate-300">
+              Point your domain to SplitLab by adding this DNS record at your registrar (GoDaddy, Namecheap, Cloudflare, etc.)
+            </h4>
+            <button
+              onClick={() => copyClientInstructions(d)}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium text-[#3D8BDA] hover:bg-[#3D8BDA]/10 transition-colors flex-shrink-0 whitespace-nowrap"
+              title="Copy DNS setup instructions to send to your client"
+            >
+              <Copy size={12} /> Copy Instructions
+            </button>
+          </div>
           <div className="rounded-lg border border-slate-700 overflow-hidden text-xs">
             <div className="grid grid-cols-3 bg-slate-50 dark:bg-slate-800/60">
               <div className="px-3 py-2 text-slate-500 font-medium border-r border-slate-200 dark:border-slate-700">Type</div>
