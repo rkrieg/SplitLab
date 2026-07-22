@@ -72,6 +72,50 @@ of them individually (or combined) accounts for an 11-14x raw traffic gap.
 
 ---
 
+## Data Snapshot — what's actually in the DB right now (plain terms)
+
+Two different scopes were queried during this investigation — **don't mix them up** when
+comparing numbers:
+
+- **Whole-test totals** = all 5 variants combined (Testing Variant, AH, AE, AG, AD, AK), full
+  test lifetime (Jun 19 – Jul 22, no date filter).
+- **Variant AD only** = just the control variant, scoped to the same window Unbounce's number
+  covers (Jun 19 – Jul 22), for a fair apples-to-apples comparison against Unbounce.
+
+### Whole test (all 5 variants combined)
+
+| Term | What it means | Value |
+|---|---|---|
+| Total events | Every row in `events` for this test (pageviews + conversions) | 1,346 |
+| Total pageviews (raw) | Every `type = 'pageview'` row, no dedup — one per page load/reload | 1,246 |
+| Unique visitors | Distinct `visitor_hash` values across pageview rows — actual different people | 1,187 |
+| Total conversion events (raw) | Every `type = 'conversion'` row fired, including duplicates from Bug 3a | 100 |
+| Conversion events matched to a goal | Of the 100, how many got a real `goal_id` attached | 99 (1 orphaned, Bug 5) |
+| **Goal Hits** (what the dashboard calls this) | Same as "matched to a goal" above — raw count, inflated ~5x by Bug 3a | 99 |
+| **Actual/Real Conversions** (unique people who converted) | Distinct `visitor_hash` among the matched conversion events — this is the number that actually matters | **15** |
+
+In short: 1,187 real people visited across all variants, and only **15 distinct people**
+actually converted — even though the raw conversion log shows 100 events, because of the 5x
+duplication bug (Bug 3a) plus a bit of genuine repeat-clicking (Bug 3).
+
+### Variant AD only (control), scoped to Jun 19 – Jul 22 — the real comparison vs. Unbounce
+
+| Term | SplitLab | Unbounce | Ratio |
+|---|---|---|---|
+| Views (raw pageviews) | 255 | 3,700 | ~14.5x lower |
+| Unique Visitors | 231 | 2,600 | ~11x lower |
+| Actual Conversions (unique people) | 4 | 839 | ~200x lower |
+| Goal Hits (raw matched conversion events) | 39 | — (Unbounce doesn't separate this) | ~21x lower |
+| CVR | 1.20-1.26% | 32.31% | — |
+
+**Why "Goal Hits" and "Actual Conversions" differ so much within SplitLab itself:** Goal Hits
+(39) counts every matched conversion *event*, including the ~5x duplicates from Bug 3a. Actual
+Conversions (4) counts distinct *people* — that's the number that should be compared against
+Unbounce's "Conversions" metric, since Unbounce also counts real conversions, not raw click
+events.
+
+---
+
 ## Bug 1 — Dashboard analytics query silently truncates at ~1,000 rows (CONFIRMED, HIGH IMPACT)
 
 **File:** `src/app/api/tests/[id]/analytics/route.ts` (lines 43-51)
