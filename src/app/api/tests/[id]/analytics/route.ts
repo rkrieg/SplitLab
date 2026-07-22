@@ -36,45 +36,35 @@ export async function GET(
     (g: { is_primary: boolean }) => g.is_primary
   ) || (test.conversion_goals || [])[0] || null;
 
-  // All goal IDs for this test — any hit counts as a conversion
-  const goalIds = new Set((test.conversion_goals || []).map((g: { id: string }) => g.id));
+  // Server-side aggregation (Postgres RPC) — avoids fetching raw event rows
+  // into JS, which used to hit Supabase's default 1,000-row PostgREST cap
+  // and silently truncate/randomize results on tests with >1,000 events.
+  const { data: rpcStats, error: rpcError } = await db.rpc('test_variant_stats', {
+    p_test_id: params.id,
+    p_from: from ? `${from}T00:00:00Z` : null,
+    p_to: to ? `${to}T23:59:59Z` : null,
+  });
 
-  // Build date filter
-  let dateFilter = db
-    .from('events')
-    .select('variant_id, type, goal_id, visitor_hash')
-    .eq('test_id', params.id);
+  if (rpcError) return NextResponse.json({ error: rpcError.message }, { status: 500 });
 
-  if (from) dateFilter = dateFilter.gte('created_at', `${from}T00:00:00Z`);
-  if (to) dateFilter = dateFilter.lte('created_at', `${to}T23:59:59Z`);
-
-  const { data: events } = await dateFilter;
+  const statsByVariant = new Map(
+    (rpcStats || []).map((r: { variant_id: string; views: number; unique_visitors: number; conversions: number; goal_hits: number }) => [r.variant_id, r])
+  );
 
   // Aggregate per variant
   const variantStats = variants.map((variant: { id: string; name: string; is_control: boolean; traffic_weight: number; pages?: { id: string; name: string } | null }) => {
-    const varEvents = (events || []).filter(
-      (e: { variant_id: string; type: string; goal_id: string | null }) => e.variant_id === variant.id
-    );
-    const views = varEvents.filter((e: { type: string }) => e.type === 'pageview').length;
+    const row = statsByVariant.get(variant.id) as { views: number; unique_visitors: number; conversions: number; goal_hits: number } | undefined;
+    const views = Number(row?.views || 0);
+    const uniqueVisitors = Number(row?.unique_visitors || 0);
+    const conversions = Number(row?.conversions || 0);
+    const goalHits = Number(row?.goal_hits || 0);
 
-    const goalEvents = varEvents.filter(
-      (e: { type: string; goal_id: string | null }) =>
-        e.type === 'conversion' && e.goal_id !== null && (goalIds.size === 0 || goalIds.has(e.goal_id))
-    );
-
-    // Unique converting visitors (one visitor counts once regardless of goals hit)
-    const conversions = new Set(
-      goalEvents.map((e: { visitor_hash: string }) => e.visitor_hash)
-    ).size;
-
-    // Total raw goal events (for Goal Hits column)
-    const goalHits = goalEvents.length;
-
-    const cvr = views > 0 ? conversions / views : 0;
+    const cvr = uniqueVisitors > 0 ? conversions / uniqueVisitors : 0;
 
     return {
       variant,
       views,
+      uniqueVisitors,
       conversions,
       goalHits,
       cvr,
@@ -83,23 +73,24 @@ export async function GET(
     };
   });
 
-  // Compute confidence vs control
+  // Compute confidence vs control (chi-square trial count = unique visitors,
+  // not raw pageviews — each visitor is one Bernoulli trial, a reload isn't)
   const control = variantStats.find((v: { variant: { is_control: boolean } }) => v.variant.is_control) || variantStats[0];
   for (const stat of variantStats) {
     if (stat.variant.id === control.variant.id) continue;
     stat.confidence = confidencePercent(
-      control.views,
+      control.uniqueVisitors,
       control.conversions,
-      stat.views,
+      stat.uniqueVisitors,
       stat.conversions
     );
   }
 
   // Mark winner
   const winnerId = findWinner(
-    variantStats.map((s: { variant: { id: string }; views: number; conversions: number }) => ({
+    variantStats.map((s: { variant: { id: string }; uniqueVisitors: number; conversions: number }) => ({
       id: s.variant.id,
-      views: s.views,
+      views: s.uniqueVisitors,
       conversions: s.conversions,
     }))
   );
@@ -108,6 +99,7 @@ export async function GET(
   }
 
   const totalViews = variantStats.reduce((s: number, v: { views: number }) => s + v.views, 0);
+  const totalUniqueVisitors = variantStats.reduce((s: number, v: { uniqueVisitors: number }) => s + v.uniqueVisitors, 0);
   const totalConversions = variantStats.reduce((s: number, v: { conversions: number }) => s + v.conversions, 0);
 
   return NextResponse.json({
@@ -115,6 +107,7 @@ export async function GET(
     primaryGoal,
     variantStats,
     totalViews,
+    totalUniqueVisitors,
     totalConversions,
   });
 }
