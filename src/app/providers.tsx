@@ -2,7 +2,7 @@
 
 import { SessionProvider } from 'next-auth/react';
 import { ThemeProvider } from 'next-themes';
-import { Toaster } from 'react-hot-toast';
+import { Toaster, ToastBar, toast } from 'react-hot-toast';
 import type { Session } from 'next-auth';
 
 interface ProvidersProps {
@@ -30,9 +30,24 @@ export default function Providers({ children, session }: ProvidersProps) {
             },
             error: {
               iconTheme: { primary: '#ef4444', secondary: '#fff' },
+              duration: Infinity,
             },
           }}
-        />
+        >
+          {(t) => (
+            <ToastBar toast={t}>
+              {({ icon, message }) => (
+                <div
+                  onClick={() => toast.dismiss(t.id)}
+                  style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}
+                >
+                  {icon}
+                  {message}
+                </div>
+              )}
+            </ToastBar>
+          )}
+        </Toaster>
       </SessionProvider>
     </ThemeProvider>
   );
