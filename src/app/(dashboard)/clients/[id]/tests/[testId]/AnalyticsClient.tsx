@@ -231,7 +231,7 @@ export default function AnalyticsClient({
   // Page Reporting (collapsible chart section)
   type ReportingVariant = { id: string; name: string; is_control: boolean };
   type ReportingTotals = { visitors: number; views: number; conversions: number; cvr: number };
-  const [reportingOpen, setReportingOpen] = useState(false);
+  const [reportingOpen, setReportingOpen] = useState(true);
   const [reportingLoaded, setReportingLoaded] = useState(false);
   const [reportingLoading, setReportingLoading] = useState(false);
   const [reportingDaily, setReportingDaily] = useState<Record<string, unknown>[]>([]);
@@ -2008,6 +2008,125 @@ export default function AnalyticsClient({
       (g) => g !== matchGoal,
     );
     if (updatedGoals.length === originalGoals.length) return; // nothing matched
+    setEditGoals(updatedGoals);
+
+    try {
+      const res = await fetch(`/api/tests/${test.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          goals: updatedGoals.map((g) => ({
+            ...(g.id ? { id: g.id } : {}),
+            name: g.name,
+            type: g.type,
+            selector: g.selector || null,
+            url_pattern: g.url_pattern || null,
+            is_primary: g.is_primary,
+            variant_id: g.variant_id ?? null,
+          })),
+        }),
+      });
+      if (!res.ok) {
+        setEditGoals(originalGoals);
+        toast.error("Failed to remove goal");
+        return;
+      }
+      const updated = await res.json();
+      setTest(updated);
+      setEditGoals(
+        (updated.conversion_goals || []).map((g: Goal) => ({
+          ...g,
+          selector: g.selector || "",
+          url_pattern: g.url_pattern || "",
+        })),
+      );
+      toast.success("Goal removed");
+    } catch {
+      setEditGoals(originalGoals);
+      toast.error("Failed to remove goal");
+    }
+  }
+
+  // Same element (matched by type + selector) present across multiple variants —
+  // used by the "All" tab so a common element (e.g. a form on every page) can be
+  // turned into a goal for all of its variants in one click.
+  async function enableAsGoalForVariants(members: { variantId: string; el: ScanElement }[]) {
+    const newGoals: Goal[] = [];
+    for (const { variantId, el } of members) {
+      const goalType = goalTypeForElement(el);
+      const selector = selectorForElement(el);
+      if (!selector && el.type !== "form") continue;
+      const label = displayLabelForElement(el);
+      newGoals.push({
+        id: "",
+        name: label.slice(0, 60),
+        type: goalType,
+        selector,
+        url_pattern: null,
+        is_primary: false,
+        variant_id: variantId,
+      });
+    }
+    if (newGoals.length === 0) {
+      toast.error("This element can't be uniquely identified (no id, text, or name)");
+      return;
+    }
+    if (editGoals.length === 0) newGoals[0].is_primary = true;
+
+    const originalGoals = editGoals;
+    const updatedGoals = [...editGoals, ...newGoals];
+    setEditGoals(updatedGoals);
+
+    try {
+      const res = await fetch(`/api/tests/${test.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          goals: updatedGoals.map((g) => ({
+            ...(g.id ? { id: g.id } : {}),
+            name: g.name,
+            type: g.type,
+            selector: g.selector || null,
+            url_pattern: g.url_pattern || null,
+            is_primary: g.is_primary,
+            variant_id: g.variant_id ?? null,
+          })),
+        }),
+      });
+      if (!res.ok) {
+        setEditGoals(originalGoals);
+        toast.error("Failed to save goal");
+        return;
+      }
+      const updated = await res.json();
+      setTest(updated);
+      setEditGoals(
+        (updated.conversion_goals || []).map((g: Goal) => ({
+          ...g,
+          selector: g.selector || "",
+          url_pattern: g.url_pattern || "",
+        })),
+      );
+      toast.success(`Goal enabled for ${newGoals.length} variant${newGoals.length !== 1 ? "s" : ""}`);
+    } catch {
+      setEditGoals(originalGoals);
+      toast.error("Failed to save goal");
+    }
+  }
+
+  async function removeGoalForVariants(members: { variantId: string; el: ScanElement }[]) {
+    const matchGoals = members
+      .map(({ variantId, el }) => {
+        const exactMatch = editGoals.find((g) => goalMatchesElement(g, el, variantId, true));
+        const fallbackMatch = editGoals.find((g) => goalMatchesElement(g, el, variantId));
+        return exactMatch ?? fallbackMatch;
+      })
+      .filter((g): g is Goal => !!g);
+    if (matchGoals.length === 0) return;
+
+    const originalGoals = editGoals;
+    const updatedGoals = editGoals.filter((g) => !matchGoals.includes(g));
+    if (updatedGoals.length === originalGoals.length) return;
     setEditGoals(updatedGoals);
 
     try {
@@ -4286,8 +4405,30 @@ export default function AnalyticsClient({
                 )}
 
                 {scanResults && (() => {
-                  const activeId = scanTab ?? scanResults.variants[0]?.variant_id;
+                  const ALL_TAB = "__all__";
+                  const activeId = scanTab ?? (scanResults.variants.length > 1 ? ALL_TAB : scanResults.variants[0]?.variant_id);
+                  const isAllTab = activeId === ALL_TAB;
                   const activeVs = scanResults.variants.find(v => v.variant_id === activeId) ?? scanResults.variants[0];
+
+                  // Group elements that appear on more than one variant (matched by
+                  // type + selector) so "All" can offer a single goal toggle for them.
+                  type ElementGroup = { key: string; representative: ScanElement; members: { variantId: string; variantName: string; el: ScanElement }[] };
+                  const allGroups: ElementGroup[] = (() => {
+                    const map = new Map<string, ElementGroup>();
+                    scanResults.variants.forEach((vs) => {
+                      vs.elements.forEach((el) => {
+                        const key = `${goalTypeForElement(el)}::${selectorForElement(el) ?? `label:${displayLabelForElement(el)}`}`;
+                        let group = map.get(key);
+                        if (!group) {
+                          group = { key, representative: el, members: [] };
+                          map.set(key, group);
+                        }
+                        group.members.push({ variantId: vs.variant_id, variantName: vs.variant_name, el });
+                      });
+                    });
+                    return Array.from(map.values());
+                  })();
+
                   return (
                     <div>
                       {/* Variant tabs */}
@@ -4295,6 +4436,20 @@ export default function AnalyticsClient({
                         <div className="mb-4">
                           <p className="text-xs text-slate-600 dark:text-slate-400 mb-2">Switch variants to set goals per page:</p>
                           <div className="flex gap-0 border-b border-slate-200 dark:border-slate-700 -mx-5 px-5 overflow-x-auto">
+                            <button
+                              type="button"
+                              onClick={() => setScanTab(ALL_TAB)}
+                              className={`px-4 py-2 text-xs font-medium border-b-2 transition-colors whitespace-nowrap flex items-center gap-1.5 ${
+                                isAllTab
+                                  ? "border-indigo-500 text-indigo-700 dark:text-indigo-400"
+                                  : "border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+                              }`}
+                            >
+                              All
+                              <span className={`text-xs ${isAllTab ? "text-indigo-500/70 dark:text-indigo-400/60" : "text-slate-400 dark:text-slate-600"}`}>
+                                {allGroups.length}
+                              </span>
+                            </button>
                             {scanResults.variants.map((vs) => (
                               <button
                                 key={vs.variant_id}
@@ -4316,8 +4471,99 @@ export default function AnalyticsClient({
                         </div>
                       )}
 
+                      {/* "All" tab content — one row per element shared across variants */}
+                      {isAllTab && (
+                        <div>
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-xs text-slate-500">
+                              {allGroups.length} element{allGroups.length !== 1 ? "s" : ""} across {scanResults.variants.length} variants
+                            </span>
+                          </div>
+                          {allGroups.length === 0 ? (
+                            <p className="text-slate-400 text-xs px-3 py-2">
+                              No trackable elements found.
+                            </p>
+                          ) : (
+                            <div className="space-y-1.5 max-h-72 overflow-y-auto pr-1">
+                              {allGroups.map((group) => {
+                                const el = group.representative;
+                                const icon =
+                                  el.type === "form" ? (
+                                    <FormInput size={13} className="text-purple-400 flex-shrink-0" />
+                                  ) : el.type === "call" ? (
+                                    <Phone size={13} className="text-green-400 flex-shrink-0" />
+                                  ) : el.type === "link" ? (
+                                    <ExternalLink size={13} className="text-blue-400 flex-shrink-0" />
+                                  ) : el.type === "toggle" ? (
+                                    <ToggleLeft size={13} className="text-amber-400 flex-shrink-0" />
+                                  ) : (
+                                    <MousePointerClick size={13} className="text-indigo-400 flex-shrink-0" />
+                                  );
+
+                                const label = displayLabelForElement(el);
+                                const variantNames = group.members.map((m) => m.variantName).join(", ");
+
+                                const addedMembers = group.members.filter((m) =>
+                                  editGoals.some((g) => goalMatchesElement(g, m.el, m.variantId)),
+                                );
+                                const alreadyAdded = addedMembers.length === group.members.length;
+                                const partiallyAdded = addedMembers.length > 0 && !alreadyAdded;
+
+                                return (
+                                  <div
+                                    key={group.key}
+                                    className={`flex items-center justify-between gap-3 px-3 py-2 rounded-lg border transition-colors ${
+                                      alreadyAdded
+                                        ? "bg-green-500/10 border-green-500/30"
+                                        : partiallyAdded
+                                        ? "bg-amber-500/10 border-amber-500/30"
+                                        : "bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700"
+                                    }`}
+                                  >
+                                    <div className="flex items-center gap-2 min-w-0">
+                                      {alreadyAdded
+                                        ? <CheckCircle2 size={13} className="text-green-600 dark:text-green-400 flex-shrink-0" />
+                                        : icon}
+                                      <span className={`text-sm truncate ${alreadyAdded ? "text-green-700 dark:text-green-300 font-medium" : "text-slate-700 dark:text-slate-300"}`}>
+                                        {label}
+                                      </span>
+                                      <span className="text-slate-500 dark:text-slate-400 text-xs flex-shrink-0 truncate max-w-[10rem]" title={variantNames}>
+                                        {variantNames}
+                                      </span>
+                                      {alreadyAdded && (
+                                        <span className="text-xs bg-green-100 dark:bg-green-500/20 text-green-700 dark:text-green-400 px-1.5 py-0.5 rounded font-medium flex-shrink-0">Goal</span>
+                                      )}
+                                      {partiallyAdded && (
+                                        <span className="text-xs bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400 px-1.5 py-0.5 rounded font-medium flex-shrink-0">Partial</span>
+                                      )}
+                                    </div>
+                                    {alreadyAdded ? (
+                                      <button
+                                        type="button"
+                                        onClick={() => removeGoalForVariants(group.members)}
+                                        className="flex-shrink-0 flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg border border-red-300 dark:border-red-500/30 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors"
+                                      >
+                                        <X size={11} /> Remove
+                                      </button>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={() => enableAsGoalForVariants(group.members.filter((m) => !addedMembers.includes(m)))}
+                                        className="flex-shrink-0 text-xs px-2.5 py-1 rounded-lg border border-indigo-300 dark:border-indigo-400/60 text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-500/15 hover:bg-indigo-100 dark:hover:bg-indigo-500/30 font-medium transition-colors"
+                                      >
+                                        + Goal
+                                      </button>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
                       {/* Active variant content */}
-                      {activeVs && (
+                      {!isAllTab && activeVs && (
                         <div>
                           <div className="flex items-center justify-between mb-2">
                             <span className="text-xs text-slate-500">
