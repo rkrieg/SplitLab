@@ -4531,17 +4531,17 @@ export default function AnalyticsClient({
                                         {variantChips.map((name, idx) => (
                                           <span
                                             key={`${name}-${idx}`}
-                                            className="text-xs font-medium px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 flex-shrink-0"
+                                            className="text-xs font-medium px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 flex-shrink-0"
                                           >
                                             {name}
                                           </span>
                                         ))}
                                       </div>
                                       {alreadyAdded && (
-                                        <span className="text-xs bg-green-100 dark:bg-green-500/20 text-green-700 dark:text-green-400 px-1.5 py-0.5 rounded font-medium flex-shrink-0">Goal</span>
+                                        <span className="text-xs bg-green-600 dark:bg-green-500 text-white px-1.5 py-0.5 rounded font-semibold flex-shrink-0 shadow-sm">Goal</span>
                                       )}
                                       {partiallyAdded && (
-                                        <span className="text-xs bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400 px-1.5 py-0.5 rounded font-medium flex-shrink-0">Partial</span>
+                                        <span className="text-xs bg-amber-500 dark:bg-amber-500 text-white px-1.5 py-0.5 rounded font-semibold flex-shrink-0 shadow-sm">Partial</span>
                                       )}
                                     </div>
                                     {alreadyAdded ? (
