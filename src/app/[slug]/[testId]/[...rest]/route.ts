@@ -32,8 +32,9 @@ export async function GET(
   });
 
   const cookieHeader = request.headers.get('cookie') || '';
+  const userAgent = request.headers.get('user-agent') || '';
   const res = await fetch(serveUrl.toString(), {
-    headers: { cookie: cookieHeader },
+    headers: { cookie: cookieHeader, 'user-agent': userAgent },
     // Redirect variants answer with a 302 to the destination site; relay it to
     // the browser instead of following it server-side, which would serve the
     // destination's HTML from this origin and break its relative assets.
