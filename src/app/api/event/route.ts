@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/supabase-server';
 import { getPlanDetails } from '@/lib/plans';
+import { getDeviceType } from '@/lib/utils';
 import { z } from 'zod';
 
 function corsHeaders(request: NextRequest) {
@@ -167,6 +168,7 @@ export async function POST(request: NextRequest) {
       goal_id: goalId,
       visitor_hash: data.visitorHash,
       type: data.type,
+      device_type: getDeviceType(request.headers.get('user-agent')),
       metadata: data.metadata || {},
     });
 

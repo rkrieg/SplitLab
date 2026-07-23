@@ -103,6 +103,12 @@ interface VariantStat {
   conversions: number;
   goalHits: number;
   cvr: number;
+  desktopUniqueVisitors: number;
+  desktopConversions: number;
+  desktopCvr: number;
+  mobileUniqueVisitors: number;
+  mobileConversions: number;
+  mobileCvr: number;
   confidence: number | null;
   isWinner: boolean;
 }
@@ -2583,7 +2589,7 @@ export default function AnalyticsClient({
             </div>
 
             <div className="card overflow-x-auto">
-              <table className="w-full min-w-[900px] text-sm">
+              <table className="w-full min-w-[1150px] text-sm">
                 <thead>
                   <tr className="border-b border-slate-200 dark:border-slate-700">
                     <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">
@@ -2606,6 +2612,12 @@ export default function AnalyticsClient({
                     </th>
                     <th className="text-right px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">
                       CVR
+                    </th>
+                    <th className="text-right px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">
+                      Desktop CVR
+                    </th>
+                    <th className="text-right px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">
+                      Mobile CVR
                     </th>
                     <th className="text-right px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">
                       Confidence
@@ -2632,7 +2644,7 @@ export default function AnalyticsClient({
                   ) : stats.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={11}
+                        colSpan={13}
                         className="px-5 py-10 text-center text-slate-400"
                       >
                         No data yet. Publish this page to start collecting
@@ -2805,6 +2817,18 @@ export default function AnalyticsClient({
                               className={`px-5 py-3.5 text-right font-semibold text-slate-900 dark:text-slate-100 ${rowBg}`}
                             >
                               {formatPercent(cvr)}
+                            </td>
+                            <td
+                              className={`px-5 py-3.5 text-right text-slate-700 dark:text-slate-300 ${rowBg}`}
+                              title={`${stat.desktopConversions.toLocaleString()} / ${stat.desktopUniqueVisitors.toLocaleString()} unique visitors`}
+                            >
+                              {stat.desktopUniqueVisitors > 0 ? formatPercent(stat.desktopCvr * 100) : <span className="text-slate-400">—</span>}
+                            </td>
+                            <td
+                              className={`px-5 py-3.5 text-right text-slate-700 dark:text-slate-300 ${rowBg}`}
+                              title={`${stat.mobileConversions.toLocaleString()} / ${stat.mobileUniqueVisitors.toLocaleString()} unique visitors`}
+                            >
+                              {stat.mobileUniqueVisitors > 0 ? formatPercent(stat.mobileCvr * 100) : <span className="text-slate-400">—</span>}
                             </td>
                             <td className={`px-5 py-3.5 text-right ${rowBg}`}>
                               {stat.variant.is_control ? (
