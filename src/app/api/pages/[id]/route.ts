@@ -46,7 +46,7 @@ export async function PATCH(
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const { data: pageMeta } = await db.from('pages').select('workspace_id, html_url').eq('id', params.id).single();
+  const { data: pageMeta } = await db.from('pages').select('workspace_id, html_url, schema_json').eq('id', params.id).single();
   if (!pageMeta) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   const wsRole = await resolveWorkspaceRole(pageMeta.workspace_id, session.user.id, session.user.role);
   if (!wsRole || wsRole === 'viewer') return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
@@ -72,6 +72,12 @@ export async function PATCH(
     // Either way the markup is replaced, so old selectors can't be trusted.
     const htmlReplaced = Boolean(data.html_content || data.html_url);
 
+    // If HTML is being replaced by a caller that did NOT also send a matching
+    // schema_json (e.g. a manual raw-HTML edit), any existing schema is now
+    // out of sync with the actual markup — a later AI structural edit would
+    // silently rebuild from the stale schema and discard the manual change.
+    const schemaNowStale = htmlReplaced && data.schema_json === undefined && !!pageMeta?.schema_json;
+
     const updatePayload = {
       ...data,
       ...(storageUrl ? { html_url: storageUrl } : {}),
@@ -80,6 +86,7 @@ export async function PATCH(
       // A rebuild replaces the storage file only — stale html_content from an earlier
       // inline edit would shadow the new HTML in preview/serve, so drop it
       ...(data.html_url && !data.html_content ? { html_content: null } : {}),
+      ...(schemaNowStale ? { schema_json: null, conversation_json: [] } : {}),
     };
 
     // If HTML is being replaced, wipe personalization rules (selectors no longer valid)

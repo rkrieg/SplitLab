@@ -62,6 +62,7 @@ import {
   Activity,
   Monitor,
   Smartphone,
+  Sparkles,
 } from "lucide-react";
 import Spinner from "@/components/ui/Spinner";
 import Button from "@/components/ui/Button";
@@ -340,6 +341,7 @@ export default function AnalyticsClient({
   const [htmlDraft, setHtmlDraft] = useState("");
   const [loadingHtml, setLoadingHtml] = useState(false);
   const [savingHtml, setSavingHtml] = useState(false);
+  const [navigatingToAI, setNavigatingToAI] = useState(false);
 
   // Tracker card dismissal (persisted per test in localStorage)
   const trackerDismissKey = `sl_tracker_dismissed_${test.id}`;
@@ -1044,6 +1046,7 @@ export default function AnalyticsClient({
   async function openHtmlEditor(variant: Variant) {
     setHtmlEditVariant(variant);
     setHtmlDraft("");
+    setNavigatingToAI(false);
     const pageId = variant.pages?.id;
     if (!pageId) return;
     setLoadingHtml(true);
@@ -5249,9 +5252,6 @@ export default function AnalyticsClient({
                 <h3 className="font-semibold text-slate-900 dark:text-slate-100">
                   Edit HTML — {htmlEditVariant.name}
                 </h3>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  Changes go live immediately after saving.
-                </p>
               </div>
               <button
                 onClick={() => setHtmlEditVariant(null)}
@@ -5284,17 +5284,32 @@ export default function AnalyticsClient({
               )}
             </div>
 
-            <div className="flex items-center justify-end gap-3 px-5 py-4 border-t border-slate-200 dark:border-slate-700 flex-shrink-0">
-              <button
-                onClick={() => setHtmlEditVariant(null)}
-                disabled={savingHtml}
-                className="btn-secondary text-sm"
-              >
-                Close
-              </button>
-              <Button size="sm" onClick={saveHtml} loading={savingHtml}>
-                <Check size={13} /> Save and Close
-              </Button>
+            <div className="flex items-center justify-between gap-3 px-5 py-4 border-t border-slate-200 dark:border-slate-700 flex-shrink-0">
+              {htmlEditVariant.pages?.id ? (
+                <button
+                  onClick={() => {
+                    setNavigatingToAI(true);
+                    router.push(`/clients/${clientId}/ai-pages/new?page_id=${htmlEditVariant.pages!.id}`);
+                  }}
+                  disabled={savingHtml || loadingHtml || navigatingToAI}
+                  className="btn-secondary text-sm"
+                >
+                  {navigatingToAI ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+                  Edit using AI
+                </button>
+              ) : <div />}
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setHtmlEditVariant(null)}
+                  disabled={savingHtml}
+                  className="btn-secondary text-sm"
+                >
+                  Close
+                </button>
+                <Button size="sm" onClick={saveHtml} loading={savingHtml}>
+                  <Check size={13} /> Save and Close
+                </Button>
+              </div>
             </div>
           </div>
         </div>
