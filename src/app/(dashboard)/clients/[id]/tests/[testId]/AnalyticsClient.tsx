@@ -4501,7 +4501,7 @@ export default function AnalyticsClient({
                                   );
 
                                 const label = displayLabelForElement(el);
-                                const variantNames = group.members.map((m) => m.variantName).join(", ");
+                                const variantChips = group.members.map((m) => m.variantName);
 
                                 const addedMembers = group.members.filter((m) =>
                                   editGoals.some((g) => goalMatchesElement(g, m.el, m.variantId)),
@@ -4512,7 +4512,7 @@ export default function AnalyticsClient({
                                 return (
                                   <div
                                     key={group.key}
-                                    className={`flex items-center justify-between gap-3 px-3 py-2 rounded-lg border transition-colors ${
+                                    className={`flex items-center justify-between gap-3 px-3 py-2 rounded-lg border transition-colors flex-wrap ${
                                       alreadyAdded
                                         ? "bg-green-500/10 border-green-500/30"
                                         : partiallyAdded
@@ -4520,16 +4520,23 @@ export default function AnalyticsClient({
                                         : "bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700"
                                     }`}
                                   >
-                                    <div className="flex items-center gap-2 min-w-0">
+                                    <div className="flex items-center gap-2 min-w-0 flex-wrap">
                                       {alreadyAdded
                                         ? <CheckCircle2 size={13} className="text-green-600 dark:text-green-400 flex-shrink-0" />
                                         : icon}
                                       <span className={`text-sm truncate ${alreadyAdded ? "text-green-700 dark:text-green-300 font-medium" : "text-slate-700 dark:text-slate-300"}`}>
                                         {label}
                                       </span>
-                                      <span className="text-slate-500 dark:text-slate-400 text-xs flex-shrink-0 truncate max-w-[10rem]" title={variantNames}>
-                                        {variantNames}
-                                      </span>
+                                      <div className="flex items-center gap-1 flex-wrap">
+                                        {variantChips.map((name, idx) => (
+                                          <span
+                                            key={`${name}-${idx}`}
+                                            className="text-xs font-medium px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 flex-shrink-0"
+                                          >
+                                            {name}
+                                          </span>
+                                        ))}
+                                      </div>
                                       {alreadyAdded && (
                                         <span className="text-xs bg-green-100 dark:bg-green-500/20 text-green-700 dark:text-green-400 px-1.5 py-0.5 rounded font-medium flex-shrink-0">Goal</span>
                                       )}
