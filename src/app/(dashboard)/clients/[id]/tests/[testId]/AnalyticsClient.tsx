@@ -60,6 +60,8 @@ import {
   XCircle,
   Eye,
   Activity,
+  Monitor,
+  Smartphone,
 } from "lucide-react";
 import Spinner from "@/components/ui/Spinner";
 import Button from "@/components/ui/Button";
@@ -209,8 +211,27 @@ export default function AnalyticsClient({
 }: Props) {
   const [test, setTest] = useState(initialTest);
   const [tab, setTab] = useState<Tab>("overview");
+  const [variantPreview, setVariantPreview] = useState<{ name: string; url: string } | null>(null);
+  const [previewViewMode, setPreviewViewMode] = useState<"desktop" | "mobile">("desktop");
+  const [previewIframeLoaded, setPreviewIframeLoaded] = useState(false);
+  const previewWrapRef = useRef<HTMLDivElement>(null);
+  const [previewSize, setPreviewSize] = useState({ width: 0, height: 0 });
   const searchParams = useSearchParams();
   const router = useRouter();
+
+  useEffect(() => {
+    const el = previewWrapRef.current;
+    if (!el || !variantPreview) return;
+    const ro = new ResizeObserver((entries) => {
+      const { width, height } = entries[0].contentRect;
+      setPreviewSize({ width, height });
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [variantPreview]);
+
+  const DESKTOP_PREVIEW_WIDTH = 1440;
+  const previewDesktopScale = previewSize.width > 0 ? Math.min(1, previewSize.width / DESKTOP_PREVIEW_WIDTH) : 1;
 
   // Show success/error toast on return from HubSpot OAuth
   useEffect(() => {
@@ -1854,6 +1875,27 @@ export default function AnalyticsClient({
     setTimeout(refreshVisitorCap, 1500);
   }
 
+  /**
+   * Redirect variants (non-proxy) 302 the browser away to an external site, which can't
+   * be embedded in an iframe (the destination navigates the top-level window, or blocks
+   * framing outright). For those we keep the existing new-tab behavior. HTML/proxy
+   * variants stay same-origin (served through /api/serve) and can be shown in-modal.
+   */
+  function openVariantPreview(variant: Variant) {
+    if (variant.redirect_url && !variant.proxy_mode) {
+      openVariant(variant.id);
+      return;
+    }
+    const freshHash = crypto.randomUUID();
+    setVariantPreview({
+      name: variant.name,
+      url: buildVariantUrl(variant.id, { sl_vh: freshHash }),
+    });
+    setPreviewViewMode("desktop");
+    setPreviewIframeLoaded(false);
+    setTimeout(refreshVisitorCap, 1500);
+  }
+
   async function scanPage(variantId: string) {
     const targetVariant = variants.find((v) => v.id === variantId);
     if (!targetVariant) return;
@@ -2906,10 +2948,10 @@ export default function AnalyticsClient({
                             <td className={`px-3 py-3.5 text-center ${rowBg}`}>
                               <div className="flex items-center justify-center gap-2">
                                 <button
-                                  onClick={() => openVariant(stat.variant.id)}
+                                  onClick={() => openVariantPreview(stat.variant)}
                                   disabled={visitorOverCap}
                                   className="p-1 rounded transition-colors text-slate-400 dark:text-slate-600 hover:text-slate-700 dark:hover:text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed"
-                                  title={visitorOverCap ? "Visitor limit reached — upgrade your plan to resume testing" : `Open ${stat.variant.name}`}
+                                  title={visitorOverCap ? "Visitor limit reached — upgrade your plan to resume testing" : `Preview ${stat.variant.name}`}
                                 >
                                   <ExternalLink size={13} />
                                 </button>
@@ -4890,6 +4932,88 @@ export default function AnalyticsClient({
       </div>
 
       {/* ═══ MODALS ═══ */}
+
+      {variantPreview && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-black/70 backdrop-blur-sm">
+          <div className="flex items-center justify-between px-4 h-14 border-b border-slate-700 bg-slate-900 flex-shrink-0">
+            <div className="text-sm font-medium text-slate-200 truncate">{variantPreview.name}</div>
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-0.5 bg-slate-800 rounded-lg p-1 border border-slate-700">
+                <button
+                  onClick={() => setPreviewViewMode("desktop")}
+                  className={`p-1.5 rounded-md transition-colors ${previewViewMode === "desktop" ? "bg-slate-700 text-slate-200 shadow-sm" : "text-slate-500 hover:text-slate-300"}`}
+                  title="Desktop view"
+                >
+                  <Monitor size={14} />
+                </button>
+                <button
+                  onClick={() => setPreviewViewMode("mobile")}
+                  className={`p-1.5 rounded-md transition-colors ${previewViewMode === "mobile" ? "bg-slate-700 text-slate-200 shadow-sm" : "text-slate-500 hover:text-slate-300"}`}
+                  title="Mobile view"
+                >
+                  <Smartphone size={14} />
+                </button>
+              </div>
+              <a
+                href={variantPreview.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-slate-500 hover:text-slate-300 transition-colors"
+                title="Open in new tab"
+              >
+                <ExternalLink size={16} />
+              </a>
+              <button
+                onClick={() => setVariantPreview(null)}
+                className="text-slate-400 hover:text-slate-200 transition-colors"
+                title="Close"
+              >
+                <X size={18} />
+              </button>
+            </div>
+          </div>
+          <div ref={previewWrapRef} className="flex-1 flex items-start justify-center overflow-auto p-5">
+            <div
+              className={`relative bg-white rounded-xl overflow-hidden shadow-xl h-full transition-all duration-300 ${previewViewMode === "mobile" ? "w-[390px]" : "w-full"}`}
+            >
+              {previewViewMode === "desktop" && previewDesktopScale < 1 ? (
+                <iframe
+                  key={variantPreview.url}
+                  src={variantPreview.url}
+                  className="transition-opacity duration-500"
+                  style={{
+                    width: `${DESKTOP_PREVIEW_WIDTH}px`,
+                    height: previewSize.height > 0 ? `${previewSize.height / previewDesktopScale}px` : "100%",
+                    transform: `scale(${previewDesktopScale})`,
+                    transformOrigin: "top left",
+                    border: 0,
+                    opacity: previewIframeLoaded ? 1 : 0,
+                  }}
+                  title="Variant preview"
+                  sandbox="allow-scripts allow-forms allow-popups"
+                  onLoad={() => setPreviewIframeLoaded(true)}
+                />
+              ) : (
+                <iframe
+                  key={variantPreview.url}
+                  src={variantPreview.url}
+                  className="w-full h-full border-0 transition-opacity duration-500"
+                  style={{ opacity: previewIframeLoaded ? 1 : 0 }}
+                  title="Variant preview"
+                  sandbox="allow-scripts allow-forms allow-popups"
+                  onLoad={() => setPreviewIframeLoaded(true)}
+                />
+              )}
+              {!previewIframeLoaded && (
+                <div className="absolute inset-0 bg-slate-100 flex items-center justify-center">
+                  <Loader2 size={20} className="animate-spin text-slate-400" />
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       <Modal
         open={addVariantOpen}
         onClose={() => { setAddVariantOpen(false); setAddVariantError(null); setNewVariantUrlFrameable(null); setCheckingFrameable(false); }}
