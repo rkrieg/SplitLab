@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/supabase-server';
 import { downloadHtml } from '@/lib/storage';
 import { buildTrackingSnippet, buildScanScript, injectIntoHtml, buildScriptTag, buildFaviconTag, stripFaviconTags, stripSplitLabTrackerTags } from '@/lib/tracking';
-import { assignVariant } from '@/lib/utils';
+import { assignVariant, getDeviceType } from '@/lib/utils';
 import { getPlanDetails } from '@/lib/plans';
 import { buildUtmSwapScript } from '@/lib/utm-swap-script';
 
@@ -333,6 +333,7 @@ ${proxyTrackingSnippet}
             variant_id: selectedVariant.id,
             visitor_hash: visitorId,
             type: 'pageview',
+            device_type: getDeviceType(request.headers.get('user-agent')),
             metadata: { redirect_url: selectedVariant.redirect_url, proxy: true },
           });
         }
@@ -382,6 +383,7 @@ ${proxyTrackingSnippet}
           variant_id: selectedVariant.id,
           visitor_hash: visitorId,
           type: 'pageview',
+          device_type: getDeviceType(request.headers.get('user-agent')),
           metadata: { redirect_url: selectedVariant.redirect_url },
         });
       }
@@ -498,6 +500,7 @@ ${proxyTrackingSnippet}
         variant_id: selectedVariant.id,
         visitor_hash: visitorId,
         type: 'pageview',
+        device_type: getDeviceType(request.headers.get('user-agent')),
         metadata: {},
       });
     }

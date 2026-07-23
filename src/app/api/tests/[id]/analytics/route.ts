@@ -47,9 +47,28 @@ export async function GET(
 
   if (rpcError) return NextResponse.json({ error: rpcError.message }, { status: 500 });
 
+  // Desktop/mobile CVR split — device_type is only populated on events recorded
+  // after this shipped, so older events (device_type null) are excluded by the
+  // RPC rather than lumped into either bucket. A separate RPC/query since
+  // test_variant_stats can't gain a column without a drop (see migration 040).
+  const { data: rpcDeviceStats, error: rpcDeviceError } = await db.rpc('test_variant_device_stats', {
+    p_test_id: params.id,
+    p_from: from ? `${from}T00:00:00Z` : null,
+    p_to: to ? `${to}T23:59:59Z` : null,
+  });
+
+  if (rpcDeviceError) return NextResponse.json({ error: rpcDeviceError.message }, { status: 500 });
+
   const statsByVariant = new Map(
     (rpcStats || []).map((r: { variant_id: string; views: number; unique_visitors: number; conversions: number; goal_hits: number }) => [r.variant_id, r])
   );
+
+  const deviceStatsByVariant = new Map<string, { desktop?: { views: number; unique_visitors: number; conversions: number }; mobile?: { views: number; unique_visitors: number; conversions: number } }>();
+  for (const r of (rpcDeviceStats || []) as { variant_id: string; device_type: 'mobile' | 'desktop'; views: number; unique_visitors: number; conversions: number }[]) {
+    const entry = deviceStatsByVariant.get(r.variant_id) || {};
+    entry[r.device_type] = { views: Number(r.views), unique_visitors: Number(r.unique_visitors), conversions: Number(r.conversions) };
+    deviceStatsByVariant.set(r.variant_id, entry);
+  }
 
   // Aggregate per variant
   const variantStats = variants.map((variant: { id: string; name: string; is_control: boolean; traffic_weight: number; pages?: { id: string; name: string } | null }) => {
@@ -61,6 +80,14 @@ export async function GET(
 
     const cvr = uniqueVisitors > 0 ? conversions / uniqueVisitors : 0;
 
+    const deviceRow = deviceStatsByVariant.get(variant.id);
+    const desktop = deviceRow?.desktop;
+    const mobile = deviceRow?.mobile;
+    const desktopUniqueVisitors = desktop?.unique_visitors || 0;
+    const desktopConversions = desktop?.conversions || 0;
+    const mobileUniqueVisitors = mobile?.unique_visitors || 0;
+    const mobileConversions = mobile?.conversions || 0;
+
     return {
       variant,
       views,
@@ -68,6 +95,12 @@ export async function GET(
       conversions,
       goalHits,
       cvr,
+      desktopUniqueVisitors,
+      desktopConversions,
+      desktopCvr: desktopUniqueVisitors > 0 ? desktopConversions / desktopUniqueVisitors : 0,
+      mobileUniqueVisitors,
+      mobileConversions,
+      mobileCvr: mobileUniqueVisitors > 0 ? mobileConversions / mobileUniqueVisitors : 0,
       confidence: null as number | null,
       isWinner: false,
     };
