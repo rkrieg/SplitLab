@@ -8,7 +8,10 @@ import { resolveWorkspaceRole, resolveOwnerPlan } from '@/lib/workspace-auth';
 import { PLAN_LIMITS } from '@/lib/plans';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 120;
+// Matches build/follow-up — this route echoes a full page's HTML back
+// through the AI (annotation pass), which can genuinely take longer than
+// 120s on a large/complex page and was hitting Vercel's function timeout.
+export const maxDuration = 300;
 
 // Prepares an existing raw-HTML page (e.g. a hand-authored test variant) for
 // the schema-driven AI Pages editor — WITHOUT redesigning it. Unlike
