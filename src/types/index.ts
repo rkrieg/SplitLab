@@ -142,6 +142,8 @@ export interface VariantStats {
   views: number;
   conversions: number;
   cvr: number;
+  desktopCvr: number;
+  mobileCvr: number;
   confidence: number | null;
   isWinner: boolean;
 }
