@@ -31,6 +31,17 @@ export function generateId(): string {
 }
 
 /**
+ * Coarse mobile/desktop classification from a request's User-Agent header.
+ * Used server-side (real UA, not client-supplied) for the device CVR split.
+ */
+export function getDeviceType(userAgent: string | null): 'mobile' | 'desktop' {
+  if (!userAgent) return 'desktop';
+  return /Mobi|Android|iPhone|iPod|IEMobile|BlackBerry|Opera Mini/i.test(userAgent)
+    ? 'mobile'
+    : 'desktop';
+}
+
+/**
  * Deterministically assign a variant for a visitor using SHA-256
  * hashing so the same visitor always gets the same variant.
  */

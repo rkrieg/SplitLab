@@ -60,6 +60,9 @@ import {
   XCircle,
   Eye,
   Activity,
+  Monitor,
+  Smartphone,
+  Sparkles,
 } from "lucide-react";
 import Spinner from "@/components/ui/Spinner";
 import Button from "@/components/ui/Button";
@@ -103,6 +106,12 @@ interface VariantStat {
   conversions: number;
   goalHits: number;
   cvr: number;
+  desktopUniqueVisitors: number;
+  desktopConversions: number;
+  desktopCvr: number;
+  mobileUniqueVisitors: number;
+  mobileConversions: number;
+  mobileCvr: number;
   confidence: number | null;
   isWinner: boolean;
 }
@@ -203,8 +212,27 @@ export default function AnalyticsClient({
 }: Props) {
   const [test, setTest] = useState(initialTest);
   const [tab, setTab] = useState<Tab>("overview");
+  const [variantPreview, setVariantPreview] = useState<{ name: string; url: string } | null>(null);
+  const [previewViewMode, setPreviewViewMode] = useState<"desktop" | "mobile">("desktop");
+  const [previewIframeLoaded, setPreviewIframeLoaded] = useState(false);
+  const previewWrapRef = useRef<HTMLDivElement>(null);
+  const [previewSize, setPreviewSize] = useState({ width: 0, height: 0 });
   const searchParams = useSearchParams();
   const router = useRouter();
+
+  useEffect(() => {
+    const el = previewWrapRef.current;
+    if (!el || !variantPreview) return;
+    const ro = new ResizeObserver((entries) => {
+      const { width, height } = entries[0].contentRect;
+      setPreviewSize({ width, height });
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [variantPreview]);
+
+  const DESKTOP_PREVIEW_WIDTH = 1440;
+  const previewDesktopScale = previewSize.width > 0 ? Math.min(1, previewSize.width / DESKTOP_PREVIEW_WIDTH) : 1;
 
   // Show success/error toast on return from HubSpot OAuth
   useEffect(() => {
@@ -231,7 +259,7 @@ export default function AnalyticsClient({
   // Page Reporting (collapsible chart section)
   type ReportingVariant = { id: string; name: string; is_control: boolean };
   type ReportingTotals = { visitors: number; views: number; conversions: number; cvr: number };
-  const [reportingOpen, setReportingOpen] = useState(false);
+  const [reportingOpen, setReportingOpen] = useState(true);
   const [reportingLoaded, setReportingLoaded] = useState(false);
   const [reportingLoading, setReportingLoading] = useState(false);
   const [reportingDaily, setReportingDaily] = useState<Record<string, unknown>[]>([]);
@@ -313,6 +341,7 @@ export default function AnalyticsClient({
   const [htmlDraft, setHtmlDraft] = useState("");
   const [loadingHtml, setLoadingHtml] = useState(false);
   const [savingHtml, setSavingHtml] = useState(false);
+  const [navigatingToAI, setNavigatingToAI] = useState(false);
 
   // Tracker card dismissal (persisted per test in localStorage)
   const trackerDismissKey = `sl_tracker_dismissed_${test.id}`;
@@ -1017,6 +1046,7 @@ export default function AnalyticsClient({
   async function openHtmlEditor(variant: Variant) {
     setHtmlEditVariant(variant);
     setHtmlDraft("");
+    setNavigatingToAI(false);
     const pageId = variant.pages?.id;
     if (!pageId) return;
     setLoadingHtml(true);
@@ -1848,6 +1878,27 @@ export default function AnalyticsClient({
     setTimeout(refreshVisitorCap, 1500);
   }
 
+  /**
+   * Redirect variants (non-proxy) 302 the browser away to an external site, which can't
+   * be embedded in an iframe (the destination navigates the top-level window, or blocks
+   * framing outright). For those we keep the existing new-tab behavior. HTML/proxy
+   * variants stay same-origin (served through /api/serve) and can be shown in-modal.
+   */
+  function openVariantPreview(variant: Variant) {
+    if (variant.redirect_url && !variant.proxy_mode) {
+      openVariant(variant.id);
+      return;
+    }
+    const freshHash = crypto.randomUUID();
+    setVariantPreview({
+      name: variant.name,
+      url: buildVariantUrl(variant.id, { sl_vh: freshHash }),
+    });
+    setPreviewViewMode("desktop");
+    setPreviewIframeLoaded(false);
+    setTimeout(refreshVisitorCap, 1500);
+  }
+
   async function scanPage(variantId: string) {
     const targetVariant = variants.find((v) => v.id === variantId);
     if (!targetVariant) return;
@@ -2008,6 +2059,125 @@ export default function AnalyticsClient({
       (g) => g !== matchGoal,
     );
     if (updatedGoals.length === originalGoals.length) return; // nothing matched
+    setEditGoals(updatedGoals);
+
+    try {
+      const res = await fetch(`/api/tests/${test.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          goals: updatedGoals.map((g) => ({
+            ...(g.id ? { id: g.id } : {}),
+            name: g.name,
+            type: g.type,
+            selector: g.selector || null,
+            url_pattern: g.url_pattern || null,
+            is_primary: g.is_primary,
+            variant_id: g.variant_id ?? null,
+          })),
+        }),
+      });
+      if (!res.ok) {
+        setEditGoals(originalGoals);
+        toast.error("Failed to remove goal");
+        return;
+      }
+      const updated = await res.json();
+      setTest(updated);
+      setEditGoals(
+        (updated.conversion_goals || []).map((g: Goal) => ({
+          ...g,
+          selector: g.selector || "",
+          url_pattern: g.url_pattern || "",
+        })),
+      );
+      toast.success("Goal removed");
+    } catch {
+      setEditGoals(originalGoals);
+      toast.error("Failed to remove goal");
+    }
+  }
+
+  // Same element (matched by type + selector) present across multiple variants —
+  // used by the "All" tab so a common element (e.g. a form on every page) can be
+  // turned into a goal for all of its variants in one click.
+  async function enableAsGoalForVariants(members: { variantId: string; el: ScanElement }[]) {
+    const newGoals: Goal[] = [];
+    for (const { variantId, el } of members) {
+      const goalType = goalTypeForElement(el);
+      const selector = selectorForElement(el);
+      if (!selector && el.type !== "form") continue;
+      const label = displayLabelForElement(el);
+      newGoals.push({
+        id: "",
+        name: label.slice(0, 60),
+        type: goalType,
+        selector,
+        url_pattern: null,
+        is_primary: false,
+        variant_id: variantId,
+      });
+    }
+    if (newGoals.length === 0) {
+      toast.error("This element can't be uniquely identified (no id, text, or name)");
+      return;
+    }
+    if (editGoals.length === 0) newGoals[0].is_primary = true;
+
+    const originalGoals = editGoals;
+    const updatedGoals = [...editGoals, ...newGoals];
+    setEditGoals(updatedGoals);
+
+    try {
+      const res = await fetch(`/api/tests/${test.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          goals: updatedGoals.map((g) => ({
+            ...(g.id ? { id: g.id } : {}),
+            name: g.name,
+            type: g.type,
+            selector: g.selector || null,
+            url_pattern: g.url_pattern || null,
+            is_primary: g.is_primary,
+            variant_id: g.variant_id ?? null,
+          })),
+        }),
+      });
+      if (!res.ok) {
+        setEditGoals(originalGoals);
+        toast.error("Failed to save goal");
+        return;
+      }
+      const updated = await res.json();
+      setTest(updated);
+      setEditGoals(
+        (updated.conversion_goals || []).map((g: Goal) => ({
+          ...g,
+          selector: g.selector || "",
+          url_pattern: g.url_pattern || "",
+        })),
+      );
+      toast.success(`Goal enabled for ${newGoals.length} variant${newGoals.length !== 1 ? "s" : ""}`);
+    } catch {
+      setEditGoals(originalGoals);
+      toast.error("Failed to save goal");
+    }
+  }
+
+  async function removeGoalForVariants(members: { variantId: string; el: ScanElement }[]) {
+    const matchGoals = members
+      .map(({ variantId, el }) => {
+        const exactMatch = editGoals.find((g) => goalMatchesElement(g, el, variantId, true));
+        const fallbackMatch = editGoals.find((g) => goalMatchesElement(g, el, variantId));
+        return exactMatch ?? fallbackMatch;
+      })
+      .filter((g): g is Goal => !!g);
+    if (matchGoals.length === 0) return;
+
+    const originalGoals = editGoals;
+    const updatedGoals = editGoals.filter((g) => !matchGoals.includes(g));
+    if (updatedGoals.length === originalGoals.length) return;
     setEditGoals(updatedGoals);
 
     try {
@@ -2464,7 +2634,7 @@ export default function AnalyticsClient({
             </div>
 
             <div className="card overflow-x-auto">
-              <table className="w-full min-w-[900px] text-sm">
+              <table className="w-full min-w-[1150px] text-sm">
                 <thead>
                   <tr className="border-b border-slate-200 dark:border-slate-700">
                     <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">
@@ -2487,6 +2657,12 @@ export default function AnalyticsClient({
                     </th>
                     <th className="text-right px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">
                       CVR
+                    </th>
+                    <th className="text-right px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">
+                      Desktop CVR
+                    </th>
+                    <th className="text-right px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">
+                      Mobile CVR
                     </th>
                     <th className="text-right px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">
                       Confidence
@@ -2513,7 +2689,7 @@ export default function AnalyticsClient({
                   ) : stats.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={11}
+                        colSpan={13}
                         className="px-5 py-10 text-center text-slate-400"
                       >
                         No data yet. Publish this page to start collecting
@@ -2687,6 +2863,18 @@ export default function AnalyticsClient({
                             >
                               {formatPercent(cvr)}
                             </td>
+                            <td
+                              className={`px-5 py-3.5 text-right text-slate-700 dark:text-slate-300 ${rowBg}`}
+                              title={`${stat.desktopConversions.toLocaleString()} / ${stat.desktopUniqueVisitors.toLocaleString()} unique visitors`}
+                            >
+                              {stat.desktopUniqueVisitors > 0 ? formatPercent(stat.desktopCvr * 100) : <span className="text-slate-400">—</span>}
+                            </td>
+                            <td
+                              className={`px-5 py-3.5 text-right text-slate-700 dark:text-slate-300 ${rowBg}`}
+                              title={`${stat.mobileConversions.toLocaleString()} / ${stat.mobileUniqueVisitors.toLocaleString()} unique visitors`}
+                            >
+                              {stat.mobileUniqueVisitors > 0 ? formatPercent(stat.mobileCvr * 100) : <span className="text-slate-400">—</span>}
+                            </td>
                             <td className={`px-5 py-3.5 text-right ${rowBg}`}>
                               {stat.variant.is_control ? (
                                 <span className="text-slate-500">—</span>
@@ -2763,10 +2951,10 @@ export default function AnalyticsClient({
                             <td className={`px-3 py-3.5 text-center ${rowBg}`}>
                               <div className="flex items-center justify-center gap-2">
                                 <button
-                                  onClick={() => openVariant(stat.variant.id)}
+                                  onClick={() => openVariantPreview(stat.variant)}
                                   disabled={visitorOverCap}
                                   className="p-1 rounded transition-colors text-slate-400 dark:text-slate-600 hover:text-slate-700 dark:hover:text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed"
-                                  title={visitorOverCap ? "Visitor limit reached — upgrade your plan to resume testing" : `Open ${stat.variant.name}`}
+                                  title={visitorOverCap ? "Visitor limit reached — upgrade your plan to resume testing" : `Preview ${stat.variant.name}`}
                                 >
                                   <ExternalLink size={13} />
                                 </button>
@@ -4286,8 +4474,30 @@ export default function AnalyticsClient({
                 )}
 
                 {scanResults && (() => {
-                  const activeId = scanTab ?? scanResults.variants[0]?.variant_id;
+                  const ALL_TAB = "__all__";
+                  const activeId = scanTab ?? (scanResults.variants.length > 1 ? ALL_TAB : scanResults.variants[0]?.variant_id);
+                  const isAllTab = activeId === ALL_TAB;
                   const activeVs = scanResults.variants.find(v => v.variant_id === activeId) ?? scanResults.variants[0];
+
+                  // Group elements that appear on more than one variant (matched by
+                  // type + selector) so "All" can offer a single goal toggle for them.
+                  type ElementGroup = { key: string; representative: ScanElement; members: { variantId: string; variantName: string; el: ScanElement }[] };
+                  const allGroups: ElementGroup[] = (() => {
+                    const map = new Map<string, ElementGroup>();
+                    scanResults.variants.forEach((vs) => {
+                      vs.elements.forEach((el) => {
+                        const key = `${goalTypeForElement(el)}::${selectorForElement(el) ?? `label:${displayLabelForElement(el)}`}`;
+                        let group = map.get(key);
+                        if (!group) {
+                          group = { key, representative: el, members: [] };
+                          map.set(key, group);
+                        }
+                        group.members.push({ variantId: vs.variant_id, variantName: vs.variant_name, el });
+                      });
+                    });
+                    return Array.from(map.values());
+                  })();
+
                   return (
                     <div>
                       {/* Variant tabs */}
@@ -4295,6 +4505,20 @@ export default function AnalyticsClient({
                         <div className="mb-4">
                           <p className="text-xs text-slate-600 dark:text-slate-400 mb-2">Switch variants to set goals per page:</p>
                           <div className="flex gap-0 border-b border-slate-200 dark:border-slate-700 -mx-5 px-5 overflow-x-auto">
+                            <button
+                              type="button"
+                              onClick={() => setScanTab(ALL_TAB)}
+                              className={`px-4 py-2 text-xs font-medium border-b-2 transition-colors whitespace-nowrap flex items-center gap-1.5 ${
+                                isAllTab
+                                  ? "border-indigo-500 text-indigo-700 dark:text-indigo-400"
+                                  : "border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+                              }`}
+                            >
+                              All
+                              <span className={`text-xs ${isAllTab ? "text-indigo-500/70 dark:text-indigo-400/60" : "text-slate-400 dark:text-slate-600"}`}>
+                                {allGroups.length}
+                              </span>
+                            </button>
                             {scanResults.variants.map((vs) => (
                               <button
                                 key={vs.variant_id}
@@ -4316,8 +4540,106 @@ export default function AnalyticsClient({
                         </div>
                       )}
 
+                      {/* "All" tab content — one row per element shared across variants */}
+                      {isAllTab && (
+                        <div>
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-xs text-slate-500">
+                              {allGroups.length} element{allGroups.length !== 1 ? "s" : ""} across {scanResults.variants.length} variants
+                            </span>
+                          </div>
+                          {allGroups.length === 0 ? (
+                            <p className="text-slate-400 text-xs px-3 py-2">
+                              No trackable elements found.
+                            </p>
+                          ) : (
+                            <div className="space-y-1.5 max-h-72 overflow-y-auto pr-1">
+                              {allGroups.map((group) => {
+                                const el = group.representative;
+                                const icon =
+                                  el.type === "form" ? (
+                                    <FormInput size={13} className="text-purple-400 flex-shrink-0" />
+                                  ) : el.type === "call" ? (
+                                    <Phone size={13} className="text-green-400 flex-shrink-0" />
+                                  ) : el.type === "link" ? (
+                                    <ExternalLink size={13} className="text-blue-400 flex-shrink-0" />
+                                  ) : el.type === "toggle" ? (
+                                    <ToggleLeft size={13} className="text-amber-400 flex-shrink-0" />
+                                  ) : (
+                                    <MousePointerClick size={13} className="text-indigo-400 flex-shrink-0" />
+                                  );
+
+                                const label = displayLabelForElement(el);
+                                const variantChips = group.members.map((m) => m.variantName);
+
+                                const addedMembers = group.members.filter((m) =>
+                                  editGoals.some((g) => goalMatchesElement(g, m.el, m.variantId)),
+                                );
+                                const alreadyAdded = addedMembers.length === group.members.length;
+                                const partiallyAdded = addedMembers.length > 0 && !alreadyAdded;
+
+                                return (
+                                  <div
+                                    key={group.key}
+                                    className={`flex items-center justify-between gap-3 px-3 py-2 rounded-lg border transition-colors flex-wrap ${
+                                      alreadyAdded
+                                        ? "bg-green-500/10 border-green-500/30"
+                                        : partiallyAdded
+                                        ? "bg-amber-500/10 border-amber-500/30"
+                                        : "bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700"
+                                    }`}
+                                  >
+                                    <div className="flex items-center gap-2 min-w-0 flex-wrap">
+                                      {alreadyAdded
+                                        ? <CheckCircle2 size={13} className="text-green-600 dark:text-green-400 flex-shrink-0" />
+                                        : icon}
+                                      <span className={`text-sm truncate ${alreadyAdded ? "text-green-700 dark:text-green-300 font-medium" : "text-slate-700 dark:text-slate-300"}`}>
+                                        {label}
+                                      </span>
+                                      <div className="flex items-center gap-1 flex-wrap">
+                                        {variantChips.map((name, idx) => (
+                                          <span
+                                            key={`${name}-${idx}`}
+                                            className="text-xs font-medium px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 flex-shrink-0"
+                                          >
+                                            {name}
+                                          </span>
+                                        ))}
+                                      </div>
+                                      {alreadyAdded && (
+                                        <span className="text-xs bg-green-600 dark:bg-green-500 text-white px-1.5 py-0.5 rounded font-semibold flex-shrink-0 shadow-sm">Goal</span>
+                                      )}
+                                      {partiallyAdded && (
+                                        <span className="text-xs bg-amber-500 dark:bg-amber-500 text-white px-1.5 py-0.5 rounded font-semibold flex-shrink-0 shadow-sm">Partial</span>
+                                      )}
+                                    </div>
+                                    {alreadyAdded ? (
+                                      <button
+                                        type="button"
+                                        onClick={() => removeGoalForVariants(group.members)}
+                                        className="flex-shrink-0 flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg border border-red-300 dark:border-red-500/30 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors"
+                                      >
+                                        <X size={11} /> Remove
+                                      </button>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={() => enableAsGoalForVariants(group.members.filter((m) => !addedMembers.includes(m)))}
+                                        className="flex-shrink-0 text-xs px-2.5 py-1 rounded-lg border border-indigo-300 dark:border-indigo-400/60 text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-500/15 hover:bg-indigo-100 dark:hover:bg-indigo-500/30 font-medium transition-colors"
+                                      >
+                                        + Goal
+                                      </button>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
                       {/* Active variant content */}
-                      {activeVs && (
+                      {!isAllTab && activeVs && (
                         <div>
                           <div className="flex items-center justify-between mb-2">
                             <span className="text-xs text-slate-500">
@@ -4613,6 +4935,88 @@ export default function AnalyticsClient({
       </div>
 
       {/* ═══ MODALS ═══ */}
+
+      {variantPreview && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-black/70 backdrop-blur-sm">
+          <div className="flex items-center justify-between px-4 h-14 border-b border-slate-700 bg-slate-900 flex-shrink-0">
+            <div className="text-sm font-medium text-slate-200 truncate">{variantPreview.name}</div>
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-0.5 bg-slate-800 rounded-lg p-1 border border-slate-700">
+                <button
+                  onClick={() => setPreviewViewMode("desktop")}
+                  className={`p-1.5 rounded-md transition-colors ${previewViewMode === "desktop" ? "bg-slate-700 text-slate-200 shadow-sm" : "text-slate-500 hover:text-slate-300"}`}
+                  title="Desktop view"
+                >
+                  <Monitor size={14} />
+                </button>
+                <button
+                  onClick={() => setPreviewViewMode("mobile")}
+                  className={`p-1.5 rounded-md transition-colors ${previewViewMode === "mobile" ? "bg-slate-700 text-slate-200 shadow-sm" : "text-slate-500 hover:text-slate-300"}`}
+                  title="Mobile view"
+                >
+                  <Smartphone size={14} />
+                </button>
+              </div>
+              <a
+                href={variantPreview.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-slate-500 hover:text-slate-300 transition-colors"
+                title="Open in new tab"
+              >
+                <ExternalLink size={16} />
+              </a>
+              <button
+                onClick={() => setVariantPreview(null)}
+                className="text-slate-400 hover:text-slate-200 transition-colors"
+                title="Close"
+              >
+                <X size={18} />
+              </button>
+            </div>
+          </div>
+          <div ref={previewWrapRef} className="flex-1 flex items-start justify-center overflow-auto p-5">
+            <div
+              className={`relative bg-white rounded-xl overflow-hidden shadow-xl h-full transition-all duration-300 ${previewViewMode === "mobile" ? "w-[390px]" : "w-full"}`}
+            >
+              {previewViewMode === "desktop" && previewDesktopScale < 1 ? (
+                <iframe
+                  key={variantPreview.url}
+                  src={variantPreview.url}
+                  className="transition-opacity duration-500"
+                  style={{
+                    width: `${DESKTOP_PREVIEW_WIDTH}px`,
+                    height: previewSize.height > 0 ? `${previewSize.height / previewDesktopScale}px` : "100%",
+                    transform: `scale(${previewDesktopScale})`,
+                    transformOrigin: "top left",
+                    border: 0,
+                    opacity: previewIframeLoaded ? 1 : 0,
+                  }}
+                  title="Variant preview"
+                  sandbox="allow-scripts allow-forms allow-popups"
+                  onLoad={() => setPreviewIframeLoaded(true)}
+                />
+              ) : (
+                <iframe
+                  key={variantPreview.url}
+                  src={variantPreview.url}
+                  className="w-full h-full border-0 transition-opacity duration-500"
+                  style={{ opacity: previewIframeLoaded ? 1 : 0 }}
+                  title="Variant preview"
+                  sandbox="allow-scripts allow-forms allow-popups"
+                  onLoad={() => setPreviewIframeLoaded(true)}
+                />
+              )}
+              {!previewIframeLoaded && (
+                <div className="absolute inset-0 bg-slate-100 flex items-center justify-center">
+                  <Loader2 size={20} className="animate-spin text-slate-400" />
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       <Modal
         open={addVariantOpen}
         onClose={() => { setAddVariantOpen(false); setAddVariantError(null); setNewVariantUrlFrameable(null); setCheckingFrameable(false); }}
@@ -4848,9 +5252,6 @@ export default function AnalyticsClient({
                 <h3 className="font-semibold text-slate-900 dark:text-slate-100">
                   Edit HTML — {htmlEditVariant.name}
                 </h3>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  Changes go live immediately after saving.
-                </p>
               </div>
               <button
                 onClick={() => setHtmlEditVariant(null)}
@@ -4883,17 +5284,32 @@ export default function AnalyticsClient({
               )}
             </div>
 
-            <div className="flex items-center justify-end gap-3 px-5 py-4 border-t border-slate-200 dark:border-slate-700 flex-shrink-0">
-              <button
-                onClick={() => setHtmlEditVariant(null)}
-                disabled={savingHtml}
-                className="btn-secondary text-sm"
-              >
-                Close
-              </button>
-              <Button size="sm" onClick={saveHtml} loading={savingHtml}>
-                <Check size={13} /> Save and Close
-              </Button>
+            <div className="flex items-center justify-between gap-3 px-5 py-4 border-t border-slate-200 dark:border-slate-700 flex-shrink-0">
+              {htmlEditVariant.pages?.id ? (
+                <button
+                  onClick={() => {
+                    setNavigatingToAI(true);
+                    router.push(`/clients/${clientId}/ai-pages/new?page_id=${htmlEditVariant.pages!.id}`);
+                  }}
+                  disabled={savingHtml || loadingHtml || navigatingToAI}
+                  className="btn-secondary text-sm"
+                >
+                  {navigatingToAI ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+                  Edit using AI
+                </button>
+              ) : <div />}
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setHtmlEditVariant(null)}
+                  disabled={savingHtml}
+                  className="btn-secondary text-sm"
+                >
+                  Close
+                </button>
+                <Button size="sm" onClick={saveHtml} loading={savingHtml}>
+                  <Check size={13} /> Save and Close
+                </Button>
+              </div>
             </div>
           </div>
         </div>

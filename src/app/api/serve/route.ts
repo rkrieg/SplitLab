@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/supabase-server';
 import { downloadHtml } from '@/lib/storage';
 import { buildTrackingSnippet, buildScanScript, injectIntoHtml, buildScriptTag, buildFaviconTag, stripFaviconTags, stripSplitLabTrackerTags } from '@/lib/tracking';
-import { assignVariant } from '@/lib/utils';
+import { assignVariant, getDeviceType } from '@/lib/utils';
 import { getPlanDetails } from '@/lib/plans';
 import { buildUtmSwapScript } from '@/lib/utm-swap-script';
 
@@ -280,11 +280,16 @@ export async function GET(request: NextRequest) {
           else bodyEndScriptTags.push(tag);
         }
 
-        // Fetch conversion goals and build tracking snippet
+        // Fetch conversion goals and build tracking snippet — scoped to this
+        // variant (plus any test-wide variant_id: null goals). Unscoped meant
+        // every variant's goal (often sharing a selector) got attached as its
+        // own click listener, so one real click fired N conversion events
+        // with N different goal_ids (Bug 3a).
         const { data: proxyGoals } = await db
           .from('conversion_goals')
           .select('*')
-          .eq('test_id', test.id);
+          .eq('test_id', test.id)
+          .or(`variant_id.is.null,variant_id.eq.${selectedVariant.id}`);
 
         const proxyTrackingSnippet = (overVisitorCap || forcedVh) ? '' : buildTrackingSnippet(
           test.id, selectedVariant.id, visitorId, proxyGoals || [], APP_URL
@@ -333,6 +338,7 @@ ${proxyTrackingSnippet}
             variant_id: selectedVariant.id,
             visitor_hash: visitorId,
             type: 'pageview',
+            device_type: getDeviceType(request.headers.get('user-agent')),
             metadata: { redirect_url: selectedVariant.redirect_url, proxy: true },
           });
         }
@@ -382,6 +388,7 @@ ${proxyTrackingSnippet}
           variant_id: selectedVariant.id,
           visitor_hash: visitorId,
           type: 'pageview',
+          device_type: getDeviceType(request.headers.get('user-agent')),
           metadata: { redirect_url: selectedVariant.redirect_url },
         });
       }
@@ -450,11 +457,16 @@ ${proxyTrackingSnippet}
       }
     }
 
-    // 8. Fetch conversion goals
+    // 8. Fetch conversion goals — scoped to this variant (plus any test-wide
+    // variant_id: null goals), matching event/route.ts's matchesGoal() scoping.
+    // Unscoped previously meant every variant's goal (often sharing the same
+    // selector) got attached as a separate click listener, so one real click
+    // fired N conversion events with N different goal_ids — see Bug 3a.
     const { data: goals } = await db
       .from('conversion_goals')
       .select('*')
-      .eq('test_id', test.id);
+      .eq('test_id', test.id)
+      .or(`variant_id.is.null,variant_id.eq.${selectedVariant.id}`);
 
     // 9. Build tracking snippet (skip for cap, scan, and Open-button previews)
     const visitorHash = visitorId;
@@ -498,6 +510,7 @@ ${proxyTrackingSnippet}
         variant_id: selectedVariant.id,
         visitor_hash: visitorId,
         type: 'pageview',
+        device_type: getDeviceType(request.headers.get('user-agent')),
         metadata: {},
       });
     }

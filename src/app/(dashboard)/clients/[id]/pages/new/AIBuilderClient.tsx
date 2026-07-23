@@ -51,9 +51,18 @@ interface Props {
   workspaceId: string;
   clientId: string;
   clientName: string;
+  // Name of the specific test variant this page belongs to, when reached via
+  // a test's "Edit using AI" button — shown alongside clientName (which is
+  // set to the test's name in that case) so the breadcrumb reads as
+  // "test / variant" instead of just "test".
+  variantName?: string;
   initialPage?: InitialPage | null;
   backPath?: string;
   canUseAI?: boolean;
+  // True when this page is the html source for a test_variants row — those
+  // pages are already served live from this same row (see /api/serve), so
+  // Publish would only create an unused, unrelated standalone URL.
+  isTestVariantPage?: boolean;
 }
 
 // Soft cap on the initial prompt — generous enough for a detailed multi-section
@@ -136,7 +145,7 @@ function hasUnfilledPlaceholders(text: string): boolean {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function AIBuilderClient({ workspaceId, clientId, clientName, initialPage, backPath, canUseAI = true }: Props) {
+export default function AIBuilderClient({ workspaceId, clientId, clientName, variantName, initialPage, backPath, canUseAI = true, isTestVariantPage = false }: Props) {
   const router = useRouter();
 
   if (!canUseAI) {
@@ -219,6 +228,14 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
   // Chat image attachments (paste / file-picker)
   const [chatImages, setChatImages] = useState<{ file: File; preview: string }[]>([]);
   const chatImageInputRef = useRef<HTMLInputElement>(null);
+
+  // Background schema synthesis for raw-HTML pages that arrive here without a
+  // schema_json (e.g. test variants opened via "Edit using AI"). Isolated
+  // from the normal generate→build flow — only ever fires for pages that
+  // have HTML but no schema, and only once per page (guarded below and
+  // idempotently on the server).
+  const [preparingSchema, setPreparingSchema] = useState(false);
+  const schemaFromHtmlFiredRef = useRef(false);
 
   const [questions, setQuestions] = useState<string[]>([]);
   const [answers, setAnswers] = useState<string[]>([]);
@@ -310,10 +327,51 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
         assistantSeen = true;
       }
     }
-    restored.push({ role: 'assistant', content: 'Welcome back. Click any text in the preview to edit, or ask me to make changes.' });
+    restored.push({
+      role: 'assistant',
+      content: initialPage.schema_json
+        ? 'Welcome back. Click any text in the preview to edit, or ask me to make changes.'
+        : "This page hasn't been set up for AI editing yet — preparing it now. In the meantime, describe any change below and I'll apply it once ready.",
+    });
     setMessages(restored);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Raw-HTML pages (e.g. test variants opened via "Edit using AI") land here
+  // with html_url/html_content but no schema_json — WYSIWYG click-to-edit and
+  // structural follow-up edits both need one. Synthesize it in the background
+  // so the user can start typing immediately; chat submission is gated below
+  // until this completes to avoid two concurrent writes to the same page row.
+  useEffect(() => {
+    if (!initialPage || !initialPage.html_url) return;
+    if (initialPage.schema_json) return;
+    if (schemaFromHtmlFiredRef.current) return;
+    schemaFromHtmlFiredRef.current = true;
+    setPreparingSchema(true);
+    (async () => {
+      try {
+        const res = await fetch(`/api/pages/${initialPage.id}/schema-from-html`, { method: 'POST' });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          toast.error(err.error || "Couldn't prepare this page for full AI editing — chat edits will still work.");
+          return;
+        }
+        const data = await res.json();
+        if (data.schema_json) {
+          schemaRef.current = data.schema_json;
+          setSchemaJson(data.schema_json);
+        }
+        if (data.html_url) {
+          setHtmlUrl(`${data.html_url}?t=${Date.now()}`);
+        }
+      } catch {
+        toast.error("Couldn't prepare this page for full AI editing — chat edits will still work.");
+      } finally {
+        setPreparingSchema(false);
+      }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialPage]);
 
   // Stable iframe src — points to preview route, refreshes when htmlUrl is available/changes
   useEffect(() => {
@@ -792,7 +850,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
 
   async function handleFollowUp(e: React.FormEvent) {
     e.preventDefault();
-    if ((!followUpInput.trim() && chatImages.length === 0) || !pageId) return;
+    if ((!followUpInput.trim() && chatImages.length === 0) || !pageId || preparingSchema) return;
     const instruction = followUpInput.trim() || 'Please incorporate these reference images into the page.';
     const attachedImages = chatImages;
     setFollowUpInput('');
@@ -890,6 +948,12 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
             <ChevronLeft size={14} />
             {clientName}
           </button>
+          {variantName && (
+            <>
+              <span className="text-slate-300 dark:text-slate-700 text-xs">/</span>
+              <span className="text-xs text-slate-500 dark:text-slate-400">{variantName}</span>
+            </>
+          )}
           <span className="text-slate-300 dark:text-slate-700 text-xs">/</span>
           <span className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
             <Sparkles size={12} className="text-indigo-600 dark:text-indigo-400" />
@@ -994,6 +1058,21 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
                     {phase === 'publishing' ? 'Publishing…' : uploadingImage ? 'Uploading image…' : phase === 'generating' && /https?:\/\/[^\s]+/i.test(prompt) ? 'Fetching reference site…' : 'Thinking…'}
                   </div>
                 )}
+              </div>
+            </div>
+          )}
+
+          {/* Background schema prep for raw-HTML pages — only shown before any real edit starts */}
+          {preparingSchema && !isLoading && followUpEvents === null && (
+            <div className="flex items-start gap-2.5">
+              <div className="w-6 h-6 rounded-full bg-indigo-50 dark:bg-indigo-600/15 border border-indigo-100 dark:border-indigo-600/25 flex items-center justify-center flex-shrink-0 mt-0.5">
+                <Sparkles size={11} className="text-indigo-600 dark:text-indigo-400" />
+              </div>
+              <div className="flex-1 pt-0.5">
+                <div className="flex items-center gap-2 text-xs text-slate-400 dark:text-slate-500">
+                  <Loader2 size={11} className="animate-spin text-indigo-600 dark:text-indigo-400" />
+                  Preparing this page for editing…
+                </div>
               </div>
             </div>
           )}
@@ -1161,10 +1240,10 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
                     el.style.height = 'auto';
                     el.style.height = `${Math.min(el.scrollHeight, FOLLOW_UP_MAX_HEIGHT)}px`;
                   }}
-                  disabled={isLoading}
+                  disabled={isLoading || preparingSchema}
                   className="w-full bg-transparent px-3.5 pt-3 pb-2 text-sm text-slate-700 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none resize-none disabled:opacity-40 overflow-y-auto"
                   style={{ maxHeight: FOLLOW_UP_MAX_HEIGHT }}
-                  placeholder="Ask Splitlab…"
+                  placeholder={preparingSchema ? 'Preparing this page for editing…' : 'Ask Splitlab…'}
                   rows={2}
                   onKeyDown={e => {
                     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); }
@@ -1175,7 +1254,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
                   <div className="flex items-center gap-0.5">
                     <button
                       type="button"
-                      disabled={isLoading || chatImages.length >= 3}
+                      disabled={isLoading || preparingSchema || chatImages.length >= 3}
                       onClick={() => chatImageInputRef.current?.click()}
                       className="p-1.5 text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                       title="Attach image (max 3)"
@@ -1186,7 +1265,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
                   <div className="flex items-center gap-1.5">
                     <button
                       type="submit"
-                      disabled={(!followUpInput.trim() && chatImages.length === 0) || isLoading}
+                      disabled={(!followUpInput.trim() && chatImages.length === 0) || isLoading || preparingSchema}
                       className="w-7 h-7 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-30 disabled:cursor-not-allowed rounded-full flex items-center justify-center transition-colors"
                     >
                       <Send size={12} className="text-white" />
@@ -1245,15 +1324,36 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
                 UTM
               </button>
             )}
-            {/* Primary publish/update button */}
-            <button
-              onClick={() => setPublishConfirmOpen(true)}
-              disabled={!showPreview || isLoading}
-              className="flex items-center gap-1.5 text-xs bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white px-3 py-1.5 rounded-full font-medium transition-colors shadow-md shadow-indigo-600/20"
-            >
-              {phase === 'publishing' ? <Loader2 size={12} className="animate-spin" /> : <Globe size={12} />}
-              {publishedUrl ? 'Update' : 'Publish'}
-            </button>
+            {/* Primary publish/update button — hidden for test-variant pages, which
+                are already served live from this same row via /api/serve.
+                Publish there would only create an unused, unrelated URL.
+                "Back to Test" gives an explicit finish action instead, since
+                there's no publish step to signal "you're done" here. */}
+            {isTestVariantPage ? (
+              showPreview && (
+                <>
+                  <span className="hidden sm:inline text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">
+                    Changes save live automatically
+                  </span>
+                  <button
+                    onClick={() => { router.push(backPath ?? `/clients/${clientId}/ai-pages`); router.refresh(); }}
+                    className="flex items-center gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-full font-medium transition-colors shadow-md shadow-emerald-600/20"
+                  >
+                    <Check size={12} />
+                    Back to Test
+                  </button>
+                </>
+              )
+            ) : (
+              <button
+                onClick={() => setPublishConfirmOpen(true)}
+                disabled={!showPreview || isLoading}
+                className="flex items-center gap-1.5 text-xs bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white px-3 py-1.5 rounded-full font-medium transition-colors shadow-md shadow-indigo-600/20"
+              >
+                {phase === 'publishing' ? <Loader2 size={12} className="animate-spin" /> : <Globe size={12} />}
+                {publishedUrl ? 'Update' : 'Publish'}
+              </button>
+            )}
 
             {/* More actions dropdown */}
             {showPreview && (
@@ -1269,7 +1369,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, ini
                   <>
                     <div className="fixed inset-0 z-10" onClick={() => setShowPageActions(false)} />
                     <div className="absolute right-0 top-full mt-1 z-20 w-44 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-lg py-1 overflow-hidden">
-                      {slug && (
+                      {slug && !isTestVariantPage && (
                         <a
                           href={phase === 'publishing' || isUnpublishing ? undefined : `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.trysplitlab.com'}/pages/${slug}`}
                           target="_blank"

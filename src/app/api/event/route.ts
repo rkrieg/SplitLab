@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/supabase-server';
 import { getPlanDetails } from '@/lib/plans';
+import { getDeviceType } from '@/lib/utils';
 import { z } from 'zod';
 
 function corsHeaders(request: NextRequest) {
@@ -161,12 +162,35 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Device type must match the visitor's pageview, not be re-derived from
+    // this request's own UA — a conversion event with its own independent
+    // device check can land in a different bucket than the pageview it
+    // belongs to (e.g. UA drift between requests), making the device-split
+    // CVR silently lose the conversion. Pageviews still self-derive since
+    // they're the ones establishing the visitor's device in the first place.
+    let deviceType = getDeviceType(request.headers.get('user-agent'));
+    if (data.type === 'conversion') {
+      const { data: visitorPageview } = await db
+        .from('events')
+        .select('device_type')
+        .eq('test_id', data.testId)
+        .eq('visitor_hash', data.visitorHash)
+        .eq('type', 'pageview')
+        .not('device_type', 'is', null)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single();
+
+      if (visitorPageview?.device_type) deviceType = visitorPageview.device_type;
+    }
+
     const { error } = await db.from('events').insert({
       test_id: data.testId,
       variant_id: data.variantId,
       goal_id: goalId,
       visitor_hash: data.visitorHash,
       type: data.type,
+      device_type: deviceType,
       metadata: data.metadata || {},
     });
 
