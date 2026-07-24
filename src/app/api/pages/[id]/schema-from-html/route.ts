@@ -259,7 +259,14 @@ function findSectionSpan(html: string, tag: string, anchor: string): [number, nu
 function annotateHtml(
   html: string,
   parsed: FieldListResponse,
-): { annotatedHtml: string; schemaJson: Record<string, unknown>; matchedCount: number; requestedCount: number } {
+): {
+  annotatedHtml: string;
+  schemaJson: Record<string, unknown>;
+  matchedCount: number;
+  requestedCount: number;
+  matchedSectionCount: number;
+  requestedSectionCount: number;
+} {
   const fields = parsed.fields ?? [];
   const sections = parsed.sections ?? [];
   const schemaJson: Record<string, unknown> = {};
@@ -282,6 +289,7 @@ function annotateHtml(
 
   const wrapEdits: WrapEdit[] = [];
   const usedNames = new Set<string>();
+  let matchedSectionCount = 0;
   for (const s of sections) {
     if (!s?.name || !SAFE_NAME_RE.test(s.name) || !s.tag || !s.anchor) continue;
     if (usedNames.has(s.name)) continue; // duplicate name from the model, skip re-wrap
@@ -291,6 +299,7 @@ function annotateHtml(
       continue;
     }
     usedNames.add(s.name);
+    matchedSectionCount++;
     const [start, end] = span;
     wrapEdits.push({ start, end, before: `<!-- SL:${s.name} -->\n`, after: `\n<!-- /SL:${s.name} -->` });
   }
@@ -311,7 +320,14 @@ function annotateHtml(
     result = result.slice(0, edit.index) + edit.insert + result.slice(edit.index);
   }
 
-  return { annotatedHtml: result, schemaJson, matchedCount, requestedCount: fields.length };
+  return {
+    annotatedHtml: result,
+    schemaJson,
+    matchedCount,
+    requestedCount: fields.length,
+    matchedSectionCount,
+    requestedSectionCount: sections.length,
+  };
 }
 
 export async function POST(
@@ -387,13 +403,35 @@ export async function POST(
     return NextResponse.json({ error: 'Could not prepare this page for AI editing' }, { status: 500 });
   }
 
-  const { annotatedHtml, schemaJson, matchedCount, requestedCount } = annotateHtml(html, parsed);
+  const {
+    annotatedHtml,
+    schemaJson,
+    matchedCount,
+    requestedCount,
+    matchedSectionCount,
+    requestedSectionCount,
+  } = annotateHtml(html, parsed);
 
   // If almost nothing the AI listed could actually be located in the HTML,
   // something is structurally wrong (not just one-off text drift) — treat
   // as a failure rather than shipping a near-empty schema.
   if (requestedCount === 0 || matchedCount / requestedCount < 0.3) {
-    console.error(`[schema-from-html] low match rate: ${matchedCount}/${requestedCount}`);
+    console.error(`[schema-from-html] low field match rate: ${matchedCount}/${requestedCount}`);
+    return NextResponse.json({ error: 'Could not prepare this page for AI editing' }, { status: 500 });
+  }
+
+  // Always logged (not just on failure) so match rate can be checked against
+  // real client pages without needing to reproduce a failure first.
+  console.log(`[schema-from-html] match rate — fields: ${matchedCount}/${requestedCount}, sections: ${matchedSectionCount}/${requestedSectionCount}`);
+
+  // A page that comes out with zero (or almost zero) SL section markers has
+  // no way to receive `type:"patch"` edits later — `follow-up/route.ts`
+  // falls back to `type:"style"` (full-document 32k-token rewrite) for
+  // EVERY future chat edit on this page, which is the actual latency
+  // complaint. Failing here (same as the field guard above) forces a retry
+  // instead of silently shipping a page that will always be slow to edit.
+  if (requestedSectionCount === 0 || matchedSectionCount === 0) {
+    console.error(`[schema-from-html] no sections matched: ${matchedSectionCount}/${requestedSectionCount} — page would have no SL markers and every future follow-up would be forced into a full-page rewrite`);
     return NextResponse.json({ error: 'Could not prepare this page for AI editing' }, { status: 500 });
   }
 
