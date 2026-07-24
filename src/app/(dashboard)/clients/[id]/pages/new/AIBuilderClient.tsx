@@ -225,9 +225,10 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   const [pendingImageField, setPendingImageField] = useState<string | null>(null);
   const [uploadingImage, setUploadingImage] = useState(false);
 
-  // Chat image attachments (paste / file-picker)
+  // Chat image attachments (paste / file-picker / drag-and-drop)
   const [chatImages, setChatImages] = useState<{ file: File; preview: string }[]>([]);
   const chatImageInputRef = useRef<HTMLInputElement>(null);
+  const [isDraggingChatImage, setIsDraggingChatImage] = useState(false);
 
   // Background schema synthesis for raw-HTML pages that arrive here without a
   // schema_json (e.g. test variants opened via "Edit using AI"). Isolated
@@ -322,7 +323,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
           role: 'assistant',
           content: assistantSeen
             ? 'Done! The page has been updated.'
-            : `Got it! Built your ${VERTICAL_LABELS[initialPage.vertical] ?? initialPage.vertical} page.`,
+            : `Got it! Built your ${VERTICAL_LABELS[initialPage.vertical] ?? 'new'} page.`,
         });
         assistantSeen = true;
       }
@@ -364,6 +365,22 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         if (data.html_url) {
           setHtmlUrl(`${data.html_url}?t=${Date.now()}`);
         }
+        toast(
+          t => (
+            <div className="flex items-start gap-2">
+              <span className="text-xs">This page is ready for AI editing.</span>
+              <button
+                onClick={() => toast.dismiss(t.id)}
+                className="flex-shrink-0 text-emerald-700/60 hover:text-emerald-800 font-bold"
+                aria-label="Dismiss"
+              >
+                ✕
+              </button>
+            </div>
+          ),
+          { id: 'schema-from-html-ready', icon: '✅', duration: Infinity },
+        );
+        addMessage({ role: 'assistant', content: 'Done preparing this page! Click any text in the preview to edit it, or ask me to make changes.' });
       } catch {
         toast.error("Couldn't prepare this page for full AI editing — chat edits will still work.");
       } finally {
@@ -737,6 +754,28 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     const files = Array.from(e.target.files ?? []);
     if (files.length > 0) addChatImages(files);
     e.target.value = '';
+  }
+
+  function handleChatImageDragOver(e: React.DragEvent) {
+    if (!e.dataTransfer.types.includes('Files')) return;
+    e.preventDefault();
+    setIsDraggingChatImage(true);
+  }
+
+  function handleChatImageDragLeave(e: React.DragEvent<HTMLDivElement>) {
+    // Only clear when the pointer actually leaves the box, not when it
+    // crosses into a child element (dragenter/dragleave fire on every
+    // child boundary too, which would otherwise flicker the highlight).
+    if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+    setIsDraggingChatImage(false);
+  }
+
+  function handleChatImageDrop(e: React.DragEvent) {
+    if (e.dataTransfer.files.length === 0) return;
+    e.preventDefault();
+    setIsDraggingChatImage(false);
+    const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
+    if (files.length > 0) addChatImages(files);
   }
 
   async function sendFollowUp(
@@ -1113,7 +1152,15 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                   <span>We&apos;ll reference that site for inspiration</span>
                 </div>
               )}
-              <div className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl overflow-hidden focus-within:border-indigo-400 dark:focus-within:border-indigo-500 transition-colors">
+              <div
+                onDragOver={handleChatImageDragOver}
+                onDragLeave={handleChatImageDragLeave}
+                onDrop={handleChatImageDrop}
+                className={cn(
+                  'bg-slate-50 dark:bg-slate-800 border rounded-2xl overflow-hidden focus-within:border-indigo-400 dark:focus-within:border-indigo-500 transition-colors',
+                  isDraggingChatImage ? 'border-indigo-400 dark:border-indigo-500 ring-2 ring-indigo-400/30' : 'border-slate-200 dark:border-slate-700'
+                )}
+              >
                 {chatImages.length > 0 && (
                   <div className="flex items-center gap-2 px-3.5 pt-2.5 flex-wrap">
                     {chatImages.map((img, i) => (
@@ -1212,7 +1259,15 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
           {/* Follow-up / editing input */}
           {phase === 'editing' && (
             <form onSubmit={handleFollowUp}>
-              <div className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl overflow-hidden focus-within:border-indigo-400 dark:focus-within:border-indigo-500 transition-colors">
+              <div
+                onDragOver={handleChatImageDragOver}
+                onDragLeave={handleChatImageDragLeave}
+                onDrop={handleChatImageDrop}
+                className={cn(
+                  'bg-slate-50 dark:bg-slate-800 border rounded-2xl overflow-hidden focus-within:border-indigo-400 dark:focus-within:border-indigo-500 transition-colors',
+                  isDraggingChatImage ? 'border-indigo-400 dark:border-indigo-500 ring-2 ring-indigo-400/30' : 'border-slate-200 dark:border-slate-700'
+                )}
+              >
                 {/* Image thumbnails */}
                 {chatImages.length > 0 && (
                   <div className="flex items-center gap-2 px-3.5 pt-2.5 flex-wrap">
