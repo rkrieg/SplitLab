@@ -377,6 +377,13 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
             </div>
             <div className="flex items-center gap-1">
               <button
+                onClick={() => copyClientInstructions(d)}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium text-[#3D8BDA] hover:bg-[#3D8BDA]/10 transition-colors flex-shrink-0 whitespace-nowrap"
+                title="Copy DNS setup instructions to send to your client"
+              >
+                <Copy size={12} /> Copy Instructions
+              </button>
+              <button
                 onClick={() => setShowDnsId(dnsExpanded ? null : d.id)}
                 className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-700/50 transition-colors"
                 title="View DNS records"
