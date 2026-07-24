@@ -184,3 +184,138 @@ exists and doesn't degrade gracefully without one.
   - Opening chat message is conditional on whether the page arrived with a
     schema already (`Welcome back...`) or not (explains prep is happening,
     invites a prompt instead of a false "click any text" promise).
+
+## Follow-up: `schema-from-html` latency fix — shipped
+
+**Status: Done** (2026-07-24). Carried over from
+`docs/edit-html-with-ai-handoff.md` Known issue #1. Root cause: the AI call
+in `schema-from-html/route.ts` had to echo the *entire* page's HTML back
+token-for-token just to insert a handful of attributes — 16-32k output
+tokens for a real page, slow regardless of model/timeout (already bumped
+120s → 300s, still slow).
+
+### Plan: field-list instead of full-HTML echo
+
+1. [x] **Rewrote `SYSTEM_PROMPT`** to ask the AI for a compact JSON object
+   instead of the full annotated HTML — `{ sections: [...], fields: [...] }`,
+   one entry per editable field:
+   ```json
+   { "dot_path": "hero.headline", "tag": "h1", "match_text": "...", "occurrence": 0 }
+   ```
+   `occurrence` (0-indexed) is included so repeated identical text (e.g. a
+   "Learn More" button appearing 3 times) can still be disambiguated —
+   without it, plain text matching is ambiguous. `tag` was added (beyond the
+   original plan) so the matching function knows which element to scan for
+   instead of guessing across all tag types.
+
+2. [x] **New matching function** (`findFieldOpenTagInsertPoint`,
+   `findSectionSpan`, `annotateHtml` in `schema-from-html/route.ts`) — given
+   the list + the original HTML, finds each `match_text`
+   (whitespace/entity-normalized comparison via `normalizeText`, not raw
+   substring — `&nbsp;` vs space, collapsed whitespace, etc. don't cause
+   false misses) and inserts `data-field="dot_path"` / `<!-- SL:name -->`
+   markers server-side by index-splicing (edits applied end-to-start so
+   earlier insertions never shift pending indices). No AI involved in this
+   step.
+   - Went with **regex/string-scan**, not cheerio — the cheerio build-fix
+     (`next.config.js` change) was declined in-session (see below), so this
+     shipped with the documented fallback instead, same style as
+     `follow-up/route.ts`'s `applyPatch`. Section spans use a depth-aware
+     tag scan (`findSectionSpan`) so nested same-name tags don't cut a wrap
+     short — this is more robust than the plan's original literal-substring
+     idea alone, with a class/id-substring fallback if the AI's anchor copy
+     isn't byte-exact.
+   - **Safety net implemented as planned**: a field/section that can't be
+     matched is skipped (logged via `console.warn`), not fatal. The whole
+     call only fails if `matchedCount / requestedCount < 0.3` — signals
+     something structurally wrong rather than one-off text drift.
+
+3. [x] **Deleted `deriveSchemaFromAnnotatedHtml`** — `schema_json` is now
+   built directly from the AI's `dot_path` + `match_text` list inside
+   `annotateHtml`, no second parsing pass.
+
+4. [x] **Lowered `maxTokens`** from 32000 to 8000, and `maxDuration` from
+   300s back down to 120s, now that the AI only returns a field/section
+   list, not the whole document.
+
+4a. [x] **Live-tested, found + fixed a real match-rate bug (2026-07-24)**:
+   first live run against a real client page (`schema-from-html` route)
+   confirmed the latency win — output tokens dropped from 16-32k to 3,469 —
+   but 11/46 fields (headlines + testimonial quotes specifically) were
+   skipped as "not matched". Root cause: `normalizeText()` only decoded 6
+   structural entities (`&nbsp;`/`&amp;`/`&quot;`/`&#39;`/`&lt;`/`&gt;`); it
+   missed typographic entities (`&#8217;`, `&rsquo;`, `&mdash;`, `&hellip;`,
+   etc.) common in marketing copy headlines/quotes. The AI tends to write
+   these decoded in its `match_text` (`you're`) even when the source HTML
+   has them encoded (`you&#8217;re`), so the two sides never matched.
+   Fixed by adding `decodeEntities()` (numeric `&#NNNN;`, hex `&#xHHHH;`,
+   and a named-entity table for common typographic marks) ahead of
+   whitespace normalization in `normalizeText()`.
+
+4b. [x] **Second live re-test surfaced a second, more direct root cause
+   (2026-07-24, same session)**: after the entity-decode fix, re-ran on the
+   same page — quotes now matched, but headlines (`hero.headline`,
+   `testimonials.headline`, `closing.headline`, etc.) and some list items
+   (`closing.points.*.body`, some `avatar_initials`) still skipped.
+   Inspected the actual DB `html_content` directly (via the Supabase REST
+   API) and found the real bug: `stripTags()` deleted tags with no
+   replacement character, so `<br>` and inline `<span>` boundaries glued
+   adjacent words together with zero space — e.g.
+   `<h1>Exclusive Leads.<br>Real Jobs. <span>No<br>More Competing.</span></h1>`
+   stripped to `"Exclusive Leads.Real Jobs. NoMore Competing."` instead of
+   the properly-spaced text the AI reports in `match_text`. Any field whose
+   markup uses `<br>` or a nested inline tag for styling (very common in
+   headlines/highlighted-word patterns) would reliably fail to match. Fixed
+   by making `stripTags()` replace each tag with `' '` instead of `''`
+   (`normalizeText()` already collapses repeated whitespace after, so this
+   is safe everywhere else it's used too).
+   - **Known residual gap, not fixed**: live testing also showed the same
+     field matching successfully on one run and failing on a later run
+     against the identical page — i.e. some AI non-determinism in
+     `match_text` output between calls (extra/missing punctuation, minor
+     wording drift) that no amount of server-side normalization alone can
+     fully close. A fuzzy/distance-based fallback match (attempt exact
+     match first, fall back to closest-normalized-match above some
+     similarity threshold) would be the next lever if match rate is still
+     unsatisfactory after this fix — **not built, flag if needed**.
+   - Also noticed (side observation, not itself a bug): repeated manual
+     testing against the same page left doubled `<!-- SL:name -->` markers
+     in the DB's `html_content` (re-running the route after `schema_json`
+     was manually nulled again re-wrapped already-wrapped sections) — purely
+     a side effect of manual dev-testing flow, not a production concern
+     since idempotency guards prevent this happening for a real single
+     schema-from-html invocation per page.
+
+5. [x] **Idempotency guards preserved as-is** (`schema_json === null` check
+   before/after, atomic `.is('schema_json', null)` update) — untouched by
+   this rewrite, verified by reading the final route.
+
+Verified via `npm run build` (type-checks, compiles, no webpack errors).
+**Not yet tested live/in-browser this session** — same caveat as the rest of
+this doc; match-rate/latency behavior against a real client page still needs
+a manual click-through pass.
+
+### Known trade-off, accepted going in
+
+This is not a 100%-guaranteed-correct solution — text-matching against
+rendered HTML has real edge cases (duplicate text without a useful
+`occurrence` hint from the AI, whitespace/entity mismatches, a `match_text`
+that's a substring of a larger text block). The skip-on-no-match behavior
+above is the deliberate mitigation: graceful degradation (fewer fields
+tagged) instead of a hard failure, which is already strictly better than
+today's behavior where AI echo-drift can silently corrupt arbitrary parts of
+the page.
+
+### Cheerio build-fix — separate, optional pre-req
+
+`cheerio`'s `undici` dependency uses private class fields that broke this
+project's webpack/SWC server bundle (see deviations note above — this is why
+it was reverted the first time). Untried fix, worth attempting before
+falling back to regex for the new matching function: add `'cheerio'` to
+`experimental.serverComponentsExternalPackages` in `next.config.js` (already
+holds `puppeteer-core`/`@sparticuz/chromium` for the same class of issue) so
+Next.js `require`s it at runtime instead of bundling it through
+webpack/SWC — should sidestep the private-class-fields transform failure
+without needing an older cheerio version. **User declined to apply this
+change in-session on 2026-07-24 — do not make this edit without the user
+doing it themselves or explicitly re-requesting it.**

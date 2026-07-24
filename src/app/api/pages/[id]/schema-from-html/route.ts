@@ -8,43 +8,55 @@ import { resolveWorkspaceRole, resolveOwnerPlan } from '@/lib/workspace-auth';
 import { PLAN_LIMITS } from '@/lib/plans';
 
 export const dynamic = 'force-dynamic';
-// Matches build/follow-up — this route echoes a full page's HTML back
-// through the AI (annotation pass), which can genuinely take longer than
-// 120s on a large/complex page and was hitting Vercel's function timeout.
-export const maxDuration = 300;
+// The AI call now returns a compact field/section list (not the full page),
+// so this should complete well under the old 300s ceiling — kept at 120 as
+// a safety margin rather than the previous 300s (which was needed only
+// because the old approach echoed the whole page back).
+export const maxDuration = 120;
 
 // Prepares an existing raw-HTML page (e.g. a hand-authored test variant) for
-// the schema-driven AI Pages editor — WITHOUT redesigning it. Unlike
-// /generate + /build, this never asks the AI to invent layout or styling.
-// It only asks the AI to ANNOTATE the existing markup (add data-field +
-// SL:name markers) so the byte-for-byte page keeps its exact look. The
-// schema is then derived deterministically from those attributes, not
-// guessed by a second AI call. Isolated from /generate, /build, /follow-up —
-// none of those files are touched by this route.
-const SYSTEM_PROMPT = `You are annotating an existing, already-designed landing page's HTML so it can be edited going forward through a WYSIWYG editor and an AI chat assistant — WITHOUT changing anything about how the page looks.
+// the schema-driven AI Pages editor — WITHOUT redesigning it.
+//
+// Unlike the old implementation, the AI is never asked to reproduce the
+// page's HTML. It only reports WHERE the editable content and structural
+// sections are (a short JSON list); this route then inserts the
+// data-field="..." attributes and <!-- SL:name --> markers itself via
+// string/tag matching. This keeps the AI's output size proportional to the
+// number of editable fields, not the size of the page — the old approach's
+// 16-32k-token echo was the actual latency bottleneck (see
+// docs/edit-html-with-ai-todos.md, "Follow-up: schema-from-html latency
+// fix"). schema_json is then built directly from the same field list, no
+// second parsing pass needed.
+const SYSTEM_PROMPT = `You are analyzing an existing, already-designed landing page's HTML so it can be edited going forward through a WYSIWYG editor and an AI chat assistant — WITHOUT changing anything about how the page looks.
 
 ## Task
-You will be given the complete HTML of an existing page. Return the SAME HTML with exactly two kinds of additions:
+You will be given the complete HTML of an existing page. Do NOT return any HTML. Return ONLY a JSON object (no markdown fences, no explanation, no extra text) with this exact shape:
 
-1. Add a data-field="<dot.path>" attribute to every editable text element (headings, paragraphs, labels, button/link text, list items, testimonial quotes, FAQ answers, stat numbers, etc.) and every meaningful content <img> (skip logos and purely decorative icons). Choose dot-path names that describe the section and field, following this pattern:
-   - data-field="hero.headline", data-field="hero.subhead", data-field="hero.cta_text"
-   - data-field="features.items.0.title", data-field="features.items.1.title"
-   - data-field="testimonials.items.0.quote", data-field="testimonials.items.0.author"
-   - data-field="hero.image" for an <img>
-   Use the SAME path format for repeated items in a list (indexed with .0, .1, .2, ...).
+{
+  "sections": [
+    { "name": "hero", "tag": "section", "anchor": "<section class=\\"hero-section\\" id=\\"hero\\">" }
+  ],
+  "fields": [
+    { "dot_path": "hero.headline", "tag": "h1", "match_text": "Grow Your Business 10x Faster", "occurrence": 0 },
+    { "dot_path": "hero.image", "tag": "img", "match_text": "https://example.com/hero.jpg", "occurrence": 0 }
+  ]
+}
 
-2. Wrap every top-level block in HTML comment markers: the <style> block, the <nav>, each top-level <section> or major top-level content block, and the <footer>. Format (marker on its own line, immediately before/after the element):
-   <!-- SL:name -->
-   ...the element...
-   <!-- /SL:name -->
-   Use name="head" for <style>, name="nav" for <nav>, name="footer" for <footer>, and a short kebab-case slug per section (suffix -2, -3 for duplicate names).
+### "sections" — one entry per top-level block
+Include: the <style> block (name: "head", tag: "style"), the <nav> (name: "nav"), every top-level <section> or major top-level content block (short kebab-case name describing it, suffix -2/-3 for duplicate names), and the <footer> (name: "footer").
+"anchor" must be the element's opening tag copied byte-for-byte EXACTLY as it appears in the given HTML — same attribute order, same quote characters, ending at ">" — including enough of it (class/id/etc.) to uniquely identify that one element if the bare tag name repeats elsewhere on the page.
 
-## CRITICAL rules — this is an annotation pass, NOT a rewrite
-- Do NOT change, rewrite, reformat, reorder, add, or remove any element, class, inline style, CSS rule, script, attribute value, or text content.
-- Do NOT restyle anything. Do NOT "improve" or "fix" the design, layout, or spacing, even if it looks unusual.
-- The ONLY changes allowed are: adding data-field="..." attributes, and adding <!-- SL:name --> / <!-- /SL:name --> comment markers around top-level blocks.
-- Preserve every other byte of the HTML exactly as given.
-- Return the complete HTML document only, starting with <!DOCTYPE html>. No explanation, no markdown fences, no extra text.`;
+### "fields" — one entry per editable element
+Every editable text element (headings, paragraphs, labels, button/link text, list items, testimonial quotes, FAQ answers, stat numbers, etc.) and every meaningful content <img> (skip logos and purely decorative icons).
+- "dot_path": describes the section and field, e.g. "hero.headline", "features.items.0.title", "testimonials.items.0.quote", "hero.image". Use the same path pattern for repeated items in a list (indexed .0, .1, .2, ...).
+- "tag": the element's HTML tag name (lowercase, no brackets), e.g. "h1", "p", "a", "span", "img".
+- "match_text": for non-<img> elements, the element's exact rendered text content (tags stripped, but preserve exact wording/punctuation/capitalization as it appears). For <img>, the exact "src" attribute value.
+- "occurrence": 0-indexed. If the exact same (tag, match_text) pair appears more than once on the page (e.g. a repeated "Learn More" button), set this to which occurrence it is in top-to-bottom document order. Otherwise 0.
+
+## CRITICAL rules
+- Do not invent, paraphrase, or summarize text — "match_text" must be copyable verbatim from the given HTML.
+- Do not include elements that are not present in the given HTML.
+- Return JSON only — nothing else.`;
 
 function minifyHtmlForModel(html: string): string {
   return html
@@ -54,9 +66,6 @@ function minifyHtmlForModel(html: string): string {
     .trim();
 }
 
-// Builds the schema object purely from data-field attributes already present
-// in the annotated HTML — deterministic, no AI guessing, always in sync with
-// what's actually on the page since it's derived FROM the page.
 function setPathValue(root: Record<string, unknown>, path: string, value: unknown) {
   const keys = path.split('.').filter(Boolean);
   if (keys.length === 0) return;
@@ -72,51 +81,253 @@ function setPathValue(root: Record<string, unknown>, path: string, value: unknow
   current[keys[keys.length - 1]] = value;
 }
 
-function extractAttr(attrsStr: string, name: string): string | null {
-  const m = new RegExp(`${name}\\s*=\\s*["']([^"']*)["']`, 'i').exec(attrsStr);
-  return m ? m[1] : null;
+const SAFE_TAG_RE = /^[a-zA-Z][a-zA-Z0-9]*$/;
+const SAFE_NAME_RE = /^[a-zA-Z0-9_-]+$/;
+
+interface FieldEntry {
+  dot_path: string;
+  tag: string;
+  match_text: string;
+  occurrence: number;
 }
 
-function stripTagsAndDecode(html: string): string {
-  return html
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
+interface SectionEntry {
+  name: string;
+  tag: string;
+  anchor: string;
+}
+
+interface FieldListResponse {
+  sections?: SectionEntry[];
+  fields?: FieldEntry[];
+}
+
+// Named entities beyond the handful of structural ones (nbsp/amp/quot/lt/gt)
+// — mainly typographic marks common in marketing copy (curly quotes,
+// dashes, ellipsis). The AI tends to write these decoded ("you're") even
+// when the source HTML has them encoded ("you&#8217;re") or vice versa, so
+// both the match_text and the HTML's actual inner text need to normalize to
+// the same characters or matching silently fails on exactly the fields most
+// likely to contain them (headlines, quotes).
+const NAMED_ENTITIES: Record<string, string> = {
+  nbsp: ' ', amp: '&', quot: '"', apos: "'", lt: '<', gt: '>',
+  rsquo: '’', lsquo: '‘', rdquo: '”', ldquo: '“',
+  mdash: '—', ndash: '–', hellip: '…',
+  trade: '™', copy: '©', reg: '®',
+};
+
+function decodeEntities(s: string): string {
+  return s
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(parseInt(dec, 10)))
+    .replace(/&([a-zA-Z]+);/g, (m, name) => NAMED_ENTITIES[name] ?? m);
+}
+
+function normalizeText(s: string): string {
+  return decodeEntities(s)
     .replace(/\s+/g, ' ')
     .trim();
 }
 
-function deriveSchemaFromAnnotatedHtml(html: string): Record<string, unknown> {
-  const schema: Record<string, unknown> = {};
+// Replaces (not just removes) each tag with a space — deleting a <br> or an
+// inline <span> boundary with nothing glues the words on either side
+// together ("Leads.Real Jobs." instead of "Leads. Real Jobs."), which never
+// matches the AI's naturally-spaced match_text. normalizeText() collapses
+// the resulting extra whitespace, so this is safe everywhere.
+function stripTags(html: string): string {
+  return html.replace(/<[^>]+>/g, ' ');
+}
 
-  // Void <img> elements have no closing tag — value is the src attribute.
-  const imgRe = /<img\b([^>]*)>/gi;
+interface OpenTagEdit {
+  index: number; // index of the char right after the tag name, where new attrs get inserted
+  attr: string; // e.g. ' data-field="hero.headline"'
+}
+
+interface WrapEdit {
+  start: number; // insert-before index (element start)
+  end: number; // insert-after index (element end, exclusive)
+  before: string;
+  after: string;
+}
+
+/**
+ * Locates the nth (0-indexed) `<tag ...>innerText</tag>` (or `<img ...>` for
+ * tag === 'img') whose normalized text/src matches matchText, and returns
+ * the index right after the tag name in the OPENING tag (where an attribute
+ * can be inserted). Returns null if not enough matches were found.
+ */
+function findFieldOpenTagInsertPoint(
+  html: string,
+  tag: string,
+  matchText: string,
+  occurrence: number,
+): number | null {
+  if (!SAFE_TAG_RE.test(tag)) return null;
+  const target = normalizeText(matchText);
+  let found = 0;
+
+  if (tag.toLowerCase() === 'img') {
+    const re = /<img\b([^>]*)>/gi;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(html))) {
+      const srcMatch = /src\s*=\s*["']([^"']*)["']/i.exec(m[1]);
+      const src = srcMatch ? srcMatch[1] : '';
+      if (normalizeText(src) === target) {
+        if (found === occurrence) return m.index + 4; // right after "<img"
+        found++;
+      }
+    }
+    return null;
+  }
+
+  const re = new RegExp(`<${tag}\\b([^>]*)>([\\s\\S]*?)</${tag}>`, 'gi');
   let m: RegExpExecArray | null;
-  while ((m = imgRe.exec(html))) {
-    const attrs = m[1];
-    const field = extractAttr(attrs, 'data-field');
-    if (!field) continue;
-    setPathValue(schema, field, extractAttr(attrs, 'src') ?? '');
+  while ((m = re.exec(html))) {
+    const inner = stripTags(m[2]);
+    if (normalizeText(inner) === target) {
+      if (found === occurrence) return m.index + 1 + tag.length; // right after "<tag"
+      found++;
+    }
+  }
+  return null;
+}
+
+/**
+ * Locates a section element by its AI-supplied opening-tag "anchor" (an
+ * exact-copy match attempted first, then a looser fallback keyed on a
+ * distinguishing class/id substring pulled from the anchor). Returns the
+ * [elementStart, elementEnd) span (elementEnd is exclusive, right after the
+ * matching closing tag), found via depth-aware scanning so nested same-name
+ * tags don't cut the wrap short. Returns null if the element can't be
+ * located.
+ */
+function findSectionSpan(html: string, tag: string, anchor: string): [number, number] | null {
+  if (!SAFE_TAG_RE.test(tag)) return null;
+
+  let openTagEnd: number | null = null;
+  let elementStart: number | null = null;
+
+  const literalIdx = html.indexOf(anchor);
+  if (literalIdx !== -1) {
+    elementStart = literalIdx;
+    openTagEnd = literalIdx + anchor.length;
+  } else {
+    // Fallback: extract a distinguishing class/id from the anchor and find
+    // the first <tag ...> whose attrs contain that same substring.
+    const idMatch = /\bid\s*=\s*["']([^"']*)["']/.exec(anchor);
+    const classMatch = /\bclass\s*=\s*["']([^"']*)["']/.exec(anchor);
+    const needle = idMatch?.[1] || classMatch?.[1]?.split(/\s+/)[0];
+    if (!needle) return null;
+    const tagOpenRe = new RegExp(`<${tag}\\b[^>]*>`, 'gi');
+    let m: RegExpExecArray | null;
+    while ((m = tagOpenRe.exec(html))) {
+      if (m[0].includes(needle)) {
+        elementStart = m.index;
+        openTagEnd = m.index + m[0].length;
+        break;
+      }
+    }
   }
 
-  // Any other tag carrying data-field — value is its inner text, tags stripped.
-  // Non-greedy match to the first matching closing tag; data-field is only
-  // ever applied to leaf-level content elements per the system prompt, so
-  // same-tag-name nesting inside a tagged element is not expected in practice.
-  const tagRe = /<([a-zA-Z][a-zA-Z0-9]*)\b([^>]*)>([\s\S]*?)<\/\1>/g;
-  while ((m = tagRe.exec(html))) {
-    const [, tag, attrs, inner] = m;
-    if (tag.toLowerCase() === 'img') continue;
-    const field = extractAttr(attrs, 'data-field');
-    if (!field) continue;
-    setPathValue(schema, field, stripTagsAndDecode(inner));
+  if (elementStart === null || openTagEnd === null) return null;
+
+  // Depth-aware scan for the matching close tag (handles nested same-tag
+  // elements, e.g. <section> containing another <section>, or <div> nesting
+  // when tag happens to be "div").
+  const scanRe = new RegExp(`<${tag}\\b[^>]*>|</${tag}\\s*>`, 'gi');
+  scanRe.lastIndex = openTagEnd;
+  let depth = 1;
+  let m: RegExpExecArray | null;
+  while ((m = scanRe.exec(html))) {
+    if (m[0].startsWith('</')) {
+      depth--;
+      if (depth === 0) return [elementStart, m.index + m[0].length];
+    } else {
+      depth++;
+    }
+  }
+  return null; // unbalanced/never closed — skip rather than guess
+}
+
+/**
+ * Given the AI's field/section list and the original page HTML, builds the
+ * annotated HTML (data-field attrs + SL markers inserted server-side) and
+ * the derived schema_json in one pass. Fields/sections that can't be
+ * confidently located are skipped, not treated as fatal — one missed field
+ * is a smaller schema, not a broken page.
+ */
+function annotateHtml(
+  html: string,
+  parsed: FieldListResponse,
+): {
+  annotatedHtml: string;
+  schemaJson: Record<string, unknown>;
+  matchedCount: number;
+  requestedCount: number;
+  matchedSectionCount: number;
+  requestedSectionCount: number;
+} {
+  const fields = parsed.fields ?? [];
+  const sections = parsed.sections ?? [];
+  const schemaJson: Record<string, unknown> = {};
+
+  const openTagEdits: OpenTagEdit[] = [];
+  let matchedCount = 0;
+
+  for (const f of fields) {
+    if (!f?.dot_path || !f.tag || typeof f.match_text !== 'string') continue;
+    const occurrence = Number.isInteger(f.occurrence) && f.occurrence >= 0 ? f.occurrence : 0;
+    const insertAt = findFieldOpenTagInsertPoint(html, f.tag, f.match_text, occurrence);
+    if (insertAt === null) {
+      console.warn(`[schema-from-html] field not matched, skipping: ${f.dot_path}`);
+      continue;
+    }
+    openTagEdits.push({ index: insertAt, attr: ` data-field="${f.dot_path.replace(/"/g, '&quot;')}"` });
+    setPathValue(schemaJson, f.dot_path, f.tag.toLowerCase() === 'img' ? f.match_text : f.match_text);
+    matchedCount++;
   }
 
-  return schema;
+  const wrapEdits: WrapEdit[] = [];
+  const usedNames = new Set<string>();
+  let matchedSectionCount = 0;
+  for (const s of sections) {
+    if (!s?.name || !SAFE_NAME_RE.test(s.name) || !s.tag || !s.anchor) continue;
+    if (usedNames.has(s.name)) continue; // duplicate name from the model, skip re-wrap
+    const span = findSectionSpan(html, s.tag, s.anchor);
+    if (!span) {
+      console.warn(`[schema-from-html] section not matched, skipping: ${s.name}`);
+      continue;
+    }
+    usedNames.add(s.name);
+    matchedSectionCount++;
+    const [start, end] = span;
+    wrapEdits.push({ start, end, before: `<!-- SL:${s.name} -->\n`, after: `\n<!-- /SL:${s.name} -->` });
+  }
+
+  // Apply every edit by index, from the end of the document backwards, so
+  // earlier insertions never shift the indices of edits still pending.
+  type Edit = { index: number; insert: string };
+  const flat: Edit[] = [
+    ...openTagEdits.map((e) => ({ index: e.index, insert: e.attr })),
+    ...wrapEdits.flatMap((e) => [
+      { index: e.end, insert: e.after },
+      { index: e.start, insert: e.before },
+    ]),
+  ].sort((a, b) => b.index - a.index);
+
+  let result = html;
+  for (const edit of flat) {
+    result = result.slice(0, edit.index) + edit.insert + result.slice(edit.index);
+  }
+
+  return {
+    annotatedHtml: result,
+    schemaJson,
+    matchedCount,
+    requestedCount: fields.length,
+    matchedSectionCount,
+    requestedSectionCount: sections.length,
+  };
 }
 
 export async function POST(
@@ -165,38 +376,62 @@ export async function POST(
 
   const htmlForModel = minifyHtmlForModel(html);
 
-  let annotatedHtml: string;
+  let parsed: FieldListResponse;
   try {
     // Streamed even though we don't need the chunks — matches every other
-    // large-output AI call in this app (build/follow-up) to avoid the
-    // Anthropic SDK's non-streaming HTTP timeout at high maxTokens.
+    // AI call in this app to avoid the Anthropic SDK's non-streaming HTTP
+    // timeout at high maxTokens.
     const text = await askAIStream(
       {
         system: SYSTEM_PROMPT,
         messages: [{ role: 'user', content: `Existing page HTML:\n${htmlForModel}` }],
-        maxTokens: 32000,
+        maxTokens: 8000,
       },
       () => {},
     );
 
-    annotatedHtml = text.trim();
-    if (annotatedHtml.startsWith('```')) {
-      annotatedHtml = annotatedHtml.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
+    let jsonText = text.trim();
+    if (jsonText.startsWith('```')) {
+      jsonText = jsonText.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
     }
-    if (!annotatedHtml.startsWith('<!DOCTYPE') && !annotatedHtml.startsWith('<html')) {
-      throw new Error('AI provider returned invalid HTML');
-    }
+    parsed = JSON.parse(jsonText);
   } catch (err) {
     if (err instanceof AIResponseTruncatedError) {
       return NextResponse.json({ error: 'This page is too large to prepare for AI editing in one pass.' }, { status: 500 });
     }
-    console.error('[schema-from-html] annotation failed', err);
+    console.error('[schema-from-html] field-list generation failed', err);
     return NextResponse.json({ error: 'Could not prepare this page for AI editing' }, { status: 500 });
   }
 
-  const schemaJson = deriveSchemaFromAnnotatedHtml(annotatedHtml);
-  if (Object.keys(schemaJson).length === 0) {
-    console.error('[schema-from-html] AI returned HTML with no data-field annotations');
+  const {
+    annotatedHtml,
+    schemaJson,
+    matchedCount,
+    requestedCount,
+    matchedSectionCount,
+    requestedSectionCount,
+  } = annotateHtml(html, parsed);
+
+  // If almost nothing the AI listed could actually be located in the HTML,
+  // something is structurally wrong (not just one-off text drift) — treat
+  // as a failure rather than shipping a near-empty schema.
+  if (requestedCount === 0 || matchedCount / requestedCount < 0.3) {
+    console.error(`[schema-from-html] low field match rate: ${matchedCount}/${requestedCount}`);
+    return NextResponse.json({ error: 'Could not prepare this page for AI editing' }, { status: 500 });
+  }
+
+  // Always logged (not just on failure) so match rate can be checked against
+  // real client pages without needing to reproduce a failure first.
+  console.log(`[schema-from-html] match rate — fields: ${matchedCount}/${requestedCount}, sections: ${matchedSectionCount}/${requestedSectionCount}`);
+
+  // A page that comes out with zero (or almost zero) SL section markers has
+  // no way to receive `type:"patch"` edits later — `follow-up/route.ts`
+  // falls back to `type:"style"` (full-document 32k-token rewrite) for
+  // EVERY future chat edit on this page, which is the actual latency
+  // complaint. Failing here (same as the field guard above) forces a retry
+  // instead of silently shipping a page that will always be slow to edit.
+  if (requestedSectionCount === 0 || matchedSectionCount === 0) {
+    console.error(`[schema-from-html] no sections matched: ${matchedSectionCount}/${requestedSectionCount} — page would have no SL markers and every future follow-up would be forced into a full-page rewrite`);
     return NextResponse.json({ error: 'Could not prepare this page for AI editing' }, { status: 500 });
   }
 
