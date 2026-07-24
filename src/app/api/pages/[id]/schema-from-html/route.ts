@@ -249,6 +249,21 @@ function findSectionSpan(html: string, tag: string, anchor: string): [number, nu
   return null; // unbalanced/never closed — skip rather than guess
 }
 
+// Detects a span that's already immediately wrapped by an <!-- SL:name --> /
+// <!-- /SL:name --> pair — e.g. HTML pasted in from a page that was already
+// converted elsewhere (a prior schema-from-html run, or exported from
+// production with markers baked in). Re-wrapping it would nest a second
+// marker pair around the first, corrupting the boundaries every later patch
+// relies on — so these spans are treated as already matched and left alone.
+function isAlreadySectionWrapped(html: string, start: number, end: number): boolean {
+  const before = html.slice(Math.max(0, start - 60), start);
+  const after = html.slice(end, end + 60);
+  return (
+    /<!--\s*SL:[a-zA-Z0-9_-]+\s*-->\s*$/.test(before) &&
+    /^\s*<!--\s*\/SL:[a-zA-Z0-9_-]+\s*-->/.test(after)
+  );
+}
+
 /**
  * Given the AI's field/section list and the original page HTML, builds the
  * annotated HTML (data-field attrs + SL markers inserted server-side) and
@@ -299,8 +314,13 @@ function annotateHtml(
       continue;
     }
     usedNames.add(s.name);
-    matchedSectionCount++;
     const [start, end] = span;
+    if (isAlreadySectionWrapped(html, start, end)) {
+      console.log(`[schema-from-html] section already SL-wrapped, skipping re-wrap: ${s.name}`);
+      matchedSectionCount++;
+      continue;
+    }
+    matchedSectionCount++;
     wrapEdits.push({ start, end, before: `<!-- SL:${s.name} -->\n`, after: `\n<!-- /SL:${s.name} -->` });
   }
 
