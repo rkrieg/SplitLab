@@ -3345,9 +3345,15 @@ export default function AnalyticsClient({
                               fontSize: '12px',
                               color: '#e2e8f0',
                             }}
-                            formatter={(value: number, name: string) => {
+                            formatter={(value: number, name: string, props: { dataKey?: string | number; payload?: Record<string, unknown> }) => {
                               const label = reportingMetric === 'cvr' ? `${value}%` : value;
-                              return [label, name];
+                              if (reportingMetric === 'cvr') return [label, name];
+                              const dataKey = typeof props?.dataKey === 'string' ? props.dataKey : undefined;
+                              const prefix = dataKey?.endsWith(`_${reportingMetric}`)
+                                ? dataKey.slice(0, -(`_${reportingMetric}`.length))
+                                : undefined;
+                              const cvr = prefix ? props?.payload?.[`${prefix}_cvr`] : undefined;
+                              return [cvr !== undefined ? `${label} (${cvr}% CVR)` : label, name];
                             }}
                             labelFormatter={(label: string) => {
                               const d = new Date(label + 'T00:00:00');
