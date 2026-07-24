@@ -322,7 +322,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
           role: 'assistant',
           content: assistantSeen
             ? 'Done! The page has been updated.'
-            : `Got it! Built your ${VERTICAL_LABELS[initialPage.vertical] ?? initialPage.vertical} page.`,
+            : `Got it! Built your ${VERTICAL_LABELS[initialPage.vertical] ?? 'new'} page.`,
         });
         assistantSeen = true;
       }
@@ -364,6 +364,22 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         if (data.html_url) {
           setHtmlUrl(`${data.html_url}?t=${Date.now()}`);
         }
+        toast(
+          t => (
+            <div className="flex items-start gap-2">
+              <span className="text-xs">This page is ready for AI editing.</span>
+              <button
+                onClick={() => toast.dismiss(t.id)}
+                className="flex-shrink-0 text-emerald-700/60 hover:text-emerald-800 font-bold"
+                aria-label="Dismiss"
+              >
+                ✕
+              </button>
+            </div>
+          ),
+          { id: 'schema-from-html-ready', icon: '✅', duration: Infinity },
+        );
+        addMessage({ role: 'assistant', content: 'Done preparing this page! Click any text in the preview to edit it, or ask me to make changes.' });
       } catch {
         toast.error("Couldn't prepare this page for full AI editing — chat edits will still work.");
       } finally {
