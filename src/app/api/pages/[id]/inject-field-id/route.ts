@@ -12,6 +12,11 @@ const render = require('dom-serializer').default as typeof import('dom-serialize
 interface Injection {
   generatedId: string;
   indexPath: string;   // e.g. "0/2/1" — child element indices from <html> root down
+  tagName?: string;     // tag of the element the client actually picked — verified before injecting
+  textSignature?: string; // full trimmed textContent (text fields) or src (image fields), captured
+                           // client-side — primary match signal, since the browser's HTML5 parser
+                           // and htmlparser2 can structure malformed HTML differently and disagree
+                           // on child indices even on a fresh load
   fieldKey: string;
   label: string;
   type: 'text' | 'image';
@@ -30,6 +35,73 @@ function walkByIndexPath(rootChildren: any[], indexPath: string): any | null {
     nodes = target.children ?? [];
   }
   return target;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function textOf(el: any): string {
+  let out = '';
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function walk(node: any) {
+    if (node.type === 'text') out += node.data;
+    else if (node.children) node.children.forEach(walk);
+  }
+  walk(el);
+  return out.trim();
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function srcOf(el: any): string {
+  return el.attribs?.src ?? '';
+}
+
+// Depth-first index-path distance — used only to disambiguate multiple equally-good
+// text/src matches, picking the one structurally closest to where the client picked.
+function pathDistance(a: string, b: string): number {
+  const ai = a.split('/').map(Number);
+  const bi = b.split('/').map(Number);
+  let d = 0;
+  for (let i = 0; i < Math.max(ai.length, bi.length); i++) d += Math.abs((ai[i] ?? -1) - (bi[i] ?? -1));
+  return d;
+}
+
+// Collect every element in the tree matching tagName, with its own indexPath computed
+// the same way the client does (child-tag-index sequence from the root down).
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function findAllByTag(rootChildren: any[], tagName: string): { el: any; indexPath: string }[] {
+  const results: { el: any; indexPath: string }[] = [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function walk(nodes: any[], prefix: number[]) {
+    const elements = nodes.filter((n: { type: string }) => n.type === 'tag');
+    elements.forEach((el, idx) => {
+      const path = [...prefix, idx];
+      if (el.name.toLowerCase() === tagName.toLowerCase()) {
+        results.push({ el, indexPath: path.join('/') });
+      }
+      if (el.children) walk(el.children, path);
+    });
+  }
+  walk(rootChildren, []);
+  return results;
+}
+
+// Resolve an injection to the element it actually refers to. Prefers an exact
+// text/src signature match (unique or nearest-by-position among duplicates) over
+// the raw indexPath, since indexPath alone can point at the wrong element when the
+// browser's HTML5 parser and htmlparser2 structure the same malformed HTML differently.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function resolveInjection(startChildren: any[], inj: Injection): any | null {
+  if (inj.tagName && inj.textSignature !== undefined && inj.textSignature !== '') {
+    const candidates = findAllByTag(startChildren, inj.tagName);
+    const matches = candidates.filter(c =>
+      inj.type === 'image' ? srcOf(c.el) === inj.textSignature : textOf(c.el) === inj.textSignature
+    );
+    if (matches.length === 1) return matches[0].el;
+    if (matches.length > 1) {
+      matches.sort((a, b) => pathDistance(a.indexPath, inj.indexPath) - pathDistance(b.indexPath, inj.indexPath));
+      return matches[0].el;
+    }
+  }
+  return walkByIndexPath(startChildren, inj.indexPath);
 }
 
 export async function POST(
@@ -79,8 +151,21 @@ export async function POST(
   const htmlEl = (dom.children as any[]).find((n: any) => n.type === 'tag' && n.name === 'html');
   const startChildren = htmlEl ? htmlEl.children : dom.children;
 
+  // Resolve every injection — preferring an exact text/src content match over the raw
+  // indexPath (see resolveInjection) — and verify the resolved element's tag matches
+  // what the client actually clicked before mutating anything.
+  const resolved: { inj: Injection; el: ReturnType<typeof walkByIndexPath> }[] = [];
   for (const inj of injections) {
-    const el = walkByIndexPath(startChildren, inj.indexPath);
+    const el = resolveInjection(startChildren, inj);
+    if (el && inj.tagName && el.name.toLowerCase() !== inj.tagName.toLowerCase()) {
+      return NextResponse.json({
+        error: `Element mapping is out of sync with the page (expected <${inj.tagName.toLowerCase()}>, found <${el.name}>). Please re-pick "${inj.label}" and save again.`,
+      }, { status: 409 });
+    }
+    resolved.push({ inj, el });
+  }
+
+  for (const { inj, el } of resolved) {
     if (el) {
       el.attribs = { ...el.attribs, id: inj.generatedId };
     }

@@ -18,6 +18,12 @@ export type StoredFieldSelectors = Record<string, { selector: string; type: 'tex
 interface Field extends FieldMapping {
   _indexPath?: string;    // HTML pages: index path for server-side ID injection
   _generatedId?: string;  // HTML pages: the sl-f-xxx ID already set in live DOM
+  _tagName?: string;      // HTML pages: tag of the picked element — server verifies this before injecting
+  _textSignature?: string; // HTML pages: full trimmed textContent (text fields) or src (image fields) —
+                            // the browser's HTML5 parser and the server's htmlparser2 can structure
+                            // malformed HTML differently, so indexPath alone can resolve to the wrong
+                            // element. The server matches on this content signature first and only
+                            // falls back to indexPath when it isn't unique.
 }
 
 // Internal rule state — extends UTMRule with a stable client-only key and a
@@ -198,9 +204,11 @@ function buildHtmlPickerScript(activeField: string): string {
     // Index path: walk up the DOM tree recording child indices — used by server to locate element in raw HTML
     var indexPath = getIndexPath(el);
 
+    var fullText = el.textContent ? el.textContent.trim() : '';
     var preview = isImg
       ? (el.alt || el.src || 'image element')
-      : (el.textContent ? el.textContent.trim().slice(0, 100) : '');
+      : fullText.slice(0, 100);
+    var srcVal = isImg ? (el.currentSrc || el.src || '') : '';
 
     window.parent.postMessage({
       type: 'sl-element-picked',
@@ -208,8 +216,10 @@ function buildHtmlPickerScript(activeField: string): string {
       selector: '#' + generatedId,
       indexPath: indexPath,
       generatedId: generatedId,
+      tagName: el.tagName,
       preview: preview,
-      src: isImg ? (el.currentSrc || el.src || '') : '',
+      src: srcVal,
+      textSignature: isImg ? srcVal : fullText,
       elementType: isImg ? 'image' : 'text',
     }, '*');
   }
@@ -283,6 +293,8 @@ export default function UTMPickerClient({ clientId, page, initialRules }: Props)
     src?: string; // image elements only — the current src URL, used to seed the fallback rule
     indexPath?: string;
     generatedId?: string;
+    tagName?: string;
+    textSignature?: string;
     // Set when re-picking an already-mapped field — the name card is prefilled with
     // its current label so the user can rename it (or press Enter to keep it).
     existingKey?: string;
@@ -427,20 +439,20 @@ export default function UTMPickerClient({ clientId, page, initialRules }: Props)
   useEffect(() => {
     function handleMessage(e: MessageEvent) {
       if (!e.data || e.data.type !== 'sl-element-picked') return;
-      const { field, selector, preview, src, elementType, indexPath, generatedId } = e.data as {
+      const { field, selector, preview, src, elementType, indexPath, generatedId, tagName, textSignature } = e.data as {
         field: string; selector: string; preview: string; src?: string; elementType: 'text' | 'image';
-        indexPath?: string; generatedId?: string;
+        indexPath?: string; generatedId?: string; tagName?: string; textSignature?: string;
       };
       if (field === '__new__') {
         setGlobalPickMode(false);
-        setPendingPick({ selector, type: elementType, preview, src, indexPath, generatedId });
+        setPendingPick({ selector, type: elementType, preview, src, indexPath, generatedId, tagName, textSignature });
         setPendingLabel('');
         setTimeout(() => pendingLabelRef.current?.focus(), 50);
       } else {
         // Re-pick of an existing field: don't save yet — open the name card
         // prefilled with the current label so the user can also rename it.
         setActivePickKey(null);
-        setPendingPick({ selector, type: elementType, preview, src, indexPath, generatedId, existingKey: field });
+        setPendingPick({ selector, type: elementType, preview, src, indexPath, generatedId, tagName, textSignature, existingKey: field });
         setPendingLabel(fieldsRef.current.find(f => f.key === field)?.label ?? '');
         setTimeout(() => pendingLabelRef.current?.select(), 50);
       }
@@ -461,7 +473,7 @@ export default function UTMPickerClient({ clientId, page, initialRules }: Props)
       const pick = pendingPick;
       const nextFields = fields.map(f =>
         f.key === key
-          ? { ...f, label, selector: pick.selector, type: pick.type, _indexPath: pick.indexPath, _generatedId: pick.generatedId }
+          ? { ...f, label, selector: pick.selector, type: pick.type, _indexPath: pick.indexPath, _generatedId: pick.generatedId, _tagName: pick.tagName, _textSignature: pick.textSignature }
           : f
       );
       // Seed the fallback (Default) rule with current content — text uses the visible
@@ -505,6 +517,8 @@ export default function UTMPickerClient({ clientId, page, initialRules }: Props)
       type: pendingPick.type,
       _indexPath: pendingPick.indexPath,
       _generatedId: pendingPick.generatedId,
+      _tagName: pendingPick.tagName,
+      _textSignature: pendingPick.textSignature,
     };
     const nextFields = [...fields, newField];
 
@@ -579,6 +593,8 @@ export default function UTMPickerClient({ clientId, page, initialRules }: Props)
               injections: fieldsToInject.map(f => ({
                 generatedId: f._generatedId,
                 indexPath: f._indexPath,
+                tagName: f._tagName,
+                textSignature: f._textSignature,
                 fieldKey: f.key,
                 label: f.label,
                 type: f.type,
@@ -587,7 +603,10 @@ export default function UTMPickerClient({ clientId, page, initialRules }: Props)
           });
           if (!res.ok) throw new Error((await res.json()).error ?? 'Failed to inject IDs');
           // Clear pending injection metadata
-          setFields(prev => prev.map(f => ({ ...f, _indexPath: undefined, _generatedId: undefined })));
+          setFields(prev => prev.map(f => ({ ...f, _indexPath: undefined, _generatedId: undefined, _tagName: undefined, _textSignature: undefined })));
+          // html_content was just re-parsed/re-serialized server-side — refresh the
+          // preview iframe so it reflects the saved state.
+          setPreviewRefresh(n => n + 1);
         }
       }
 
