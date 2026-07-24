@@ -225,9 +225,10 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   const [pendingImageField, setPendingImageField] = useState<string | null>(null);
   const [uploadingImage, setUploadingImage] = useState(false);
 
-  // Chat image attachments (paste / file-picker)
+  // Chat image attachments (paste / file-picker / drag-and-drop)
   const [chatImages, setChatImages] = useState<{ file: File; preview: string }[]>([]);
   const chatImageInputRef = useRef<HTMLInputElement>(null);
+  const [isDraggingChatImage, setIsDraggingChatImage] = useState(false);
 
   // Background schema synthesis for raw-HTML pages that arrive here without a
   // schema_json (e.g. test variants opened via "Edit using AI"). Isolated
@@ -755,6 +756,28 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     e.target.value = '';
   }
 
+  function handleChatImageDragOver(e: React.DragEvent) {
+    if (!e.dataTransfer.types.includes('Files')) return;
+    e.preventDefault();
+    setIsDraggingChatImage(true);
+  }
+
+  function handleChatImageDragLeave(e: React.DragEvent<HTMLDivElement>) {
+    // Only clear when the pointer actually leaves the box, not when it
+    // crosses into a child element (dragenter/dragleave fire on every
+    // child boundary too, which would otherwise flicker the highlight).
+    if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+    setIsDraggingChatImage(false);
+  }
+
+  function handleChatImageDrop(e: React.DragEvent) {
+    if (e.dataTransfer.files.length === 0) return;
+    e.preventDefault();
+    setIsDraggingChatImage(false);
+    const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
+    if (files.length > 0) addChatImages(files);
+  }
+
   async function sendFollowUp(
     instruction: string,
     images: { file: File; preview: string }[],
@@ -1129,7 +1152,15 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                   <span>We&apos;ll reference that site for inspiration</span>
                 </div>
               )}
-              <div className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl overflow-hidden focus-within:border-indigo-400 dark:focus-within:border-indigo-500 transition-colors">
+              <div
+                onDragOver={handleChatImageDragOver}
+                onDragLeave={handleChatImageDragLeave}
+                onDrop={handleChatImageDrop}
+                className={cn(
+                  'bg-slate-50 dark:bg-slate-800 border rounded-2xl overflow-hidden focus-within:border-indigo-400 dark:focus-within:border-indigo-500 transition-colors',
+                  isDraggingChatImage ? 'border-indigo-400 dark:border-indigo-500 ring-2 ring-indigo-400/30' : 'border-slate-200 dark:border-slate-700'
+                )}
+              >
                 {chatImages.length > 0 && (
                   <div className="flex items-center gap-2 px-3.5 pt-2.5 flex-wrap">
                     {chatImages.map((img, i) => (
@@ -1228,7 +1259,15 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
           {/* Follow-up / editing input */}
           {phase === 'editing' && (
             <form onSubmit={handleFollowUp}>
-              <div className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl overflow-hidden focus-within:border-indigo-400 dark:focus-within:border-indigo-500 transition-colors">
+              <div
+                onDragOver={handleChatImageDragOver}
+                onDragLeave={handleChatImageDragLeave}
+                onDrop={handleChatImageDrop}
+                className={cn(
+                  'bg-slate-50 dark:bg-slate-800 border rounded-2xl overflow-hidden focus-within:border-indigo-400 dark:focus-within:border-indigo-500 transition-colors',
+                  isDraggingChatImage ? 'border-indigo-400 dark:border-indigo-500 ring-2 ring-indigo-400/30' : 'border-slate-200 dark:border-slate-700'
+                )}
+              >
                 {/* Image thumbnails */}
                 {chatImages.length > 0 && (
                   <div className="flex items-center gap-2 px-3.5 pt-2.5 flex-wrap">
