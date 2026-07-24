@@ -2915,36 +2915,34 @@ export default function AnalyticsClient({
                                     title="Set up UTM parameters"
                                   >
                                     <SlidersHorizontal size={11} />
-                                    Set Up UTM
+                                    UTM personalization
                                   </Link>
                                 )}
-                                <button
-                                  onClick={() => {
-                                    if (getVerifiedStatus(stat.variant) === false) {
-                                      toast.error('Install the tracker.js snippet on your landing page first, then set up goal or event tracking.');
-                                      return;
+                                {!variantHasGoals && (
+                                  <button
+                                    onClick={() => {
+                                      if (getVerifiedStatus(stat.variant) === false) {
+                                        toast.error('Install the tracker.js snippet on your landing page first, then set up goal or event tracking.');
+                                        return;
+                                      }
+                                      scanPage(stat.variant.id);
+                                    }}
+                                    disabled={scanningVariantIds.includes(stat.variant.id)}
+                                    className={`flex items-center justify-center gap-1 w-full px-2 py-1 rounded-lg text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap ${
+                                      variantScanned
+                                        ? "bg-amber-500 border border-amber-600 text-white hover:bg-amber-600 shadow-md shadow-amber-500/50 animate-pulse"
+                                        : "bg-red-600 border border-red-500 text-white hover:bg-red-700 shadow-md shadow-red-500/50 animate-pulse"
+                                    }`}
+                                    title={
+                                      variantScanned
+                                        ? "Page scanned but no goal is enabled yet — conversions are NOT being recorded. Click to choose a goal."
+                                        : "No goal tracking set up — conversions are NOT being recorded for this variant. Click to set it up now."
                                     }
-                                    scanPage(stat.variant.id);
-                                  }}
-                                  disabled={scanningVariantIds.includes(stat.variant.id)}
-                                  className={`flex items-center justify-center gap-1 w-full px-2 py-1 rounded-lg text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap ${
-                                    variantHasGoals
-                                      ? "bg-green-500/10 border border-green-500/30 text-green-500 dark:text-green-400 hover:bg-green-500/20"
-                                      : variantScanned
-                                      ? "bg-amber-500 border border-amber-600 text-white hover:bg-amber-600 shadow-md shadow-amber-500/50 animate-pulse"
-                                      : "bg-red-600 border border-red-500 text-white hover:bg-red-700 shadow-md shadow-red-500/50 animate-pulse"
-                                  }`}
-                                  title={
-                                    variantHasGoals
-                                      ? "Goal tracking set up — click to manage"
-                                      : variantScanned
-                                      ? "Page scanned but no goal is enabled yet — conversions are NOT being recorded. Click to choose a goal."
-                                      : "No goal tracking set up — conversions are NOT being recorded for this variant. Click to set it up now."
-                                  }
-                                >
-                                  <ScanLine size={11} />
-                                  Setup Goal Tracking
-                                </button>
+                                  >
+                                    <ScanLine size={11} />
+                                    Setup Goal Tracking
+                                  </button>
+                                )}
                               </div>
                             </td>
                             {/* Open + Edit icons */}
