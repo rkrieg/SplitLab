@@ -46,7 +46,10 @@ function textOf(el: any): string {
     else if (node.children) node.children.forEach(walk);
   }
   walk(el);
-  return out.trim();
+  // Must match the client's whitespace normalization (indentation/newlines from the
+  // source HTML are collapsed before comparison) so a textSignature computed in the
+  // browser always matches the same element re-parsed here.
+  return out.replace(/\s+/g, ' ').trim();
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
