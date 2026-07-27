@@ -3,6 +3,7 @@
 import { SessionProvider } from 'next-auth/react';
 import { ThemeProvider } from 'next-themes';
 import { Toaster, ToastBar, toast } from 'react-hot-toast';
+import { X } from 'lucide-react';
 import type { Session } from 'next-auth';
 
 interface ProvidersProps {
@@ -37,12 +38,29 @@ export default function Providers({ children, session }: ProvidersProps) {
           {(t) => (
             <ToastBar toast={t}>
               {({ icon, message }) => (
-                <div
-                  onClick={() => toast.dismiss(t.id)}
-                  style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}
-                >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                   {icon}
                   {message}
+                  {t.type !== 'loading' && (
+                    <button
+                      onClick={() => toast.dismiss(t.id)}
+                      aria-label="Dismiss"
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        background: 'transparent',
+                        border: 'none',
+                        padding: '2px',
+                        marginLeft: '0.25rem',
+                        cursor: 'pointer',
+                        color: 'inherit',
+                        opacity: 0.6,
+                      }}
+                    >
+                      <X size={14} />
+                    </button>
+                  )}
                 </div>
               )}
             </ToastBar>

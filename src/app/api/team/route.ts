@@ -4,12 +4,12 @@ import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { PLAN_LIMITS } from '@/lib/plans';
 import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
 import { z } from 'zod';
 
 const inviteSchema = z.object({
   name: z.string().min(1).max(255),
   email: z.string().email(),
-  password: z.string().min(8),
   role: z.enum(['manager', 'viewer']),
 });
 
@@ -112,7 +112,8 @@ export async function POST(request: NextRequest) {
     }
 
     // ── Create user account (viewer globally — workspace role controls access) ─
-    const passwordHash = await bcrypt.hash(data.password, 12);
+    // Unusable placeholder password — the invited user sets their own via the setup link
+    const passwordHash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 12);
     const { data: newUser, error: userError } = await db
       .from('users')
       .insert({
@@ -141,6 +142,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // ── Generate a password-setup token (expires in 7 days) ──────────────────
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+    await db.from('password_resets').upsert({ user_id: newUser.id, token, expires_at: expiresAt }, { onConflict: 'user_id' });
+
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.trysplitlab.com';
+    const setupLink = `${appUrl}/reset-password?token=${token}`;
+
     // ── Send invite email ────────────────────────────────────────────────────
     let emailError: string | null = null;
     try {
@@ -148,7 +157,7 @@ export async function POST(request: NextRequest) {
       await sendInvitationEmail({
         toName: data.name,
         toEmail: data.email,
-        temporaryPassword: data.password,
+        setupLink,
         role: data.role,
       });
     } catch (err) {

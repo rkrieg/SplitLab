@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
 import { z } from 'zod';
 
 export const dynamic = 'force-dynamic';
@@ -10,7 +11,6 @@ export const dynamic = 'force-dynamic';
 const createSchema = z.object({
   name: z.string().min(1).max(255),
   email: z.string().email(),
-  password: z.string().min(8),
   role: z.enum(['admin']), // admin panel only creates internal staff — customers use /api/team
 });
 
@@ -51,7 +51,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Email already in use' }, { status: 409 });
     }
 
-    const passwordHash = await bcrypt.hash(data.password, 12);
+    // Unusable placeholder password — the invited user sets their own via the setup link
+    const passwordHash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 12);
 
     const { data: user, error } = await db
       .from('users')
@@ -67,6 +68,14 @@ export async function POST(request: NextRequest) {
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
+    // Generate a password-setup token (expires in 7 days)
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+    await db.from('password_resets').upsert({ user_id: user.id, token, expires_at: expiresAt }, { onConflict: 'user_id' });
+
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.trysplitlab.com';
+    const setupLink = `${appUrl}/reset-password?token=${token}`;
+
     // Send invitation email
     let emailError: string | null = null;
     try {
@@ -74,7 +83,7 @@ export async function POST(request: NextRequest) {
       await sendInvitationEmail({
         toName: data.name,
         toEmail: data.email,
-        temporaryPassword: data.password,
+        setupLink,
         role: data.role,
       });
     } catch (err) {
