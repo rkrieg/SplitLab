@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { uploadHtml, deleteHtmlFile, deletePageImages, fileNameFromUrl } from '@/lib/storage';
 import { resolveWorkspaceRole } from '@/lib/workspace-auth';
+import { isTestVariantPage } from '@/lib/page-drafts';
 import { z } from 'zod';
 
 const updateSchema = z.object({
@@ -16,6 +17,13 @@ const updateSchema = z.object({
   status: z.enum(['active', 'archived']).optional(),
   schema_json: z.record(z.unknown()).optional(),
   conversation_json: z.array(z.unknown()).optional(),
+  // Explicit opt-in, set only by the WYSIWYG click-to-edit autosave in
+  // AIBuilderClient — writes land in draft_* columns instead of live ones
+  // when the page is actually a test variant. The "Edit HTML" CodeMirror
+  // modal in AnalyticsClient never sends this and always writes live, by
+  // design — whatever it does gets superseded if the user later replaces
+  // the variant with their draft anyway.
+  draft: z.boolean().optional(),
 });
 
 export async function GET(
@@ -53,7 +61,29 @@ export async function PATCH(
 
   try {
     const body = await request.json();
-    const data = updateSchema.parse(body);
+    const { draft, ...data } = updateSchema.parse(body);
+
+    // Draft writes (WYSIWYG click-to-edit on a variant page) land in draft_*
+    // columns and never touch live HTML, live schema, storage, or UTM
+    // selectors/rules — those stay exactly as-is until the user explicitly
+    // replaces the live variant with their draft.
+    const isDraftWrite = draft === true && (await isTestVariantPage(params.id));
+
+    if (isDraftWrite) {
+      const draftPayload: Record<string, unknown> = {};
+      if (data.html_content !== undefined) draftPayload.draft_html_content = data.html_content;
+      if (data.schema_json !== undefined) draftPayload.draft_schema_json = data.schema_json;
+
+      const { data: updated, error } = await db
+        .from('pages')
+        .update(draftPayload)
+        .eq('id', params.id)
+        .select()
+        .single();
+
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+      return NextResponse.json(updated);
+    }
 
     // If html_content is being updated, re-upload to storage
     let storageUrl: string | undefined;
