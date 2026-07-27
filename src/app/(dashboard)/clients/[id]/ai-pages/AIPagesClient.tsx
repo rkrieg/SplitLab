@@ -223,7 +223,7 @@ export default function AIPagesClient({ pages: initialPages, clientId, workspace
                         className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-slate-100 dark:bg-white/5 hover:bg-slate-200 dark:hover:bg-white/10 text-slate-600 dark:text-slate-300 transition-colors"
                       >
                         <Sliders className="w-3 h-3" />
-                        Set Up UTM
+                        UTM personalization
                       </a>
                       {canManage && (
                         <button

@@ -18,6 +18,12 @@ export type StoredFieldSelectors = Record<string, { selector: string; type: 'tex
 interface Field extends FieldMapping {
   _indexPath?: string;    // HTML pages: index path for server-side ID injection
   _generatedId?: string;  // HTML pages: the sl-f-xxx ID already set in live DOM
+  _tagName?: string;      // HTML pages: tag of the picked element — server verifies this before injecting
+  _textSignature?: string; // HTML pages: full trimmed textContent (text fields) or src (image fields) —
+                            // the browser's HTML5 parser and the server's htmlparser2 can structure
+                            // malformed HTML differently, so indexPath alone can resolve to the wrong
+                            // element. The server matches on this content signature first and only
+                            // falls back to indexPath when it isn't unique.
 }
 
 // Internal rule state — extends UTMRule with a stable client-only key and a
@@ -108,9 +114,13 @@ function buildAiPickerScript(activeField: string): string {
       ? '[data-field="' + dataField + '"]'
       : generateSelector(el);
 
+    // Raw textContent keeps every bit of source-HTML indentation/newlines as literal
+    // characters — on pretty-printed/indented HTML that whitespace can eat most of a
+    // 100-char slice before any real visible text is captured. Collapse runs of
+    // whitespace to a single space first so the limit applies to visible text only.
     var preview = isImg
       ? (el.alt || el.src || 'image element')
-      : (el.textContent ? el.textContent.trim().slice(0, 100) : '');
+      : (el.textContent ? el.textContent.replace(/\s+/g, ' ').trim().slice(0, 100) : '');
 
     window.parent.postMessage({
       type: 'sl-element-picked',
@@ -198,9 +208,15 @@ function buildHtmlPickerScript(activeField: string): string {
     // Index path: walk up the DOM tree recording child indices — used by server to locate element in raw HTML
     var indexPath = getIndexPath(el);
 
+    // Raw textContent keeps every bit of source-HTML indentation/newlines as literal
+    // characters — on pretty-printed/indented HTML that whitespace can eat most of a
+    // 100-char slice before any real visible text is captured. Collapse runs of
+    // whitespace to a single space first so the limit applies to visible text only.
+    var fullText = el.textContent ? el.textContent.replace(/\s+/g, ' ').trim() : '';
     var preview = isImg
       ? (el.alt || el.src || 'image element')
-      : (el.textContent ? el.textContent.trim().slice(0, 100) : '');
+      : fullText.slice(0, 100);
+    var srcVal = isImg ? (el.currentSrc || el.src || '') : '';
 
     window.parent.postMessage({
       type: 'sl-element-picked',
@@ -208,8 +224,10 @@ function buildHtmlPickerScript(activeField: string): string {
       selector: '#' + generatedId,
       indexPath: indexPath,
       generatedId: generatedId,
+      tagName: el.tagName,
       preview: preview,
-      src: isImg ? (el.currentSrc || el.src || '') : '',
+      src: srcVal,
+      textSignature: isImg ? srcVal : fullText,
       elementType: isImg ? 'image' : 'text',
     }, '*');
   }
@@ -283,6 +301,8 @@ export default function UTMPickerClient({ clientId, page, initialRules }: Props)
     src?: string; // image elements only — the current src URL, used to seed the fallback rule
     indexPath?: string;
     generatedId?: string;
+    tagName?: string;
+    textSignature?: string;
     // Set when re-picking an already-mapped field — the name card is prefilled with
     // its current label so the user can rename it (or press Enter to keep it).
     existingKey?: string;
@@ -381,16 +401,24 @@ export default function UTMPickerClient({ clientId, page, initialRules }: Props)
         if (!el) continue;
         const val = f.type === 'image' || (el as HTMLElement).tagName === 'IMG'
           ? (el as HTMLImageElement).src
-          : (el.textContent?.trim() ?? '');
+          : (el.textContent?.replace(/\s+/g, ' ').trim() ?? '');
         if (val) currentContent[f.key] = val;
       } catch { /* invalid selector */ }
     }
 
     if (Object.keys(currentContent).length > 0) {
-      setFieldPreviews(prev => ({ ...currentContent, ...prev }));
+      // The Default row is read-only and labeled "auto-detected" — it must always
+      // reflect the live page, never freeze on a stale/previously-corrupted value.
+      // Only safe to let live content win when the iframe is actually showing the
+      // Default state though: if a UTM simulator is active, the DOM currently holds
+      // that OTHER rule's swapped-in text, which must never leak into the fallback.
+      const isDefaultView = utmSimulator === 'default';
+      setFieldPreviews(prev => (isDefaultView ? { ...prev, ...currentContent } : { ...currentContent, ...prev }));
       setRules(prev => prev.map(r =>
         r.is_fallback
-          ? { ...r, overrides_json: { ...currentContent, ...r.overrides_json } }
+          ? { ...r, overrides_json: isDefaultView
+              ? { ...r.overrides_json, ...currentContent }
+              : { ...currentContent, ...r.overrides_json } }
           : r
       ));
     }
@@ -427,20 +455,20 @@ export default function UTMPickerClient({ clientId, page, initialRules }: Props)
   useEffect(() => {
     function handleMessage(e: MessageEvent) {
       if (!e.data || e.data.type !== 'sl-element-picked') return;
-      const { field, selector, preview, src, elementType, indexPath, generatedId } = e.data as {
+      const { field, selector, preview, src, elementType, indexPath, generatedId, tagName, textSignature } = e.data as {
         field: string; selector: string; preview: string; src?: string; elementType: 'text' | 'image';
-        indexPath?: string; generatedId?: string;
+        indexPath?: string; generatedId?: string; tagName?: string; textSignature?: string;
       };
       if (field === '__new__') {
         setGlobalPickMode(false);
-        setPendingPick({ selector, type: elementType, preview, src, indexPath, generatedId });
+        setPendingPick({ selector, type: elementType, preview, src, indexPath, generatedId, tagName, textSignature });
         setPendingLabel('');
         setTimeout(() => pendingLabelRef.current?.focus(), 50);
       } else {
         // Re-pick of an existing field: don't save yet — open the name card
         // prefilled with the current label so the user can also rename it.
         setActivePickKey(null);
-        setPendingPick({ selector, type: elementType, preview, src, indexPath, generatedId, existingKey: field });
+        setPendingPick({ selector, type: elementType, preview, src, indexPath, generatedId, tagName, textSignature, existingKey: field });
         setPendingLabel(fieldsRef.current.find(f => f.key === field)?.label ?? '');
         setTimeout(() => pendingLabelRef.current?.select(), 50);
       }
@@ -461,17 +489,17 @@ export default function UTMPickerClient({ clientId, page, initialRules }: Props)
       const pick = pendingPick;
       const nextFields = fields.map(f =>
         f.key === key
-          ? { ...f, label, selector: pick.selector, type: pick.type, _indexPath: pick.indexPath, _generatedId: pick.generatedId }
+          ? { ...f, label, selector: pick.selector, type: pick.type, _indexPath: pick.indexPath, _generatedId: pick.generatedId, _tagName: pick.tagName, _textSignature: pick.textSignature }
           : f
       );
-      // Seed the fallback (Default) rule with current content — text uses the visible
-      // text, images use the element's src URL.
-      const fallbackVal = pick.type === 'image' ? (pick.src ?? '') : pick.preview;
-      const nextRules = fallbackVal
-        ? rules.map(r =>
-            r.is_fallback ? { ...r, overrides_json: { ...r.overrides_json, [key]: fallbackVal } } : r
-          )
-        : rules;
+      // Deliberately NOT seeding the fallback (Default) rule's overrides_json here.
+      // The swap script applies the active rule's overrides on every render, including
+      // Default's — so auto-seeding it with captured content means "Default" secretly
+      // becomes "re-apply this captured text via JS" instead of "leave the page as-is."
+      // If the capture ever gets corrupted (e.g. a race with an already-running swap
+      // script), that bad text gets baked into every render, forever, even with no UTM
+      // params present. Default should only override content the user explicitly types.
+      const nextRules = rules;
 
       setPendingPick(null);
       setPendingLabel('');
@@ -505,18 +533,14 @@ export default function UTMPickerClient({ clientId, page, initialRules }: Props)
       type: pendingPick.type,
       _indexPath: pendingPick.indexPath,
       _generatedId: pendingPick.generatedId,
+      _tagName: pendingPick.tagName,
+      _textSignature: pendingPick.textSignature,
     };
     const nextFields = [...fields, newField];
 
-    // Seed the fallback (Default) rule with current content — text uses the visible
-    // text, images use the element's src URL.
-    const fallbackVal = pendingPick.type === 'image' ? (pendingPick.src ?? '') : pendingPick.preview;
-    let nextRules = rules;
-    if (fallbackVal) {
-      nextRules = rules.map(r =>
-        r.is_fallback ? { ...r, overrides_json: { ...r.overrides_json, [uniqueKey]: fallbackVal } } : r
-      );
-    }
+    // Deliberately NOT seeding the fallback (Default) rule's overrides_json here — see
+    // the comment on the re-pick branch above for why.
+    const nextRules = rules;
 
     const preview = pendingPick.preview;
 
@@ -579,15 +603,21 @@ export default function UTMPickerClient({ clientId, page, initialRules }: Props)
               injections: fieldsToInject.map(f => ({
                 generatedId: f._generatedId,
                 indexPath: f._indexPath,
+                tagName: f._tagName,
+                textSignature: f._textSignature,
                 fieldKey: f.key,
                 label: f.label,
                 type: f.type,
               })),
             }),
           });
+          // Clear pending injection metadata and force a fresh iframe load regardless
+          // of outcome — on failure the picked indexPath/textSignature are stale by
+          // definition, so silently keeping them would make every re-pick reproduce
+          // the exact same mismatch against the exact same unchanged DOM snapshot.
+          setFields(prev => prev.map(f => ({ ...f, _indexPath: undefined, _generatedId: undefined, _tagName: undefined, _textSignature: undefined })));
+          setPreviewRefresh(n => n + 1);
           if (!res.ok) throw new Error((await res.json()).error ?? 'Failed to inject IDs');
-          // Clear pending injection metadata
-          setFields(prev => prev.map(f => ({ ...f, _indexPath: undefined, _generatedId: undefined })));
         }
       }
 
@@ -986,7 +1016,7 @@ export default function UTMPickerClient({ clientId, page, initialRules }: Props)
               {/* Pick Element button — primary action, shown first */}
               {!pendingPick && (
                 <button
-                  onClick={() => { setGlobalPickMode(m => !m); setActivePickKey(null); }}
+                  onClick={() => { setUtmSimulator('default'); setGlobalPickMode(m => !m); setActivePickKey(null); }}
                   className={cn(
                     'w-full flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-semibold shadow-sm transition-colors',
                     globalPickMode
@@ -1020,7 +1050,7 @@ export default function UTMPickerClient({ clientId, page, initialRules }: Props)
                     </div>
                     <div className="flex items-center gap-1 flex-shrink-0">
                       <button
-                        onClick={() => setActivePickKey(activePickKey === f.key ? null : f.key)}
+                        onClick={() => { setUtmSimulator('default'); setActivePickKey(activePickKey === f.key ? null : f.key); }}
                         disabled={repickingFieldKey === f.key}
                         title={f.selector && savedFieldKeys.has(f.key) ? 'Pick this element again' : undefined}
                         className={cn(
