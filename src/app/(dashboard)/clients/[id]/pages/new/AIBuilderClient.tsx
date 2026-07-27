@@ -45,6 +45,11 @@ interface InitialPage {
   slug: string | null;
   is_published: boolean;
   published_url: string | null;
+  // Only meaningful for test-variant pages — edits accumulate here and never
+  // touch the live columns above until the user replaces or forks (see
+  // "Edit with AI" revision, 2026-07-27).
+  draft_html_content?: string | null;
+  draft_schema_json?: unknown;
 }
 
 interface Props {
@@ -148,6 +153,15 @@ function hasUnfilledPlaceholders(text: string): boolean {
 export default function AIBuilderClient({ workspaceId, clientId, clientName, variantName, initialPage, backPath, canUseAI = true, isTestVariantPage = false }: Props) {
   const router = useRouter();
 
+  // Variant pages ask the preview route for the in-progress draft; every
+  // other page type (and every other caller of /preview, e.g. the UTM
+  // picker) always sees the live HTML.
+  function previewUrl(pid: string) {
+    return isTestVariantPage
+      ? `/api/pages/${pid}/preview?draft=1&t=${Date.now()}`
+      : `/api/pages/${pid}/preview?t=${Date.now()}`;
+  }
+
   if (!canUseAI) {
     return (
       <div className="fixed inset-0 z-20 flex items-center justify-center bg-slate-50 dark:bg-slate-900 transition-[left] duration-200" style={{ left: 'var(--sl-sidebar-w, 15rem)' }}>
@@ -225,6 +239,12 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   const [pendingImageField, setPendingImageField] = useState<string | null>(null);
   const [uploadingImage, setUploadingImage] = useState(false);
 
+  // Variant pages only: true once any edit has landed in draft_* columns —
+  // gates the Save (Replace / Save as New) controls and the confirm modal.
+  const [hasDraft, setHasDraft] = useState(false);
+  const [replaceConfirmOpen, setReplaceConfirmOpen] = useState(false);
+  const [savingVariant, setSavingVariant] = useState<'replace' | 'new' | null>(null);
+
   // Chat image attachments (paste / file-picker / drag-and-drop)
   const [chatImages, setChatImages] = useState<{ file: File; preview: string }[]>([]);
   const chatImageInputRef = useRef<HTMLInputElement>(null);
@@ -260,8 +280,17 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       t => (
         <div className="flex items-start gap-2">
           <span className="text-xs">
-            <strong>Editing this page clears its UTM field mappings and personalization rules.</strong>{' '}
-            After any chat or on-page edit you will need to re-map elements and re-create rules in UTM Personalization.
+            {isTestVariantPage ? (
+              <>
+                <strong>Replacing the live variant clears its UTM field mappings and personalization rules.</strong>{' '}
+                Edits here stay in a draft and don&apos;t affect the live test until you choose to replace it — but once you do, you&apos;ll need to re-map elements and re-create rules in UTM Personalization.
+              </>
+            ) : (
+              <>
+                <strong>Editing this page clears its UTM field mappings and personalization rules.</strong>{' '}
+                After any chat or on-page edit you will need to re-map elements and re-create rules in UTM Personalization.
+              </>
+            )}
           </span>
           <button
             onClick={() => toast.dismiss(t.id)}
@@ -292,8 +321,13 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     // Fresh page (just created from modal) — no HTML yet, stay in prompt phase
     if (!initialPage.html_url) return;
 
-    setSchemaJson(initialPage.schema_json);
-    schemaRef.current = initialPage.schema_json;
+    // Variant pages resume from their draft (if one exists) rather than the
+    // live schema, so the user picks up exactly where they left off.
+    const hasExistingDraft = isTestVariantPage && !!initialPage.draft_html_content;
+    setHasDraft(hasExistingDraft);
+    const initialSchema = hasExistingDraft ? (initialPage.draft_schema_json ?? initialPage.schema_json) : initialPage.schema_json;
+    setSchemaJson(initialSchema);
+    schemaRef.current = initialSchema;
     const history = initialPage.conversation_json ?? [];
     setConversationJson(history);
     setHtmlUrl(initialPage.html_url);
@@ -365,6 +399,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         if (data.html_url) {
           setHtmlUrl(`${data.html_url}?t=${Date.now()}`);
         }
+        if (isTestVariantPage && !data.already) setHasDraft(true);
         toast(
           t => (
             <div className="flex items-start gap-2">
@@ -393,7 +428,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   // Stable iframe src — points to preview route, refreshes when htmlUrl is available/changes
   useEffect(() => {
     if (!pageId || !htmlUrl) return;
-    const src = `/api/pages/${pageId}/preview?t=${Date.now()}`;
+    const src = previewUrl(pageId);
     setIframeSrc(src);
     setIframeLoaded(false);
   }, [pageId, htmlUrl]);
@@ -427,8 +462,13 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         await fetch(`/api/pages/${pageId}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ schema_json: updated, html_content: html }),
+          body: JSON.stringify({
+            schema_json: updated,
+            html_content: html,
+            ...(isTestVariantPage ? { draft: true } : {}),
+          }),
         });
+        if (isTestVariantPage) setHasDraft(true);
         saveTimers.delete(field);
       }, 800));
     }
@@ -876,6 +916,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     }
     if (done.schema_json) { schemaRef.current = done.schema_json; setSchemaJson(done.schema_json); }
     setHtmlUrl(done.html_url + `?t=${Date.now()}`);
+    if (isTestVariantPage) setHasDraft(true);
     if (!silent) {
       addMessage({ role: 'assistant', content: 'Done! The page has been updated.' });
     }
@@ -916,7 +957,46 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     if (!res.ok) { const err = await res.json(); toast.error(err.error || 'Image upload failed'); return; }
     const { html_url } = await res.json();
     setHtmlUrl(html_url + `?t=${Date.now()}`);
+    if (isTestVariantPage) setHasDraft(true);
     addMessage({ role: 'assistant', content: 'Image updated! The preview has been refreshed.' });
+  }
+
+  async function handleReplaceVariant() {
+    if (!pageId) return;
+    setSavingVariant('replace');
+    try {
+      const res = await fetch(`/api/pages/${pageId}/replace-variant`, { method: 'POST' });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.error || 'Failed to replace the variant');
+        return;
+      }
+      setReplaceConfirmOpen(false);
+      toast.success('Live variant updated');
+      router.push(backPath ?? `/clients/${clientId}/ai-pages`);
+      router.refresh();
+    } finally {
+      setSavingVariant(null);
+    }
+  }
+
+  async function handleSaveAsNew() {
+    if (!pageId) return;
+    setSavingVariant('new');
+    try {
+      const res = await fetch(`/api/pages/${pageId}/save-as-new`, { method: 'POST' });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.error || 'Failed to save as a new page');
+        return;
+      }
+      const data = await res.json();
+      toast.success('Saved as a new draft in AI Pages');
+      router.push(`/clients/${clientId}/ai-pages/new?page_id=${data.pageId}`);
+      router.refresh();
+    } finally {
+      setSavingVariant(null);
+    }
   }
 
   async function handlePublish(id?: string) {
@@ -952,6 +1032,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   const [isUnpublishing, setIsUnpublishing] = useState(false);
 
   const [showPageActions, setShowPageActions] = useState(false);
+  const [showSaveMenu, setShowSaveMenu] = useState(false);
 
   async function handleUnpublish() {
     if (!pageId) return;
@@ -1359,7 +1440,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
             <span className="text-sm text-slate-600 dark:text-slate-300 font-medium">{pageName || 'Homepage'}</span>
             {showPreview && (
               <button
-                onClick={() => pageId && setIframeSrc(`/api/pages/${pageId}/preview?t=${Date.now()}`)}
+                onClick={() => pageId && setIframeSrc(previewUrl(pageId))}
                 className="p-1 text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
               >
                 <RefreshCw size={13} />
@@ -1387,16 +1468,48 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
             {isTestVariantPage ? (
               showPreview && (
                 <>
-                  <span className="hidden sm:inline text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">
-                    Changes save live automatically
-                  </span>
+                  {hasDraft && (
+                    <span className="hidden sm:inline text-[11px] text-amber-600 dark:text-amber-400 font-medium">
+                      Unsaved draft — not live yet
+                    </span>
+                  )}
                   <button
                     onClick={() => { router.push(backPath ?? `/clients/${clientId}/ai-pages`); router.refresh(); }}
-                    className="flex items-center gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-full font-medium transition-colors shadow-md shadow-emerald-600/20"
+                    className="flex items-center gap-1.5 text-xs bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600 px-3 py-1.5 rounded-full font-medium transition-colors"
                   >
-                    <Check size={12} />
                     Back to Test
                   </button>
+                  <div className="relative">
+                    <button
+                      onClick={() => setShowSaveMenu(v => !v)}
+                      disabled={!hasDraft || savingVariant !== null}
+                      className="flex items-center gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white px-3 py-1.5 rounded-full font-medium transition-colors shadow-md shadow-emerald-600/20"
+                    >
+                      {savingVariant ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+                      Save
+                    </button>
+                    {showSaveMenu && (
+                      <>
+                        <div className="fixed inset-0 z-10" onClick={() => setShowSaveMenu(false)} />
+                        <div className="absolute right-0 top-full mt-1 z-20 w-56 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-lg py-1 overflow-hidden">
+                          <button
+                            onClick={() => { setShowSaveMenu(false); setReplaceConfirmOpen(true); }}
+                            className="w-full flex flex-col items-start gap-0.5 px-3 py-2 text-left hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+                          >
+                            <span className="text-xs font-medium text-slate-700 dark:text-slate-200">Replace Current Variant</span>
+                            <span className="text-[11px] text-slate-400 dark:text-slate-500">Overwrite what this test is serving live</span>
+                          </button>
+                          <button
+                            onClick={() => { setShowSaveMenu(false); handleSaveAsNew(); }}
+                            className="w-full flex flex-col items-start gap-0.5 px-3 py-2 text-left hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+                          >
+                            <span className="text-xs font-medium text-slate-700 dark:text-slate-200">Save as New</span>
+                            <span className="text-[11px] text-slate-400 dark:text-slate-500">Fork into a new page in AI Pages — live variant untouched</span>
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
                 </>
               )
             ) : (
@@ -1573,6 +1686,32 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                 className="btn-primary text-sm rounded-xl"
               >
                 Continue
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {replaceConfirmOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => !savingVariant && setReplaceConfirmOpen(false)}>
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl p-6 w-full max-w-sm mx-4 shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="mb-3">
+              <h3 className="text-slate-900 dark:text-slate-100 font-semibold text-base">Replace the live variant?</h3>
+            </div>
+            <p className="text-sm text-slate-500 dark:text-slate-400 mb-5">
+              This overwrites the HTML this test is currently serving to visitors with your draft. UTM field mappings and personalization rules for this page will be cleared.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setReplaceConfirmOpen(false)} disabled={!!savingVariant} className="btn-secondary text-sm rounded-xl">
+                No, keep as draft
+              </button>
+              <button
+                onClick={handleReplaceVariant}
+                disabled={!!savingVariant}
+                className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white text-sm px-4 py-2 rounded-xl font-medium transition-colors"
+              >
+                {savingVariant === 'replace' && <Loader2 size={13} className="animate-spin" />}
+                Yes, replace it
               </button>
             </div>
           </div>
