@@ -498,15 +498,19 @@ export async function POST(
         if (!targetSections) {
           sendSSE(controller, { type: 'status', message: 'Locating section...' });
           const routing = await tryHaikuRouting(prompt, schema, slSections, hasUserImages);
-          if (
-            routing &&
+          const routingQualifies = !!routing &&
             routing.confidence === 'high' &&
             routing.type === 'patch' &&
             routing.target_sections.length >= 1 &&
             routing.target_sections.length <= 3 &&
-            routing.target_sections.every((n) => slSections.some((s) => s.name === n))
-          ) {
-            targetSections = routing.target_sections;
+            routing.target_sections.every((n) => slSections.some((s) => s.name === n));
+          if (routingQualifies) {
+            targetSections = (routing as { target_sections: string[] }).target_sections;
+          } else {
+            console.log('[pages/follow-up] routing did not qualify for scoped patch, falling back to full-page path', {
+              routing,
+              knownSectionNames: slSections.map((s) => s.name),
+            });
           }
         }
 
