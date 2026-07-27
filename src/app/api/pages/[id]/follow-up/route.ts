@@ -3,7 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { jsonrepair } from 'jsonrepair';
-import { askAIStream, isRateLimited, generatePageImages, AIResponseTruncatedError, type AIContent, type AIContentBlock } from '@/lib/ai-client';
+import { askAI, askAIStream, isRateLimited, generatePageImages, AIResponseTruncatedError, type AIContent, type AIContentBlock } from '@/lib/ai-client';
 import { uploadHtml, downloadHtmlByPath, fileNameFromUrl } from '@/lib/storage';
 import { resolveWorkspaceRole, resolveOwnerPlan } from '@/lib/workspace-auth';
 import { PLAN_LIMITS } from '@/lib/plans';
@@ -176,6 +176,176 @@ function applyPatch(
   return html;
 }
 
+// ── Scoped-patch input reduction (see docs/follow-up-input-scoping.md) ──────
+//
+// For the common case — a small localized edit targeting 1-3 sections — the
+// old single Pass 1 call sent the ENTIRE page HTML + schema to Sonnet just to
+// figure out which section(s) to touch, then generate the fix. That full-page
+// payload (uncached, changes every message) is the dominant cost of the old
+// ~58-60s latency. The three helpers below let us identify the target
+// section(s) cheaply (free text-match, or a tiny/fast Haiku routing call)
+// BEFORE paying for a full-page Sonnet call, so Sonnet only ever sees the
+// section(s) actually being edited.
+//
+// Competitor-URL prompts always bypass this entirely (see caller) — a URL
+// means full-page rebuild, never a scoped patch.
+
+interface SlSection {
+  name: string;
+  html: string; // inner content only, SL markers stripped
+  text: string; // stripped-tag text + any image srcs in this section, for matching/routing
+}
+
+function extractSlSections(html: string): SlSection[] {
+  const sections: SlSection[] = [];
+  const re = /<!-- SL:([a-zA-Z0-9_-]+) -->([\s\S]*?)<!-- \/SL:\1 -->/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html))) {
+    const name = m[1];
+    const inner = m[2];
+    const strippedText = inner.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    const imgSrcs = Array.from(inner.matchAll(/<img\b[^>]*\bsrc\s*=\s*["']([^"']+)["']/gi)).map((mm) => mm[1]);
+    const text = imgSrcs.length > 0 ? `${strippedText} [images: ${imgSrcs.join(', ')}]` : strippedText;
+    sections.push({ name, html: inner, text });
+  }
+  return sections;
+}
+
+// Pass 0 — free, no AI call. If the instruction quotes actual page copy
+// verbatim (8+ chars, single- or double-quoted) and that quote appears in
+// exactly one section's text, we know the target section with certainty —
+// skip the Haiku routing call entirely.
+function extractQuotedPhrases(prompt: string): string[] {
+  const phrases: string[] = [];
+  const re = /["']([^"']{8,})["']/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(prompt))) phrases.push(m[1].replace(/\s+/g, ' ').trim());
+  return phrases;
+}
+
+function tryDirectQuoteMatch(prompt: string, sections: SlSection[]): string | null {
+  const phrases = extractQuotedPhrases(prompt).filter(Boolean);
+  if (phrases.length === 0) return null;
+  const matchedNames = new Set<string>();
+  for (const phrase of phrases) {
+    for (const section of sections) {
+      if (section.text.includes(phrase)) matchedNames.add(section.name);
+    }
+  }
+  return matchedNames.size === 1 ? Array.from(matchedNames)[0] : null;
+}
+
+const ROUTING_SYSTEM_PROMPT = `You are a routing classifier for a landing-page AI edit assistant. Given a list of the page's sections (name + a short text/image preview of each) and an edit instruction, decide which section(s) the instruction targets and how big the change is.
+
+Return JSON only. No markdown fences, no explanation.
+{"type":"patch"|"style"|"structural","target_sections":["section-name", ...],"confidence":"high"|"low"}
+
+Rules:
+- "patch": the instruction clearly targets 1-3 specific existing sections you can identify from the previews below (a heading, button, image, paragraph, one section's design/spacing/color).
+- "style": the instruction touches 4+ sections, or a global CSS/font/color variable change (route this to the "head" section), or you cannot map it to specific sections from the previews given (e.g. "make the whole page feel more premium").
+- "structural": the instruction adds, removes, or reorders whole sections, or asks for a brand-new image/logo to be generated.
+- Set confidence "low" whenever you are not reasonably sure which section(s) are meant — including ambiguous image references ("use this image" when multiple sections have images) or vague whole-page requests. When confidence is "low" it is fine to still fill in your best guess for type/target_sections — the caller ignores them and falls back to full-page handling.
+- Only ever use section names EXACTLY as given in the list — never invent one.`;
+
+async function tryHaikuRouting(
+  prompt: string,
+  schema: unknown,
+  sections: SlSection[],
+  hasUserImages: boolean,
+): Promise<{ type: string; target_sections: string[]; confidence: string } | null> {
+  try {
+    const sectionList = sections.map((s) => `- ${s.name}: "${s.text.slice(0, 150)}"`).join('\n');
+    const text = await askAI({
+      system: ROUTING_SYSTEM_PROMPT,
+      messages: [
+        {
+          role: 'user',
+          content:
+            `Schema:\n${JSON.stringify(schema)}\n\nSections:\n${sectionList}\n\nInstruction: ${prompt}` +
+            (hasUserImages ? '\n\n(User has attached image(s) along with this instruction.)' : ''),
+        },
+      ],
+      maxTokens: 300,
+      model: 'claude-haiku-4-5-20251001',
+    });
+    let raw = text.trim();
+    if (raw.startsWith('```')) raw = raw.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed.type !== 'string' || !Array.isArray(parsed.target_sections) || typeof parsed.confidence !== 'string') {
+      return null;
+    }
+    return parsed;
+  } catch (err) {
+    console.error('[pages/follow-up] routing pass failed, falling back to full-page path', err);
+    return null;
+  }
+}
+
+const SCOPED_PATCH_SYSTEM_PROMPT = `You are editing ONE section of an existing landing page. You are given only that section's HTML (not the full page) and the schema slice for it. Make the requested change to this section only.
+
+Return JSON only. No markdown fences, no explanation.
+{"html":"...complete updated section HTML..."}
+
+Rules:
+- Return the COMPLETE updated section HTML — do NOT include the <!-- SL:name --> markers themselves, they are added back by the caller.
+- Make the MINIMUM edit required. Do not restructure, reorganize, or rebuild the section beyond what the instruction asks.
+- Keep every existing data-field attribute intact unless the instruction specifically targets that field's content.
+- Before adding a scoped inline style override: if the existing rule for that property uses !important anywhere (including inside @media blocks), your override must also use !important on that property, or the change will silently not apply.
+- Never select or modify any element carrying a data-field attribute with decorative JS — that content must always stay visible/clickable.
+- Never add an external <script src> to a third-party domain.
+- If any copy in your output contains a double-quote character, escape it as \\" — invalid JSON breaks the parser.
+- Your response must begin with { and end with }.`;
+
+async function runScopedPatch(
+  sectionHtml: string,
+  schemaSlice: unknown,
+  prompt: string,
+  imageUrls: string[] | undefined,
+): Promise<string | null> {
+  try {
+    const userContent: AIContent = [
+      ...(imageUrls ?? []).map((url): AIContentBlock => ({ type: 'image', url })),
+      {
+        type: 'text' as const,
+        text: `Schema slice for this section:\n${JSON.stringify(schemaSlice)}\n\nCurrent section HTML:\n${sectionHtml}\n\nInstruction: ${prompt}`,
+      },
+    ];
+    const text = await askAI({
+      system: SCOPED_PATCH_SYSTEM_PROMPT,
+      messages: [{ role: 'user', content: userContent }],
+      maxTokens: 4000,
+    });
+    let raw = text.trim();
+    if (raw.startsWith('```')) raw = raw.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
+    let parsed: { html?: string };
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      parsed = JSON.parse(jsonrepair(raw));
+    }
+    if (!parsed.html || typeof parsed.html !== 'string') return null;
+    return parsed.html;
+  } catch (err) {
+    console.error('[pages/follow-up] scoped patch generation failed, falling back to full-page path', err);
+    return null;
+  }
+}
+
+// Crude but effective corruption guard: the model swapping in a whole document,
+// an empty fragment, or a completely different element type is caught here
+// before the section is spliced back into the live page.
+function outerTag(html: string): string | null {
+  const m = /^\s*<([a-zA-Z][a-zA-Z0-9]*)/.exec(html);
+  return m ? m[1].toLowerCase() : null;
+}
+
+function sanityCheckScopedSection(original: string, updated: string): boolean {
+  if (!updated.trim()) return false;
+  const origTag = outerTag(original);
+  const newTag = outerTag(updated);
+  return !!origTag && origTag === newTag;
+}
+
 function countImagePrompts(node: unknown): number {
   if (!node || typeof node !== 'object') return 0;
   if (Array.isArray(node)) {
@@ -269,6 +439,12 @@ export async function POST(
   const mentionedUrls = extractUrls(prompt);
   const hasUserImages = Array.isArray(image_urls) && image_urls.length > 0;
 
+  // Scoped-patch candidates — cheap, synchronous, no AI call. A competitor
+  // URL always means full-page rebuild (see follow-up-input-scoping.md), so
+  // scoping is never attempted when one is mentioned.
+  const slSections = mentionedUrls.length === 0 ? extractSlSections(html) : [];
+  const quoteMatchSection = mentionedUrls.length === 0 ? tryDirectQuoteMatch(prompt, slSections) : null;
+
   // ── Open SSE stream — no NextResponse.json after this point ───────────────
 
   const { stream, controller } = createSSEStream();
@@ -276,8 +452,62 @@ export async function POST(
 
   void (async () => {
     try {
-      // Competitor scrape
+      let finalHtml = '';
+      let finalSchemaJson: unknown | undefined;
+      let scopedApplied = false;
       let competitorContext: Awaited<ReturnType<typeof scrapeCompetitorUrl>> | null = null;
+      // Mirrors parsed.type from the full-page path — scoped patches are
+      // always a 'patch' by construction, so this is set once up front and
+      // only overwritten inside the fallback branch below.
+      let resultType: 'structural' | 'style' | 'patch' = 'patch';
+
+      // ── Scoped-patch attempt (input-side token reduction) ─────────────────
+      // Only attempted when there's no competitor URL (slSections/quoteMatchSection
+      // are pre-empted to [] / null above when one is mentioned) and the page
+      // actually has SL section markers to scope to. See
+      // docs/follow-up-input-scoping.md for the full design + guardrails.
+      if (slSections.length > 0) {
+        let targetSections: string[] | null = quoteMatchSection ? [quoteMatchSection] : null;
+
+        if (!targetSections) {
+          sendSSE(controller, { type: 'status', message: 'Locating section...' });
+          const routing = await tryHaikuRouting(prompt, schema, slSections, hasUserImages);
+          if (
+            routing &&
+            routing.confidence === 'high' &&
+            routing.type === 'patch' &&
+            routing.target_sections.length >= 1 &&
+            routing.target_sections.length <= 3 &&
+            routing.target_sections.every((n) => slSections.some((s) => s.name === n))
+          ) {
+            targetSections = routing.target_sections;
+          }
+        }
+
+        if (targetSections && targetSections.length > 0) {
+          if (request.signal.aborted) { closeSSE(controller); return; }
+          sendSSE(controller, { type: 'status', message: 'Applying patch...' });
+
+          const patchedSections: Array<{ name: string; html: string }> = [];
+          let allOk = true;
+          for (const name of targetSections) {
+            const section = slSections.find((s) => s.name === name);
+            if (!section) { allOk = false; break; }
+            const schemaSlice = { [name]: (schema as Record<string, unknown> | null | undefined)?.[name] };
+            const updated = await runScopedPatch(section.html, schemaSlice, prompt, image_urls);
+            if (!updated || !sanityCheckScopedSection(section.html, updated)) { allOk = false; break; }
+            patchedSections.push({ name, html: updated });
+          }
+
+          if (allOk && patchedSections.length === targetSections.length) {
+            finalHtml = applyPatch(html, patchedSections);
+            scopedApplied = true;
+          }
+        }
+      }
+
+      // ── Fallback: today's full-page single-call path, unchanged ──────────
+      if (!scopedApplied) {
       if (mentionedUrls.length > 0) {
         let hostname = mentionedUrls[0];
         try { hostname = new URL(mentionedUrls[0]).hostname; } catch { /* keep raw */ }
@@ -390,8 +620,7 @@ export async function POST(
         return;
       }
 
-      let finalHtml: string;
-      let finalSchemaJson: unknown | undefined;
+      resultType = parsed.type;
 
       if (parsed.type === 'structural') {
         if (!parsed.schema_json || typeof parsed.schema_json !== 'object') {
@@ -471,6 +700,7 @@ export async function POST(
         }
         finalHtml = parsed.html;
       }
+      } // end fallback full-page path (!scopedApplied)
 
       // Strip STATUS comments before upload
       finalHtml = finalHtml.replace(/<!--\s*STATUS:[^>]*-->/g, '');
@@ -495,7 +725,7 @@ export async function POST(
       const updatedConversation = [
         ...history,
         userEntry,
-        { role: 'assistant', content: JSON.stringify({ type: parsed.type, schema_json: finalSchemaJson ?? schema }) },
+        { role: 'assistant', content: JSON.stringify({ type: resultType, schema_json: finalSchemaJson ?? schema }) },
       ];
 
       const updatePayload: Record<string, unknown> = {
@@ -513,7 +743,7 @@ export async function POST(
           updatePayload.field_selectors_json = null;
         }
       }
-      if (parsed.type === 'structural' && finalSchemaJson) {
+      if (resultType === 'structural' && finalSchemaJson) {
         if (isVariant) {
           updatePayload.draft_schema_json = finalSchemaJson;
         } else {
