@@ -10,6 +10,7 @@ import { PLAN_LIMITS } from '@/lib/plans';
 import { extractUrls, scrapeCompetitorUrl } from '@/lib/ai-competitor-scrape';
 import { buildHtmlFromSchema } from '@/lib/ai-page-builder';
 import { createSSEStream, sendSSE, closeSSE, SSE_HEADERS, type SSEEvent } from '@/lib/sse';
+import { isTestVariantPage } from '@/lib/page-drafts';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -198,11 +199,16 @@ export async function POST(
 
   const { data: page } = await db
     .from('pages')
-    .select('workspace_id, html_url, html_content, schema_json, conversation_json, slug')
+    .select('workspace_id, html_url, html_content, schema_json, conversation_json, slug, draft_html_content, draft_schema_json')
     .eq('id', params.id)
     .single();
 
   if (!page) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+
+  // Variant pages are drafted: edits accumulate in draft_* columns and never
+  // touch the live HTML a test is actually serving until the user explicitly
+  // replaces it or forks a copy (see "Edit with AI" revision, 2026-07-27).
+  const isVariant = await isTestVariantPage(params.id);
 
   const wsRole = await resolveWorkspaceRole(page.workspace_id, session.user.id, session.user.role);
   if (!wsRole || wsRole === 'viewer') return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
@@ -244,9 +250,14 @@ export async function POST(
     return NextResponse.json({ error: 'image_urls must be an array of at most 3 URLs' }, { status: 400 });
   }
 
-  // Load current HTML before opening the stream so failures are clean 4xx responses
-  const schema = current_schema ?? page.schema_json;
-  const html = current_html ?? page.html_content ?? (page.html_url ? await downloadHtmlByPath(fileNameFromUrl(page.html_url)) : null);
+  // Load current HTML before opening the stream so failures are clean 4xx responses.
+  // Variant pages resume from their draft (if one exists) rather than the live
+  // HTML, so consecutive follow-up edits build on prior draft edits instead of
+  // reverting to what's actually live on the test.
+  const baseSchema = isVariant ? (page.draft_schema_json ?? page.schema_json) : page.schema_json;
+  const baseHtml = isVariant ? (page.draft_html_content ?? page.html_content) : page.html_content;
+  const schema = current_schema ?? baseSchema;
+  const html = current_html ?? baseHtml ?? (page.html_url ? await downloadHtmlByPath(fileNameFromUrl(page.html_url)) : null);
   if (!html) return NextResponse.json({ error: 'Could not load current HTML' }, { status: 400 });
 
   // Prepare synchronous data
@@ -469,11 +480,14 @@ export async function POST(
       // personalization work for an edit that had no effect
       const htmlUnchanged = finalHtml === html;
 
-      // Upload
-      const storagePath = fileNameFromUrl(page.html_url);
-      const htmlUrl = htmlUnchanged && page.html_url
-        ? page.html_url
-        : await uploadHtml(storagePath, finalHtml);
+      // Variant pages write to draft_* columns and never touch the live storage
+      // file a test is actually serving — only "Replace Current Variant" uploads
+      // to the live path. Non-variant pages behave exactly as before.
+      let htmlUrl: string = page.html_url ?? '';
+      if (!htmlUnchanged && !isVariant) {
+        const storagePath = fileNameFromUrl(page.html_url);
+        htmlUrl = await uploadHtml(storagePath, finalHtml);
+      }
 
       // Save conversation
       const userEntry: Record<string, unknown> = { role: 'user', content: prompt };
@@ -489,23 +503,37 @@ export async function POST(
         updated_at: new Date().toISOString(),
       };
       if (!htmlUnchanged) {
-        updatePayload.html_url = htmlUrl;
-        updatePayload.html_content = finalHtml.length < 500_000 ? finalHtml : null;
-        // HTML was rewritten by the AI — old UTM selectors can't be trusted, so
-        // clear mappings (and rules below), same as manual HTML edits do
-        updatePayload.field_selectors_json = null;
+        if (isVariant) {
+          updatePayload.draft_html_content = finalHtml;
+        } else {
+          updatePayload.html_url = htmlUrl;
+          updatePayload.html_content = finalHtml.length < 500_000 ? finalHtml : null;
+          // HTML was rewritten by the AI — old UTM selectors can't be trusted, so
+          // clear mappings (and rules below), same as manual HTML edits do
+          updatePayload.field_selectors_json = null;
+        }
       }
       if (parsed.type === 'structural' && finalSchemaJson) {
-        updatePayload.schema_json = finalSchemaJson;
+        if (isVariant) {
+          updatePayload.draft_schema_json = finalSchemaJson;
+        } else {
+          updatePayload.schema_json = finalSchemaJson;
+        }
       }
 
-      if (!htmlUnchanged) {
+      // Live selector/personalization invalidation only applies when live HTML
+      // actually changed — variant drafts don't touch live HTML, so nothing to wipe
+      // here; that happens instead when the draft is promoted via Replace.
+      if (!htmlUnchanged && !isVariant) {
         await db.from('personalization_rules').delete().eq('page_id', params.id);
       }
       await db.from('pages').update(updatePayload).eq('id', params.id);
 
       const doneEvent: SSEEvent = {
         type: 'done',
+        // For variant drafts this is the unchanged live URL — the client only
+        // uses it as a cache-busting trigger to refetch /preview, which serves
+        // the draft content directly.
         html_url: htmlUrl,
         ...(finalSchemaJson ? { schema_json: finalSchemaJson } : {}),
         ...(mentionedUrls.length > 0 && !competitorContext ? { competitor_fetch_failed: true } : {}),

@@ -5,6 +5,7 @@ import { db } from '@/lib/supabase-server';
 import { uploadHtml, uploadImage, downloadHtmlByPath, fileNameFromUrl } from '@/lib/storage';
 import { resolveWorkspaceRole, resolveOwnerPlan } from '@/lib/workspace-auth';
 import { PLAN_LIMITS } from '@/lib/plans';
+import { isTestVariantPage } from '@/lib/page-drafts';
 
 function setNestedValue(obj: Record<string, unknown>, path: string, value: unknown): Record<string, unknown> {
   const keys = path.split('.');
@@ -35,7 +36,7 @@ export async function POST(
 
   const { data: page } = await db
     .from('pages')
-    .select('workspace_id, html_url, html_content, schema_json, slug')
+    .select('workspace_id, html_url, html_content, schema_json, slug, draft_html_content, draft_schema_json')
     .eq('id', params.id)
     .single();
 
@@ -78,15 +79,22 @@ export async function POST(
     // Upload image to public ai-pages-images bucket
     const imageUrl = await uploadImage(params.id, arrayBuffer, file.type, ext);
 
+    const isVariant = await isTestVariantPage(params.id);
+
+    // Variant pages: resume from the draft, and write the result back to the
+    // draft — never touch the live HTML a test is actually serving.
+    const baseSchema = isVariant ? (page.draft_schema_json ?? page.schema_json) : page.schema_json;
+    const baseHtmlContent = isVariant ? (page.draft_html_content ?? page.html_content) : page.html_content;
+
     // Update schema_json with the new image URL at field_path
     const updatedSchema = setNestedValue(
-      (page.schema_json as Record<string, unknown>) ?? {},
+      (baseSchema as Record<string, unknown>) ?? {},
       fieldPath,
       imageUrl
     );
 
     // Load current HTML via service role (private bucket)
-    let html: string | null = page.html_content;
+    let html: string | null = baseHtmlContent;
     if (!html && page.html_url) {
       html = await downloadHtmlByPath(fileNameFromUrl(page.html_url));
     }
@@ -103,19 +111,30 @@ export async function POST(
       );
     }
 
-    const storagePath = page.html_url ? fileNameFromUrl(page.html_url) : '';
     let htmlUrl = page.html_url;
-    if (html && storagePath) {
-      htmlUrl = await uploadHtml(storagePath, html);
+
+    if (isVariant) {
+      await db.from('pages').update({
+        draft_schema_json: updatedSchema,
+        draft_html_content: html,
+        updated_at: new Date().toISOString(),
+      }).eq('id', params.id);
+    } else {
+      const storagePath = page.html_url ? fileNameFromUrl(page.html_url) : '';
+      if (html && storagePath) {
+        htmlUrl = await uploadHtml(storagePath, html);
+      }
+      await db.from('pages').update({
+        schema_json: updatedSchema,
+        html_url: htmlUrl,
+        html_content: html && html.length < 500_000 ? html : null,
+        updated_at: new Date().toISOString(),
+      }).eq('id', params.id);
     }
 
-    await db.from('pages').update({
-      schema_json: updatedSchema,
-      html_url: htmlUrl,
-      html_content: html && html.length < 500_000 ? html : null,
-      updated_at: new Date().toISOString(),
-    }).eq('id', params.id);
-
+    // For variant drafts, html_url is the unchanged live URL — the client
+    // only uses it as a cache-busting trigger to refetch /preview, which
+    // serves the draft content directly.
     return NextResponse.json({ image_url: imageUrl, html_url: htmlUrl });
   } catch (err) {
     console.error('[pages/upload-image]', err);

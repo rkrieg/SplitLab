@@ -1,0 +1,2 @@
+ALTER TABLE pages ADD COLUMN IF NOT EXISTS draft_html_content TEXT;
+ALTER TABLE pages ADD COLUMN IF NOT EXISTS draft_schema_json  JSONB;
