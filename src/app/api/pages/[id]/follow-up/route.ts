@@ -495,7 +495,20 @@ export async function POST(
             if (!section) { allOk = false; break; }
             const schemaSlice = { [name]: (schema as Record<string, unknown> | null | undefined)?.[name] };
             const updated = await runScopedPatch(section.html, schemaSlice, prompt, image_urls);
-            if (!updated || !sanityCheckScopedSection(section.html, updated)) { allOk = false; break; }
+            if (!updated) {
+              console.error(`[pages/follow-up] scoped patch returned no html for section "${name}" — falling back to full-page path`);
+              allOk = false;
+              break;
+            }
+            if (!sanityCheckScopedSection(section.html, updated)) {
+              console.error(`[pages/follow-up] scoped patch failed sanity check for section "${name}" — falling back to full-page path`, {
+                originalOuterTag: outerTag(section.html),
+                updatedOuterTag: outerTag(updated),
+                updatedPreview: updated.slice(0, 300),
+              });
+              allOk = false;
+              break;
+            }
             patchedSections.push({ name, html: updated });
           }
 
