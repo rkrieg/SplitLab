@@ -5,6 +5,7 @@ import { db } from '@/lib/supabase-server';
 import { resolveWorkspaceRole } from '@/lib/workspace-auth';
 import { downloadHtmlByPath, fileNameFromUrl } from '@/lib/storage';
 import { buildUtmSwapScript } from '@/lib/utm-swap-script';
+import { isTestVariantPage } from '@/lib/page-drafts';
 
 export async function GET(
   req: NextRequest,
@@ -15,7 +16,7 @@ export async function GET(
 
   const { data: page } = await db
     .from('pages')
-    .select('workspace_id, html_url, html_content, field_selectors_json')
+    .select('workspace_id, html_url, html_content, field_selectors_json, draft_html_content')
     .eq('id', params.id)
     .single();
 
@@ -24,8 +25,19 @@ export async function GET(
   const wsRole = await resolveWorkspaceRole(page.workspace_id, session.user.id, session.user.role);
   if (!wsRole) return new NextResponse(errorHtml('403', 'Access Denied', "You don't have permission to view this page."), { status: 403, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
 
+  // The AI Builder editor iframe explicitly asks for the in-progress draft
+  // (?draft=1) so a variant page under edit shows what's being worked on,
+  // not what's actually live. Every other caller (UTM field-mapping picker,
+  // "Preview URL" link, etc.) omits this and always sees the live page —
+  // selectors/rules are matched against live HTML, not an unsaved draft.
+  const wantsDraft = req.nextUrl.searchParams.get('draft') === '1';
+
   try {
-    let html = page.html_content as string | null;
+    let html: string | null = null;
+    if (wantsDraft && page.draft_html_content) {
+      html = page.draft_html_content as string;
+    }
+    if (!html) html = page.html_content as string | null;
 
     if (!html) {
       const filePath = fileNameFromUrl(page.html_url);

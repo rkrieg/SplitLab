@@ -6,6 +6,7 @@ import { askAIStream, isRateLimited, AIResponseTruncatedError } from '@/lib/ai-c
 import { uploadHtml, downloadHtmlByPath, fileNameFromUrl } from '@/lib/storage';
 import { resolveWorkspaceRole, resolveOwnerPlan } from '@/lib/workspace-auth';
 import { PLAN_LIMITS } from '@/lib/plans';
+import { isTestVariantPage } from '@/lib/page-drafts';
 
 export const dynamic = 'force-dynamic';
 // The AI call now returns a compact field/section list (not the full page),
@@ -359,7 +360,7 @@ export async function POST(
 
   const { data: page } = await db
     .from('pages')
-    .select('workspace_id, html_url, html_content, schema_json, slug')
+    .select('workspace_id, html_url, html_content, schema_json, slug, draft_html_content, draft_schema_json')
     .eq('id', params.id)
     .single();
 
@@ -378,8 +379,22 @@ export async function POST(
     }
   }
 
-  // Idempotency guard #1 — already has a schema, nothing to do.
-  if (page.schema_json) {
+  // Variant pages annotate straight into the draft — this is the first "edit"
+  // that seeds it, since inserting data-field/SL markers changes the actual
+  // markup (invisibly) even though nothing about the render changes.
+  const isVariant = await isTestVariantPage(params.id);
+
+  // Idempotency guard #1 — already has a schema (draft schema for variant
+  // pages, live schema otherwise), nothing to do.
+  if (isVariant ? page.draft_schema_json : page.schema_json) {
+    return NextResponse.json(
+      isVariant
+        ? { already: true, schema_json: page.draft_schema_json, html_url: page.html_url }
+        : { already: true, schema_json: page.schema_json, html_url: page.html_url }
+    );
+  }
+  if (isVariant && page.schema_json) {
+    // Already annotated before drafts existed — nothing to prepare.
     return NextResponse.json({ already: true, schema_json: page.schema_json, html_url: page.html_url });
   }
 
@@ -455,34 +470,58 @@ export async function POST(
     return NextResponse.json({ error: 'Could not prepare this page for AI editing' }, { status: 500 });
   }
 
-  const storagePath = page.html_url ? fileNameFromUrl(page.html_url) : `pages/${page.workspace_id}/${params.id}.html`;
-  const htmlUrl = await uploadHtml(storagePath, annotatedHtml);
+  let updatePayload: Record<string, unknown>;
+  let idempotencyColumn: 'schema_json' | 'draft_schema_json';
 
-  const updatePayload = {
-    schema_json: schemaJson,
-    html_url: htmlUrl,
-    html_content: annotatedHtml.length < 500_000 ? annotatedHtml : null,
-    field_selectors_json: null,
-    updated_at: new Date().toISOString(),
-  };
+  if (isVariant) {
+    // Annotated markup goes into the draft only — the live storage file and
+    // live columns a test is actually serving stay untouched, same as any
+    // other draft edit.
+    updatePayload = {
+      draft_schema_json: schemaJson,
+      draft_html_content: annotatedHtml,
+      updated_at: new Date().toISOString(),
+    };
+    idempotencyColumn = 'draft_schema_json';
+  } else {
+    const storagePath = page.html_url ? fileNameFromUrl(page.html_url) : `pages/${page.workspace_id}/${params.id}.html`;
+    const htmlUrl = await uploadHtml(storagePath, annotatedHtml);
+    updatePayload = {
+      schema_json: schemaJson,
+      html_url: htmlUrl,
+      html_content: annotatedHtml.length < 500_000 ? annotatedHtml : null,
+      field_selectors_json: null,
+      updated_at: new Date().toISOString(),
+    };
+    idempotencyColumn = 'schema_json';
+  }
 
   // Idempotency guard #2 — atomic write, only applies if still schema-less.
-  // If a concurrent call already set schema_json, this update matches zero
-  // rows and we fall back to returning the row's current state.
+  // If a concurrent call already set schema_json/draft_schema_json, this
+  // update matches zero rows and we fall back to returning the row's current state.
   const { data: updated } = await db
     .from('pages')
     .update(updatePayload)
     .eq('id', params.id)
-    .is('schema_json', null)
-    .select('schema_json, html_url')
+    .is(idempotencyColumn, null)
+    .select('schema_json, html_url, draft_schema_json')
     .single();
 
   if (!updated) {
-    const { data: current } = await db.from('pages').select('schema_json, html_url').eq('id', params.id).single();
-    return NextResponse.json({ already: true, schema_json: current?.schema_json, html_url: current?.html_url });
+    const { data: current } = await db.from('pages').select('schema_json, html_url, draft_schema_json').eq('id', params.id).single();
+    return NextResponse.json({
+      already: true,
+      schema_json: isVariant ? current?.draft_schema_json : current?.schema_json,
+      html_url: current?.html_url,
+    });
   }
 
-  await db.from('personalization_rules').delete().eq('page_id', params.id);
+  if (!isVariant) {
+    await db.from('personalization_rules').delete().eq('page_id', params.id);
+  }
 
-  return NextResponse.json({ schema_json: updated.schema_json, html_url: updated.html_url });
+  return NextResponse.json({
+    schema_json: isVariant ? updated.draft_schema_json : updated.schema_json,
+    html_url: updated.html_url,
+  });
 }

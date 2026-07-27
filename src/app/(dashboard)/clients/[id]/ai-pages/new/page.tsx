@@ -43,7 +43,7 @@ export default async function AIBuilderPage({ params, searchParams }: PageProps)
 
   const { data: initialPage } = await db
     .from('pages')
-    .select('id, name, vertical, schema_json, conversation_json, html_url, html_content, slug, is_published, published_url')
+    .select('id, name, vertical, schema_json, conversation_json, html_url, html_content, slug, is_published, published_url, draft_html_content, draft_schema_json')
     .eq('id', searchParams.page_id)
     .eq('workspace_id', workspace.id)
     .single();
@@ -78,6 +78,11 @@ export default async function AIBuilderPage({ params, searchParams }: PageProps)
 
   return (
     <AIBuilderClient
+      // Force a full remount when navigating between page_ids on this same
+      // route (e.g. redirecting into a page freshly forked via "Save as
+      // New") — the component's hydration effect only runs once on mount,
+      // so without this, stale state from the previous page would leak in.
+      key={initialPage.id}
       workspaceId={workspace.id}
       clientId={params.id}
       clientName={isTestVariantPage && testName ? testName : (client?.name ?? 'Client')}
