@@ -492,17 +492,14 @@ export default function UTMPickerClient({ clientId, page, initialRules }: Props)
           ? { ...f, label, selector: pick.selector, type: pick.type, _indexPath: pick.indexPath, _generatedId: pick.generatedId, _tagName: pick.tagName, _textSignature: pick.textSignature }
           : f
       );
-      // Seed the fallback (Default) rule with current content — text uses the full,
-      // untruncated element text (falls back to the 100-char preview only when a full
-      // signature isn't available, e.g. AI pages), images use the element's src URL.
-      // `preview` is capped for the small UI label only — it must never be used as
-      // the actual swapped-in content, or long headlines get cut off mid-sentence.
-      const fallbackVal = pick.type === 'image' ? (pick.src ?? '') : (pick.textSignature || pick.preview);
-      const nextRules = fallbackVal
-        ? rules.map(r =>
-            r.is_fallback ? { ...r, overrides_json: { ...r.overrides_json, [key]: fallbackVal } } : r
-          )
-        : rules;
+      // Deliberately NOT seeding the fallback (Default) rule's overrides_json here.
+      // The swap script applies the active rule's overrides on every render, including
+      // Default's — so auto-seeding it with captured content means "Default" secretly
+      // becomes "re-apply this captured text via JS" instead of "leave the page as-is."
+      // If the capture ever gets corrupted (e.g. a race with an already-running swap
+      // script), that bad text gets baked into every render, forever, even with no UTM
+      // params present. Default should only override content the user explicitly types.
+      const nextRules = rules;
 
       setPendingPick(null);
       setPendingLabel('');
@@ -541,18 +538,9 @@ export default function UTMPickerClient({ clientId, page, initialRules }: Props)
     };
     const nextFields = [...fields, newField];
 
-    // Seed the fallback (Default) rule with current content — text uses the full,
-    // untruncated element text (falls back to the 100-char preview only when a full
-    // signature isn't available, e.g. AI pages), images use the element's src URL.
-    // `preview` is capped for the small UI label only — it must never be used as
-    // the actual swapped-in content, or long headlines get cut off mid-sentence.
-    const fallbackVal = pendingPick.type === 'image' ? (pendingPick.src ?? '') : (pendingPick.textSignature || pendingPick.preview);
-    let nextRules = rules;
-    if (fallbackVal) {
-      nextRules = rules.map(r =>
-        r.is_fallback ? { ...r, overrides_json: { ...r.overrides_json, [uniqueKey]: fallbackVal } } : r
-      );
-    }
+    // Deliberately NOT seeding the fallback (Default) rule's overrides_json here — see
+    // the comment on the re-pick branch above for why.
+    const nextRules = rules;
 
     const preview = pendingPick.preview;
 
