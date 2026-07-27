@@ -42,7 +42,6 @@ export default function TeamClient({ initialUsers, currentUserId }: Props) {
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
   const [role] = useState<'admin'>('admin');
 
   const totalPages = Math.max(1, Math.ceil(users.length / PAGE_SIZE));
@@ -56,7 +55,7 @@ export default function TeamClient({ initialUsers, currentUserId }: Props) {
       const res = await fetch('/api/users', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email, password, role }),
+        body: JSON.stringify({ name, email, role }),
       });
       if (!res.ok) {
         const err = await res.json();
@@ -99,7 +98,7 @@ export default function TeamClient({ initialUsers, currentUserId }: Props) {
   }
 
   function resetForm() {
-    setName(''); setEmail(''); setPassword('');
+    setName(''); setEmail('');
   }
 
   return (
@@ -225,10 +224,9 @@ export default function TeamClient({ initialUsers, currentUserId }: Props) {
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Email</label>
             <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="input-base" placeholder="jane@agency.com" required />
           </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Temporary Password</label>
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="input-base" placeholder="Min. 8 characters" required minLength={8} />
-          </div>
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            They&apos;ll receive an email with a link to set their own password.
+          </p>
           <div className="flex justify-end gap-3 pt-2">
             <Button variant="secondary" type="button" onClick={() => { setModalOpen(false); resetForm(); }}>Cancel</Button>
             <Button type="submit" loading={saving}>Add Staff Member</Button>
