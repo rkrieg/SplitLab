@@ -319,11 +319,25 @@ async function runScopedPatch(
     if (raw.startsWith('```')) raw = raw.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
     let parsed: { html?: string };
     try {
-      parsed = JSON.parse(raw);
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        parsed = JSON.parse(jsonrepair(raw));
+      }
     } catch {
-      parsed = JSON.parse(jsonrepair(raw));
+      console.error('[pages/follow-up] scoped patch returned unparseable JSON', {
+        rawLength: text.length,
+        rawPreview: text.slice(0, 1500),
+      });
+      return null;
     }
-    if (!parsed.html || typeof parsed.html !== 'string') return null;
+    if (!parsed.html || typeof parsed.html !== 'string') {
+      console.error('[pages/follow-up] scoped patch JSON parsed but had no "html" field', {
+        rawLength: text.length,
+        rawPreview: text.slice(0, 1500),
+      });
+      return null;
+    }
     return parsed.html;
   } catch (err) {
     console.error('[pages/follow-up] scoped patch generation failed, falling back to full-page path', err);
