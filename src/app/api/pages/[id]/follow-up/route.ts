@@ -270,8 +270,12 @@ async function tryHaikuRouting(
     });
     let raw = text.trim();
     if (raw.startsWith('```')) raw = raw.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
+    const jsonStart = raw.indexOf('{');
+    const jsonEnd = raw.lastIndexOf('}');
+    if (jsonStart >= 0 && jsonEnd > jsonStart) raw = raw.slice(jsonStart, jsonEnd + 1);
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed.type !== 'string' || !Array.isArray(parsed.target_sections) || typeof parsed.confidence !== 'string') {
+      console.error('[pages/follow-up] routing pass returned unexpected shape', { rawPreview: text.slice(0, 500) });
       return null;
     }
     return parsed;
@@ -283,7 +287,8 @@ async function tryHaikuRouting(
 
 const SCOPED_PATCH_SYSTEM_PROMPT = `You are editing ONE section of an existing landing page. You are given only that section's HTML (not the full page) and the schema slice for it. Make the requested change to this section only.
 
-Return JSON only. No markdown fences, no explanation.
+IMPORTANT: Your entire response must be ONLY the JSON object below — begin your response with { and end it with }. Do NOT write any explanation, reasoning, preamble ("I need to...", "Here is..."), or markdown code fences before or after the JSON. Any text outside the JSON object will break the parser.
+
 {"html":"...complete updated section HTML..."}
 
 Rules:
@@ -293,8 +298,7 @@ Rules:
 - Before adding a scoped inline style override: if the existing rule for that property uses !important anywhere (including inside @media blocks), your override must also use !important on that property, or the change will silently not apply.
 - Never select or modify any element carrying a data-field attribute with decorative JS — that content must always stay visible/clickable.
 - Never add an external <script src> to a third-party domain.
-- If any copy in your output contains a double-quote character, escape it as \\" — invalid JSON breaks the parser.
-- Your response must begin with { and end with }.`;
+- If any copy in your output contains a double-quote character, escape it as \\" — invalid JSON breaks the parser.`;
 
 async function runScopedPatch(
   sectionHtml: string,
@@ -317,6 +321,14 @@ async function runScopedPatch(
     });
     let raw = text.trim();
     if (raw.startsWith('```')) raw = raw.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
+    // The model doesn't always follow the "response must begin with {" rule —
+    // it sometimes prepends a plain-English sentence before the JSON (and/or
+    // a fenced block that doesn't start at position 0, so the check above
+    // never fires). Slice to the outermost {...} span regardless, same
+    // defensive pattern already used for Pass 1 parsing further down this file.
+    const jsonStart = raw.indexOf('{');
+    const jsonEnd = raw.lastIndexOf('}');
+    if (jsonStart >= 0 && jsonEnd > jsonStart) raw = raw.slice(jsonStart, jsonEnd + 1);
     let parsed: { html?: string };
     try {
       try {
