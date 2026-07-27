@@ -277,29 +277,20 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   useEffect(() => {
     if (phase !== 'editing') return;
     toast(
-      t => (
-        <div className="flex items-start gap-2">
-          <span className="text-xs">
-            {isTestVariantPage ? (
-              <>
-                <strong>Replacing the live variant clears its UTM field mappings and personalization rules.</strong>{' '}
-                Edits here stay in a draft and don&apos;t affect the live test until you choose to replace it — but once you do, you&apos;ll need to re-map elements and re-create rules in UTM Personalization.
-              </>
-            ) : (
-              <>
-                <strong>Editing this page clears its UTM field mappings and personalization rules.</strong>{' '}
-                After any chat or on-page edit you will need to re-map elements and re-create rules in UTM Personalization.
-              </>
-            )}
-          </span>
-          <button
-            onClick={() => toast.dismiss(t.id)}
-            className="flex-shrink-0 text-amber-700/60 hover:text-amber-800 font-bold"
-            aria-label="Dismiss"
-          >
-            ✕
-          </button>
-        </div>
+      () => (
+        <span className="text-xs">
+          {isTestVariantPage ? (
+            <>
+              <strong>Replacing the live variant clears its UTM mappings and personalization rules.</strong>{' '}
+              Edits stay in a draft until you replace the live variant — after that, re-map elements in UTM Personalization.
+            </>
+          ) : (
+            <>
+              <strong>Editing this page clears its UTM mappings and personalization rules.</strong>{' '}
+              Re-map elements in UTM Personalization after any edit.
+            </>
+          )}
+        </span>
       ),
       {
         id: 'utm-wipe-warning',
@@ -400,21 +391,13 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
           setHtmlUrl(`${data.html_url}?t=${Date.now()}`);
         }
         if (isTestVariantPage && !data.already) setHasDraft(true);
-        toast(
-          t => (
-            <div className="flex items-start gap-2">
-              <span className="text-xs">This page is ready for AI editing.</span>
-              <button
-                onClick={() => toast.dismiss(t.id)}
-                className="flex-shrink-0 text-emerald-700/60 hover:text-emerald-800 font-bold"
-                aria-label="Dismiss"
-              >
-                ✕
-              </button>
-            </div>
-          ),
-          { id: 'schema-from-html-ready', icon: '✅', duration: Infinity },
-        );
+        // Transient confirmation only — the chat message below carries the
+        // same info permanently, so this doesn't need to persist like the
+        // UTM warning toast does (which stays until the user dismisses it).
+        toast.success('This page is ready for AI editing.', {
+          id: 'schema-from-html-ready',
+          duration: 4000,
+        });
         addMessage({ role: 'assistant', content: 'Done preparing this page! Click any text in the preview to edit it, or ask me to make changes.' });
       } catch {
         toast.error("Couldn't prepare this page for full AI editing — chat edits will still work.");

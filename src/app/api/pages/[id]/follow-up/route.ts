@@ -3,7 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { jsonrepair } from 'jsonrepair';
-import { askAIStream, isRateLimited, generatePageImages, AIResponseTruncatedError, type AIContent, type AIContentBlock } from '@/lib/ai-client';
+import { askAI, askAIStream, isRateLimited, generatePageImages, AIResponseTruncatedError, type AIContent, type AIContentBlock } from '@/lib/ai-client';
 import { uploadHtml, downloadHtmlByPath, fileNameFromUrl } from '@/lib/storage';
 import { resolveWorkspaceRole, resolveOwnerPlan } from '@/lib/workspace-auth';
 import { PLAN_LIMITS } from '@/lib/plans';
@@ -176,6 +176,236 @@ function applyPatch(
   return html;
 }
 
+// ── Scoped-patch input reduction (see docs/follow-up-input-scoping.md) ──────
+//
+// For the common case — a small localized edit targeting 1-3 sections — the
+// old single Pass 1 call sent the ENTIRE page HTML + schema to Sonnet just to
+// figure out which section(s) to touch, then generate the fix. That full-page
+// payload (uncached, changes every message) is the dominant cost of the old
+// ~58-60s latency. The three helpers below let us identify the target
+// section(s) cheaply (free text-match, or a tiny/fast Haiku routing call)
+// BEFORE paying for a full-page Sonnet call, so Sonnet only ever sees the
+// section(s) actually being edited.
+//
+// Competitor-URL prompts always bypass this entirely (see caller) — a URL
+// means full-page rebuild, never a scoped patch.
+
+interface SlSection {
+  name: string;
+  html: string; // inner content only, SL markers stripped
+  text: string; // stripped-tag text + any image srcs in this section, for matching/routing
+}
+
+// A URL pasted in the prompt could be a competitor site to replicate ("make
+// this look like https://stripe.com") or a plain image asset to embed
+// ("use https://picsum.photos/200/300 as the hero background") — these need
+// completely different handling (full-page competitor rebuild vs. a normal
+// scoped content edit). extractUrls() can't tell them apart by pattern alone
+// (asset hosts like picsum.photos don't have an image file extension), so a
+// quick HEAD request settles it by actual Content-Type. Fails closed to
+// "not an image" (today's existing competitor-URL behavior) on any error —
+// no regression risk if the check itself fails.
+async function isImageUrl(url: string): Promise<boolean> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
+    const res = await fetch(url, { method: 'HEAD', signal: controller.signal });
+    clearTimeout(timeout);
+    if ((res.headers.get('content-type') ?? '').startsWith('image/')) return true;
+  } catch {
+    // fall through to GET below — some image hosts (e.g. picsum.photos,
+    // which renders on demand) don't handle HEAD cleanly
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    // Range header so dynamically-rendered images don't cost a full download
+    const res = await fetch(url, { headers: { Range: 'bytes=0-0' }, signal: controller.signal });
+    clearTimeout(timeout);
+    return (res.headers.get('content-type') ?? '').startsWith('image/');
+  } catch {
+    return false;
+  }
+}
+
+function extractSlSections(html: string): SlSection[] {
+  const sections: SlSection[] = [];
+  const re = /<!-- SL:([a-zA-Z0-9_-]+) -->([\s\S]*?)<!-- \/SL:\1 -->/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html))) {
+    const name = m[1];
+    const inner = m[2];
+    const strippedText = inner.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    const imgSrcs = Array.from(inner.matchAll(/<img\b[^>]*\bsrc\s*=\s*["']([^"']+)["']/gi)).map((mm) => mm[1]);
+    const text = imgSrcs.length > 0 ? `${strippedText} [images: ${imgSrcs.join(', ')}]` : strippedText;
+    sections.push({ name, html: inner, text });
+  }
+  return sections;
+}
+
+// Pass 0 — free, no AI call. If the instruction quotes actual page copy
+// verbatim (8+ chars, single- or double-quoted) and that quote appears in
+// exactly one section's text, we know the target section with certainty —
+// skip the Haiku routing call entirely.
+function extractQuotedPhrases(prompt: string): string[] {
+  const phrases: string[] = [];
+  const re = /["']([^"']{8,})["']/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(prompt))) phrases.push(m[1].replace(/\s+/g, ' ').trim());
+  return phrases;
+}
+
+function tryDirectQuoteMatch(prompt: string, sections: SlSection[]): string | null {
+  const phrases = extractQuotedPhrases(prompt).filter(Boolean);
+  if (phrases.length === 0) return null;
+  const matchedNames = new Set<string>();
+  for (const phrase of phrases) {
+    for (const section of sections) {
+      if (section.text.includes(phrase)) matchedNames.add(section.name);
+    }
+  }
+  return matchedNames.size === 1 ? Array.from(matchedNames)[0] : null;
+}
+
+const ROUTING_SYSTEM_PROMPT = `You are a routing classifier for a landing-page AI edit assistant. Given a list of the page's sections (name + a short text/image preview of each) and an edit instruction, decide which section(s) the instruction targets and how big the change is.
+
+Return JSON only. No markdown fences, no explanation.
+{"type":"patch"|"style"|"structural","target_sections":["section-name", ...],"confidence":"high"|"low"}
+
+Rules:
+- "patch": the instruction clearly targets 1-3 specific existing sections you can identify from the previews below (a heading, button, image, paragraph, one section's design/spacing/color).
+- "style": the instruction touches 4+ sections, or a global CSS/font/color variable change (route this to the "head" section), or you cannot map it to specific sections from the previews given (e.g. "make the whole page feel more premium").
+- "structural": the instruction adds, removes, or reorders whole sections, or asks for a brand-new image/logo to be AI-generated from a text description. Swapping/replacing an existing image with a user-attached image (see note below) is NOT structural — it's a "patch" on whichever section holds that image, same as swapping any other element.
+- Confidence is about WHICH SECTION, not about literal wording match. The instruction will often describe UI in generic terms ("button", "form", "banner") that don't literally match the underlying HTML tag — a labeled pill, badge, link, or div styled as a button all count as a match for "button." If exactly one section's preview clearly contains the referenced text/element, that is high confidence — do not lower it just because the HTML tag isn't literally a <button>/<form>/etc.
+- Set confidence "low" only when the referenced element/text could plausibly belong to two or more different sections, or doesn't appear in any preview at all — including truly ambiguous image references ("use this image" when multiple sections have images) or vague whole-page requests ("make it feel more premium"). When confidence is "low" it is fine to still fill in your best guess for type/target_sections — the caller ignores them and falls back to full-page handling.
+- Only ever use section names EXACTLY as given in the list — never invent one.`;
+
+async function tryHaikuRouting(
+  prompt: string,
+  schema: unknown,
+  sections: SlSection[],
+  hasUserImages: boolean,
+): Promise<{ type: string; target_sections: string[]; confidence: string } | null> {
+  try {
+    const sectionList = sections.map((s) => `- ${s.name}: "${s.text.slice(0, 150)}"`).join('\n');
+    const text = await askAI({
+      system: ROUTING_SYSTEM_PROMPT,
+      messages: [
+        {
+          role: 'user',
+          content:
+            `Schema:\n${JSON.stringify(schema)}\n\nSections:\n${sectionList}\n\nInstruction: ${prompt}` +
+            (hasUserImages ? '\n\n(User has attached image(s) along with this instruction.)' : ''),
+        },
+      ],
+      maxTokens: 300,
+      model: 'claude-haiku-4-5-20251001',
+    });
+    let raw = text.trim();
+    if (raw.startsWith('```')) raw = raw.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
+    const jsonStart = raw.indexOf('{');
+    const jsonEnd = raw.lastIndexOf('}');
+    if (jsonStart >= 0 && jsonEnd > jsonStart) raw = raw.slice(jsonStart, jsonEnd + 1);
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed.type !== 'string' || !Array.isArray(parsed.target_sections) || typeof parsed.confidence !== 'string') {
+      console.error('[pages/follow-up] routing pass returned unexpected shape', { rawPreview: text.slice(0, 500) });
+      return null;
+    }
+    return parsed;
+  } catch (err) {
+    console.error('[pages/follow-up] routing pass failed, falling back to full-page path', err);
+    return null;
+  }
+}
+
+const SCOPED_PATCH_SYSTEM_PROMPT = `You are editing ONE section of an existing landing page. You are given only that section's HTML (not the full page) and the schema slice for it. Make the requested change to this section only.
+
+IMPORTANT: Your entire response must be ONLY the JSON object below — begin your response with { and end it with }. Do NOT write any explanation, reasoning, preamble ("I need to...", "Here is..."), or markdown code fences before or after the JSON. Any text outside the JSON object will break the parser.
+
+{"html":"...complete updated section HTML..."}
+
+Rules:
+- Return the COMPLETE updated section HTML — do NOT include the <!-- SL:name --> markers themselves, they are added back by the caller.
+- Make the MINIMUM edit required. Do not restructure, reorganize, or rebuild the section beyond what the instruction asks.
+- Keep every existing data-field attribute intact unless the instruction specifically targets that field's content.
+- Before adding a scoped inline style override: if the existing rule for that property uses !important anywhere (including inside @media blocks), your override must also use !important on that property, or the change will silently not apply.
+- Never select or modify any element carrying a data-field attribute with decorative JS — that content must always stay visible/clickable.
+- Never add an external <script src> to a third-party domain.
+- If any copy in your output contains a double-quote character, escape it as \\" — invalid JSON breaks the parser.`;
+
+async function runScopedPatch(
+  sectionHtml: string,
+  schemaSlice: unknown,
+  prompt: string,
+  imageUrls: string[] | undefined,
+): Promise<string | null> {
+  try {
+    const userContent: AIContent = [
+      ...(imageUrls ?? []).map((url): AIContentBlock => ({ type: 'image', url })),
+      {
+        type: 'text' as const,
+        text: `Schema slice for this section:\n${JSON.stringify(schemaSlice)}\n\nCurrent section HTML:\n${sectionHtml}\n\nInstruction: ${prompt}`,
+      },
+    ];
+    const text = await askAI({
+      system: SCOPED_PATCH_SYSTEM_PROMPT,
+      messages: [{ role: 'user', content: userContent }],
+      maxTokens: 4000,
+    });
+    let raw = text.trim();
+    if (raw.startsWith('```')) raw = raw.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
+    // The model doesn't always follow the "response must begin with {" rule —
+    // it sometimes prepends a plain-English sentence before the JSON (and/or
+    // a fenced block that doesn't start at position 0, so the check above
+    // never fires). Slice to the outermost {...} span regardless, same
+    // defensive pattern already used for Pass 1 parsing further down this file.
+    const jsonStart = raw.indexOf('{');
+    const jsonEnd = raw.lastIndexOf('}');
+    if (jsonStart >= 0 && jsonEnd > jsonStart) raw = raw.slice(jsonStart, jsonEnd + 1);
+    let parsed: { html?: string };
+    try {
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        parsed = JSON.parse(jsonrepair(raw));
+      }
+    } catch {
+      console.error('[pages/follow-up] scoped patch returned unparseable JSON', {
+        rawLength: text.length,
+        rawPreview: text.slice(0, 1500),
+      });
+      return null;
+    }
+    if (!parsed.html || typeof parsed.html !== 'string') {
+      console.error('[pages/follow-up] scoped patch JSON parsed but had no "html" field', {
+        rawLength: text.length,
+        rawPreview: text.slice(0, 1500),
+      });
+      return null;
+    }
+    return parsed.html;
+  } catch (err) {
+    console.error('[pages/follow-up] scoped patch generation failed, falling back to full-page path', err);
+    return null;
+  }
+}
+
+// Crude but effective corruption guard: the model swapping in a whole document,
+// an empty fragment, or a completely different element type is caught here
+// before the section is spliced back into the live page.
+function outerTag(html: string): string | null {
+  const m = /^\s*<([a-zA-Z][a-zA-Z0-9]*)/.exec(html);
+  return m ? m[1].toLowerCase() : null;
+}
+
+function sanityCheckScopedSection(original: string, updated: string): boolean {
+  if (!updated.trim()) return false;
+  const origTag = outerTag(original);
+  const newTag = outerTag(updated);
+  return !!origTag && origTag === newTag;
+}
+
 function countImagePrompts(node: unknown): number {
   if (!node || typeof node !== 'object') return 0;
   if (Array.isArray(node)) {
@@ -266,8 +496,26 @@ export async function POST(
   const htmlForModel = minifyHtmlForModel(
     html.replace(/<script src="[^"]+\/tracker\.js"><\/script>/, '<!-- TRACKER_PLACEHOLDER -->')
   );
+  // A URL in the prompt could be a competitor site OR a plain image asset to
+  // embed ("use https://picsum.photos/... as the hero background") — only
+  // the former should trigger competitor-scrape + forced full-page rebuild.
   const mentionedUrls = extractUrls(prompt);
-  const hasUserImages = Array.isArray(image_urls) && image_urls.length > 0;
+  const mentionedUrlImageFlags = await Promise.all(mentionedUrls.map(isImageUrl));
+  const promptImageUrls = mentionedUrls.filter((_, i) => mentionedUrlImageFlags[i]);
+  const competitorUrls = mentionedUrls.filter((_, i) => !mentionedUrlImageFlags[i]);
+
+  // Merge prompt-detected image URLs in with any client-attached ones so the
+  // model can embed them exactly like an uploaded image attachment. Capped at
+  // 3 total to match the existing image_urls validation above.
+  const effectiveImageUrls = [...(image_urls ?? []), ...promptImageUrls].slice(0, 3);
+  const hasUserImages = effectiveImageUrls.length > 0;
+
+  // Scoped-patch candidates — cheap, synchronous, no AI call. A genuine
+  // competitor URL always means full-page rebuild (see
+  // follow-up-input-scoping.md), so scoping is never attempted when one is
+  // mentioned — but a plain image-asset URL no longer counts as one.
+  const slSections = competitorUrls.length === 0 ? extractSlSections(html) : [];
+  const quoteMatchSection = competitorUrls.length === 0 ? tryDirectQuoteMatch(prompt, slSections) : null;
 
   // ── Open SSE stream — no NextResponse.json after this point ───────────────
 
@@ -276,13 +524,93 @@ export async function POST(
 
   void (async () => {
     try {
-      // Competitor scrape
+      let finalHtml = '';
+      let finalSchemaJson: unknown | undefined;
+      let scopedApplied = false;
       let competitorContext: Awaited<ReturnType<typeof scrapeCompetitorUrl>> | null = null;
-      if (mentionedUrls.length > 0) {
-        let hostname = mentionedUrls[0];
-        try { hostname = new URL(mentionedUrls[0]).hostname; } catch { /* keep raw */ }
+      // Mirrors parsed.type from the full-page path — scoped patches are
+      // always a 'patch' by construction, so this is set once up front and
+      // only overwritten inside the fallback branch below.
+      let resultType: 'structural' | 'style' | 'patch' = 'patch';
+
+      // ── Scoped-patch attempt (input-side token reduction) ─────────────────
+      // Only attempted when there's no competitor URL (slSections/quoteMatchSection
+      // are pre-empted to [] / null above when one is mentioned) and the page
+      // actually has SL section markers to scope to. See
+      // docs/follow-up-input-scoping.md for the full design + guardrails.
+      if (slSections.length > 0) {
+        let targetSections: string[] | null = quoteMatchSection ? [quoteMatchSection] : null;
+
+        if (!targetSections) {
+          sendSSE(controller, { type: 'status', message: 'Locating section...' });
+          const routing = await tryHaikuRouting(prompt, schema, slSections, hasUserImages);
+          const basicShapeOk = !!routing &&
+            routing.type === 'patch' &&
+            routing.target_sections.length >= 1 &&
+            routing.target_sections.length <= 3 &&
+            routing.target_sections.every((n) => slSections.some((s) => s.name === n));
+          // Haiku has repeatedly under-rated its own confidence when it
+          // correctly identifies the section but hedges on an unrelated
+          // ambiguity (e.g. "which image is this replacing", not "which
+          // section"). Prompt-wording alone hasn't fixed this reliably, so
+          // when it names exactly one section AND that section's name is
+          // literally present in the instruction text, trust that
+          // independent textual confirmation over Haiku's self-rating.
+          const namesItsSingleSection = !!routing && basicShapeOk && routing.target_sections.length === 1 &&
+            new RegExp(`\\b${routing.target_sections[0]}\\b`, 'i').test(prompt);
+          const routingQualifies = basicShapeOk && (routing!.confidence === 'high' || namesItsSingleSection);
+          if (routingQualifies) {
+            targetSections = (routing as { target_sections: string[] }).target_sections;
+          } else {
+            console.log('[pages/follow-up] routing did not qualify for scoped patch, falling back to full-page path', {
+              routing,
+              knownSectionNames: slSections.map((s) => s.name),
+            });
+          }
+        }
+
+        if (targetSections && targetSections.length > 0) {
+          if (request.signal.aborted) { closeSSE(controller); return; }
+          sendSSE(controller, { type: 'status', message: 'Applying patch...' });
+
+          const patchedSections: Array<{ name: string; html: string }> = [];
+          let allOk = true;
+          for (const name of targetSections) {
+            const section = slSections.find((s) => s.name === name);
+            if (!section) { allOk = false; break; }
+            const schemaSlice = { [name]: (schema as Record<string, unknown> | null | undefined)?.[name] };
+            const updated = await runScopedPatch(section.html, schemaSlice, prompt, effectiveImageUrls);
+            if (!updated) {
+              console.error(`[pages/follow-up] scoped patch returned no html for section "${name}" — falling back to full-page path`);
+              allOk = false;
+              break;
+            }
+            if (!sanityCheckScopedSection(section.html, updated)) {
+              console.error(`[pages/follow-up] scoped patch failed sanity check for section "${name}" — falling back to full-page path`, {
+                originalOuterTag: outerTag(section.html),
+                updatedOuterTag: outerTag(updated),
+                updatedPreview: updated.slice(0, 300),
+              });
+              allOk = false;
+              break;
+            }
+            patchedSections.push({ name, html: updated });
+          }
+
+          if (allOk && patchedSections.length === targetSections.length) {
+            finalHtml = applyPatch(html, patchedSections);
+            scopedApplied = true;
+          }
+        }
+      }
+
+      // ── Fallback: today's full-page single-call path, unchanged ──────────
+      if (!scopedApplied) {
+      if (competitorUrls.length > 0) {
+        let hostname = competitorUrls[0];
+        try { hostname = new URL(competitorUrls[0]).hostname; } catch { /* keep raw */ }
         sendSSE(controller, { type: 'status', message: `Fetching ${hostname}...` });
-        competitorContext = await scrapeCompetitorUrl(mentionedUrls[0]);
+        competitorContext = await scrapeCompetitorUrl(competitorUrls[0]);
       }
 
       if (request.signal.aborted) { closeSSE(controller); return; }
@@ -293,7 +621,7 @@ export async function POST(
       // Emit status before Pass 1
       sendSSE(controller, {
         type: 'status',
-        message: mentionedUrls.length > 0 ? 'Analyzing design...' : 'Applying changes...',
+        message: competitorUrls.length > 0 ? 'Analyzing design...' : 'Applying changes...',
       });
 
       // Build Pass 1 message content
@@ -308,7 +636,7 @@ export async function POST(
         ...(hasUserImages
           ? [
               { type: 'text' as const, text: 'User-attached image(s) — apply the "Attached images" rule from the system prompt to determine whether each is a bug reference screenshot or a content asset to embed:' },
-              ...(image_urls as string[]).map((url): AIContentBlock => ({ type: 'image', url })),
+              ...effectiveImageUrls.map((url): AIContentBlock => ({ type: 'image', url })),
             ]
           : []),
       ];
@@ -390,8 +718,7 @@ export async function POST(
         return;
       }
 
-      let finalHtml: string;
-      let finalSchemaJson: unknown | undefined;
+      resultType = parsed.type;
 
       if (parsed.type === 'structural') {
         if (!parsed.schema_json || typeof parsed.schema_json !== 'object') {
@@ -471,6 +798,7 @@ export async function POST(
         }
         finalHtml = parsed.html;
       }
+      } // end fallback full-page path (!scopedApplied)
 
       // Strip STATUS comments before upload
       finalHtml = finalHtml.replace(/<!--\s*STATUS:[^>]*-->/g, '');
@@ -495,7 +823,7 @@ export async function POST(
       const updatedConversation = [
         ...history,
         userEntry,
-        { role: 'assistant', content: JSON.stringify({ type: parsed.type, schema_json: finalSchemaJson ?? schema }) },
+        { role: 'assistant', content: JSON.stringify({ type: resultType, schema_json: finalSchemaJson ?? schema }) },
       ];
 
       const updatePayload: Record<string, unknown> = {
@@ -513,7 +841,7 @@ export async function POST(
           updatePayload.field_selectors_json = null;
         }
       }
-      if (parsed.type === 'structural' && finalSchemaJson) {
+      if (resultType === 'structural' && finalSchemaJson) {
         if (isVariant) {
           updatePayload.draft_schema_json = finalSchemaJson;
         } else {
@@ -536,7 +864,7 @@ export async function POST(
         // the draft content directly.
         html_url: htmlUrl,
         ...(finalSchemaJson ? { schema_json: finalSchemaJson } : {}),
-        ...(mentionedUrls.length > 0 && !competitorContext ? { competitor_fetch_failed: true } : {}),
+        ...(competitorUrls.length > 0 && !competitorContext ? { competitor_fetch_failed: true } : {}),
       };
       sendSSE(controller, doneEvent);
       closeSSE(controller);
