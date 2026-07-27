@@ -44,7 +44,6 @@ export default function ManagerTeamClient({ initialMembers, seatLimit, currentUs
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
   const [role, setRole] = useState<'manager' | 'viewer'>('viewer');
 
   const totalPages  = Math.max(1, Math.ceil(members.length / PAGE_SIZE));
@@ -62,7 +61,7 @@ export default function ManagerTeamClient({ initialMembers, seatLimit, currentUs
       const res = await fetch('/api/team', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email, password, role }),
+        body: JSON.stringify({ name, email, role }),
       });
       const json = await res.json();
       if (!res.ok) {
@@ -104,7 +103,7 @@ export default function ManagerTeamClient({ initialMembers, seatLimit, currentUs
   }
 
   function resetForm() {
-    setName(''); setEmail(''); setPassword(''); setRole('viewer'); setInviteError(null);
+    setName(''); setEmail(''); setRole('viewer'); setInviteError(null);
   }
 
   // ── Free plan — no seats available ──────────────────────────────────────────
@@ -265,10 +264,6 @@ export default function ManagerTeamClient({ initialMembers, seatLimit, currentUs
               <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="input-base" placeholder="jane@company.com" required autoComplete="off" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Temporary Password</label>
-              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="input-base" placeholder="Min. 8 characters" required minLength={8} autoComplete="new-password" />
-            </div>
-            <div>
               <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Role</label>
               <select value={role} onChange={(e) => setRole(e.target.value as 'manager' | 'viewer')} className="input-base">
                 <option value="viewer">Viewer — read-only access</option>
@@ -276,7 +271,7 @@ export default function ManagerTeamClient({ initialMembers, seatLimit, currentUs
               </select>
             </div>
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              They will receive an email with these credentials to log in.
+              They&apos;ll receive an email with a link to set their own password.
             </p>
             {inviteError && (
               <div className="flex items-start gap-2 rounded-lg bg-red-500/10 border border-red-500/30 px-3 py-2.5 text-sm text-red-400">
