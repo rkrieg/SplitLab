@@ -87,24 +87,66 @@ function findAllByTag(rootChildren: any[], tagName: string): { el: any; indexPat
   return results;
 }
 
+// Collect every element in the tree whose text (or src, for images) equals signature,
+// regardless of tag — used when no element of the expected tag matches, since the
+// content itself is a stronger identity signal than a tag name the client and server
+// parsers may have disagreed about.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function findAllBySignature(rootChildren: any[], type: 'text' | 'image', signature: string): any[] {
+  const results: any[] = [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function walk(nodes: any[]) {
+    const elements = nodes.filter((n: { type: string }) => n.type === 'tag');
+    elements.forEach(el => {
+      const val = type === 'image' ? srcOf(el) : textOf(el);
+      if (val === signature) results.push(el);
+      if (el.children) walk(el.children);
+    });
+  }
+  walk(rootChildren);
+  return results;
+}
+
 // Resolve an injection to the element it actually refers to. Prefers an exact
 // text/src signature match (unique or nearest-by-position among duplicates) over
 // the raw indexPath, since indexPath alone can point at the wrong element when the
 // browser's HTML5 parser and htmlparser2 structure the same malformed HTML differently.
+// `matchedByContent` tells the caller whether the resolution is content-backed (in
+// which case the client's reported tagName is not authoritative and shouldn't be
+// enforced) or a last-resort positional guess (where a tag mismatch is a real signal
+// that the page structure changed and the pick is genuinely stale).
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function resolveInjection(startChildren: any[], inj: Injection): any | null {
+function resolveInjection(startChildren: any[], inj: Injection): { el: any; matchedByContent: boolean } {
   if (inj.tagName && inj.textSignature !== undefined && inj.textSignature !== '') {
     const candidates = findAllByTag(startChildren, inj.tagName);
     const matches = candidates.filter(c =>
       inj.type === 'image' ? srcOf(c.el) === inj.textSignature : textOf(c.el) === inj.textSignature
     );
-    if (matches.length === 1) return matches[0].el;
+    if (matches.length === 1) return { el: matches[0].el, matchedByContent: true };
     if (matches.length > 1) {
       matches.sort((a, b) => pathDistance(a.indexPath, inj.indexPath) - pathDistance(b.indexPath, inj.indexPath));
-      return matches[0].el;
+      return { el: matches[0].el, matchedByContent: true };
+    }
+    // No element with the expected tag has this content — the client and server
+    // parsers may disagree on what tag this node actually is. Trust the content: if
+    // exactly one element anywhere has this exact text/src, use it regardless of tag.
+    const anyTagMatches = findAllBySignature(startChildren, inj.type, inj.textSignature);
+    if (anyTagMatches.length === 1) return { el: anyTagMatches[0], matchedByContent: true };
+  }
+  // Content-based resolution found nothing usable (page content changed, or the
+  // captured signature didn't survive whitespace/encoding differences intact). Rather
+  // than hard-failing the save — which just traps the user in a re-pick loop against
+  // an unchanged DOM snapshot — fall back to the closest element of the *expected tag*
+  // to the raw indexPath, so the mapping still lands on a plausible same-type element
+  // instead of erroring out or a stray text/positional guess.
+  if (inj.tagName) {
+    const candidates = findAllByTag(startChildren, inj.tagName);
+    if (candidates.length > 0) {
+      candidates.sort((a, b) => pathDistance(a.indexPath, inj.indexPath) - pathDistance(b.indexPath, inj.indexPath));
+      return { el: candidates[0].el, matchedByContent: true };
     }
   }
-  return walkByIndexPath(startChildren, inj.indexPath);
+  return { el: walkByIndexPath(startChildren, inj.indexPath), matchedByContent: false };
 }
 
 export async function POST(
@@ -155,12 +197,14 @@ export async function POST(
   const startChildren = htmlEl ? htmlEl.children : dom.children;
 
   // Resolve every injection — preferring an exact text/src content match over the raw
-  // indexPath (see resolveInjection) — and verify the resolved element's tag matches
-  // what the client actually clicked before mutating anything.
+  // indexPath (see resolveInjection). The tag check only applies when resolution fell
+  // back to raw position (no content match found anywhere) — a content match is
+  // trusted regardless of tag, since the client/server parsers can disagree on tag
+  // names for the same node without the content itself having moved at all.
   const resolved: { inj: Injection; el: ReturnType<typeof walkByIndexPath> }[] = [];
   for (const inj of injections) {
-    const el = resolveInjection(startChildren, inj);
-    if (el && inj.tagName && el.name.toLowerCase() !== inj.tagName.toLowerCase()) {
+    const { el, matchedByContent } = resolveInjection(startChildren, inj);
+    if (el && !matchedByContent && inj.tagName && el.name.toLowerCase() !== inj.tagName.toLowerCase()) {
       return NextResponse.json({
         error: `Element mapping is out of sync with the page (expected <${inj.tagName.toLowerCase()}>, found <${el.name}>). Please re-pick "${inj.label}" and save again.`,
       }, { status: 409 });

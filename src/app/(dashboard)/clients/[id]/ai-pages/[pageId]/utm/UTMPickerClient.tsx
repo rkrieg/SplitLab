@@ -623,12 +623,13 @@ export default function UTMPickerClient({ clientId, page, initialRules }: Props)
               })),
             }),
           });
-          if (!res.ok) throw new Error((await res.json()).error ?? 'Failed to inject IDs');
-          // Clear pending injection metadata
+          // Clear pending injection metadata and force a fresh iframe load regardless
+          // of outcome — on failure the picked indexPath/textSignature are stale by
+          // definition, so silently keeping them would make every re-pick reproduce
+          // the exact same mismatch against the exact same unchanged DOM snapshot.
           setFields(prev => prev.map(f => ({ ...f, _indexPath: undefined, _generatedId: undefined, _tagName: undefined, _textSignature: undefined })));
-          // html_content was just re-parsed/re-serialized server-side — refresh the
-          // preview iframe so it reflects the saved state.
           setPreviewRefresh(n => n + 1);
+          if (!res.ok) throw new Error((await res.json()).error ?? 'Failed to inject IDs');
         }
       }
 
@@ -1027,7 +1028,7 @@ export default function UTMPickerClient({ clientId, page, initialRules }: Props)
               {/* Pick Element button — primary action, shown first */}
               {!pendingPick && (
                 <button
-                  onClick={() => { setGlobalPickMode(m => !m); setActivePickKey(null); }}
+                  onClick={() => { setUtmSimulator('default'); setGlobalPickMode(m => !m); setActivePickKey(null); }}
                   className={cn(
                     'w-full flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-semibold shadow-sm transition-colors',
                     globalPickMode
@@ -1061,7 +1062,7 @@ export default function UTMPickerClient({ clientId, page, initialRules }: Props)
                     </div>
                     <div className="flex items-center gap-1 flex-shrink-0">
                       <button
-                        onClick={() => setActivePickKey(activePickKey === f.key ? null : f.key)}
+                        onClick={() => { setUtmSimulator('default'); setActivePickKey(activePickKey === f.key ? null : f.key); }}
                         disabled={repickingFieldKey === f.key}
                         title={f.selector && savedFieldKeys.has(f.key) ? 'Pick this element again' : undefined}
                         className={cn(
