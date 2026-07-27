@@ -114,9 +114,13 @@ function buildAiPickerScript(activeField: string): string {
       ? '[data-field="' + dataField + '"]'
       : generateSelector(el);
 
+    // Raw textContent keeps every bit of source-HTML indentation/newlines as literal
+    // characters — on pretty-printed/indented HTML that whitespace can eat most of a
+    // 100-char slice before any real visible text is captured. Collapse runs of
+    // whitespace to a single space first so the limit applies to visible text only.
     var preview = isImg
       ? (el.alt || el.src || 'image element')
-      : (el.textContent ? el.textContent.trim().slice(0, 100) : '');
+      : (el.textContent ? el.textContent.replace(/\s+/g, ' ').trim().slice(0, 100) : '');
 
     window.parent.postMessage({
       type: 'sl-element-picked',
@@ -204,7 +208,11 @@ function buildHtmlPickerScript(activeField: string): string {
     // Index path: walk up the DOM tree recording child indices — used by server to locate element in raw HTML
     var indexPath = getIndexPath(el);
 
-    var fullText = el.textContent ? el.textContent.trim() : '';
+    // Raw textContent keeps every bit of source-HTML indentation/newlines as literal
+    // characters — on pretty-printed/indented HTML that whitespace can eat most of a
+    // 100-char slice before any real visible text is captured. Collapse runs of
+    // whitespace to a single space first so the limit applies to visible text only.
+    var fullText = el.textContent ? el.textContent.replace(/\s+/g, ' ').trim() : '';
     var preview = isImg
       ? (el.alt || el.src || 'image element')
       : fullText.slice(0, 100);
@@ -393,16 +401,24 @@ export default function UTMPickerClient({ clientId, page, initialRules }: Props)
         if (!el) continue;
         const val = f.type === 'image' || (el as HTMLElement).tagName === 'IMG'
           ? (el as HTMLImageElement).src
-          : (el.textContent?.trim() ?? '');
+          : (el.textContent?.replace(/\s+/g, ' ').trim() ?? '');
         if (val) currentContent[f.key] = val;
       } catch { /* invalid selector */ }
     }
 
     if (Object.keys(currentContent).length > 0) {
-      setFieldPreviews(prev => ({ ...currentContent, ...prev }));
+      // The Default row is read-only and labeled "auto-detected" — it must always
+      // reflect the live page, never freeze on a stale/previously-corrupted value.
+      // Only safe to let live content win when the iframe is actually showing the
+      // Default state though: if a UTM simulator is active, the DOM currently holds
+      // that OTHER rule's swapped-in text, which must never leak into the fallback.
+      const isDefaultView = utmSimulator === 'default';
+      setFieldPreviews(prev => (isDefaultView ? { ...prev, ...currentContent } : { ...currentContent, ...prev }));
       setRules(prev => prev.map(r =>
         r.is_fallback
-          ? { ...r, overrides_json: { ...currentContent, ...r.overrides_json } }
+          ? { ...r, overrides_json: isDefaultView
+              ? { ...r.overrides_json, ...currentContent }
+              : { ...currentContent, ...r.overrides_json } }
           : r
       ));
     }
@@ -476,9 +492,12 @@ export default function UTMPickerClient({ clientId, page, initialRules }: Props)
           ? { ...f, label, selector: pick.selector, type: pick.type, _indexPath: pick.indexPath, _generatedId: pick.generatedId, _tagName: pick.tagName, _textSignature: pick.textSignature }
           : f
       );
-      // Seed the fallback (Default) rule with current content — text uses the visible
-      // text, images use the element's src URL.
-      const fallbackVal = pick.type === 'image' ? (pick.src ?? '') : pick.preview;
+      // Seed the fallback (Default) rule with current content — text uses the full,
+      // untruncated element text (falls back to the 100-char preview only when a full
+      // signature isn't available, e.g. AI pages), images use the element's src URL.
+      // `preview` is capped for the small UI label only — it must never be used as
+      // the actual swapped-in content, or long headlines get cut off mid-sentence.
+      const fallbackVal = pick.type === 'image' ? (pick.src ?? '') : (pick.textSignature || pick.preview);
       const nextRules = fallbackVal
         ? rules.map(r =>
             r.is_fallback ? { ...r, overrides_json: { ...r.overrides_json, [key]: fallbackVal } } : r
@@ -522,9 +541,12 @@ export default function UTMPickerClient({ clientId, page, initialRules }: Props)
     };
     const nextFields = [...fields, newField];
 
-    // Seed the fallback (Default) rule with current content — text uses the visible
-    // text, images use the element's src URL.
-    const fallbackVal = pendingPick.type === 'image' ? (pendingPick.src ?? '') : pendingPick.preview;
+    // Seed the fallback (Default) rule with current content — text uses the full,
+    // untruncated element text (falls back to the 100-char preview only when a full
+    // signature isn't available, e.g. AI pages), images use the element's src URL.
+    // `preview` is capped for the small UI label only — it must never be used as
+    // the actual swapped-in content, or long headlines get cut off mid-sentence.
+    const fallbackVal = pendingPick.type === 'image' ? (pendingPick.src ?? '') : (pendingPick.textSignature || pendingPick.preview);
     let nextRules = rules;
     if (fallbackVal) {
       nextRules = rules.map(r =>
