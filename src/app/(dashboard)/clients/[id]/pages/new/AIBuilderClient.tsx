@@ -277,29 +277,20 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   useEffect(() => {
     if (phase !== 'editing') return;
     toast(
-      t => (
-        <div className="flex items-start gap-2">
-          <span className="text-xs">
-            {isTestVariantPage ? (
-              <>
-                <strong>Replacing the live variant clears its UTM field mappings and personalization rules.</strong>{' '}
-                Edits here stay in a draft and don&apos;t affect the live test until you choose to replace it — but once you do, you&apos;ll need to re-map elements and re-create rules in UTM Personalization.
-              </>
-            ) : (
-              <>
-                <strong>Editing this page clears its UTM field mappings and personalization rules.</strong>{' '}
-                After any chat or on-page edit you will need to re-map elements and re-create rules in UTM Personalization.
-              </>
-            )}
-          </span>
-          <button
-            onClick={() => toast.dismiss(t.id)}
-            className="flex-shrink-0 text-amber-700/60 hover:text-amber-800 font-bold"
-            aria-label="Dismiss"
-          >
-            ✕
-          </button>
-        </div>
+      () => (
+        <span className="text-xs">
+          {isTestVariantPage ? (
+            <>
+              <strong>Replacing the live variant clears its UTM mappings and personalization rules.</strong>{' '}
+              Edits stay in a draft until you replace the live variant — after that, re-map elements in UTM Personalization.
+            </>
+          ) : (
+            <>
+              <strong>Editing this page clears its UTM mappings and personalization rules.</strong>{' '}
+              Re-map elements in UTM Personalization after any edit.
+            </>
+          )}
+        </span>
       ),
       {
         id: 'utm-wipe-warning',

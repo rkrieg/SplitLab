@@ -211,6 +211,18 @@ async function isImageUrl(url: string): Promise<boolean> {
     const timeout = setTimeout(() => controller.abort(), 3000);
     const res = await fetch(url, { method: 'HEAD', signal: controller.signal });
     clearTimeout(timeout);
+    if ((res.headers.get('content-type') ?? '').startsWith('image/')) return true;
+  } catch {
+    // fall through to GET below — some image hosts (e.g. picsum.photos,
+    // which renders on demand) don't handle HEAD cleanly
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    // Range header so dynamically-rendered images don't cost a full download
+    const res = await fetch(url, { headers: { Range: 'bytes=0-0' }, signal: controller.signal });
+    clearTimeout(timeout);
     return (res.headers.get('content-type') ?? '').startsWith('image/');
   } catch {
     return false;
@@ -264,7 +276,7 @@ Return JSON only. No markdown fences, no explanation.
 Rules:
 - "patch": the instruction clearly targets 1-3 specific existing sections you can identify from the previews below (a heading, button, image, paragraph, one section's design/spacing/color).
 - "style": the instruction touches 4+ sections, or a global CSS/font/color variable change (route this to the "head" section), or you cannot map it to specific sections from the previews given (e.g. "make the whole page feel more premium").
-- "structural": the instruction adds, removes, or reorders whole sections, or asks for a brand-new image/logo to be generated.
+- "structural": the instruction adds, removes, or reorders whole sections, or asks for a brand-new image/logo to be AI-generated from a text description. Swapping/replacing an existing image with a user-attached image (see note below) is NOT structural — it's a "patch" on whichever section holds that image, same as swapping any other element.
 - Confidence is about WHICH SECTION, not about literal wording match. The instruction will often describe UI in generic terms ("button", "form", "banner") that don't literally match the underlying HTML tag — a labeled pill, badge, link, or div styled as a button all count as a match for "button." If exactly one section's preview clearly contains the referenced text/element, that is high confidence — do not lower it just because the HTML tag isn't literally a <button>/<form>/etc.
 - Set confidence "low" only when the referenced element/text could plausibly belong to two or more different sections, or doesn't appear in any preview at all — including truly ambiguous image references ("use this image" when multiple sections have images) or vague whole-page requests ("make it feel more premium"). When confidence is "low" it is fine to still fill in your best guess for type/target_sections — the caller ignores them and falls back to full-page handling.
 - Only ever use section names EXACTLY as given in the list — never invent one.`;
