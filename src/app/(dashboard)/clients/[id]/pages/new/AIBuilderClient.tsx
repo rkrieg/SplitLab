@@ -400,21 +400,13 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
           setHtmlUrl(`${data.html_url}?t=${Date.now()}`);
         }
         if (isTestVariantPage && !data.already) setHasDraft(true);
-        toast(
-          t => (
-            <div className="flex items-start gap-2">
-              <span className="text-xs">This page is ready for AI editing.</span>
-              <button
-                onClick={() => toast.dismiss(t.id)}
-                className="flex-shrink-0 text-emerald-700/60 hover:text-emerald-800 font-bold"
-                aria-label="Dismiss"
-              >
-                ✕
-              </button>
-            </div>
-          ),
-          { id: 'schema-from-html-ready', icon: '✅', duration: Infinity },
-        );
+        // Transient confirmation only — the chat message below carries the
+        // same info permanently, so this doesn't need to persist like the
+        // UTM warning toast does (which stays until the user dismisses it).
+        toast.success('This page is ready for AI editing.', {
+          id: 'schema-from-html-ready',
+          duration: 4000,
+        });
         addMessage({ role: 'assistant', content: 'Done preparing this page! Click any text in the preview to edit it, or ask me to make changes.' });
       } catch {
         toast.error("Couldn't prepare this page for full AI editing — chat edits will still work.");

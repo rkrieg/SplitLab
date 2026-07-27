@@ -196,6 +196,27 @@ interface SlSection {
   text: string; // stripped-tag text + any image srcs in this section, for matching/routing
 }
 
+// A URL pasted in the prompt could be a competitor site to replicate ("make
+// this look like https://stripe.com") or a plain image asset to embed
+// ("use https://picsum.photos/200/300 as the hero background") — these need
+// completely different handling (full-page competitor rebuild vs. a normal
+// scoped content edit). extractUrls() can't tell them apart by pattern alone
+// (asset hosts like picsum.photos don't have an image file extension), so a
+// quick HEAD request settles it by actual Content-Type. Fails closed to
+// "not an image" (today's existing competitor-URL behavior) on any error —
+// no regression risk if the check itself fails.
+async function isImageUrl(url: string): Promise<boolean> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
+    const res = await fetch(url, { method: 'HEAD', signal: controller.signal });
+    clearTimeout(timeout);
+    return (res.headers.get('content-type') ?? '').startsWith('image/');
+  } catch {
+    return false;
+  }
+}
+
 function extractSlSections(html: string): SlSection[] {
   const sections: SlSection[] = [];
   const re = /<!-- SL:([a-zA-Z0-9_-]+) -->([\s\S]*?)<!-- \/SL:\1 -->/g;
@@ -463,14 +484,26 @@ export async function POST(
   const htmlForModel = minifyHtmlForModel(
     html.replace(/<script src="[^"]+\/tracker\.js"><\/script>/, '<!-- TRACKER_PLACEHOLDER -->')
   );
+  // A URL in the prompt could be a competitor site OR a plain image asset to
+  // embed ("use https://picsum.photos/... as the hero background") — only
+  // the former should trigger competitor-scrape + forced full-page rebuild.
   const mentionedUrls = extractUrls(prompt);
-  const hasUserImages = Array.isArray(image_urls) && image_urls.length > 0;
+  const mentionedUrlImageFlags = await Promise.all(mentionedUrls.map(isImageUrl));
+  const promptImageUrls = mentionedUrls.filter((_, i) => mentionedUrlImageFlags[i]);
+  const competitorUrls = mentionedUrls.filter((_, i) => !mentionedUrlImageFlags[i]);
 
-  // Scoped-patch candidates — cheap, synchronous, no AI call. A competitor
-  // URL always means full-page rebuild (see follow-up-input-scoping.md), so
-  // scoping is never attempted when one is mentioned.
-  const slSections = mentionedUrls.length === 0 ? extractSlSections(html) : [];
-  const quoteMatchSection = mentionedUrls.length === 0 ? tryDirectQuoteMatch(prompt, slSections) : null;
+  // Merge prompt-detected image URLs in with any client-attached ones so the
+  // model can embed them exactly like an uploaded image attachment. Capped at
+  // 3 total to match the existing image_urls validation above.
+  const effectiveImageUrls = [...(image_urls ?? []), ...promptImageUrls].slice(0, 3);
+  const hasUserImages = effectiveImageUrls.length > 0;
+
+  // Scoped-patch candidates — cheap, synchronous, no AI call. A genuine
+  // competitor URL always means full-page rebuild (see
+  // follow-up-input-scoping.md), so scoping is never attempted when one is
+  // mentioned — but a plain image-asset URL no longer counts as one.
+  const slSections = competitorUrls.length === 0 ? extractSlSections(html) : [];
+  const quoteMatchSection = competitorUrls.length === 0 ? tryDirectQuoteMatch(prompt, slSections) : null;
 
   // ── Open SSE stream — no NextResponse.json after this point ───────────────
 
@@ -499,12 +532,21 @@ export async function POST(
         if (!targetSections) {
           sendSSE(controller, { type: 'status', message: 'Locating section...' });
           const routing = await tryHaikuRouting(prompt, schema, slSections, hasUserImages);
-          const routingQualifies = !!routing &&
-            routing.confidence === 'high' &&
+          const basicShapeOk = !!routing &&
             routing.type === 'patch' &&
             routing.target_sections.length >= 1 &&
             routing.target_sections.length <= 3 &&
             routing.target_sections.every((n) => slSections.some((s) => s.name === n));
+          // Haiku has repeatedly under-rated its own confidence when it
+          // correctly identifies the section but hedges on an unrelated
+          // ambiguity (e.g. "which image is this replacing", not "which
+          // section"). Prompt-wording alone hasn't fixed this reliably, so
+          // when it names exactly one section AND that section's name is
+          // literally present in the instruction text, trust that
+          // independent textual confirmation over Haiku's self-rating.
+          const namesItsSingleSection = !!routing && basicShapeOk && routing.target_sections.length === 1 &&
+            new RegExp(`\\b${routing.target_sections[0]}\\b`, 'i').test(prompt);
+          const routingQualifies = basicShapeOk && (routing!.confidence === 'high' || namesItsSingleSection);
           if (routingQualifies) {
             targetSections = (routing as { target_sections: string[] }).target_sections;
           } else {
@@ -525,7 +567,7 @@ export async function POST(
             const section = slSections.find((s) => s.name === name);
             if (!section) { allOk = false; break; }
             const schemaSlice = { [name]: (schema as Record<string, unknown> | null | undefined)?.[name] };
-            const updated = await runScopedPatch(section.html, schemaSlice, prompt, image_urls);
+            const updated = await runScopedPatch(section.html, schemaSlice, prompt, effectiveImageUrls);
             if (!updated) {
               console.error(`[pages/follow-up] scoped patch returned no html for section "${name}" — falling back to full-page path`);
               allOk = false;
@@ -552,11 +594,11 @@ export async function POST(
 
       // ── Fallback: today's full-page single-call path, unchanged ──────────
       if (!scopedApplied) {
-      if (mentionedUrls.length > 0) {
-        let hostname = mentionedUrls[0];
-        try { hostname = new URL(mentionedUrls[0]).hostname; } catch { /* keep raw */ }
+      if (competitorUrls.length > 0) {
+        let hostname = competitorUrls[0];
+        try { hostname = new URL(competitorUrls[0]).hostname; } catch { /* keep raw */ }
         sendSSE(controller, { type: 'status', message: `Fetching ${hostname}...` });
-        competitorContext = await scrapeCompetitorUrl(mentionedUrls[0]);
+        competitorContext = await scrapeCompetitorUrl(competitorUrls[0]);
       }
 
       if (request.signal.aborted) { closeSSE(controller); return; }
@@ -567,7 +609,7 @@ export async function POST(
       // Emit status before Pass 1
       sendSSE(controller, {
         type: 'status',
-        message: mentionedUrls.length > 0 ? 'Analyzing design...' : 'Applying changes...',
+        message: competitorUrls.length > 0 ? 'Analyzing design...' : 'Applying changes...',
       });
 
       // Build Pass 1 message content
@@ -582,7 +624,7 @@ export async function POST(
         ...(hasUserImages
           ? [
               { type: 'text' as const, text: 'User-attached image(s) — apply the "Attached images" rule from the system prompt to determine whether each is a bug reference screenshot or a content asset to embed:' },
-              ...(image_urls as string[]).map((url): AIContentBlock => ({ type: 'image', url })),
+              ...effectiveImageUrls.map((url): AIContentBlock => ({ type: 'image', url })),
             ]
           : []),
       ];
@@ -810,7 +852,7 @@ export async function POST(
         // the draft content directly.
         html_url: htmlUrl,
         ...(finalSchemaJson ? { schema_json: finalSchemaJson } : {}),
-        ...(mentionedUrls.length > 0 && !competitorContext ? { competitor_fetch_failed: true } : {}),
+        ...(competitorUrls.length > 0 && !competitorContext ? { competitor_fetch_failed: true } : {}),
       };
       sendSSE(controller, doneEvent);
       closeSSE(controller);
