@@ -3,7 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { jsonrepair } from 'jsonrepair';
-import { askAIStream, isRateLimited, generatePageImages, AIResponseTruncatedError, type AIContent, type AIContentBlock } from '@/lib/ai-client';
+import { askAI, askAIStream, isRateLimited, generatePageImages, generateAndUploadImage, AIResponseTruncatedError, type AIContent, type AIContentBlock } from '@/lib/ai-client';
 import { uploadHtml, downloadHtmlByPath, fileNameFromUrl } from '@/lib/storage';
 import { resolveWorkspaceRole, resolveOwnerPlan } from '@/lib/workspace-auth';
 import { PLAN_LIMITS } from '@/lib/plans';
@@ -176,6 +176,275 @@ function applyPatch(
   return html;
 }
 
+// ── Scoped-patch input reduction (see docs/follow-up-input-scoping.md) ──────
+//
+// For the common case — a small localized edit targeting 1-3 sections — the
+// old single Pass 1 call sent the ENTIRE page HTML + schema to Sonnet just to
+// figure out which section(s) to touch, then generate the fix. That full-page
+// payload (uncached, changes every message) is the dominant cost of the old
+// ~58-60s latency. The three helpers below let us identify the target
+// section(s) cheaply (free text-match, or a tiny/fast Haiku routing call)
+// BEFORE paying for a full-page Sonnet call, so Sonnet only ever sees the
+// section(s) actually being edited.
+//
+// Competitor-URL prompts always bypass this entirely (see caller) — a URL
+// means full-page rebuild, never a scoped patch.
+
+interface SlSection {
+  name: string;
+  html: string; // inner content only, SL markers stripped
+  text: string; // stripped-tag text + any image srcs in this section, for matching/routing
+}
+
+// A URL pasted in the prompt could be a competitor site to replicate ("make
+// this look like https://stripe.com") or a plain image asset to embed
+// ("use https://picsum.photos/200/300 as the hero background") — these need
+// completely different handling (full-page competitor rebuild vs. a normal
+// scoped content edit). extractUrls() can't tell them apart by pattern alone
+// (asset hosts like picsum.photos don't have an image file extension), so a
+// quick HEAD request settles it by actual Content-Type. Fails closed to
+// "not an image" (today's existing competitor-URL behavior) on any error —
+// no regression risk if the check itself fails.
+async function isImageUrl(url: string): Promise<boolean> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
+    const res = await fetch(url, { method: 'HEAD', signal: controller.signal });
+    clearTimeout(timeout);
+    if ((res.headers.get('content-type') ?? '').startsWith('image/')) return true;
+  } catch {
+    // fall through to GET below — some image hosts (e.g. picsum.photos,
+    // which renders on demand) don't handle HEAD cleanly
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    // Range header so dynamically-rendered images don't cost a full download
+    const res = await fetch(url, { headers: { Range: 'bytes=0-0' }, signal: controller.signal });
+    clearTimeout(timeout);
+    return (res.headers.get('content-type') ?? '').startsWith('image/');
+  } catch {
+    return false;
+  }
+}
+
+// Crude relative-luminance check on the first background-color/background hex
+// found in a section's inline styles — good enough to tell the image-generation
+// prompt "this section is dark, don't generate a dark logo that disappears into
+// it." Not a full CSS cascade resolution (doesn't look at :root variables or
+// external classes), just a same-order-of-magnitude signal for routing.
+function detectBackgroundTone(html: string): 'dark' | 'light' | 'unknown' {
+  const hexMatches = Array.from(
+    html.matchAll(/background(?:-color)?\s*:\s*#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})/g)
+  );
+  if (hexMatches.length === 0) return 'unknown';
+  let hex = hexMatches[0][1];
+  if (hex.length === 3) hex = hex.split('').map((c) => c + c).join('');
+  const r = parseInt(hex.slice(0, 2), 16);
+  const g = parseInt(hex.slice(2, 4), 16);
+  const b = parseInt(hex.slice(4, 6), 16);
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return luminance < 0.5 ? 'dark' : 'light';
+}
+
+function extractSlSections(html: string): SlSection[] {
+  const sections: SlSection[] = [];
+  const re = /<!-- SL:([a-zA-Z0-9_-]+) -->([\s\S]*?)<!-- \/SL:\1 -->/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html))) {
+    const name = m[1];
+    const inner = m[2];
+    const strippedText = inner.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    const imgSrcs = Array.from(inner.matchAll(/<img\b[^>]*\bsrc\s*=\s*["']([^"']+)["']/gi)).map((mm) => mm[1]);
+    const tone = detectBackgroundTone(inner);
+    const toneNote = tone !== 'unknown' ? ` [background: ${tone}]` : '';
+    const text = (imgSrcs.length > 0 ? `${strippedText} [images: ${imgSrcs.join(', ')}]` : strippedText) + toneNote;
+    sections.push({ name, html: inner, text });
+  }
+  return sections;
+}
+
+// Pass 0 — free, no AI call. If the instruction quotes actual page copy
+// verbatim (8+ chars, single- or double-quoted) and that quote appears in
+// exactly one section's text, we know the target section with certainty —
+// skip the Haiku routing call entirely.
+function extractQuotedPhrases(prompt: string): string[] {
+  const phrases: string[] = [];
+  const re = /["']([^"']{8,})["']/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(prompt))) phrases.push(m[1].replace(/\s+/g, ' ').trim());
+  return phrases;
+}
+
+function tryDirectQuoteMatch(prompt: string, sections: SlSection[]): string | null {
+  const phrases = extractQuotedPhrases(prompt).filter(Boolean);
+  if (phrases.length === 0) return null;
+  const matchedNames = new Set<string>();
+  for (const phrase of phrases) {
+    for (const section of sections) {
+      if (section.text.includes(phrase)) matchedNames.add(section.name);
+    }
+  }
+  return matchedNames.size === 1 ? Array.from(matchedNames)[0] : null;
+}
+
+const ROUTING_SYSTEM_PROMPT = `You are a routing classifier for a landing-page AI edit assistant. Given a list of the page's sections (name + a short text/image preview of each) and an edit instruction, decide which section(s) the instruction targets and how big the change is.
+
+Return JSON only. No markdown fences, no explanation.
+{"type":"patch"|"style"|"structural"|"image_generate","target_sections":["section-name", ...],"confidence":"high"|"low","image_prompt":"..."}
+
+Rules:
+- "patch": the instruction clearly targets 1-3 specific existing sections you can identify from the previews below (a heading, button, image, paragraph, one section's design/spacing/color).
+- "style": the instruction touches 4+ sections, or a global CSS/font/color variable change (route this to the "head" section), or you cannot map it to specific sections from the previews given (e.g. "make the whole page feel more premium").
+- "structural": the instruction adds, removes, or reorders whole sections. Swapping/replacing an existing image with a user-attached image (see note below) is NOT structural — it's a "patch" on whichever section holds that image, same as swapping any other element.
+- "image_generate": the instruction asks for a brand-new image/logo to be AI-generated from a text description (no user-attached image, no existing image referenced by URL) AND the ONLY change is generating that image and placing it into 1-3 EXISTING sections — no sections are being added, removed, or reordered. Treat any instruction phrased as "create/generate a new X and replace/swap it with the current/existing one" as meaning "replace the CURRENT X with a NEW generated one" — that phrasing is a common but confusing way real users describe swapping in a new asset; never interpret it as "keep the old one unchanged" or "revert to the current one." If the request also restructures the page (e.g. "add a new testimonials section with AI-generated photos"), that is "structural", not "image_generate" — image_generate is only for a pure image-swap-via-generation on sections that already exist.
+  When you pick "image_generate", also return "image_prompt": a complete, standalone image-generation prompt — it is sent directly to an image model with NO other context, so it must stand on its own and must be fully decided, with zero ambiguity.
+  **Pick exactly ONE business name.** The schema may mention more than one name-like string (a company name, a product name, a tagline). You MUST resolve this to a single definitive name before writing the prompt — never write "X or Y", never write two candidate names separated by "or"/"/", never hedge. If genuinely unclear, prefer whichever name appears in the nav/header/logo area of the schema over one that only appears in body copy.
+  **User-specified details always win.** If the instruction itself states a color, style, icon idea, mood, or any other concrete visual detail (e.g. "make it blue", "minimalist", "use a mountain icon", "keep it playful"), that detail MUST appear in the image_prompt and overrides whatever the schema's palette/style would otherwise suggest. Only fall back to schema-derived colors/style/industry cues to fill in whatever the instruction left unspecified — never let a schema default silently override something the user actually asked for.
+  **Logo prompt formula (use this structure, don't freestyle):** "A flat vector logo icon for '<exact single business name>', a <industry/niche in 2-4 words>. <1-2 concrete visual concepts — use the user's own icon/style idea from the instruction if they gave one, otherwise pick something specific to this industry, e.g. an oil derrick silhouette, a coffee bean, a shield — NOT a generic swoosh or abstract blob>. Minimal geometric icon mark, <2-3 colors — the user's specified colors if given, otherwise exact colors from the schema's palette/brand>, flat solid colors only, no gradients, no drop shadows, no photorealism, no 3D rendering, clean vector illustration style, centered composition on a transparent background, generous negative space, high resolution."
+  **No readable text in the image, unless unavoidable.** Image models render text poorly (garbled letters, misspellings) — default to an ICON-ONLY mark with no business name lettered into the image at all, since the business name is already rendered as real HTML text next to the logo image in virtually every navbar/footer. Only include the name as image text if the instruction explicitly demands a wordmark/text-based logo, and even then keep it to one short word in large simple lettering.
+  You are also given each section's background tone as "[background: dark]" or "[background: light]" in the section list below when detectable — the generated image MUST contrast against the background of the section(s) it's being placed into: for a dark-background section, specify light/white/pale coloring; for a light-background section, specify dark coloring. If tone isn't given, favor a mid-tone/colorful mark that isn't itself near-white or near-black, so it holds up on either background.
+  Example: instruction "create a new logo and replace the current one" for a schema whose nav says "American Oil & Gas" (an oil and gas exploration company), targeting a section marked "[background: dark]" → image_prompt: "A flat vector logo icon for 'American Oil & Gas', an oil and gas exploration company. An oil derrick silhouette icon. Minimal geometric icon mark, warm gold and cream tones, flat solid colors only, no gradients, no drop shadows, no photorealism, no 3D rendering, clean vector illustration style, centered composition on a transparent background, generous negative space, high resolution."
+  Always include "transparent background" and "high resolution" so it composites cleanly into the section.
+- Confidence is about WHICH SECTION, not about literal wording match. The instruction will often describe UI in generic terms ("button", "form", "banner") that don't literally match the underlying HTML tag — a labeled pill, badge, link, or div styled as a button all count as a match for "button." If exactly one section's preview clearly contains the referenced text/element, that is high confidence — do not lower it just because the HTML tag isn't literally a <button>/<form>/etc.
+- Set confidence "low" only when the referenced element/text could plausibly belong to two or more different sections, or doesn't appear in any preview at all — including truly ambiguous image references ("use this image" when multiple sections have images) or vague whole-page requests ("make it feel more premium"). When confidence is "low" it is fine to still fill in your best guess for type/target_sections — the caller ignores them and falls back to full-page handling.
+- Only ever use section names EXACTLY as given in the list — never invent one.`;
+
+async function tryHaikuRouting(
+  prompt: string,
+  schema: unknown,
+  sections: SlSection[],
+  hasUserImages: boolean,
+): Promise<{ type: string; target_sections: string[]; confidence: string; image_prompt?: string } | null> {
+  try {
+    const sectionList = sections.map((s) => `- ${s.name}: "${s.text.slice(0, 150)}"`).join('\n');
+    const text = await askAI({
+      system: ROUTING_SYSTEM_PROMPT,
+      messages: [
+        {
+          role: 'user',
+          content:
+            `Schema:\n${JSON.stringify(schema)}\n\nSections:\n${sectionList}\n\nInstruction: ${prompt}` +
+            (hasUserImages ? '\n\n(User has attached image(s) along with this instruction.)' : ''),
+        },
+      ],
+      maxTokens: 300,
+      model: 'claude-haiku-4-5-20251001',
+    });
+    let raw = text.trim();
+    if (raw.startsWith('```')) raw = raw.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
+    const jsonStart = raw.indexOf('{');
+    const jsonEnd = raw.lastIndexOf('}');
+    if (jsonStart >= 0 && jsonEnd > jsonStart) raw = raw.slice(jsonStart, jsonEnd + 1);
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed.type !== 'string' || !Array.isArray(parsed.target_sections) || typeof parsed.confidence !== 'string') {
+      console.error('[pages/follow-up] routing pass returned unexpected shape', { rawPreview: text.slice(0, 500) });
+      return null;
+    }
+    return parsed;
+  } catch (err) {
+    console.error('[pages/follow-up] routing pass failed, falling back to full-page path', err);
+    return null;
+  }
+}
+
+const SCOPED_PATCH_SYSTEM_PROMPT = `You are editing ONE section of an existing landing page. You are given only that section's HTML (not the full page) and the schema slice for it. Make the requested change to this section only.
+
+IMPORTANT: Your entire response must be ONLY the JSON object below — begin your response with { and end it with }. Do NOT write any explanation, reasoning, preamble ("I need to...", "Here is..."), or markdown code fences before or after the JSON. Any text outside the JSON object will break the parser.
+
+{"html":"...complete updated section HTML..."}
+
+Rules:
+- Return the COMPLETE updated section HTML — do NOT include the <!-- SL:name --> markers themselves, they are added back by the caller.
+- Make the MINIMUM edit required. Do not restructure, reorganize, or rebuild the section beyond what the instruction asks.
+- Never leave old and new markup coexisting. If the instruction asks to redesign, rebuild, tighten, or otherwise change a part of the section (e.g. "the nav bar looks off, redesign it"), your output must REPLACE that part entirely — delete every old element it's replacing (old logo, old links, old buttons, old wrapper divs) before/while adding the new ones. Never append new elements next to old ones that do the same job, and never return a section where the same logical item (e.g. the same nav link, the same CTA button) appears twice.
+- Keep every existing data-field attribute intact unless the instruction specifically targets that field's content.
+- Before adding a scoped inline style override: if the existing rule for that property uses !important anywhere (including inside @media blocks), your override must also use !important on that property, or the change will silently not apply.
+- Never select or modify any element carrying a data-field attribute with decorative JS — that content must always stay visible/clickable.
+- Never add an external <script src> to a third-party domain.
+- If any copy in your output contains a double-quote character, escape it as \\" — invalid JSON breaks the parser.`;
+
+async function runScopedPatch(
+  sectionHtml: string,
+  schemaSlice: unknown,
+  prompt: string,
+  imageUrls: string[] | undefined,
+): Promise<string | null> {
+  try {
+    // The image content blocks below only give the model PIXELS — the
+    // literal URL string is never otherwise visible to it, so without this
+    // it has no way to know what to actually write into an <img src="...">.
+    // Every attached image is listed here by index so the model can quote
+    // the exact URL string back into the HTML it returns.
+    const imageUrlsNote = (imageUrls ?? []).length > 0
+      ? `\n\nAttached image URL(s) — use these EXACT strings verbatim in any src attribute, in the order attached:\n${(imageUrls ?? []).map((u, i) => `${i + 1}. ${u}`).join('\n')}`
+      : '';
+    const userContent: AIContent = [
+      ...(imageUrls ?? []).map((url): AIContentBlock => ({ type: 'image', url })),
+      {
+        type: 'text' as const,
+        text: `Schema slice for this section:\n${JSON.stringify(schemaSlice)}\n\nCurrent section HTML:\n${sectionHtml}\n\nInstruction: ${prompt}${imageUrlsNote}`,
+      },
+    ];
+    const text = await askAI({
+      system: SCOPED_PATCH_SYSTEM_PROMPT,
+      messages: [{ role: 'user', content: userContent }],
+      maxTokens: 4000,
+    });
+    let raw = text.trim();
+    if (raw.startsWith('```')) raw = raw.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
+    // The model doesn't always follow the "response must begin with {" rule —
+    // it sometimes prepends a plain-English sentence before the JSON (and/or
+    // a fenced block that doesn't start at position 0, so the check above
+    // never fires). Slice to the outermost {...} span regardless, same
+    // defensive pattern already used for Pass 1 parsing further down this file.
+    const jsonStart = raw.indexOf('{');
+    const jsonEnd = raw.lastIndexOf('}');
+    if (jsonStart >= 0 && jsonEnd > jsonStart) raw = raw.slice(jsonStart, jsonEnd + 1);
+    let parsed: { html?: string };
+    try {
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        parsed = JSON.parse(jsonrepair(raw));
+      }
+    } catch {
+      console.error('[pages/follow-up] scoped patch returned unparseable JSON', {
+        rawLength: text.length,
+        rawPreview: text.slice(0, 1500),
+      });
+      return null;
+    }
+    if (!parsed.html || typeof parsed.html !== 'string') {
+      console.error('[pages/follow-up] scoped patch JSON parsed but had no "html" field', {
+        rawLength: text.length,
+        rawPreview: text.slice(0, 1500),
+      });
+      return null;
+    }
+    return parsed.html;
+  } catch (err) {
+    console.error('[pages/follow-up] scoped patch generation failed, falling back to full-page path', err);
+    return null;
+  }
+}
+
+// Crude but effective corruption guard: the model swapping in a whole document,
+// an empty fragment, or a completely different element type is caught here
+// before the section is spliced back into the live page.
+function outerTag(html: string): string | null {
+  const m = /^\s*<([a-zA-Z][a-zA-Z0-9]*)/.exec(html);
+  return m ? m[1].toLowerCase() : null;
+}
+
+function sanityCheckScopedSection(original: string, updated: string): boolean {
+  if (!updated.trim()) return false;
+  const origTag = outerTag(original);
+  const newTag = outerTag(updated);
+  return !!origTag && origTag === newTag;
+}
+
 function countImagePrompts(node: unknown): number {
   if (!node || typeof node !== 'object') return 0;
   if (Array.isArray(node)) {
@@ -266,8 +535,26 @@ export async function POST(
   const htmlForModel = minifyHtmlForModel(
     html.replace(/<script src="[^"]+\/tracker\.js"><\/script>/, '<!-- TRACKER_PLACEHOLDER -->')
   );
+  // A URL in the prompt could be a competitor site OR a plain image asset to
+  // embed ("use https://picsum.photos/... as the hero background") — only
+  // the former should trigger competitor-scrape + forced full-page rebuild.
   const mentionedUrls = extractUrls(prompt);
-  const hasUserImages = Array.isArray(image_urls) && image_urls.length > 0;
+  const mentionedUrlImageFlags = await Promise.all(mentionedUrls.map(isImageUrl));
+  const promptImageUrls = mentionedUrls.filter((_, i) => mentionedUrlImageFlags[i]);
+  const competitorUrls = mentionedUrls.filter((_, i) => !mentionedUrlImageFlags[i]);
+
+  // Merge prompt-detected image URLs in with any client-attached ones so the
+  // model can embed them exactly like an uploaded image attachment. Capped at
+  // 3 total to match the existing image_urls validation above.
+  const effectiveImageUrls = [...(image_urls ?? []), ...promptImageUrls].slice(0, 3);
+  const hasUserImages = effectiveImageUrls.length > 0;
+
+  // Scoped-patch candidates — cheap, synchronous, no AI call. A genuine
+  // competitor URL always means full-page rebuild (see
+  // follow-up-input-scoping.md), so scoping is never attempted when one is
+  // mentioned — but a plain image-asset URL no longer counts as one.
+  const slSections = competitorUrls.length === 0 ? extractSlSections(html) : [];
+  const quoteMatchSection = competitorUrls.length === 0 ? tryDirectQuoteMatch(prompt, slSections) : null;
 
   // ── Open SSE stream — no NextResponse.json after this point ───────────────
 
@@ -276,13 +563,137 @@ export async function POST(
 
   void (async () => {
     try {
-      // Competitor scrape
+      let finalHtml = '';
+      let finalSchemaJson: unknown | undefined;
+      let scopedApplied = false;
       let competitorContext: Awaited<ReturnType<typeof scrapeCompetitorUrl>> | null = null;
-      if (mentionedUrls.length > 0) {
-        let hostname = mentionedUrls[0];
-        try { hostname = new URL(mentionedUrls[0]).hostname; } catch { /* keep raw */ }
+      // Mirrors parsed.type from the full-page path — scoped patches are
+      // always a 'patch' by construction, so this is set once up front and
+      // only overwritten inside the fallback branch below.
+      let resultType: 'structural' | 'style' | 'patch' = 'patch';
+
+      // ── Scoped-patch attempt (input-side token reduction) ─────────────────
+      // Only attempted when there's no competitor URL (slSections/quoteMatchSection
+      // are pre-empted to [] / null above when one is mentioned) and the page
+      // actually has SL section markers to scope to. See
+      // docs/follow-up-input-scoping.md for the full design + guardrails.
+      if (slSections.length > 0) {
+        let targetSections: string[] | null = quoteMatchSection ? [quoteMatchSection] : null;
+        // Set only when the routing pass resolved this as a "generate a new
+        // image and embed it in 1-3 existing sections" request — the scoped
+        // patch call below embeds this URL instead of relying on the
+        // instruction text alone. schema_json is intentionally left
+        // untouched for this path (see follow-up-input-scoping.md).
+        let generatedImageUrl: string | null = null;
+
+        if (!targetSections) {
+          sendSSE(controller, { type: 'status', message: 'Locating section...' });
+          const routing = await tryHaikuRouting(prompt, schema, slSections, hasUserImages);
+          const basicShapeOk = !!routing &&
+            routing.type === 'patch' &&
+            routing.target_sections.length >= 1 &&
+            routing.target_sections.length <= 3 &&
+            routing.target_sections.every((n) => slSections.some((s) => s.name === n));
+          // Haiku has repeatedly under-rated its own confidence when it
+          // correctly identifies the section but hedges on an unrelated
+          // ambiguity (e.g. "which image is this replacing", not "which
+          // section"). Prompt-wording alone hasn't fixed this reliably, so
+          // when it names exactly one section AND that section's name is
+          // literally present in the instruction text, trust that
+          // independent textual confirmation over Haiku's self-rating.
+          const namesItsSingleSection = !!routing && basicShapeOk && routing.target_sections.length === 1 &&
+            new RegExp(`\\b${routing.target_sections[0]}\\b`, 'i').test(prompt);
+          const routingQualifies = basicShapeOk && (routing!.confidence === 'high' || namesItsSingleSection);
+
+          const imageGenerateShapeOk = !!routing &&
+            routing.type === 'image_generate' &&
+            routing.confidence === 'high' &&
+            typeof routing.image_prompt === 'string' && routing.image_prompt.trim().length > 0 &&
+            routing.target_sections.length >= 1 &&
+            routing.target_sections.length <= 3 &&
+            routing.target_sections.every((n) => slSections.some((s) => s.name === n));
+
+          if (routingQualifies) {
+            targetSections = (routing as { target_sections: string[] }).target_sections;
+          } else if (imageGenerateShapeOk) {
+            const pageSlugForImage = page.slug ?? crypto.randomUUID();
+            sendSSE(controller, { type: 'status', message: 'Generating image...' });
+            const generatedUrl = await generateAndUploadImage(routing!.image_prompt!, pageSlugForImage, 'medium');
+            if (generatedUrl) {
+              sendSSE(controller, { type: 'image_ready', url: generatedUrl });
+              targetSections = routing!.target_sections;
+              generatedImageUrl = generatedUrl;
+            } else {
+              console.error('[pages/follow-up] image_generate routing qualified but image generation failed — falling back to full-page path', { routing });
+            }
+          } else {
+            console.log('[pages/follow-up] routing did not qualify for scoped patch, falling back to full-page path', {
+              routing,
+              knownSectionNames: slSections.map((s) => s.name),
+            });
+          }
+        }
+
+        if (targetSections && targetSections.length > 0) {
+          if (request.signal.aborted) { closeSSE(controller); return; }
+          sendSSE(controller, { type: 'status', message: 'Applying patch...' });
+
+          const scopedPrompt = generatedImageUrl
+            ? `${prompt}\n\n(A brand-new image has just been generated to satisfy this request — it is attached below, and it is the FINAL, intended replacement. Regardless of how the instruction above orders the words "replace/with/current/new" — real users often phrase this ambiguously (e.g. "create a new X and replace with the current one" is meant as "replace the current X with this new one", NOT "keep the current one" or "revert") — you must make this section visibly display the attached image in place of whatever currently represents it. If the current logo/element is an <img> tag, swap its src to the attached image URL. If it is instead built from inline <svg>/icon markup (common for hand-drawn logo icons), you MUST delete that entire inline SVG/icon markup and replace it with a single <img src="ATTACHED_IMAGE_URL" alt="logo" style="height:<match the icon's original rendered height>; width:auto;"> in its place — do not leave the old SVG/icon untouched alongside or instead of the new image. Do not leave the section unchanged and do not generate or invent a different image URL.)`
+            : prompt;
+          const scopedImageUrls = generatedImageUrl ? [...effectiveImageUrls, generatedImageUrl] : effectiveImageUrls;
+
+          const patchedSections: Array<{ name: string; html: string }> = [];
+          let allOk = true;
+          for (const name of targetSections) {
+            const section = slSections.find((s) => s.name === name);
+            if (!section) { allOk = false; break; }
+            const schemaSlice = { [name]: (schema as Record<string, unknown> | null | undefined)?.[name] };
+            const updated = await runScopedPatch(section.html, schemaSlice, scopedPrompt, scopedImageUrls);
+            if (!updated) {
+              console.error(`[pages/follow-up] scoped patch returned no html for section "${name}" — falling back to full-page path`);
+              allOk = false;
+              break;
+            }
+            if (!sanityCheckScopedSection(section.html, updated)) {
+              console.error(`[pages/follow-up] scoped patch failed sanity check for section "${name}" — falling back to full-page path`, {
+                originalOuterTag: outerTag(section.html),
+                updatedOuterTag: outerTag(updated),
+                updatedPreview: updated.slice(0, 300),
+              });
+              allOk = false;
+              break;
+            }
+            // For the image_generate path specifically: a "successful" patch
+            // that doesn't actually contain the new image URL is a silent
+            // no-op (the model left the section unchanged, or edited around
+            // it without embedding it) — treat that as a failure rather than
+            // shipping a response that looks done but visually didn't change.
+            if (generatedImageUrl && !updated.includes(generatedImageUrl)) {
+              console.error(`[pages/follow-up] image_generate patch for section "${name}" did not embed the generated image URL — falling back to full-page path`, {
+                generatedImageUrl,
+                updatedPreview: updated.slice(0, 500),
+              });
+              allOk = false;
+              break;
+            }
+            patchedSections.push({ name, html: updated });
+          }
+
+          if (allOk && patchedSections.length === targetSections.length) {
+            finalHtml = applyPatch(html, patchedSections);
+            scopedApplied = true;
+          }
+        }
+      }
+
+      // ── Fallback: today's full-page single-call path, unchanged ──────────
+      if (!scopedApplied) {
+      if (competitorUrls.length > 0) {
+        let hostname = competitorUrls[0];
+        try { hostname = new URL(competitorUrls[0]).hostname; } catch { /* keep raw */ }
         sendSSE(controller, { type: 'status', message: `Fetching ${hostname}...` });
-        competitorContext = await scrapeCompetitorUrl(mentionedUrls[0]);
+        competitorContext = await scrapeCompetitorUrl(competitorUrls[0]);
       }
 
       if (request.signal.aborted) { closeSSE(controller); return; }
@@ -293,7 +704,7 @@ export async function POST(
       // Emit status before Pass 1
       sendSSE(controller, {
         type: 'status',
-        message: mentionedUrls.length > 0 ? 'Analyzing design...' : 'Applying changes...',
+        message: competitorUrls.length > 0 ? 'Analyzing design...' : 'Applying changes...',
       });
 
       // Build Pass 1 message content
@@ -307,8 +718,12 @@ export async function POST(
         { type: 'text' as const, text: textContent },
         ...(hasUserImages
           ? [
-              { type: 'text' as const, text: 'User-attached image(s) — apply the "Attached images" rule from the system prompt to determine whether each is a bug reference screenshot or a content asset to embed:' },
-              ...(image_urls as string[]).map((url): AIContentBlock => ({ type: 'image', url })),
+              {
+                type: 'text' as const,
+                text: 'User-attached image(s) — apply the "Attached images" rule from the system prompt to determine whether each is a bug reference screenshot or a content asset to embed. If embedding, you MUST use these EXACT URL strings verbatim in any src attribute — the image content below only shows you the pixels, not the URL:\n' +
+                  effectiveImageUrls.map((u, i) => `${i + 1}. ${u}`).join('\n'),
+              },
+              ...effectiveImageUrls.map((url): AIContentBlock => ({ type: 'image', url })),
             ]
           : []),
       ];
@@ -390,8 +805,7 @@ export async function POST(
         return;
       }
 
-      let finalHtml: string;
-      let finalSchemaJson: unknown | undefined;
+      resultType = parsed.type;
 
       if (parsed.type === 'structural') {
         if (!parsed.schema_json || typeof parsed.schema_json !== 'object') {
@@ -471,6 +885,7 @@ export async function POST(
         }
         finalHtml = parsed.html;
       }
+      } // end fallback full-page path (!scopedApplied)
 
       // Strip STATUS comments before upload
       finalHtml = finalHtml.replace(/<!--\s*STATUS:[^>]*-->/g, '');
@@ -495,7 +910,7 @@ export async function POST(
       const updatedConversation = [
         ...history,
         userEntry,
-        { role: 'assistant', content: JSON.stringify({ type: parsed.type, schema_json: finalSchemaJson ?? schema }) },
+        { role: 'assistant', content: JSON.stringify({ type: resultType, schema_json: finalSchemaJson ?? schema }) },
       ];
 
       const updatePayload: Record<string, unknown> = {
@@ -513,7 +928,7 @@ export async function POST(
           updatePayload.field_selectors_json = null;
         }
       }
-      if (parsed.type === 'structural' && finalSchemaJson) {
+      if (resultType === 'structural' && finalSchemaJson) {
         if (isVariant) {
           updatePayload.draft_schema_json = finalSchemaJson;
         } else {
@@ -536,7 +951,7 @@ export async function POST(
         // the draft content directly.
         html_url: htmlUrl,
         ...(finalSchemaJson ? { schema_json: finalSchemaJson } : {}),
-        ...(mentionedUrls.length > 0 && !competitorContext ? { competitor_fetch_failed: true } : {}),
+        ...(competitorUrls.length > 0 && !competitorContext ? { competitor_fetch_failed: true } : {}),
       };
       sendSSE(controller, doneEvent);
       closeSSE(controller);
