@@ -358,6 +358,7 @@ IMPORTANT: Your entire response must be ONLY the JSON object below — begin you
 Rules:
 - Return the COMPLETE updated section HTML — do NOT include the <!-- SL:name --> markers themselves, they are added back by the caller.
 - Make the MINIMUM edit required. Do not restructure, reorganize, or rebuild the section beyond what the instruction asks.
+- Never leave old and new markup coexisting. If the instruction asks to redesign, rebuild, tighten, or otherwise change a part of the section (e.g. "the nav bar looks off, redesign it"), your output must REPLACE that part entirely — delete every old element it's replacing (old logo, old links, old buttons, old wrapper divs) before/while adding the new ones. Never append new elements next to old ones that do the same job, and never return a section where the same logical item (e.g. the same nav link, the same CTA button) appears twice.
 - Keep every existing data-field attribute intact unless the instruction specifically targets that field's content.
 - Before adding a scoped inline style override: if the existing rule for that property uses !important anywhere (including inside @media blocks), your override must also use !important on that property, or the change will silently not apply.
 - Never select or modify any element carrying a data-field attribute with decorative JS — that content must always stay visible/clickable.
