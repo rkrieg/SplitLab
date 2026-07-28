@@ -154,6 +154,64 @@ async function askAnthropicStream(options: AskAIOptions, onChunk: (text: string)
 }
 
 /**
+ * Generates a single image from a text prompt (gpt-image-1) and uploads it to
+ * Supabase Storage. Returns the public URL, or null if generation/upload
+ * failed — callers decide how to handle that (skip, fall back, etc.).
+ */
+export async function generateAndUploadImage(
+  prompt: string,
+  pageSlug: string,
+): Promise<string | null> {
+  try {
+    const openai = getOpenAIImageClient();
+    const result = await openai.images.generate({
+      model: 'gpt-image-1',
+      prompt,
+      n: 1,
+      size: '1024x1024',
+      quality: 'low',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any);
+
+    const item = result.data?.[0] as Record<string, unknown> | undefined;
+    if (!item) return null;
+
+    let buffer: ArrayBuffer;
+    let mimeType = 'image/png';
+    let ext = 'png';
+
+    if (typeof item.url === 'string') {
+      // URL response — fetch buffer immediately (URLs expire in ~1hr)
+      const imgRes = await fetch(item.url);
+      if (!imgRes.ok) return null;
+      buffer = await imgRes.arrayBuffer();
+      const ct = imgRes.headers.get('content-type') ?? '';
+      if (ct.includes('webp')) { mimeType = 'image/webp'; ext = 'webp'; }
+      else if (ct.includes('jpeg') || ct.includes('jpg')) { mimeType = 'image/jpeg'; ext = 'jpg'; }
+    } else if (typeof item.b64_json === 'string') {
+      // Base64 response
+      const bytes = Buffer.from(item.b64_json, 'base64');
+      buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+    } else {
+      return null;
+    }
+
+    const publicUrl = await uploadImage(pageSlug, buffer, mimeType, ext);
+    console.log(`[generateAndUploadImage] uploaded image for prompt: "${prompt.slice(0, 60)}…"`);
+    return publicUrl;
+  } catch (err) {
+    const e = err as Record<string, unknown>;
+    console.error('[generateAndUploadImage] image failed:', {
+      message: (err as Error).message,
+      status: e.status,
+      type: e.type,
+      code: e.code,
+    });
+    return null;
+  }
+}
+
+/**
  * Walks a schema object, collects every node that has an image_prompt field
  * (up to 8), calls DALL-E 3 for each in parallel, uploads the result to
  * Supabase Storage, and injects generated_image_url back onto the same node.
@@ -182,53 +240,10 @@ export async function generatePageImages(
 
   await Promise.all(
     capped.map(async ({ obj, prompt }) => {
-      try {
-        const openai = getOpenAIImageClient();
-        const result = await openai.images.generate({
-          model: 'gpt-image-1',
-          prompt,
-          n: 1,
-          size: '1024x1024',
-          quality: 'low',
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        } as any);
-
-        const item = result.data?.[0] as Record<string, unknown> | undefined;
-        if (!item) return;
-
-        let buffer: ArrayBuffer;
-        let mimeType = 'image/png';
-        let ext = 'png';
-
-        if (typeof item.url === 'string') {
-          // URL response — fetch buffer immediately (URLs expire in ~1hr)
-          const imgRes = await fetch(item.url);
-          if (!imgRes.ok) return;
-          buffer = await imgRes.arrayBuffer();
-          const ct = imgRes.headers.get('content-type') ?? '';
-          if (ct.includes('webp')) { mimeType = 'image/webp'; ext = 'webp'; }
-          else if (ct.includes('jpeg') || ct.includes('jpg')) { mimeType = 'image/jpeg'; ext = 'jpg'; }
-        } else if (typeof item.b64_json === 'string') {
-          // Base64 response
-          const bytes = Buffer.from(item.b64_json, 'base64');
-          buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
-        } else {
-          return;
-        }
-
-        const publicUrl = await uploadImage(pageSlug, buffer, mimeType, ext);
-        obj.generated_image_url = publicUrl;
-        onImageReady?.(publicUrl);
-        console.log(`[generatePageImages] uploaded image for prompt: "${prompt.slice(0, 60)}…"`);
-      } catch (err) {
-        const e = err as Record<string, unknown>;
-        console.error('[generatePageImages] image failed, skipping:', {
-          message: (err as Error).message,
-          status: e.status,
-          type: e.type,
-          code: e.code,
-        });
-      }
+      const publicUrl = await generateAndUploadImage(prompt, pageSlug);
+      if (!publicUrl) return;
+      obj.generated_image_url = publicUrl;
+      onImageReady?.(publicUrl);
     }),
   );
 
