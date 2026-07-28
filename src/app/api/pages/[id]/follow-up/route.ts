@@ -229,6 +229,25 @@ async function isImageUrl(url: string): Promise<boolean> {
   }
 }
 
+// Crude relative-luminance check on the first background-color/background hex
+// found in a section's inline styles — good enough to tell the image-generation
+// prompt "this section is dark, don't generate a dark logo that disappears into
+// it." Not a full CSS cascade resolution (doesn't look at :root variables or
+// external classes), just a same-order-of-magnitude signal for routing.
+function detectBackgroundTone(html: string): 'dark' | 'light' | 'unknown' {
+  const hexMatches = Array.from(
+    html.matchAll(/background(?:-color)?\s*:\s*#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})/g)
+  );
+  if (hexMatches.length === 0) return 'unknown';
+  let hex = hexMatches[0][1];
+  if (hex.length === 3) hex = hex.split('').map((c) => c + c).join('');
+  const r = parseInt(hex.slice(0, 2), 16);
+  const g = parseInt(hex.slice(2, 4), 16);
+  const b = parseInt(hex.slice(4, 6), 16);
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return luminance < 0.5 ? 'dark' : 'light';
+}
+
 function extractSlSections(html: string): SlSection[] {
   const sections: SlSection[] = [];
   const re = /<!-- SL:([a-zA-Z0-9_-]+) -->([\s\S]*?)<!-- \/SL:\1 -->/g;
@@ -238,7 +257,9 @@ function extractSlSections(html: string): SlSection[] {
     const inner = m[2];
     const strippedText = inner.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
     const imgSrcs = Array.from(inner.matchAll(/<img\b[^>]*\bsrc\s*=\s*["']([^"']+)["']/gi)).map((mm) => mm[1]);
-    const text = imgSrcs.length > 0 ? `${strippedText} [images: ${imgSrcs.join(', ')}]` : strippedText;
+    const tone = detectBackgroundTone(inner);
+    const toneNote = tone !== 'unknown' ? ` [background: ${tone}]` : '';
+    const text = (imgSrcs.length > 0 ? `${strippedText} [images: ${imgSrcs.join(', ')}]` : strippedText) + toneNote;
     sections.push({ name, html: inner, text });
   }
   return sections;
@@ -277,7 +298,15 @@ Rules:
 - "patch": the instruction clearly targets 1-3 specific existing sections you can identify from the previews below (a heading, button, image, paragraph, one section's design/spacing/color).
 - "style": the instruction touches 4+ sections, or a global CSS/font/color variable change (route this to the "head" section), or you cannot map it to specific sections from the previews given (e.g. "make the whole page feel more premium").
 - "structural": the instruction adds, removes, or reorders whole sections. Swapping/replacing an existing image with a user-attached image (see note below) is NOT structural — it's a "patch" on whichever section holds that image, same as swapping any other element.
-- "image_generate": the instruction asks for a brand-new image/logo to be AI-generated from a text description (no user-attached image, no existing image referenced by URL) AND the ONLY change is generating that image and placing it into 1-3 EXISTING sections — no sections are being added, removed, or reordered. If the request also restructures the page (e.g. "add a new testimonials section with AI-generated photos"), that is "structural", not "image_generate" — image_generate is only for a pure image-swap-via-generation on sections that already exist. When you pick "image_generate", also return "image_prompt": a concise, standalone image-generation prompt derived from the instruction (e.g. "a new minimalist logo" → a proper descriptive prompt for a logo image, incorporating any style/brand details mentioned).
+- "image_generate": the instruction asks for a brand-new image/logo to be AI-generated from a text description (no user-attached image, no existing image referenced by URL) AND the ONLY change is generating that image and placing it into 1-3 EXISTING sections — no sections are being added, removed, or reordered. Treat any instruction phrased as "create/generate a new X and replace/swap it with the current/existing one" as meaning "replace the CURRENT X with a NEW generated one" — that phrasing is a common but confusing way real users describe swapping in a new asset; never interpret it as "keep the old one unchanged" or "revert to the current one." If the request also restructures the page (e.g. "add a new testimonials section with AI-generated photos"), that is "structural", not "image_generate" — image_generate is only for a pure image-swap-via-generation on sections that already exist.
+  When you pick "image_generate", also return "image_prompt": a complete, standalone image-generation prompt — it is sent directly to an image model with NO other context, so it must stand on its own and must be fully decided, with zero ambiguity.
+  **Pick exactly ONE business name.** The schema may mention more than one name-like string (a company name, a product name, a tagline). You MUST resolve this to a single definitive name before writing the prompt — never write "X or Y", never write two candidate names separated by "or"/"/", never hedge. If genuinely unclear, prefer whichever name appears in the nav/header/logo area of the schema over one that only appears in body copy.
+  **User-specified details always win.** If the instruction itself states a color, style, icon idea, mood, or any other concrete visual detail (e.g. "make it blue", "minimalist", "use a mountain icon", "keep it playful"), that detail MUST appear in the image_prompt and overrides whatever the schema's palette/style would otherwise suggest. Only fall back to schema-derived colors/style/industry cues to fill in whatever the instruction left unspecified — never let a schema default silently override something the user actually asked for.
+  **Logo prompt formula (use this structure, don't freestyle):** "A flat vector logo icon for '<exact single business name>', a <industry/niche in 2-4 words>. <1-2 concrete visual concepts — use the user's own icon/style idea from the instruction if they gave one, otherwise pick something specific to this industry, e.g. an oil derrick silhouette, a coffee bean, a shield — NOT a generic swoosh or abstract blob>. Minimal geometric icon mark, <2-3 colors — the user's specified colors if given, otherwise exact colors from the schema's palette/brand>, flat solid colors only, no gradients, no drop shadows, no photorealism, no 3D rendering, clean vector illustration style, centered composition on a transparent background, generous negative space, high resolution."
+  **No readable text in the image, unless unavoidable.** Image models render text poorly (garbled letters, misspellings) — default to an ICON-ONLY mark with no business name lettered into the image at all, since the business name is already rendered as real HTML text next to the logo image in virtually every navbar/footer. Only include the name as image text if the instruction explicitly demands a wordmark/text-based logo, and even then keep it to one short word in large simple lettering.
+  You are also given each section's background tone as "[background: dark]" or "[background: light]" in the section list below when detectable — the generated image MUST contrast against the background of the section(s) it's being placed into: for a dark-background section, specify light/white/pale coloring; for a light-background section, specify dark coloring. If tone isn't given, favor a mid-tone/colorful mark that isn't itself near-white or near-black, so it holds up on either background.
+  Example: instruction "create a new logo and replace the current one" for a schema whose nav says "American Oil & Gas" (an oil and gas exploration company), targeting a section marked "[background: dark]" → image_prompt: "A flat vector logo icon for 'American Oil & Gas', an oil and gas exploration company. An oil derrick silhouette icon. Minimal geometric icon mark, warm gold and cream tones, flat solid colors only, no gradients, no drop shadows, no photorealism, no 3D rendering, clean vector illustration style, centered composition on a transparent background, generous negative space, high resolution."
+  Always include "transparent background" and "high resolution" so it composites cleanly into the section.
 - Confidence is about WHICH SECTION, not about literal wording match. The instruction will often describe UI in generic terms ("button", "form", "banner") that don't literally match the underlying HTML tag — a labeled pill, badge, link, or div styled as a button all count as a match for "button." If exactly one section's preview clearly contains the referenced text/element, that is high confidence — do not lower it just because the HTML tag isn't literally a <button>/<form>/etc.
 - Set confidence "low" only when the referenced element/text could plausibly belong to two or more different sections, or doesn't appear in any preview at all — including truly ambiguous image references ("use this image" when multiple sections have images) or vague whole-page requests ("make it feel more premium"). When confidence is "low" it is fine to still fill in your best guess for type/target_sections — the caller ignores them and falls back to full-page handling.
 - Only ever use section names EXACTLY as given in the list — never invent one.`;
@@ -342,11 +371,19 @@ async function runScopedPatch(
   imageUrls: string[] | undefined,
 ): Promise<string | null> {
   try {
+    // The image content blocks below only give the model PIXELS — the
+    // literal URL string is never otherwise visible to it, so without this
+    // it has no way to know what to actually write into an <img src="...">.
+    // Every attached image is listed here by index so the model can quote
+    // the exact URL string back into the HTML it returns.
+    const imageUrlsNote = (imageUrls ?? []).length > 0
+      ? `\n\nAttached image URL(s) — use these EXACT strings verbatim in any src attribute, in the order attached:\n${(imageUrls ?? []).map((u, i) => `${i + 1}. ${u}`).join('\n')}`
+      : '';
     const userContent: AIContent = [
       ...(imageUrls ?? []).map((url): AIContentBlock => ({ type: 'image', url })),
       {
         type: 'text' as const,
-        text: `Schema slice for this section:\n${JSON.stringify(schemaSlice)}\n\nCurrent section HTML:\n${sectionHtml}\n\nInstruction: ${prompt}`,
+        text: `Schema slice for this section:\n${JSON.stringify(schemaSlice)}\n\nCurrent section HTML:\n${sectionHtml}\n\nInstruction: ${prompt}${imageUrlsNote}`,
       },
     ];
     const text = await askAI({
@@ -580,7 +617,7 @@ export async function POST(
           } else if (imageGenerateShapeOk) {
             const pageSlugForImage = page.slug ?? crypto.randomUUID();
             sendSSE(controller, { type: 'status', message: 'Generating image...' });
-            const generatedUrl = await generateAndUploadImage(routing!.image_prompt!, pageSlugForImage);
+            const generatedUrl = await generateAndUploadImage(routing!.image_prompt!, pageSlugForImage, 'medium');
             if (generatedUrl) {
               sendSSE(controller, { type: 'image_ready', url: generatedUrl });
               targetSections = routing!.target_sections;
@@ -601,7 +638,7 @@ export async function POST(
           sendSSE(controller, { type: 'status', message: 'Applying patch...' });
 
           const scopedPrompt = generatedImageUrl
-            ? `${prompt}\n\n(A new image has just been generated for this request — it is attached below. Use it as the src/background for the relevant element in this section; do not generate or invent a different image.)`
+            ? `${prompt}\n\n(A brand-new image has just been generated to satisfy this request — it is attached below, and it is the FINAL, intended replacement. Regardless of how the instruction above orders the words "replace/with/current/new" — real users often phrase this ambiguously (e.g. "create a new X and replace with the current one" is meant as "replace the current X with this new one", NOT "keep the current one" or "revert") — you must make this section visibly display the attached image in place of whatever currently represents it. If the current logo/element is an <img> tag, swap its src to the attached image URL. If it is instead built from inline <svg>/icon markup (common for hand-drawn logo icons), you MUST delete that entire inline SVG/icon markup and replace it with a single <img src="ATTACHED_IMAGE_URL" alt="logo" style="height:<match the icon's original rendered height>; width:auto;"> in its place — do not leave the old SVG/icon untouched alongside or instead of the new image. Do not leave the section unchanged and do not generate or invent a different image URL.)`
             : prompt;
           const scopedImageUrls = generatedImageUrl ? [...effectiveImageUrls, generatedImageUrl] : effectiveImageUrls;
 
@@ -622,6 +659,19 @@ export async function POST(
                 originalOuterTag: outerTag(section.html),
                 updatedOuterTag: outerTag(updated),
                 updatedPreview: updated.slice(0, 300),
+              });
+              allOk = false;
+              break;
+            }
+            // For the image_generate path specifically: a "successful" patch
+            // that doesn't actually contain the new image URL is a silent
+            // no-op (the model left the section unchanged, or edited around
+            // it without embedding it) — treat that as a failure rather than
+            // shipping a response that looks done but visually didn't change.
+            if (generatedImageUrl && !updated.includes(generatedImageUrl)) {
+              console.error(`[pages/follow-up] image_generate patch for section "${name}" did not embed the generated image URL — falling back to full-page path`, {
+                generatedImageUrl,
+                updatedPreview: updated.slice(0, 500),
               });
               allOk = false;
               break;
@@ -667,7 +717,11 @@ export async function POST(
         { type: 'text' as const, text: textContent },
         ...(hasUserImages
           ? [
-              { type: 'text' as const, text: 'User-attached image(s) — apply the "Attached images" rule from the system prompt to determine whether each is a bug reference screenshot or a content asset to embed:' },
+              {
+                type: 'text' as const,
+                text: 'User-attached image(s) — apply the "Attached images" rule from the system prompt to determine whether each is a bug reference screenshot or a content asset to embed. If embedding, you MUST use these EXACT URL strings verbatim in any src attribute — the image content below only shows you the pixels, not the URL:\n' +
+                  effectiveImageUrls.map((u, i) => `${i + 1}. ${u}`).join('\n'),
+              },
               ...effectiveImageUrls.map((url): AIContentBlock => ({ type: 'image', url })),
             ]
           : []),

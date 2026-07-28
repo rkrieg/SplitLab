@@ -161,6 +161,7 @@ async function askAnthropicStream(options: AskAIOptions, onChunk: (text: string)
 export async function generateAndUploadImage(
   prompt: string,
   pageSlug: string,
+  quality: 'low' | 'medium' | 'high' = 'low',
 ): Promise<string | null> {
   try {
     const openai = getOpenAIImageClient();
@@ -169,7 +170,7 @@ export async function generateAndUploadImage(
       prompt,
       n: 1,
       size: '1024x1024',
-      quality: 'low',
+      quality,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } as any);
 
