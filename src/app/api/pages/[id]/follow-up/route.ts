@@ -3,7 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { jsonrepair } from 'jsonrepair';
-import { askAI, askAIStream, isRateLimited, generatePageImages, AIResponseTruncatedError, type AIContent, type AIContentBlock } from '@/lib/ai-client';
+import { askAI, askAIStream, isRateLimited, generatePageImages, generateAndUploadImage, AIResponseTruncatedError, type AIContent, type AIContentBlock } from '@/lib/ai-client';
 import { uploadHtml, downloadHtmlByPath, fileNameFromUrl } from '@/lib/storage';
 import { resolveWorkspaceRole, resolveOwnerPlan } from '@/lib/workspace-auth';
 import { PLAN_LIMITS } from '@/lib/plans';
@@ -271,12 +271,13 @@ function tryDirectQuoteMatch(prompt: string, sections: SlSection[]): string | nu
 const ROUTING_SYSTEM_PROMPT = `You are a routing classifier for a landing-page AI edit assistant. Given a list of the page's sections (name + a short text/image preview of each) and an edit instruction, decide which section(s) the instruction targets and how big the change is.
 
 Return JSON only. No markdown fences, no explanation.
-{"type":"patch"|"style"|"structural","target_sections":["section-name", ...],"confidence":"high"|"low"}
+{"type":"patch"|"style"|"structural"|"image_generate","target_sections":["section-name", ...],"confidence":"high"|"low","image_prompt":"..."}
 
 Rules:
 - "patch": the instruction clearly targets 1-3 specific existing sections you can identify from the previews below (a heading, button, image, paragraph, one section's design/spacing/color).
 - "style": the instruction touches 4+ sections, or a global CSS/font/color variable change (route this to the "head" section), or you cannot map it to specific sections from the previews given (e.g. "make the whole page feel more premium").
-- "structural": the instruction adds, removes, or reorders whole sections, or asks for a brand-new image/logo to be AI-generated from a text description. Swapping/replacing an existing image with a user-attached image (see note below) is NOT structural — it's a "patch" on whichever section holds that image, same as swapping any other element.
+- "structural": the instruction adds, removes, or reorders whole sections. Swapping/replacing an existing image with a user-attached image (see note below) is NOT structural — it's a "patch" on whichever section holds that image, same as swapping any other element.
+- "image_generate": the instruction asks for a brand-new image/logo to be AI-generated from a text description (no user-attached image, no existing image referenced by URL) AND the ONLY change is generating that image and placing it into 1-3 EXISTING sections — no sections are being added, removed, or reordered. If the request also restructures the page (e.g. "add a new testimonials section with AI-generated photos"), that is "structural", not "image_generate" — image_generate is only for a pure image-swap-via-generation on sections that already exist. When you pick "image_generate", also return "image_prompt": a concise, standalone image-generation prompt derived from the instruction (e.g. "a new minimalist logo" → a proper descriptive prompt for a logo image, incorporating any style/brand details mentioned).
 - Confidence is about WHICH SECTION, not about literal wording match. The instruction will often describe UI in generic terms ("button", "form", "banner") that don't literally match the underlying HTML tag — a labeled pill, badge, link, or div styled as a button all count as a match for "button." If exactly one section's preview clearly contains the referenced text/element, that is high confidence — do not lower it just because the HTML tag isn't literally a <button>/<form>/etc.
 - Set confidence "low" only when the referenced element/text could plausibly belong to two or more different sections, or doesn't appear in any preview at all — including truly ambiguous image references ("use this image" when multiple sections have images) or vague whole-page requests ("make it feel more premium"). When confidence is "low" it is fine to still fill in your best guess for type/target_sections — the caller ignores them and falls back to full-page handling.
 - Only ever use section names EXACTLY as given in the list — never invent one.`;
@@ -286,7 +287,7 @@ async function tryHaikuRouting(
   schema: unknown,
   sections: SlSection[],
   hasUserImages: boolean,
-): Promise<{ type: string; target_sections: string[]; confidence: string } | null> {
+): Promise<{ type: string; target_sections: string[]; confidence: string; image_prompt?: string } | null> {
   try {
     const sectionList = sections.map((s) => `- ${s.name}: "${s.text.slice(0, 150)}"`).join('\n');
     const text = await askAI({
@@ -540,6 +541,12 @@ export async function POST(
       // docs/follow-up-input-scoping.md for the full design + guardrails.
       if (slSections.length > 0) {
         let targetSections: string[] | null = quoteMatchSection ? [quoteMatchSection] : null;
+        // Set only when the routing pass resolved this as a "generate a new
+        // image and embed it in 1-3 existing sections" request — the scoped
+        // patch call below embeds this URL instead of relying on the
+        // instruction text alone. schema_json is intentionally left
+        // untouched for this path (see follow-up-input-scoping.md).
+        let generatedImageUrl: string | null = null;
 
         if (!targetSections) {
           sendSSE(controller, { type: 'status', message: 'Locating section...' });
@@ -559,8 +566,28 @@ export async function POST(
           const namesItsSingleSection = !!routing && basicShapeOk && routing.target_sections.length === 1 &&
             new RegExp(`\\b${routing.target_sections[0]}\\b`, 'i').test(prompt);
           const routingQualifies = basicShapeOk && (routing!.confidence === 'high' || namesItsSingleSection);
+
+          const imageGenerateShapeOk = !!routing &&
+            routing.type === 'image_generate' &&
+            routing.confidence === 'high' &&
+            typeof routing.image_prompt === 'string' && routing.image_prompt.trim().length > 0 &&
+            routing.target_sections.length >= 1 &&
+            routing.target_sections.length <= 3 &&
+            routing.target_sections.every((n) => slSections.some((s) => s.name === n));
+
           if (routingQualifies) {
             targetSections = (routing as { target_sections: string[] }).target_sections;
+          } else if (imageGenerateShapeOk) {
+            const pageSlugForImage = page.slug ?? crypto.randomUUID();
+            sendSSE(controller, { type: 'status', message: 'Generating image...' });
+            const generatedUrl = await generateAndUploadImage(routing!.image_prompt!, pageSlugForImage);
+            if (generatedUrl) {
+              sendSSE(controller, { type: 'image_ready', url: generatedUrl });
+              targetSections = routing!.target_sections;
+              generatedImageUrl = generatedUrl;
+            } else {
+              console.error('[pages/follow-up] image_generate routing qualified but image generation failed — falling back to full-page path', { routing });
+            }
           } else {
             console.log('[pages/follow-up] routing did not qualify for scoped patch, falling back to full-page path', {
               routing,
@@ -573,13 +600,18 @@ export async function POST(
           if (request.signal.aborted) { closeSSE(controller); return; }
           sendSSE(controller, { type: 'status', message: 'Applying patch...' });
 
+          const scopedPrompt = generatedImageUrl
+            ? `${prompt}\n\n(A new image has just been generated for this request — it is attached below. Use it as the src/background for the relevant element in this section; do not generate or invent a different image.)`
+            : prompt;
+          const scopedImageUrls = generatedImageUrl ? [...effectiveImageUrls, generatedImageUrl] : effectiveImageUrls;
+
           const patchedSections: Array<{ name: string; html: string }> = [];
           let allOk = true;
           for (const name of targetSections) {
             const section = slSections.find((s) => s.name === name);
             if (!section) { allOk = false; break; }
             const schemaSlice = { [name]: (schema as Record<string, unknown> | null | undefined)?.[name] };
-            const updated = await runScopedPatch(section.html, schemaSlice, prompt, effectiveImageUrls);
+            const updated = await runScopedPatch(section.html, schemaSlice, scopedPrompt, scopedImageUrls);
             if (!updated) {
               console.error(`[pages/follow-up] scoped patch returned no html for section "${name}" — falling back to full-page path`);
               allOk = false;

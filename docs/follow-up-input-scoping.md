@@ -214,23 +214,79 @@ Additional safeguards to add:
       via the existing `extractUrls(prompt)`), so scoping is never attempted
       at all when a URL is mentioned — falls straight to today's unchanged
       full-page path
-- [ ] Measure real latency split: how much of the current 58-60s is prefill
-      of the full HTML vs. generation time, to confirm the input-scoping
-      theory actually delivers the expected win in production
+- [x] Measure real latency split: validated against real prompts on the
+      preview deployment — scoped patches landed in the ~13-27s range vs.
+      ~58-60s baseline once the parsing/routing bugs below were fixed;
+      remaining time on slow local-network tests traced to client image
+      upload/download bandwidth, not the AI calls themselves
+- [x] Fixed: `runScopedPatch`/`tryHaikuRouting` JSON parsing failing when the
+      model prepended prose before a fenced/unfenced JSON block — added
+      `indexOf('{')`/`lastIndexOf('}')` span slicing; this was silently
+      forcing every scoped attempt into the (double-cost) full-page fallback
+- [x] Fixed: competitor-URL vs. plain image-asset URL misclassification
+      (e.g. `picsum.photos` triggering a wasted ApiFlash/Firecrawl
+      competitor-scrape instead of a scoped image-embed patch) — added
+      `isImageUrl()`, HEAD request with a ranged-GET fallback for hosts that
+      don't serve HEAD cleanly (picsum renders on demand), splitting
+      `mentionedUrls` into `competitorUrls` vs. `promptImageUrls`
+- [x] Fixed: Haiku under-rating its own correct routing decisions as
+      `confidence: "low"` (recurring on hero heading, button, and
+      image-upload cases) — added a code-level corroboration check
+      (`namesItsSingleSection`) that trusts a single named, prompt-matched
+      section over Haiku's self-reported low confidence
+- [x] Fixed: routing prompt classified "replace this image with X" (a
+      user-attached image swap on an existing section) as `structural`
+      instead of `patch`, since the rule only mentioned "brand-new image to
+      be generated" — clarified that swapping in a user-supplied image is a
+      patch, not structural, on whichever section holds it
+- [x] Verified: pages whose CSS lives only in a top-level `<style>` tag in
+      `head` (no per-section inline styles) still route/patch correctly — the
+      routing prompt already sends global CSS/font/color-variable changes to
+      the `"head"` section (`follow-up/route.ts` line ~278), and the scoped
+      Pass 2 prompt carries the same head-patching rules as the full-page
+      prompt: retype the entire `<style>` block verbatim for genuinely global
+      changes, or fall back to a scoped inline `<style>` block inside the
+      target section when the change only affects one section's rules. No
+      code change needed — `head` was already just another SL section per the
+      "Correctness Guardrails" section above; this confirms it holds for the
+      style-only-in-head-tag case specifically.
 - [ ] No feature flag exists yet — the scoped path is always attempted (with
       automatic fallback baked in whenever confidence/targeting isn't solid),
       not gated behind an env var/rollout toggle. Add one if a staged rollout
       is wanted before this reaches real users
-- [ ] Validate `target_sections` accuracy and fallback-rate against a batch of
-      real follow-up prompts (including the ambiguous/multi-section examples
-      in the table below) before trusting this in production
+- [ ] Double-cost fallback is still unresolved: when Pass 2 fails after
+      already paying for Pass 0/1/2, the code pays again for the full
+      fallback on top — mitigated indirectly by fixing why Pass 2 was
+      failing, not by changing the fallback's cost structure itself
 - [ ] Confirm cost delta: Pass 1 is a new, extra call (cheap/fast model +
       tiny input) — net cost per patch edit vs. today's single Sonnet call
-- [ ] **TBD, out of scope for now:** wiring DALL·E image generation into
-      `follow-up/route.ts` itself (currently only initial build + structural
-      schema rebuilds generate images) — needed for prompts like "create a
-      new logo," which today can only be satisfied by a full
-      structural/style rewrite, not a scoped patch
+- [x] ✅ Done: Wire new-image generation into the scoped path via a new
+      `image_generate` routing type — extracted the single-image gen+upload
+      logic out of `generatePageImages` into a reusable exported
+      `generateAndUploadImage(prompt, pageSlug)` helper (`ai-client.ts`),
+      which `generatePageImages` now calls internally per schema node too (no
+      behavior change there)
+- [x] ✅ Done: Extended `ROUTING_SYSTEM_PROMPT`/`tryHaikuRouting` with the
+      `image_generate` type (+ `image_prompt` field on its output), narrowed
+      so it ONLY fires when the request is purely "generate/replace an image
+      in 1-3 existing sections" — a request that also adds/reorders sections
+      still routes `structural`, unchanged
+- [x] ✅ Done: In `follow-up/route.ts`, when routing qualifies as
+      `image_generate` (confidence "high", 1-3 valid target sections,
+      non-empty `image_prompt`): generates the image via the new helper,
+      emits `image_ready` SSE, then runs the existing scoped-patch call
+      (`runScopedPatch`) with the generated URL appended to the image
+      attachments and an explicit instruction-suffix telling the model to
+      embed it rather than invent a different image. schema_json stays
+      untouched, per existing patch behavior — accepted tradeoff: a later
+      full structural rebuild won't retroactively know about this generated
+      image
+- [x] ✅ Done: Fallback — image generation failure, routing not qualifying,
+      or the existing scoped-patch/sanity-check failing all leave
+      `scopedApplied` `false` and fall straight through to today's full
+      structural rewrite, the exact same safety net used for every other
+      scoped-patch failure. No new fallback mechanism was needed.
+- [x] ✅ Done: `npm run build` passes with these changes
 
 ## Files Likely Touched (when implementation starts)
 
