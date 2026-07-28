@@ -416,6 +416,45 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     setIframeLoaded(false);
   }, [pageId, htmlUrl]);
 
+  // Fallback for iframeLoaded: the React onLoad prop can fail to fire even though the
+  // frame's document has actually finished loading, so also listen natively and poll
+  // readyState as a backstop.
+  useEffect(() => {
+    if (!iframeSrc) return;
+    const iframe = iframeRef.current;
+    if (!iframe) return;
+
+    // readyState 'complete' fires once fonts/CSS/images are fetched, but the page still
+    // needs a beat to actually paint (render-blocking @import fonts, fade-in animations
+    // on load) — reveal a moment later so we don't flash its blank white background.
+    let revealTimer: ReturnType<typeof setTimeout> | null = null;
+    const markLoaded = () => {
+      if (revealTimer) return;
+      revealTimer = setTimeout(() => setIframeLoaded(true), 150);
+    };
+    iframe.addEventListener('load', markLoaded);
+
+    const poll = setInterval(() => {
+      try {
+        if (iframe.contentDocument?.readyState === 'complete') {
+          markLoaded();
+          clearInterval(poll);
+        }
+      } catch {
+        // cross-origin or not yet accessible — keep polling until timeout below
+      }
+    }, 250);
+
+    const timeout = setTimeout(markLoaded, 8000);
+
+    return () => {
+      iframe.removeEventListener('load', markLoaded);
+      clearInterval(poll);
+      clearTimeout(timeout);
+      if (revealTimer) clearTimeout(revealTimer);
+    };
+  }, [iframeSrc]);
+
   // postMessage: field edits + image clicks
   useEffect(() => {
     if (!pageId) return;
