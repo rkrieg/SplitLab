@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { resolveWorkspaceRole } from '@/lib/workspace-auth';
+import { normalizedConditionSignature } from '@/lib/auto-personalize';
 
 const VALID_PARAMS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'] as const;
 const MAX_RULES = 20;
@@ -191,6 +192,7 @@ export async function POST(
       match_value: isFallback ? null : (firstCondition?.match_value as string),
       match_type: 'exact',
       conditions_json: isFallback ? null : conditions,
+      condition_signature: isFallback ? null : normalizedConditionSignature(conditions),
       overrides_json: r.overrides_json ?? {},
       hero_html: typeof r.hero_html === 'string' ? r.hero_html : null,
       priority: typeof r.priority === 'number' ? r.priority : i,

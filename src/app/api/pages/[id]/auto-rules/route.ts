@@ -4,13 +4,17 @@ import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { resolveWorkspaceRole } from '@/lib/workspace-auth';
 
-// UTM Personalization V2 pivot (2026-07-30). See docs/utm-personalization-v2-automation.md,
-// "PIVOT" section. User-defined rule templates: which UTM field(s) to watch
-// (AND'd together) plus an optional loose hint. No exact values are set here —
-// the background cron judges incoming values against the hint via AI.
+// UTM Personalization V2 pivot (2026-07-30, refined 2026-07-31 "PIVOT 3").
+// See docs/utm-personalization-v2-automation.md. User-defined rule templates:
+// an ordered list of per-field rows (AND'd together). Each row is either a
+// literal filter (personalize=false, look_for is a literal value matched
+// case-insensitive/contains) or an AI-judged category (personalize=true,
+// look_for is a loose description, instructions guide content generation).
+// No exact values are pre-declared for personalize rows — the background
+// cron judges incoming values against look_for via AI.
 
 const MAX_RULES_PER_PAGE = 200;
-const MAX_FIELDS_PER_RULE = 5;
+const MAX_ROWS_PER_RULE = 5;
 
 const LEGACY_UTM_PARAMS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'];
 const EXTRA_ID_PARAMS = ['h_ad_id', 'ad_id', 'adset_id', 'campaign_id', 'creative_id', 'placement_id'];
@@ -20,6 +24,13 @@ function isAllowedField(name: string): boolean {
   if (EXTRA_ID_PARAMS.includes(name)) return true;
   if (name.indexOf('hsa_') === 0) return true;
   return false;
+}
+
+export interface AutoRuleRow {
+  field: string;
+  look_for: string;
+  personalize: boolean;
+  instructions?: string;
 }
 
 async function authorize(pageId: string) {
@@ -61,22 +72,41 @@ export async function POST(
   if (auth.wsRole === 'viewer') return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
   const body = await req.json();
-  const fields = body.fields as string[] | undefined;
-  const hint = typeof body.hint === 'string' ? body.hint.trim().slice(0, 500) : '';
+  const rawRows = body.rows as unknown[] | undefined;
 
-  if (!Array.isArray(fields) || fields.length === 0) {
-    return NextResponse.json({ error: 'Select at least one UTM field.' }, { status: 400 });
+  if (!Array.isArray(rawRows) || rawRows.length === 0) {
+    return NextResponse.json({ error: 'Add at least one field row.' }, { status: 400 });
   }
-  if (hint.length < 3) {
-    return NextResponse.json({ error: 'Describe what to look for (at least a few words) — this guides the AI judgment.' }, { status: 400 });
+  if (rawRows.length > MAX_ROWS_PER_RULE) {
+    return NextResponse.json({ error: `Maximum ${MAX_ROWS_PER_RULE} rows per rule.` }, { status: 400 });
   }
-  if (fields.length > MAX_FIELDS_PER_RULE) {
-    return NextResponse.json({ error: `Maximum ${MAX_FIELDS_PER_RULE} fields per rule.` }, { status: 400 });
-  }
-  for (const f of fields) {
-    if (typeof f !== 'string' || !isAllowedField(f)) {
-      return NextResponse.json({ error: `"${f}" is not a recognized tracking parameter.` }, { status: 400 });
+
+  const rows: AutoRuleRow[] = [];
+  for (const raw of rawRows) {
+    if (typeof raw !== 'object' || raw === null) {
+      return NextResponse.json({ error: 'Each row must be an object.' }, { status: 400 });
     }
+    const r = raw as Record<string, unknown>;
+    const field = r.field;
+    const lookFor = typeof r.look_for === 'string' ? r.look_for.trim().slice(0, 500) : '';
+    const personalize = r.personalize === true;
+    const instructions = typeof r.instructions === 'string' ? r.instructions.trim().slice(0, 500) : '';
+
+    if (typeof field !== 'string' || !isAllowedField(field)) {
+      return NextResponse.json({ error: `"${field}" is not a recognized tracking parameter.` }, { status: 400 });
+    }
+    if (lookFor.length < 2) {
+      return NextResponse.json({ error: `Describe what to look for in "${field}" — this guides matching.` }, { status: 400 });
+    }
+    rows.push({ field, look_for: lookFor, personalize, ...(personalize && instructions ? { instructions } : {}) });
+  }
+
+  const uniqueFields = new Set(rows.map(r => r.field));
+  if (uniqueFields.size !== rows.length) {
+    return NextResponse.json({ error: 'Each field can only be used once per rule.' }, { status: 400 });
+  }
+  if (!rows.some(r => r.personalize)) {
+    return NextResponse.json({ error: 'Add at least one personalize row — a rule made only of filter rows never changes anything.' }, { status: 400 });
   }
 
   const { count } = await db
@@ -90,7 +120,7 @@ export async function POST(
 
   const { data: inserted, error } = await db
     .from('utm_auto_rules')
-    .insert({ page_id: params.id, fields, hint })
+    .insert({ page_id: params.id, rows })
     .select()
     .single();
 

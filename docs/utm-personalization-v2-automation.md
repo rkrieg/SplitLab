@@ -268,13 +268,23 @@ The original `personalization-rules/auto/route.ts` POST endpoint has always dedu
 
 - [x] ✅ UTM capture into `events.metadata` (`utm_sig` computed server-side in `/api/event` and `serve/route.ts`) — unchanged from before the pivot, still the data source everything else reads from.
 - [x] ✅ Hero-field auto-detection, both tiers (`src/lib/hero-field-detection.ts`, `src/lib/hero-field-detection-raw.ts`) — unchanged, reused as-is by the new flow.
-- [x] ✅ Migration `044_utm_auto_rules.sql` (**not yet run**): `utm_auto_rules` (user-defined rule templates: page_id, fields[], hint) and `utm_auto_rule_matches` (per-rule AI-judgment cache keyed by projected value-combination signature).
-- [x] ✅ `src/lib/auto-personalize.ts`: `judgeUtmHintMatch()` (AI yes/no judgment against a rule's hint), `generateHeroOverrides()` (content generation, extracted from the old auto-generate route, logic unchanged), `insertLiveAutoRule()` (writes a completed, non-draft rule directly, no approval state).
-- [x] ✅ `src/app/api/pages/[id]/auto-rules/route.ts` — GET/POST/DELETE for rule templates.
-- [x] ✅ Rewrote `src/app/api/cron/utm-detect/route.ts` — no more visitor-threshold traffic discovery; now projects traffic onto each active rule's watched fields, judges new value-combinations via AI (once per combination, cached), and on match generates content + writes a live rule directly.
-- [x] ✅ `src/components/utm/AutoRulesPanel.tsx` — field-name dropdown (no raw values), optional hint textarea, rule list with delete. Replaces and deletes the old `AutoDetectionPanel.tsx`. Wired into `UTMPickerClient.tsx`.
+- [x] ✅ Migration `044_utm_auto_rules.sql` (**not yet run**): `utm_auto_rules` (user-defined rule templates: page_id, fields[], hint) and `utm_auto_rule_matches` (per-rule AI-judgment cache keyed by projected value-combination signature). — **superseded by PIVOT 3, see below.**
+- [x] ✅ `src/lib/auto-personalize.ts`: `judgeUtmHintMatch()` (AI yes/no judgment against a rule's hint), `generateHeroOverrides()` (content generation, extracted from the old auto-generate route, logic unchanged), `insertLiveAutoRule()` (writes a completed, non-draft rule directly, no approval state). — **judge/generation signatures superseded by PIVOT 3, see below.**
+- [x] ✅ `src/app/api/pages/[id]/auto-rules/route.ts` — GET/POST/DELETE for rule templates. — **validation superseded by PIVOT 3, see below.**
+- [x] ✅ Rewrote `src/app/api/cron/utm-detect/route.ts` — no more visitor-threshold traffic discovery; now projects traffic onto each active rule's watched fields, judges new value-combinations via AI (once per combination, cached), and on match generates content + writes a live rule directly. — **row-projection logic superseded by PIVOT 3, see below.**
+- [x] ✅ `src/components/utm/AutoRulesPanel.tsx` — field-name dropdown (no raw values), optional hint textarea, rule list with delete. Replaces and deletes the old `AutoDetectionPanel.tsx`. Wired into `UTMPickerClient.tsx`. — **UI superseded by PIVOT 3, see below.**
 - [x] ✅ Verified with `tsc --noEmit` and `npm run build` — both clean.
 - [x] ✅ Client confirmed (2026-07-30): everything in the pivoted flow correct; content scope originally confirmed hero-only (superseded same day by the hero-revamp scope expansion below).
+
+**PIVOT 3 (2026-07-31) — per-field row model, replaces single shared hint (see "PIVOT 3" section above):**
+
+- [x] ✅ `044_utm_auto_rules.sql` reverted back to its originally-applied `fields`/`hint` form (had already been run locally — editing it in place was wrong). New migration `046_utm_auto_rules_rows.sql` (`alter table`, adds `rows jsonb not null default '[]'`, drops `fields`/`hint`) — **not yet run**.
+- [x] ✅ Updated `src/app/api/pages/[id]/auto-rules/route.ts` POST validation to accept/validate `rows[]` (field allow-list, `look_for` min length, `instructions` only kept when `personalize: true`, `MAX_ROWS_PER_RULE = 5`).
+- [x] ✅ Rewrote `src/components/utm/AutoRulesPanel.tsx` as a per-row table (field dropdown, look-for input, personalize checkbox, conditional instructions textarea, "+ Add More", up to `MAX_ROWS_PER_RULE`).
+- [x] ✅ `src/lib/auto-personalize.ts`: added `filterRowsMatch()` (literal case-insensitive contains-match for `personalize: false` rows, no AI call), `judgeUtmRowsMatch()` (AI judge over only `personalize: true` rows' category hints, includes gender/age naming-convention guidance), `mergePersonalizeHint()` (combines all personalize rows into one generation hint). Old `judgeUtmHintMatch()` removed.
+- [x] ✅ `src/app/api/cron/utm-detect/route.ts`: derives `fields` per rule from deduped `rows.map(r => r.field)`; resolves filter rows via `filterRowsMatch()` before any AI call (cached as no-match on failure, no AI cost); calls `judgeUtmRowsMatch()`/generation only when `personalize: true` rows exist and filters passed; pure-filter rules (no personalize rows) are cached as matched but never generate content (nothing to personalize).
+- [x] ✅ Verified with `tsc --noEmit` and `npm run build` — both clean.
+- [ ] Manual QA: recreate the 4 example rows discussed on the call (source filter, campaign→location, campaign→audience, content→messaging angle) against a test page once migration `044` is run on dev; verify combined personalization output. **Blocked on running the migration — needs explicit go-ahead per standing rule.**
 
 **NOT yet built — this session's scope expansion (hero revamp), needed before today's dev ship:**
 
@@ -310,6 +320,69 @@ The original `personalization-rules/auto/route.ts` POST endpoint has always dedu
 - [x] ✅ Swap-script wiring bug (auto selectors never read at 3 serve-time call sites) — found and fixed during manual testing; merged into `serve/route.ts`, `preview/route.ts`, `pages/[slug]/route.ts`.
 - [ ] Not yet tested against a real raw-HTML page locally.
 - [ ] No dedicated loading state distinguishing "detecting hero fields" from ordinary content generation — cosmetic.
+
+## PIVOT 3 (2026-07-31) — per-field row model replaces single shared hint
+
+Client call (voice, transcribed) reacting to the built `AutoRulesPanel` (field multiselect chips + one shared free-text hint per rule). Complaint, in his own words: a single hint can't express "for THIS field look for THIS kind of thing, and personalize THIS way" per field — he wants the same visual layout as the existing manual rule table (`When utm_source = facebook AND utm_campaign = Roofers_2024 AND ...`) reused for Auto, but with the "value" cell repurposed as a loose AI category instead of a literal string, and independent personalize controls per row.
+
+### Confirmed model
+
+A rule is an **ordered list of rows**, not a field-set + one hint. Each row:
+
+- `field` — same dropdown as the manual rule table (`utm_source`, `utm_campaign`, `utm_medium`, `utm_content`, `utm_term`, `ad_id`, `adset_id`, `campaign_id`, `creative_id`, `placement_id`, `hsa_*`).
+- `look_for` — text. Meaning depends on `personalize`:
+  - `personalize: false` → **literal filter value**, matched case-insensitively as a substring (not exact-equality) against the incoming UTM value — e.g. `look_for: "facebook"` matches `utm_source=Facebook_Ads`. No AI call for these rows; see "Edge case" below for why contains-match was chosen over exact-equality.
+  - `personalize: true` → **loose category description** for AI to judge against the actual incoming value (e.g. "location", "audience", "messaging angle") — never a literal value; the AI extracts whatever concrete signal is present.
+- `personalize` — boolean. `false` rows are pure match/filter conditions (client's `utm_source = facebook` example — "no personalization necessary, it just only applies to that rule"). `true` rows drive content generation.
+- `instructions` — optional text, only meaningful when `personalize: true` — how to use the detected value (e.g. "urgency angle → hero copy emphasizes a deadline").
+
+The same `field` can appear in multiple rows with different `look_for`/`personalize` targets (client's own example: `utm_campaign` once for "location", again for "audience"). Rows are AND'd — all filter rows must match, and (if any exist) personalize rows must be judged as matching, for the rule to fire.
+
+**Worked example (client's own, from the call):** rule = `[{field: utm_source, look_for: "facebook", personalize: false}, {field: utm_campaign, look_for: "location", personalize: true, instructions: "put the detected city/country in the hero heading"}, {field: utm_campaign, look_for: "audience/profession", personalize: true, instructions: "tailor headline to the detected profession"}, {field: utm_content, look_for: "messaging angle", personalize: true, instructions: "urgency → deadline-driven copy; affordable → price/discount emphasis"}]`. Incoming traffic `utm_source=facebook&utm_campaign=denver_dentist&utm_content=flash_sale_urgent` → filter row passes (facebook), personalize rows resolve to Denver + Dentist + Urgency → AI merges all three into one hero rewrite ("Denver Dentists — Grow Your Practice, Offer Ends Tonight!").
+
+### Edge case resolved this call — filter-row matching semantics
+
+Raised during this session: `utm_source` in the wild isn't always a clean literal (`facebook` vs `fb` vs `Facebook_Ads` vs `meta`) — strict `===` would silently miss traffic a human would obviously call "Facebook." **Decision: case-insensitive substring (`contains`) match for `personalize: false` rows**, not AI-judged and not strict equality. Cheap (no AI call on the highest-volume/most-repetitive part of a rule), deterministic, and forgiving of naming variants, at the cost of being coarser than true fuzzy matching — accepted tradeoff; can be upgraded to AI-judged per-row later if it proves too loose/strict in practice.
+
+### Age/gender detection — flagged, not solved
+
+Client, on the call: "we might have to instruct the AI to look for... male, female, that sort of stuff" when personalizing by age/gender signals in ad naming. Treated as a prompt-engineering note for the personalize-row AI judge/generation prompts (recognize common gender/age abbreviations in campaign/adset names), not a new UI control or schema field.
+
+### What this replaces
+
+- `utm_auto_rules.fields text[]` + `utm_auto_rules.hint text` (single shared hint per rule) → `utm_auto_rules.rows jsonb` (array of `{field, look_for, personalize, instructions?}`).
+- `AutoRulesPanel.tsx`'s field-multiselect-chips + one shared hint textarea UI → a table layout matching the existing manual-rule screenshot (`When [field ▾] [look_for text] [personalize ☐] [instructions] AND ...` + Add More), with per-row controls.
+- `judgeUtmHintMatch(fields, hint, utm)`'s single-hint prompt → judges only the `personalize: true` rows' categories (filter rows are resolved by literal contains-match before any AI call, not passed to the judge at all).
+- `generateHeroOverrides`/`generateHeroRevamp`'s single `hint` param → a merged instruction string built from all `personalize: true` rows' `look_for` + `instructions`, combined into one content-generation prompt (multiple personalize rows on one rule combine into one hero rewrite, not one call per row).
+
+**Update (same day):** migration `044_utm_auto_rules.sql` had already been run locally by the time this was implemented (user confirmed), so the original plan (edit 044 in place) was wrong — `044` was reverted back to its originally-applied `fields`/`hint` form, and the column swap ships as a new migration, `046_utm_auto_rules_rows.sql` (`alter table` adding `rows jsonb`, dropping `fields`/`hint`). `045_hero_revamp.sql` already occupied the next number.
+
+### UX follow-ups after the row model shipped (2026-07-31, same day)
+
+- **"Just filter" (personalize=false) rows only matter combined with a personalize row.** Clarified during review: a filter row alone is a scoping condition ("only run this rule for Facebook traffic"), never a content change by itself — the AI/hero-rewrite path only runs when the rule has at least one `personalize: true` row. A rule made entirely of filter rows would previously get cached as "matched" by the cron but silently generate nothing — a confusing no-op the user would have no way to notice.
+  - **Fix:** both `AutoRulesPanel.tsx`'s `saveRule()` and `auto-rules/route.ts`'s POST validation now reject saving a rule with zero `personalize: true` rows ("Add at least one 'Personalize with AI' row — a rule made only of filter rows never changes anything.").
+  - Filter rows remain fully supported and encouraged *alongside* personalize rows in the same rule — that combination (e.g. filter by `utm_source=facebook`, personalize on `utm_campaign`→location) is exactly the client's own worked example from the pivot call.
+- **Per-row UX redesign** (`AutoRulesPanel.tsx`): replaced the single checkbox + relabeled input with a two-button segmented "Mode" toggle ("Just filter" vs. "Personalize with AI") shown *before* the value input, so the input's meaning is set upfront instead of silently changing based on an easy-to-miss checkbox. Added a one-line helper caption under the input explaining exactly how matching/detection works in plain language, and gave the optional instructions textarea its own label.
+- **Field-relevant placeholders, not generic examples.** Every field in `FIELD_OPTIONS` now has its own `{filter, category, instructions}` example set in `FIELD_EXAMPLES`, so e.g. `utm_medium` shows "cpc/paid_social" and a "search vs. social" instructions example, not an unrelated Facebook/urgency example copied from a different field. The 5 opaque ID fields (`ad_id`, `adset_id`, etc.) honestly flag their category mode as "rarely useful — opaque numbers with no readable meaning to detect" rather than faking a plausible-looking example.
+- **One field per rule, enforced client- and server-side.** The field dropdown disables/greys out any field already used by another row in the same rule (labeled "(in use)"), "+ Add More" auto-picks the next unused field, and `auto-rules/route.ts` also rejects duplicate fields within one rule's `rows[]` server-side.
+- **Filter-only rules blocked at save time.** A rule made entirely of `personalize: false` rows can never generate content (the cron only calls the AI judge/generation path when `personalize: true` rows exist) — it was previously a silent no-op. Both `AutoRulesPanel.tsx`'s `saveRule()` and `auto-rules/route.ts`'s POST now reject saving a rule with zero personalize rows.
+
+### Bug found this session — duplicate-rule race condition (2026-07-31)
+
+Found via manual testing: two identical live `personalization_rules` rows appeared for the exact same condition combination (`utm_source=facebook AND utm_campaign=denver_leads AND utm_content=urgent_flash_sale AND utm_medium=email`), both auto-created.
+
+**Root cause:** `insertLiveAutoRule()`'s duplicate check (see the earlier "Bug found this session — duplicate-rule validation dropped during extraction" entry above) was a **select-then-insert**, i.e. an application-level check-then-act, not a database-level guarantee. It's race-free *within* a single cron run (the cron processes rules in a sequential `for` loop, no concurrency), but **not** race-free *across* concurrent cron invocations — e.g. the cron endpoint manually curled twice in close succession while testing (exactly what happened this session). Two overlapping invocations can both read "no existing rule for this signature" before either write commits, so both insert — producing the duplicate observed.
+
+**Fix — moved the guarantee to the database (migration `047_personalization_rules_dedupe.sql`):**
+- New column `personalization_rules.condition_signature` (text) — the same normalized (sorted, lowercased) signature string `insertLiveAutoRule()` already computed in memory, now persisted.
+- Backfilled for existing rows (both the current `conditions_json` array shape and the legacy single `match_param`/`match_value` shape).
+- Pre-existing exact-duplicate rows deleted (kept the oldest of each duplicate set) — required before the constraint below could be added.
+- **`create unique index on personalization_rules (page_id, condition_signature)`** — enforced atomically by Postgres. Fallback rows always have `condition_signature = null`, and Postgres treats every `NULL` as distinct for uniqueness purposes, so the one-fallback-per-page rule (existing separate constraint) is unaffected.
+- `insertLiveAutoRule()` (`src/lib/auto-personalize.ts`) rewritten to insert optimistically and only fall back to looking up the existing row if Postgres rejects the insert with a `23505` (unique_violation) error — the database decides who wins a race, not app-level timing.
+- `normalizedConditionSignature()` exported from `auto-personalize.ts` and reused in the manual rules endpoint (`src/app/api/pages/[id]/personalization-rules/route.ts`) so manually-created rules also populate `condition_signature` — keeps the constraint meaningful across manual + auto rules together, matching the original (pre-race-fix) app-level check's scope.
+- **Known residual gap, not fixed by this migration:** concurrent cron invocations can still both run the AI judge/generation calls for the same new combination before either insert resolves — the DB constraint prevents the duplicate *row*, but not the duplicate *AI spend*. Only one row survives, but you may pay for two judge/generation calls. Not addressed here (would need an advisory lock or similar around the cron's per-page/per-signature processing) — flagged as a follow-up, not blocking.
+
+Migration `047_personalization_rules_dedupe.sql` — **not yet run.**
 
 ## Todos (superseded/no longer applicable)
 
