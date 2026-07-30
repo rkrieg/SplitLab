@@ -184,6 +184,25 @@ export async function POST(request: NextRequest) {
       if (visitorPageview?.device_type) deviceType = visitorPageview.device_type;
     }
 
+    // UTM personalization V2 (auto-detection): compute a canonical signature
+    // from the raw UTM params tracker.js sent on this pageview, so the
+    // detection job can GROUP BY a plain text column instead of iterating
+    // jsonb keys per row. Sorting keys makes the signature independent of
+    // param order in the URL. See docs/utm-personalization-v2-automation.md.
+    let eventMetadata = data.metadata || {};
+    if (data.type === 'pageview') {
+      const utm = (data.metadata as { utm?: unknown } | null)?.utm;
+      if (utm && typeof utm === 'object' && !Array.isArray(utm)) {
+        const entries = Object.entries(utm as Record<string, unknown>)
+          .filter(([, v]) => typeof v === 'string' && v.length > 0)
+          .sort(([a], [b]) => a.localeCompare(b));
+        if (entries.length > 0) {
+          const utmSig = entries.map(([k, v]) => `${k}=${v}`).join('&');
+          eventMetadata = { ...eventMetadata, utm_sig: utmSig };
+        }
+      }
+    }
+
     const { error } = await db.from('events').insert({
       test_id: data.testId,
       variant_id: data.variantId,
@@ -191,7 +210,7 @@ export async function POST(request: NextRequest) {
       visitor_hash: data.visitorHash,
       type: data.type,
       device_type: deviceType,
-      metadata: data.metadata || {},
+      metadata: eventMetadata,
     });
 
     if (error) {

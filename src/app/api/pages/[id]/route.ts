@@ -112,7 +112,7 @@ export async function PATCH(
       ...data,
       ...(storageUrl ? { html_url: storageUrl } : {}),
       // HTML changed → old injected #sl-f-xxx IDs are gone; clear mappings and rules
-      ...(htmlReplaced ? { field_selectors_json: null } : {}),
+      ...(htmlReplaced ? { field_selectors_json: null, auto_field_selectors_json: null } : {}),
       // A rebuild replaces the storage file only — stale html_content from an earlier
       // inline edit would shadow the new HTML in preview/serve, so drop it
       ...(data.html_url && !data.html_content ? { html_content: null } : {}),

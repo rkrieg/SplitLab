@@ -491,6 +491,7 @@ export async function POST(
       html_url: htmlUrl,
       html_content: annotatedHtml.length < 500_000 ? annotatedHtml : null,
       field_selectors_json: null,
+      auto_field_selectors_json: null,
       updated_at: new Date().toISOString(),
     };
     idempotencyColumn = 'schema_json';

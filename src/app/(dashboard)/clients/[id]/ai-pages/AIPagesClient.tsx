@@ -9,6 +9,7 @@ import { VERTICALS, VERTICAL_LABELS, VERTICAL_COLORS } from '@/lib/ai-page-verti
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
 import EmptyState from '@/components/ui/EmptyState';
+import DetectionDot from '@/components/utm/DetectionDot';
 
 interface AIPage {
   id: string;
@@ -26,6 +27,7 @@ interface Props {
   workspaceId: string;
   canManage: boolean;
   canUseAI: boolean;
+  pendingDetectionPageIds?: string[];
 }
 
 function UpgradeModal({ onClose }: { onClose: () => void }) {
@@ -61,7 +63,8 @@ function UpgradeModal({ onClose }: { onClose: () => void }) {
 
 const PAGE_SIZE = 10;
 
-export default function AIPagesClient({ pages: initialPages, clientId, workspaceId, canManage, canUseAI }: Props) {
+export default function AIPagesClient({ pages: initialPages, clientId, workspaceId, canManage, canUseAI, pendingDetectionPageIds }: Props) {
+  const pendingDetectionSet = new Set(pendingDetectionPageIds ?? []);
   const router = useRouter();
   const [pages, setPages] = useState(initialPages);
   const [deleteId, setDeleteId] = useState<string | null>(null);
@@ -224,6 +227,7 @@ export default function AIPagesClient({ pages: initialPages, clientId, workspace
                       >
                         <Sliders className="w-3 h-3" />
                         UTM personalization
+                        {pendingDetectionSet.has(page.id) && <DetectionDot />}
                       </a>
                       {canManage && (
                         <button

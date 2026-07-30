@@ -64,6 +64,43 @@ function forwardInboundParams(target: URL, inbound: URLSearchParams): void {
   }
 }
 
+// UTM Personalization V2 (auto-detection): the server records a pageview row
+// itself (below) before tracker.js's client-side beacon can ever run, and
+// /api/event's one-pageview-per-visitor/test/day dedup means that beacon's
+// utm-carrying payload never lands — this row always wins the race. So the
+// signature has to be computed here, from the same inbound query params
+// tracker.js would have read off window.location.search. Click IDs are
+// excluded (gclid/fbclid/etc. are unique per click and would never
+// accumulate distinct visitors) — mirrors tracker.js's CLICK_ID_PARAMS.
+const CLICK_ID_PARAMS = new Set([
+  'gclid', 'fbclid', 'fbc_id', 'fbp', 'msclkid', 'ttclid', 'li_fat_id',
+  'twclid', 'dclid', 'wbraid', 'gbraid', 'epik', 'sccid', 'irclickid',
+]);
+const EXTRA_ID_PARAMS = new Set([
+  'h_ad_id', 'ad_id', 'adset_id', 'campaign_id', 'creative_id', 'placement_id',
+]);
+
+function isDetectionParam(key: string): boolean {
+  if (key.startsWith('sl_')) return false;
+  if (key.startsWith('utm_')) return true;
+  if (key.startsWith('hsa_')) return true;
+  if (EXTRA_ID_PARAMS.has(key)) return true;
+  return false;
+}
+
+function computeUtmSig(searchParams: URLSearchParams): { utm: Record<string, string>; utm_sig: string } | null {
+  const entries: Array<[string, string]> = [];
+  searchParams.forEach((value, key) => {
+    if (!value || CLICK_ID_PARAMS.has(key) || !isDetectionParam(key)) return;
+    entries.push([key, value]);
+  });
+  if (entries.length === 0) return null;
+  entries.sort(([a], [b]) => a.localeCompare(b));
+  const utm: Record<string, string> = {};
+  for (const [k, v] of entries) utm[k] = v;
+  return { utm, utm_sig: entries.map(([k, v]) => `${k}=${v}`).join('&') };
+}
+
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const domain = searchParams.get('domain') || '';
@@ -505,13 +542,14 @@ ${proxyTrackingSnippet}
 
     // 10c. Record pageview (skip for cap, scan, and Open-button previews)
     if (!overVisitorCap && !isScan && !forcedVh) {
+      const utmMeta = computeUtmSig(searchParams);
       await db.from('events').insert({
         test_id: test.id,
         variant_id: selectedVariant.id,
         visitor_hash: visitorId,
         type: 'pageview',
         device_type: getDeviceType(request.headers.get('user-agent')),
-        metadata: {},
+        metadata: utmMeta ? { utm: utmMeta.utm, utm_sig: utmMeta.utm_sig } : {},
       });
     }
 

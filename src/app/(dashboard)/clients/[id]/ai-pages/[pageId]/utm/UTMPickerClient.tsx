@@ -10,6 +10,7 @@ import {
 import toast from 'react-hot-toast';
 import { cn } from '@/lib/utils';
 import Modal from '@/components/ui/Modal';
+import AutoDetectionPanel from '@/components/utm/AutoDetectionPanel';
 import type { UTMRule, UTMCondition, FieldMapping } from './page';
 
 export type StoredFieldSelectors = Record<string, { selector: string; type: 'text' | 'image'; label: string }>;
@@ -984,6 +985,20 @@ export default function UTMPickerClient({ clientId, page, initialRules }: Props)
         {/* Scrollable content */}
         <div className="flex-1 overflow-y-auto p-5 space-y-6">
 
+          {/* ── Auto-detected UTM traffic (V2) ── */}
+          <section className="space-y-2 rounded-xl border border-slate-200 dark:border-slate-800 p-4">
+            <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">Setup with AI</h3>
+            <AutoDetectionPanel
+              pageId={page.id}
+              hasTextFields={fields.some(f => f.type === 'text' && f.selector)}
+              onRuleCreated={() => router.refresh()}
+            />
+          </section>
+
+          {/* ── Manual Setup: Map Elements + UTM Rules ── */}
+          <section className="space-y-6 rounded-xl border border-slate-200 dark:border-slate-800 p-4">
+          <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">Manual Setup</h3>
+
           {/* ── Map Elements ── */}
           <section>
             <button
@@ -1285,6 +1300,7 @@ export default function UTMPickerClient({ clientId, page, initialRules }: Props)
             </div>
             </>
             )}
+          </section>
           </section>
         </div>
       </div>

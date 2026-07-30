@@ -43,6 +43,19 @@ export default async function TestAnalyticsPage({
     if (domainData) domain = domainData.domain;
   }
 
+  const pageIds = Array.from(
+    new Set((test.test_variants ?? []).map((v: { pages?: { id: string } | null }) => v.pages?.id).filter(Boolean))
+  ) as string[];
+  let pendingDetectionPageIds: string[] = [];
+  if (pageIds.length > 0) {
+    const { data: detections } = await db
+      .from('utm_auto_detections')
+      .select('page_id')
+      .in('page_id', pageIds)
+      .eq('status', 'notified');
+    pendingDetectionPageIds = Array.from(new Set((detections ?? []).map(d => d.page_id as string)));
+  }
+
   return (
     <AnalyticsClient
       test={test}
@@ -53,6 +66,7 @@ export default async function TestAnalyticsPage({
       userRole={session.user.role}
       userPlan={session.user.plan ?? 'free'}
       workspaceId={workspace?.id}
+      pendingDetectionPageIds={pendingDetectionPageIds}
     />
   );
 }

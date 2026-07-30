@@ -255,6 +255,23 @@ function buildTrackerScript(appUrl: string): string {
     return out;
   }
 
+  // UTM personalization V2 (auto-detection): pageview events carry no tracking
+  // data today, so there is no data source to threshold new UTM combinations
+  // against. Click IDs are excluded — they are unique per click and would
+  // never accumulate distinct visitors. See docs/utm-personalization-v2-automation.md.
+  function pageviewUtmMeta() {
+    try {
+      var p = trackingParams(), out = {}, k, has = false;
+      for (k in p) {
+        if (!p.hasOwnProperty(k)) continue;
+        if (CLICK_ID_PARAMS[k] === 1) continue;
+        out[k] = p[k];
+        has = true;
+      }
+      return has ? { utm: out } : null;
+    } catch(e) { return null; }
+  }
+
   // Splits into the 7 dedicated columns vs everything else (extra_params).
   function splitTrackingParams(all) {
     var utm = {}, extra = {}, k;
@@ -1430,7 +1447,7 @@ function buildTrackerScript(appUrl: string): string {
         _ctx = null;
         return;
       }
-      track("pageview");
+      track("pageview", null, pageviewUtmMeta());
       wireUrlGoals();
       wireAutoConversions();
       registerFormFields();
