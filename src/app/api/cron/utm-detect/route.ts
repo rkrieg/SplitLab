@@ -1,31 +1,33 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/supabase-server';
+import { judgeUtmHintMatch, generateHeroOverrides, generateHeroRevamp, insertLiveAutoRule } from '@/lib/auto-personalize';
 
-// UTM Personalization V2 (auto-detection) — background detection job.
-// See docs/utm-personalization-v2-automation.md for the full design.
+// UTM Personalization V2 pivot (2026-07-30). See docs/utm-personalization-v2-automation.md,
+// "PIVOT" section. This job no longer discovers new audiences from a
+// visitor-count threshold and surfaces them for human approval — the user
+// now defines rules upfront (utm_auto_rules: field(s) + optional loose
+// hint), and this job's job is to judge whether a newly-seen value-
+// combination matches an existing rule's hint, then write live content
+// directly with no approval step.
 //
-// Runs on a fixed, frequent baseline schedule (see vercel.json — every 15
-// minutes), but each page's own `scan_interval_minutes` setting (default 45)
-// governs how often it is actually re-evaluated: a page is skipped until
-// that many minutes have passed since its `last_scanned_at`. This is how a
-// per-page-adjustable interval is reconciled with Vercel Cron only
-// supporting one fixed schedule per entry.
-//
-// KNOWN LIMITATION: this does not yet check whether a `personalization_rules`
-// row already covers a detected combination before surfacing it again as
-// 'notified' — a combination that already has a manually-authored rule can
-// still show up here. Left as a follow-up; low-risk since the UTM screen
-// lets the user dismiss/reject it either way.
+// Each new (rule, value-combination) pair is judged by AI at most once —
+// the result is cached in utm_auto_rule_matches so repeat traffic with the
+// same combination is a lookup, not a repeat AI call.
 
 const LOOKBACK_DAYS = 30;
-const DEFAULT_THRESHOLD = 8;
-const DEFAULT_INTERVAL_MINUTES = 45;
 
 interface AggregateRow {
   page_id: string;
   utm_sig: string;
   utm: Record<string, string> | null;
   distinct_visitor_count: number;
+}
+
+function projectSignature(fields: string[], utm: Record<string, string>): string {
+  return fields
+    .map(f => `${f}=${(utm[f] ?? '').trim().toLowerCase()}`)
+    .sort()
+    .join('&');
 }
 
 export async function GET(request: NextRequest) {
@@ -43,105 +45,136 @@ export async function GET(request: NextRequest) {
     const since = new Date();
     since.setUTCDate(since.getUTCDate() - LOOKBACK_DAYS);
 
-    // Aggregation (join + group by + distinct-visitor count) runs as a SQL
-    // function (utm_aggregate_pageviews, migration 042) instead of pulling
-    // raw event rows into Node and reducing them here — events grow fast
-    // (every pageview, every client), so this has to scale in the database,
-    // not in a JS Map.
     const { data: rows, error } = await db.rpc('utm_aggregate_pageviews', { since: since.toISOString() });
-
     if (error) throw error;
 
     const groups = (rows ?? []) as unknown as AggregateRow[];
-
     const pageIds = Array.from(new Set(groups.map(g => g.page_id)));
     console.log(`[cron/utm-detect] since=${since.toISOString()} utmCombinationsFound=${groups.length} pagesWithTraffic=${pageIds.length}`);
     if (pageIds.length === 0) {
-      console.log('[cron/utm-detect] no pageview events with a utm_sig found in the lookback window — nothing to do');
-      return NextResponse.json({ ok: true, pagesScanned: 0 });
+      return NextResponse.json({ ok: true, pagesScanned: 0, rulesCreated: 0 });
     }
 
-    const { data: settingsRows } = await db
-      .from('utm_detection_settings')
+    const { data: autoRules } = await db
+      .from('utm_auto_rules')
       .select('*')
+      .eq('enabled', true)
       .in('page_id', pageIds);
 
-    const settingsByPage = new Map((settingsRows ?? []).map(s => [s.page_id as string, s]));
-
-    const now = new Date();
-    let pagesScanned = 0;
-
-    for (const pageId of pageIds) {
-      const settings = settingsByPage.get(pageId);
-      const intervalMinutes = settings?.scan_interval_minutes ?? DEFAULT_INTERVAL_MINUTES;
-      const threshold = settings?.visitor_threshold ?? DEFAULT_THRESHOLD;
-
-      if (settings?.last_scanned_at) {
-        const elapsedMs = now.getTime() - new Date(settings.last_scanned_at).getTime();
-        if (elapsedMs < intervalMinutes * 60_000) continue; // not due yet
-      }
-
-      const pageGroups = groups.filter(g => g.page_id === pageId);
-
-      const { data: existingDetections } = await db
-        .from('utm_auto_detections')
-        .select('id, utm_sig, status')
-        .eq('page_id', pageId);
-
-      const existingBySig = new Map((existingDetections ?? []).map(d => [d.utm_sig as string, d]));
-
-      let newlyNotified = 0;
-
-      for (const g of pageGroups) {
-        const distinctVisitorCount = g.distinct_visitor_count;
-        const existing = existingBySig.get(g.utm_sig);
-
-        if (!existing) {
-          const willNotify = distinctVisitorCount >= threshold;
-          await db.from('utm_auto_detections').insert({
-            page_id: pageId,
-            utm_sig: g.utm_sig,
-            utm: g.utm ?? {},
-            distinct_visitor_count: distinctVisitorCount,
-            status: willNotify ? 'notified' : 'pending',
-            notified_at: willNotify ? now.toISOString() : null,
-            last_seen_at: now.toISOString(),
-          });
-          if (willNotify) newlyNotified++;
-          console.log(
-            `[cron/utm-detect] page=${pageId} utm_sig="${g.utm_sig}" visitors=${distinctVisitorCount}/${threshold} -> ${willNotify ? 'notified (new)' : 'pending (new)'}`
-          );
-          continue;
-        }
-
-        const shouldNotify = existing.status === 'pending' && distinctVisitorCount >= threshold;
-        await db
-          .from('utm_auto_detections')
-          .update({
-            distinct_visitor_count: distinctVisitorCount,
-            last_seen_at: now.toISOString(),
-            ...(shouldNotify ? { status: 'notified', notified_at: now.toISOString() } : {}),
-            updated_at: now.toISOString(),
-          })
-          .eq('id', existing.id);
-        if (shouldNotify) {
-          newlyNotified++;
-          console.log(`[cron/utm-detect] page=${pageId} utm_sig="${g.utm_sig}" visitors=${distinctVisitorCount}/${threshold} -> notified (threshold crossed)`);
-        }
-      }
-
-      // Upsert last_scanned_at, creating the settings row with defaults if this
-      // is the first time this page has ever been scanned.
-      await db
-        .from('utm_detection_settings')
-        .upsert({ page_id: pageId, last_scanned_at: now.toISOString() }, { onConflict: 'page_id' });
-
-      pagesScanned++;
-      console.log(`[cron/utm-detect] page=${pageId} combinations=${pageGroups.length} newlyNotified=${newlyNotified}`);
+    if (!autoRules || autoRules.length === 0) {
+      console.log('[cron/utm-detect] no active auto-rules on any page with traffic — nothing to do');
+      return NextResponse.json({ ok: true, pagesScanned: 0, rulesCreated: 0 });
     }
 
-    console.log(`[cron/utm-detect] run complete: pagesScanned=${pagesScanned} totalPagesWithTraffic=${pageIds.length}`);
-    return NextResponse.json({ ok: true, pagesScanned });
+    const rulesByPage = new Map<string, typeof autoRules>();
+    for (const r of autoRules) {
+      const list = rulesByPage.get(r.page_id) ?? [];
+      list.push(r);
+      rulesByPage.set(r.page_id, list);
+    }
+
+    let rulesCreated = 0;
+    let pagesScanned = 0;
+
+    for (const [pageId, rules] of Array.from(rulesByPage.entries())) {
+      const pageGroups = groups.filter(g => g.page_id === pageId);
+      if (pageGroups.length === 0) continue;
+
+      let pageRow: { id: string; schema_json: Record<string, unknown> | null; auto_field_selectors_json: Record<string, { selector: string; type: 'text' | 'image'; label: string }> | null; html_content: string | null; html_url: string | null } | null = null;
+
+      for (const rule of rules) {
+        // Project each traffic group onto just this rule's watched fields —
+        // different rules on the same page can watch different field sets,
+        // so the relevant "new combination" signature differs per rule.
+        const projected = new Map<string, Record<string, string>>();
+        for (const g of pageGroups) {
+          const utm = g.utm ?? {};
+          if (!rule.fields.every((f: string) => utm[f]?.trim())) continue;
+          const sig = projectSignature(rule.fields, utm);
+          if (!projected.has(sig)) projected.set(sig, utm);
+        }
+        if (projected.size === 0) continue;
+
+        const { data: existingMatches } = await db
+          .from('utm_auto_rule_matches')
+          .select('utm_sig')
+          .eq('auto_rule_id', rule.id);
+        const alreadyJudged = new Set((existingMatches ?? []).map(m => m.utm_sig as string));
+
+        for (const [sig, utm] of Array.from(projected.entries())) {
+          if (alreadyJudged.has(sig)) continue;
+
+          let matched = false;
+          let personalizationRuleId: string | null = null;
+
+          try {
+            matched = await judgeUtmHintMatch(rule.fields, rule.hint, utm);
+          } catch (err) {
+            console.error(`[cron/utm-detect] judge failed rule=${rule.id} sig="${sig}"`, err);
+            continue; // don't cache a failed judgment — retry next run
+          }
+
+          if (matched) {
+            if (!pageRow) {
+              const { data } = await db
+                .from('pages')
+                .select('id, schema_json, auto_field_selectors_json, html_content, html_url')
+                .eq('id', pageId)
+                .single();
+              pageRow = data;
+            }
+
+            if (pageRow) {
+              const conditions = rule.fields.map((f: string) => ({ match_param: f, match_value: utm[f] }));
+              const conditionDescription = conditions.map((c: { match_param: string; match_value: string }) => `${c.match_param} = "${c.match_value}"`).join(' AND ');
+              try {
+                // Prefer a full hero-section revamp (content + layout + CTA
+                // together) over the older field-by-field swap. Only
+                // AI-generated pages carry the `section.hero` container
+                // needed for this — raw/uploaded HTML pages return null here
+                // and fall back to the field-swap path (explicit, tracked
+                // gap, see docs/utm-personalization-v2-automation.md).
+                const heroHtml = await generateHeroRevamp(pageRow, conditionDescription, rule.hint);
+                if (heroHtml) {
+                  personalizationRuleId = await insertLiveAutoRule(pageId, conditions, {}, heroHtml);
+                  if (personalizationRuleId) {
+                    rulesCreated++;
+                    console.log(`[cron/utm-detect] page=${pageId} rule=${rule.id} sig="${sig}" -> matched, live hero-revamp rule created`);
+                  }
+                } else {
+                  const overrides = await generateHeroOverrides(pageRow, conditionDescription, rule.hint);
+                  if (overrides) {
+                    personalizationRuleId = await insertLiveAutoRule(pageId, conditions, overrides);
+                    if (personalizationRuleId) {
+                      rulesCreated++;
+                      console.log(`[cron/utm-detect] page=${pageId} rule=${rule.id} sig="${sig}" -> matched, live field-swap rule created`);
+                    }
+                  } else {
+                    console.log(`[cron/utm-detect] page=${pageId} rule=${rule.id} sig="${sig}" -> matched but hero fields could not be detected`);
+                  }
+                }
+              } catch (err) {
+                console.error(`[cron/utm-detect] generation failed rule=${rule.id} sig="${sig}"`, err);
+                continue; // don't cache — retry generation next run
+              }
+            }
+          }
+
+          await db.from('utm_auto_rule_matches').insert({
+            auto_rule_id: rule.id,
+            utm_sig: sig,
+            utm,
+            matched,
+            personalization_rule_id: personalizationRuleId,
+          });
+        }
+      }
+
+      pagesScanned++;
+    }
+
+    console.log(`[cron/utm-detect] run complete: pagesScanned=${pagesScanned} rulesCreated=${rulesCreated}`);
+    return NextResponse.json({ ok: true, pagesScanned, rulesCreated });
   } catch (err) {
     console.error('[cron/utm-detect]', err);
     return NextResponse.json({ error: 'Internal error' }, { status: 500 });

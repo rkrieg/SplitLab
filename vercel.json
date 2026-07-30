@@ -17,7 +17,7 @@
   "crons": [
     {
       "path": "/api/cron/utm-detect",
-      "schedule": "*/1 * * * *"
+      "schedule": "*/5 * * * *"
     }
   ]
 }

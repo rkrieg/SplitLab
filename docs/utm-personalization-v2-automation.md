@@ -182,67 +182,141 @@ On every later detection/rule for the same page, `auto_field_selectors_json` alr
 
 Not yet built. No migration, no code, nothing committed/pushed — pure design, pending a decision on whether/when to implement.
 
-## Todos
+## PIVOT (2026-07-30) — client feedback after seeing the V2 build
 
-**Built (2026-07-29) — migration not yet run, nothing committed/pushed/deployed:**
+Client (voice note + follow-up chat) reacted to the built approve-gated, value-chip flow above. Two core complaints:
 
-- [x] ✅ Send UTM params (`utm_*` + `hsa_*` + `EXTRA_ID_PARAMS`, excluding click IDs) along with the pageview beacon in `tracker.js`, stored in `events.metadata` (`tracker.js`'s new `pageviewUtmMeta()`, plus `/api/event` computing a canonical `utm_sig`).
-- [x] ✅ Migration `042_utm_auto_detection.sql`: `personalization_rules.source`/`is_draft`, relaxed `match_param` CHECK, `utm_detection_settings`, `utm_auto_detections`.
-- [x] ✅ Background detection job (`/api/cron/utm-detect`, `vercel.json` cron entry every 15 min baseline, per-page `scan_interval_minutes`/`visitor_threshold` enforced in the handler, defaults 45 min / 8 visitors).
-- [x] ✅ **Aggregation moved to a SQL function** (`utm_aggregate_pageviews` in the migration) instead of pulling raw event rows into Node and grouping in JS — event volume grows fast (every pageview, every client), so a JS-side reduce over a rolling window would not scale. Supporting indexes (`idx_events_variant_id`, a partial index on pageview rows with a `utm_sig`) added alongside it. The cron route now just calls `db.rpc('utm_aggregate_pageviews', ...)`.
-- [x] ✅ Insert-only write path for auto-generated rules (`/api/pages/[id]/personalization-rules/auto` — POST for the rule shell/complete rule, PATCH to complete a draft) — does not touch the existing full-replace manual endpoint.
-- [x] ✅ `/api/pages/[id]/personalization-rules/auto-generate` — Sonnet-based generation, reads current live field content first, respects existing per-field word-limit guidance, hardened system prompt for lighter-review content.
-- [x] ✅ `/api/pages/[id]/utm-detections` — GET (list pending/notified) + PATCH (reject / update remembered detection field).
-- [x] ✅ `DetectionDot` glowing/pulsing indicator, wired into the AI Pages list next to "UTM personalization".
-- [x] ✅ `AutoDetectionPanel` (detection card + chip field-selector + hint input + AI content review/edit + Approve/Dismiss), mounted inside `UTMPickerClient`.
+1. **"You're gonna show every combination and permutation of the UTM variables... there's gonna be a million different ones."** The chip UI (flow step 7) shows actual detected *values*. At real traffic volume this list is unusable. Fix: show **field names only** (a small fixed dropdown: Campaign, Medium, Source, etc.), never raw detected values.
+2. **"This isn't really the feature... this is just using AI to help you manually do it."** The approval/review-before-live step (flow steps 6, 8, 11, 12) is exactly what the client doesn't want. The vision is AI recognizing and personalizing **without a human in the loop at all** — no chip picker, no review screen, no Approve button.
+
+### Confirmed via follow-up Q&A (2026-07-30)
+
+- **Scale:** "dozens... could be a ton" of audiences/angles concurrently per page. The hard `MAX_RULES = 20` cap must be raised/redesigned — 20 is far too low.
+- **Fully autonomous confirmed:** "Yes, this is supposed to be autonomous." No approval step, no review screen. AI content goes straight live.
+- **Rule setup, client's own words:** a dropdown where the user picks UTM field(s) (can combine, e.g. Campaign + Medium = AND condition), then gives a **loose plain-English hint** per rule — not exact values. Example: "in Campaign look for something like 'United States', and in Medium look for something like 'audience' — if both are there, make the page more applicable." The user does NOT type exact match values; hints can be as loose as "just make this more applicable."
+- Client acknowledges giving users fine-grained parameter control is *possible* but "complicates it a little" — prefers the simpler loose-hint model.
+
+### New flow (replaces "Finalized end-to-end flow" above)
+
+1. **User defines a rule upfront, before any matching traffic exists.** Dropdown to pick UTM field(s) (AND combination), plus an optional free-text hint per rule (can be left blank). No raw detected values are ever shown — this replaces the old "wait for traffic, then show chips" model entirely.
+2. **No approval step exists anywhere in this flow.** Rule creation is the only human action; everything after that is autonomous.
+3. **New visitor arrives** with some value in the watched field(s) (e.g. `utm_campaign=Texas_Roofers_2024`).
+4. **Is this exact value-combination already resolved?** (cached from a prior AI judgment for this same rule) → yes: instant swap via existing V1 mechanism, no AI call, no delay. → no: continue.
+5. **Background job judges the new value-combination against the rule's hint using AI** ("does `Texas_Roofers_2024` match the hint 'roofers'?" — or, if no hint was given, AI decides purely on the raw value whether it's worth personalizing at all). This must run in the background (same reasoning as before — AI calls are too slow for the request path), evaluated once per new value-combination, then cached.
+6. **Match confirmed →** AI generates hero content (reuses existing `auto-generate` content-generation logic, hero-field detection tiers 1/2 unchanged) → **written straight to `personalization_rules` as a live, non-draft, exact-match rule** for this specific value-combination — no draft/review/approve state.
+7. **No match →** nothing happens, value is cached as "no match" so it's never re-judged.
+8. **All future visitors** with that exact value-combination get the instant V1 client-side swap, same as before.
+9. **Repeat independently** per rule, per page/variant.
+
+### What this removes from the built V2 flow
+
+- The **value-chip picker** in `AutoDetectionPanel` (`detection.utm` entries as selectable chips) — replaced by a field-name-only dropdown at rule-*creation* time, not traffic-*reaction* time.
+- The **cron's distinct-visitor-threshold "detect new combo, then notify" trigger** (flow steps 3-6 in the old design) — rules are now user-defined upfront; the background job's job changes from "discover new audiences from traffic" to "judge whether an already-anticipated rule's hint matches a new incoming value."
+- The **glowing dot + review/approval card** (`DetectionDot`, the Accept/Reject + review/edit stage in `AutoDetectionPanel`) — content goes live with no human checkpoint.
+- **Exact-match-only condition model** as the sole matching mode — a new AI-judged "does this value match this hint" mode is added alongside it (exact match still used for the *cached* re-visit case, step 4 above).
+- Hard `MAX_RULES = 20` — needs raising or a retirement policy, given "dozens... could be a ton."
+
+### What's reused as-is
+
+- UTM capture into `events.metadata`, `utm_sig` computation (`tracker.js`, `/api/event`).
+- Hero-field auto-detection, both tiers (`src/lib/hero-field-detection.ts`, `src/lib/hero-field-detection-raw.ts`) — still needed to know which selectors AI-generated content should be written into, regardless of matching model.
+- Content-generation logic in `auto-generate/route.ts` (Sonnet call, per-field guidance, reads current live content) — reused, just triggered from the background matcher instead of a user clicking "Generate preview" after Accept.
+- Insert-only write path (`personalization-rules/auto/route.ts`) — reused, but the `is_draft`/approval-gated PATCH-to-complete flow is no longer needed since nothing stays in draft state.
+- V1 client-side swap mechanism (`utm-swap-script.ts`) — unchanged, still how repeat visitors get instant personalization once a value-combination is resolved.
+
+### Client answers, round 2 (2026-07-30, chat)
+
+Client confirmed the full pivot flow as described above ("everything else seems correct") and added:
+
+- **Content scope — answered.** Hero section only **for now**; confirmed long-term direction is AI rebuilding the *entire* page per audience eventually, but that's explicitly out of scope for this build. No change needed to the current hero-swap approach.
+- **Rule cap / rate limiting — not given a number.** Client's answer was "we're going to have to play with this to make it feel right" — i.e. expects to tune it empirically after seeing it run, not a fixed spec up front. Practical implication: ship with a conservative default (current placeholder `MAX_RULES_PER_PAGE = 200`) and make it easy to adjust later, rather than blocking on an exact number. Still no daily AI-call budget/cost cap — that specific risk wasn't addressed by this answer and should stay flagged.
+
+### Scope expansion — hero section revamp, not just field swap (2026-07-30, later same day)
+
+Client's "this isn't really the feature" complaint (see top of PIVOT) also applies to *content* scope, not just process: swapping individual field strings in place is still fairly manual-feeling. Decision made this session:
+
+- **AI should be able to revamp the whole hero section** — content AND layout/CTA together, as one block — not just substitute text into fixed selectors one field at a time.
+- **New DB column:** `personalization_rules.hero_html` (nullable text) — stores a full replacement HTML block for the hero section. Coexists with the existing `overrides_json` (per-field swap); a rule uses one or the other. Migration `045_hero_revamp.sql`, **not yet written/run**.
+- **Detection dependency:** a full-section swap needs a reliable selector for the hero *container*, not just its individual fields. AI-generated pages have this for free — `ai-page-builder.ts` always emits the hero as `<section class="hero">...</section>` (confirmed via grep), so the container selector can just be `section.hero`. Raw/uploaded HTML pages have no such reliable marker.
+- **Decision: ship AI-generated pages only, for now.** Raw HTML pages keep the existing field-swap behavior (`overrides_json`) rather than blocking the whole feature on raw-HTML hero-container detection, which is real, separate work (parallel to the existing tier-1/tier-2 split in hero-field-detection). **This is a deliberate, explicit gap — not a silent one — and must stay tracked as a todo, not forgotten once AI-generated pages work.**
+- **Swap mechanism:** `utm-swap-script.ts` needs a new branch — if the active matched rule has `hero_html`, replace the hero container's `outerHTML` wholesale; otherwise fall back to the existing per-field `textContent`/`src` swap loop (unchanged) for `overrides_json`-only rules (this is how existing manual + old auto rules keep working unmodified).
+- **Generation change:** the AI prompt in `auto-personalize.ts` needs a new mode — instead of "give me new strings for these 4 field keys," it needs "rewrite this entire `<section class="hero">...</section>` block," given the current hero HTML as context, encouraged to vary layout/structure, not just copy.
+
+### Visibility decision — reuse the existing simulator, don't build a new preview (2026-07-30)
+
+Discussed and rejected `dangerouslySetInnerHTML`-rendering a raw hero HTML snippet directly in the rules list: the generated HTML depends on the page's own CSS (Tailwind/page `<style>` block), which isn't loaded in the dashboard shell — a bare snippet would render unstyled/broken, not a useful preview.
+
+**Better, already-built option:** `UTMPickerClient.tsx` already has a UTM-simulator dropdown (`utmSimulator` state) that points the existing full-page preview iframe at a rule's query string, rendering the real page with real CSS and the swap applied. Since `initialRules` is an unfiltered `select('*')` from `personalization_rules`, **auto-created rules already land in this same dropdown for free** — no new preview code needed, as long as they still produce a valid `ruleQueryString()` (they do, since `conditions_json` is populated the same way regardless of source).
+
+Remaining gap: the rule *edit panel* below the dropdown (`renderRuleFields`) currently assumes per-field text inputs (`overrides_json`) — it has no representation for a rule whose content lives in `hero_html` instead. Needs its own editable form (e.g. a raw-HTML textarea, or field-level inputs re-derived from the hero HTML) — not yet designed.
+
+### Bug found this session — duplicate-rule validation dropped during extraction
+
+The original `personalization-rules/auto/route.ts` POST endpoint has always deduped by exact condition signature across **all** existing rules for a page (manual and auto both, no `source` filter) before inserting — rejecting a second rule with identical conditions. When `insertLiveAutoRule()` was extracted into `src/lib/auto-personalize.ts` for the cron job, **this dedupe check was not carried over** — it's missing today. Net effect: the cron could currently create a duplicate rule with the exact same conditions as an existing manual (or auto) rule, and `utm-swap-script.ts`'s tie-break logic (most-specific-conditions wins; ties fall to array order) would pick between them non-deterministically from the user's point of view.
+
+**Decision:** restore the same exact-signature check inside `insertLiveAutoRule()` — scoped across manual + auto rules together, same as the original endpoint. If a rule with that exact condition signature already exists, skip creating a new one and cache the match (`utm_auto_rule_matches`) as resolved, linking `personalization_rule_id` to the **existing** rule instead of a new one. Manual rules always win by default; auto never overwrites or duplicates.
+
+### Still open / blocking further scoping
+
+- **Cost/rate limiting** — client expects to tune the *rule cap* by feel, but did not address the separate risk of unbounded AI-call cost per day if traffic is messy/high-volume. Worth a basic daily cap as a safety net even before the "right" number is known.
+- **Per-version stats** — since each matched rule creates its own personalized version under one variant, does the client want performance tracked separately per version, or combined into the variant total?
+- **Raw-HTML hero revamp** — explicitly deferred (see scope expansion above), not answered by the client, needs its own detection design (hero-container identification) before it can be built.
+
+## Todos (current — reflects the pivot + scope expansion, as of 2026-07-30)
+
+**Built and working (pivoted implementation, pre-scope-expansion):**
+
+- [x] ✅ UTM capture into `events.metadata` (`utm_sig` computed server-side in `/api/event` and `serve/route.ts`) — unchanged from before the pivot, still the data source everything else reads from.
+- [x] ✅ Hero-field auto-detection, both tiers (`src/lib/hero-field-detection.ts`, `src/lib/hero-field-detection-raw.ts`) — unchanged, reused as-is by the new flow.
+- [x] ✅ Migration `044_utm_auto_rules.sql` (**not yet run**): `utm_auto_rules` (user-defined rule templates: page_id, fields[], hint) and `utm_auto_rule_matches` (per-rule AI-judgment cache keyed by projected value-combination signature).
+- [x] ✅ `src/lib/auto-personalize.ts`: `judgeUtmHintMatch()` (AI yes/no judgment against a rule's hint), `generateHeroOverrides()` (content generation, extracted from the old auto-generate route, logic unchanged), `insertLiveAutoRule()` (writes a completed, non-draft rule directly, no approval state).
+- [x] ✅ `src/app/api/pages/[id]/auto-rules/route.ts` — GET/POST/DELETE for rule templates.
+- [x] ✅ Rewrote `src/app/api/cron/utm-detect/route.ts` — no more visitor-threshold traffic discovery; now projects traffic onto each active rule's watched fields, judges new value-combinations via AI (once per combination, cached), and on match generates content + writes a live rule directly.
+- [x] ✅ `src/components/utm/AutoRulesPanel.tsx` — field-name dropdown (no raw values), optional hint textarea, rule list with delete. Replaces and deletes the old `AutoDetectionPanel.tsx`. Wired into `UTMPickerClient.tsx`.
 - [x] ✅ Verified with `tsc --noEmit` and `npm run build` — both clean.
+- [x] ✅ Client confirmed (2026-07-30): everything in the pivoted flow correct; content scope originally confirmed hero-only (superseded same day by the hero-revamp scope expansion below).
 
-**Still open:**
+**NOT yet built — this session's scope expansion (hero revamp), needed before today's dev ship:**
 
-- [ ] Get remaining client answer: human approval mandatory vs. optional/auto-approve toggle (open question 2 — client leaning toward wanting the option, not committed). Current build always shows the review/edit screen before Approve — matches the "approval option" lean, but there's no auto-approve toggle yet.
-- [ ] Get client answers on open questions 4-13 (naming convention, scale, QC, brand guardrails, threshold specifics, rollout scope, manual-rule interaction, multi-dimension audience+angle combination, layout-variation generation approach)
-- [ ] Check whether a detected combination already has a matching manually-authored rule before surfacing it as 'notified' (noted as a known limitation in `/api/cron/utm-detect`) — currently it can show up for review even if a human already covered it; low-risk since Dismiss/Approve both resolve it either way, but wasteful.
-- [ ] Per-page settings UI: nothing yet lets a user actually view/change `visitor_threshold`/`scan_interval_minutes` (DB columns exist with defaults, `detection_fields` is settable via the utm-detections PATCH endpoint, but there's no "Change detection field" control wired into the screen yet, nor a threshold/interval editor).
-- [ ] Decide and design the hero-layout-variation mechanism separately — it doesn't fit the existing selector-based swap system (see gaps section); likely closer to the AI page-rebuild/follow-up path than to `utm-swap-script.ts`. Not started.
-- [ ] Add cost/rate limits for automatic Sonnet calls (reuse pattern from `docs/ai-cost-limit.md`) — not implemented yet, the auto-generate endpoint has no rate limiting.
-- [ ] Handle the existing `MAX_RULES = 20` per-page cap once scale answer comes back from client (the auto endpoint checks and rejects at the cap, but there's no retirement/replacement policy for low-value auto rules yet).
-- [ ] Set `CRON_SECRET` env var before deploying, or the cron endpoint runs unauthenticated (it only checks the header when the env var is set, to allow local testing without it).
-- [ ] Pilot on one client/page before rolling out broadly — no feature flag/gating exists yet; once deployed this runs for every page with qualifying traffic.
-- [ ] Fix stale glowing-dot after dismiss/approve without a manual hard refresh: the dot is computed server-side (`utm_auto_detections` query in `tests/[testId]/page.tsx` and `ai-pages/page.tsx`) at page-load time, and Next's client-side router cache can serve a stale RSC payload on soft navigation/back — confirmed in local testing (dismissed a detection, `status` correctly flipped to `rejected` in the DB, but the dot kept showing until a hard refresh). Fix: add a focus/`visibilitychange`-based refetch (or periodic `router.refresh()`) so the dot self-updates without the user needing to know to hard-refresh.
-- [ ] Proxy-mode and redirect-mode (302) variants are NOT covered by UTM auto-detection yet. `/api/serve`'s HTML-mode pageview insert now computes `utm_sig` server-side directly (fixed during local testing — the server-recorded pageview always wins `/api/event`'s per-visitor/test/day dedup race, so the client `tracker.js` beacon's UTM payload never actually lands), but the equivalent fix was only applied to the HTML-mode insert (`serve/route.ts` ~line 508-516). The proxy-mode insert (~line 336-346, `metadata: { redirect_url, proxy: true }`) and the plain-redirect insert (~line 386-393, `metadata: { redirect_url }`) still don't carry `utm_sig`, so auto-detection currently only works for HTML-mode tests. Needs the same `computeUtmSig(searchParams)` treatment applied to both before this feature can be considered complete for redirect/proxy variants.
+- [ ] **Write migration `045_hero_revamp.sql`** — adds `personalization_rules.hero_html` (nullable text). Do not run yet, per standing rule — write it, confirm with the user, then run alongside 044 when ready to test on dev.
+- [ ] **Add hero-container detection for AI-generated pages** — a function (likely in `hero-field-detection.ts`, alongside the existing tier-1 field parser) that returns the `section.hero` container's outer HTML given the page's stored HTML. Raw-HTML pages return null/unsupported for now (explicit gap, tracked below).
+- [ ] **Add a hero-revamp generation function** in `auto-personalize.ts` (alongside `generateHeroOverrides`) — prompts Sonnet to rewrite the entire hero container's HTML (content + layout + CTA) given current hero HTML as context, returns the new HTML block instead of a field-keyed JSON object.
+- [ ] **Update the cron** (`utm-detect/route.ts`) to call the hero-revamp function instead of (or as a preferred alternative to) `generateHeroOverrides`, and pass the result into `insertLiveAutoRule()` as `hero_html` (with `overrides_json: {}`).
+- [ ] **Update `insertLiveAutoRule()`** to accept and store an optional `heroHtml` param.
+- [ ] **Restore the duplicate-signature check** inside `insertLiveAutoRule()` (see "Bug found this session" above) — this must ship alongside the hero-revamp work, not after, since scope expansion increases how often the cron writes new rules.
+- [ ] **Extend `utm-swap-script.ts`** with a new branch: if the active rule has `hero_html`, replace the hero container's `outerHTML`; otherwise keep the existing per-field swap loop unchanged.
+- [ ] **Add `hero_html` to the 3 serve-time `personalization_rules` selects** (`serve/route.ts`, `preview/route.ts`, `pages/[slug]/route.ts`) so it reaches `buildUtmSwapScript()` — currently they only select `match_param,match_value,is_fallback,overrides_json,conditions_json`.
+- [ ] **Add an "Auto" badge** in `UTMPickerClient.tsx`'s rules list for rows where `source === 'auto'`.
+- [ ] **Design an editable representation for `hero_html` rules** in the rule edit panel (`renderRuleFields` currently assumes per-field text inputs from `overrides_json` only) — likely a raw-HTML textarea for a first pass.
+- [ ] **Confirm the existing UTM-simulator dropdown surfaces auto-created rules correctly** (should be free, per the visibility decision above) — verify, don't assume.
+- [ ] **Explicitly flag as a known gap, not silently skipped:** raw/uploaded HTML pages do not get hero revamp yet — they keep the old field-swap-only behavior. Needs its own follow-up design (hero-container detection for raw HTML, parallel to the existing tier-2 field detection).
 
-**Hero auto-field-mapping (2026-07-29, follow-up session) — core detection + generation flow built (both tiers, atomic writes, explicit failure handling), UI polish + real-page testing still open, migration not run, nothing committed/pushed:**
+**Still open — everything else (deprioritized for today's ship, per user instruction):**
 
-- [x] ✅ Migration `043_auto_field_selectors.sql`: adds `pages.auto_field_selectors_json` (same shape as manual `field_selectors_json`, fully separate column). Confirmed via grep that no earlier migration used this or a similar column name.
-- [x] ✅ Wired the same clear-on-live-HTML-replace treatment already applied to `field_selectors_json` onto `auto_field_selectors_json`, at all 4 existing call sites (mechanical, mirrors existing behavior exactly, does not change any current logic/condition):
-  - `src/app/api/pages/[id]/route.ts` (~line 115, gated by existing `htmlReplaced`)
-  - `src/app/api/pages/[id]/follow-up/route.ts` (~line 928, AI chat rewrite, non-variant live HTML)
-  - `src/app/api/pages/[id]/schema-from-html/route.ts` (~line 493, raw HTML import, non-variant branch)
-  - `src/app/api/pages/[id]/replace-variant/route.ts` (~line 49, variant draft → live promote)
-  - **Dependency risk:** these `update()` calls now reference `auto_field_selectors_json` in the payload. Until migration 043 is actually run against a given DB, that column doesn't exist and these 4 update paths (manual edit, AI rebuild, raw HTML import, variant promote — all currently-working, frequently-used editing flows) will fail with an unknown-column DB error. **Migration must be run before testing/deploying this change**, consistent with the standing "don't run migration without explicit go-ahead" rule — flagging here so this isn't deployed ahead of the migration by mistake.
-- [x] ✅ **Detection logic — AI-generated-page tier only** (`src/lib/hero-field-detection.ts`, `detectHeroFieldsFromHtml()`): regex-parses stored HTML for existing `data-field="hero.*"` attributes (headline/subhead/cta_text/background_image), infers `type: 'image'` for `<img>` tags and `'text'` otherwise, builds `[data-field="hero.X"]` attribute selectors (no id injection needed — `querySelector` in `utm-swap-script.ts` already supports attribute selectors directly). Returns `null` if no hero fields found (raw HTML, or no hero section) — treated as "nothing detected," not an error.
-- [x] ✅ **Wired into `auto-generate/route.ts`**: checks `auto_field_selectors_json` first; if empty, fetches page HTML (`html_content` or storage fallback via `html_url`, same pattern as `preview/route.ts`) and runs detection; if hero fields are found, saves them to `auto_field_selectors_json` and uses them for content generation. (Superseded below — no longer falls back to manual `field_selectors_json`; see the "Manual-mapping fallback — removed" entry.) Verified with `tsc --noEmit` — clean.
-- [x] ✅ **Raw/uploaded HTML tier — built** (`src/lib/hero-field-detection-raw.ts`, `detectAndInjectHeroFieldsRawHtml()`):
-  - **Scope: fixed 4 fields only**, reading from the shared `HERO_FIELD_CONFIG`/`HERO_FIELD_KEYS` in `hero-field-detection.ts` (same config tier 1 uses) — adding a 5th field later is still a one-line change there, this tier's prompt and injection loop are already generic over that list, not hardcoded to 4.
-  - Parses the page with `htmlparser2` (same library `inject-field-id/route.ts` already uses — not cheerio; cheerio's ESM build pulls in `undici`, which broke the webpack build with a private-class-field parse error), collects up to 120 candidate elements from tags likely to be hero content (`h1/h2/h3/p/span/div/a/button/img`) with their indexPath + a short text/src preview.
-  - Sends the candidate list (not the raw HTML) to Sonnet, asking it to map each of the 4 field keys to a candidate's `indexPath` or `null` if not confidently identifiable — conservative by design, explicitly told never to guess and to return all-null if there's no identifiable hero section.
-  - Injects `data-field="hero.X"` (not a new `id` — see collision-avoidance reasoning below) onto each identified element, then **hands off to tier 1's own `detectHeroFieldsFromHtml()`** to build the final selector map from the freshly-injected markup — no separate selector-building path, one parser for both tiers.
-  - Returns `null` (clean "detection failed," not a thrown error) if zero candidates exist, the AI call throws, or no field was confidently identified — edge cases 3/4 from the design section.
-  - **Collision-avoidance with manual mapping:** confirmed via `data-field`, not `id` — a DOM element can only carry one `id`, and the manual "Map Elements" flow (`inject-field-id/route.ts`) may have already injected one on the exact element the hero detector wants to tag. `data-field` is a separate attribute namespace, so there's never a collision regardless of whether manual mapping touched that element or not.
-- [x] ✅ **Wired into `auto-generate/route.ts`**: tier 1 (attribute parse) runs first; if it finds nothing, tier 2 (AI raw-HTML detection) runs; if tier 2 succeeds, the mutated HTML + `auto_field_selectors_json` are written in **one atomic `update()` call** (plus a fresh storage upload via `uploadHtml()` if the page has a stored file, so `serve`/`preview` don't keep reading pre-injection HTML) — matching edge case 2's atomicity requirement. If the storage upload fails, the whole write is aborted rather than saving selectors that point at markup storage doesn't have yet. Only falls back to manual `field_selectors_json` if both tiers find nothing.
-- [x] ✅ **Fixed a latent gap while wiring this in:** the "current live content" read for the content-generation prompt previously only checked `schema_json.hero`, which is empty for any raw-HTML or manually-mapped page (it's only ever populated for AI-generated pages' fixed hero.\* keys) — so raw-HTML/manual generation was silently working from blank "current content" context. New `src/lib/html-field-read.ts` (`readFieldValueFromHtml()`, htmlparser2-based, matches only the `#id` and `[data-field="..."]` selector forms this codebase actually generates) reads each field's real current value straight from the live HTML, falling back to `schema_json.hero` only if that fails.
-- [x] ✅ Verified with `tsc --noEmit` and `npm run build` — both clean.
-- [x] ✅ **"Generate preview" flow wiring — confirmed complete.** `auto-generate/route.ts` already does exactly the required sequence: check `auto_field_selectors_json` → detect (tier 1, then tier 2) if empty → compute fully in memory → write once atomically → run content generation using those selectors. No further change needed here; this was built in the same pass as the raw-HTML tier above.
-- [x] ✅ **Manual-mapping fallback — removed, replaced with an explicit error (revised 2026-07-29).** Initially kept as a silent last-resort fallback when both detection tiers failed (edge cases 3/4), but reconsidered: silently reading from `field_selectors_json` — a deliberately independent, separately-owned store — inside the AUTO endpoint is confusing behavior a caller can't predict (sometimes auto, sometimes manual, no signal which). **Now:** if neither tier can identify a hero section, `auto-generate` returns an explicit `422` — `"Could not automatically detect this page's hero fields..."` — instead of quietly trying manual mapping. This is a clean behavior, not a regression: nothing in production today depends on this fallback (the whole hero-auto-mapping feature, migration included, has never shipped), so there's no working case being broken. A page whose hero genuinely can't be auto-detected still has the fully independent manual "Map Elements" + regular UTM rule flow available — just not silently invoked from behind this endpoint.
-- [ ] **CTA destination URL — flagged as an open question for the client, not built.** Today `cta_text` is `type: 'text'` only — personalization can change the CTA's label but not its link/href. Building href support would mean adding a new field type across `utm-swap-script.ts` (the swap script only knows `text`/`image`), the manual `inject-field-id` flow, `HERO_FIELD_CONFIG`, and the review UI — real cross-cutting scope, not assumed here. Needs an explicit answer: is "personalize the CTA" expected to include where it links, or just its label? Folded into the existing open-questions list (was already edge case 6; now also added to the client-facing "Open questions" section above as question 14).
-- [ ] Wire the "Generate preview" **UI** step (`AutoDetectionPanel.tsx`) to reflect that detection (including the AI raw-HTML call, which adds latency) may now happen transparently on first Generate click — currently no UI change was made, this todo only touched the API route; the panel doesn't yet show a "detecting hero fields..." loading state or a distinct message for "no hero section found, please map manually" (edge case 3/4) vs. other failures.
-- [ ] Not yet tested against a real raw-HTML page locally — build/typecheck are clean but the actual AI identification accuracy (candidate selection, indexPath resolution, injection correctness) hasn't been verified end-to-end since the migration hasn't been run yet.
-- [ ] Still blocked on client answers to open questions 4-13 (naming convention, scale, QC guardrails, threshold specifics, rollout scope, manual-rule interaction, multi-dimension combination, layout-variation approach) before this becomes a full build, not just plumbing.
+- [ ] **Cost/rate limiting** — no daily AI-call budget exists. Client didn't set an exact rule cap either ("we're going to have to play with this to make it feel right") — ship with the current placeholder (`MAX_RULES_PER_PAGE = 200`) and make it easy to tune, but a basic daily cost cap is still worth adding as a safety net regardless of that number.
+- [ ] **Per-version stats** — each matched rule creates its own personalized version under one variant; not yet decided whether the client wants stats tracked separately per version or combined into the variant total.
+- [ ] **Bot/junk protection** — the new design judges on first sighting of a value-combination, no minimum-visitor threshold like the old design had (8 visitors). Not explicitly re-confirmed with the client whether this is acceptable risk.
+- [ ] **CTA destination URL** — still label-only; personalizing the CTA's link/href is a separate, cross-cutting scope decision not yet answered by the client.
+- [ ] **Proxy-mode and redirect-mode (302) variants** are still not covered — auto-personalization only works for HTML-mode tests (the `utm_sig` fix was only applied to the HTML-mode pageview insert in `serve/route.ts`).
+- [ ] Set `CRON_SECRET` env var before deploying, or the cron endpoint runs unauthenticated.
+- [ ] Pilot on one client/page before rolling out broadly — no feature flag/gating exists yet.
+- [ ] Run migrations `044_utm_auto_rules.sql` and `045_hero_revamp.sql` before any end-to-end testing (needs explicit go-ahead, per the standing rule — user has agreed to running these specifically on dev to unblock testing).
+- [ ] Not yet tested against a real live visitor/page — everything above has only been verified by `tsc`/`build`, never an actual served page with matching UTM traffic. Given the pivot's history (a swap-script wiring bug was previously invisible to both `tsc` and `build` and only surfaced in live testing), treat all of the above as unverified until tested the same way.
+
+**Carried over, unaffected by the pivot (from the hero-auto-field-mapping work, 2026-07-29):**
+
+- [x] ✅ Migration `043_auto_field_selectors.sql` (adds `pages.auto_field_selectors_json`) and its 4 clear-on-live-HTML-replace call sites — still needs to be run before deploying, alongside migrations 044 and 045.
+- [x] ✅ Tier 1 (attribute parse) + Tier 2 (AI raw-HTML detection + injection) hero-field detection, atomic writes, explicit `422` failure instead of a silent manual-mapping fallback.
+- [x] ✅ Swap-script wiring bug (auto selectors never read at 3 serve-time call sites) — found and fixed during manual testing; merged into `serve/route.ts`, `preview/route.ts`, `pages/[slug]/route.ts`.
+- [ ] Not yet tested against a real raw-HTML page locally.
+- [ ] No dedicated loading state distinguishing "detecting hero fields" from ordinary content generation — cosmetic.
 
 ## Todos (superseded/no longer applicable)
 
-These were reasonable early on but are superseded by the finalized flow above — kept for history, not active work:
-
-- ~~Ask client "which UTM field should identify audience" as an upfront onboarding step~~ → replaced by in-context, per-variant, first-detection field selection (chip UI), not a mandatory setup step.
+- ~~Ask client "which UTM field should identify audience" as an upfront onboarding step~~ → replaced by upfront rule creation (field dropdown + optional hint) via `AutoRulesPanel`.
 - ~~Generate a new tracking link for the user to paste into their ad~~ → wrong direction; the client's existing Meta/Google ad already produces the link, SplitLab only ever reads incoming traffic, never issues links for ads.
-- ~~Dashboard-wide "pending suggestions" notification list~~ → replaced by the glowing dot + in-screen card, scoped to each variant's existing UTM Personalization screen.
+- ~~Dashboard-wide "pending suggestions" notification list~~ → superseded twice: first by the glowing dot + in-screen card, then by full autonomy (no notification needed since nothing needs a human decision).
+- ~~Value-chip picker showing every detected UTM combination~~ → replaced by a field-name-only dropdown at rule-creation time (client: "there's gonna be a million different ones").
+- ~~Approval/review-before-live step, `DetectionDot`, `AutoDetectionPanel`~~ → removed entirely; client confirmed fully autonomous, no human checkpoint.
+- ~~Cron's distinct-visitor-threshold "detect new combo, notify" trigger~~ → replaced by AI-judged hint matching against user-defined rule templates.
+- ~~Hard `MAX_RULES = 20` cap~~ → raised to a placeholder `200`, pending the client's empirical tuning.

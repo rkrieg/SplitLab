@@ -61,3 +61,28 @@ export function detectHeroFieldsFromHtml(html: string): HeroFieldSelectors | nul
 
   return Object.keys(result).length > 0 ? result : null;
 }
+
+// Hero-container detection (2026-07-30, "hero section revamp" scope
+// expansion). Distinct from the field-level detection above: this returns
+// the whole hero container's outer HTML so it can be replaced wholesale by
+// an AI-generated layout/content rewrite, rather than swapped field-by-field.
+//
+// AI-generated pages always emit the hero as `<section class="hero">...
+// </section>` (confirmed via grep against ai-page-builder.ts) — this tier
+// only needs to find that one fixed marker, no attribute parsing required.
+// Raw/uploaded HTML pages have no such reliable marker; this is an explicit,
+// tracked gap (see "Bug found this session" / scope-expansion notes in
+// docs/utm-personalization-v2-automation.md) — callers must treat a null
+// return as "unsupported for this page," not silently skip it.
+const HERO_SECTION_RE = /<section\b[^>]*\bclass=(["'])(?:(?!\1).)*\bhero\b(?:(?!\1).)*\1[^>]*>[\s\S]*?<\/section>/i;
+
+/**
+ * Extracts the outer HTML of the page's `<section class="hero">...</section>`
+ * container from AI-generated page HTML. Returns null if no such section is
+ * found — raw/uploaded HTML pages, or AI-generated pages with no hero
+ * section, both fall through to this case.
+ */
+export function detectHeroContainerFromHtml(html: string): string | null {
+  const match = HERO_SECTION_RE.exec(html);
+  return match ? match[0] : null;
+}

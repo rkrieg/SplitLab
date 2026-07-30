@@ -463,14 +463,24 @@ ${proxyTrackingSnippet}
         : Promise.resolve({ data: [] }),
       db.from('scripts').select('*').eq('workspace_id', workspaceId).eq('is_active', true).eq('test_id', test.id),
       selectedVariant.page_id
-        ? db.from('personalization_rules').select('match_param,match_value,is_fallback,overrides_json,conditions_json').eq('page_id', selectedVariant.page_id).order('is_fallback', { ascending: true }).order('priority', { ascending: true })
+        ? db.from('personalization_rules').select('match_param,match_value,is_fallback,overrides_json,conditions_json,hero_html').eq('page_id', selectedVariant.page_id).order('is_fallback', { ascending: true }).order('priority', { ascending: true })
         : Promise.resolve({ data: [] }),
       selectedVariant.page_id
-        ? db.from('pages').select('field_selectors_json').eq('id', selectedVariant.page_id).single()
+        ? db.from('pages').select('field_selectors_json, auto_field_selectors_json').eq('id', selectedVariant.page_id).single()
         : Promise.resolve({ data: null }),
       db.from('workspace_integrations').select('config').eq('workspace_id', workspaceId).eq('type', 'hubspot').eq('enabled', true).limit(1),
     ]);
-    const fieldSelectors = (utmPageRow?.data as { field_selectors_json?: Record<string, { selector: string; type: 'text' | 'image'; label: string }> } | null)?.field_selectors_json ?? null;
+    // Merge manual + auto-detected (hero.*) selector maps — the two stores
+    // use disjoint key namespaces (manual keys are slugified user labels,
+    // auto keys are fixed hero.* dot-paths), so a plain merge never
+    // collides. Without this, rules created via the auto-detection flow
+    // (overrides keyed by hero.headline etc.) would have no selector to
+    // swap against, since the swap script only ever looked at manual
+    // field_selectors_json.
+    const utmPageData = utmPageRow?.data as { field_selectors_json?: Record<string, { selector: string; type: 'text' | 'image'; label: string }>; auto_field_selectors_json?: Record<string, { selector: string; type: 'text' | 'image'; label: string }> } | null;
+    const fieldSelectors = (utmPageData?.field_selectors_json || utmPageData?.auto_field_selectors_json)
+      ? { ...(utmPageData?.field_selectors_json ?? {}), ...(utmPageData?.auto_field_selectors_json ?? {}) }
+      : null;
     const scripts = [...(workspaceScripts || []), ...(pageScripts || []), ...(testScripts || [])];
 
     const testHeadScriptsHtml = (test as { head_scripts?: string }).head_scripts || '';

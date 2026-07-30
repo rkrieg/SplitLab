@@ -35,15 +35,21 @@ export async function GET(
   try {
     const [{ data: rules }, { data: pageRow }] = await Promise.all([
       db.from('personalization_rules')
-        .select('match_param,match_value,is_fallback,overrides_json,conditions_json')
+        .select('match_param,match_value,is_fallback,overrides_json,conditions_json,hero_html')
         .eq('page_id', page.id)
         .order('is_fallback', { ascending: true })
         .order('priority', { ascending: true }),
-      db.from('pages').select('field_selectors_json').eq('id', page.id).single(),
+      db.from('pages').select('field_selectors_json, auto_field_selectors_json').eq('id', page.id).single(),
     ]);
 
     if (rules && rules.length > 0) {
-      const fieldSelectors = (pageRow as { field_selectors_json?: Record<string, string> } | null)?.field_selectors_json ?? null;
+      // Merge manual + auto-detected selector maps — disjoint key
+      // namespaces (manual = slugified labels, auto = fixed hero.*
+      // dot-paths), so a plain merge never collides. See serve/route.ts.
+      const row = pageRow as { field_selectors_json?: Record<string, { selector: string; type: 'text' | 'image'; label: string }>; auto_field_selectors_json?: Record<string, { selector: string; type: 'text' | 'image'; label: string }> } | null;
+      const fieldSelectors = (row?.field_selectors_json || row?.auto_field_selectors_json)
+        ? { ...(row?.field_selectors_json ?? {}), ...(row?.auto_field_selectors_json ?? {}) }
+        : null;
       const swapScript = buildUtmSwapScript(rules, fieldSelectors);
       html = html.includes('</body')
         ? html.replace('</body>', `${swapScript}\n</body>`)

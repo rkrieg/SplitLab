@@ -4,6 +4,7 @@ export interface PersonalizationRuleRow {
   is_fallback: boolean;
   overrides_json: Record<string, unknown>;
   conditions_json?: { match_param: string; match_value: string }[] | null;
+  hero_html?: string | null;
 }
 
 export type FieldSelectorMap = Record<string, { selector: string; type: 'text' | 'image'; label: string } | string> | null;
@@ -43,10 +44,16 @@ export function buildUtmSwapScript(rules: PersonalizationRuleRow[], fieldSelecto
   var candidates=rules.filter(function(r){return !r.is_fallback&&ruleMatches(r);});
   candidates.sort(function(a,b){return conditionsOf(b).length-conditionsOf(a).length;});
   var active=candidates[0]||rules.find(function(r){return r.is_fallback;});
-  if(!active||!active.overrides_json)return;
-  var o=active.overrides_json;
+  if(!active)return;
   function getInfo(field){var fm=fs[field];if(!fm)return{selector:null,type:'text'};if(typeof fm==='string')return{selector:fm,type:'text'};return{selector:fm.selector||null,type:fm.type||'text'};}
   function run(){
+    if(active.hero_html){
+      var heroEl=document.querySelector('section.hero');
+      if(heroEl)heroEl.outerHTML=active.hero_html;
+      return;
+    }
+    if(!active.overrides_json)return;
+    var o=active.overrides_json;
     Object.keys(o).forEach(function(field){
       var val=o[field];if(!val)return;
       var info=getInfo(field);if(!info.selector)return;

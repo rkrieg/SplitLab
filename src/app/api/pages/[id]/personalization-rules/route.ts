@@ -142,8 +142,9 @@ export async function POST(
     seenSignatures.set(signature, i);
 
     const overrides = rule.overrides_json as Record<string, string> | undefined;
+    const heroHtml = typeof rule.hero_html === 'string' ? rule.hero_html : null;
 
-    const hasFilledField = Object.values(overrides ?? {}).some(v => typeof v === 'string' && v.trim());
+    const hasFilledField = !!heroHtml?.trim() || Object.values(overrides ?? {}).some(v => typeof v === 'string' && v.trim());
     if (!hasFilledField) {
       return NextResponse.json(
         { error: `This rule does not change anything on the page. Fill in at least one field.` },
@@ -191,8 +192,10 @@ export async function POST(
       match_type: 'exact',
       conditions_json: isFallback ? null : conditions,
       overrides_json: r.overrides_json ?? {},
+      hero_html: typeof r.hero_html === 'string' ? r.hero_html : null,
       priority: typeof r.priority === 'number' ? r.priority : i,
       is_fallback: isFallback,
+      source: r.source === 'auto' ? 'auto' : 'manual',
     };
   });
 
