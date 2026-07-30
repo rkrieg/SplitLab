@@ -70,6 +70,7 @@ import Modal from "@/components/ui/Modal";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import { TestStatusBadge } from "@/components/ui/Badge";
 import { formatPercent } from "@/lib/utils";
+import DetectionDot from "@/components/utm/DetectionDot";
 
 const GOAL_TYPES = [
   { value: "form_submit", label: "Form Submit" },
@@ -166,6 +167,7 @@ interface Props {
   userRole: string;
   userPlan: string;
   workspaceId?: string;
+  pendingDetectionPageIds?: string[];
 }
 
 interface HubSpotProperty {
@@ -209,7 +211,9 @@ export default function AnalyticsClient({
   userRole,
   userPlan,
   workspaceId,
+  pendingDetectionPageIds,
 }: Props) {
+  const pendingDetectionSet = new Set(pendingDetectionPageIds ?? []);
   const [test, setTest] = useState(initialTest);
   const [tab, setTab] = useState<Tab>("overview");
   const [variantPreview, setVariantPreview] = useState<{ name: string; url: string } | null>(null);
@@ -2911,11 +2915,12 @@ export default function AnalyticsClient({
                                 {stat.variant.pages?.id && (
                                   <Link
                                     href={`/clients/${clientId}/pages/${stat.variant.pages.id}/utm`}
-                                    className="flex items-center justify-center gap-1 w-full px-2 py-1 rounded-lg text-xs font-medium bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 hover:bg-indigo-500/20 transition-colors whitespace-nowrap"
+                                    className="relative flex items-center justify-center gap-1 w-full px-2 py-1 rounded-lg text-xs font-medium bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 hover:bg-indigo-500/20 transition-colors whitespace-nowrap"
                                     title="Set up UTM parameters"
                                   >
                                     <SlidersHorizontal size={11} />
                                     UTM personalization
+                                    {pendingDetectionSet.has(stat.variant.pages.id) && <DetectionDot />}
                                   </Link>
                                 )}
                                 {!variantHasGoals && (

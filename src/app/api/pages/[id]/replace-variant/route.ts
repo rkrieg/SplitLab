@@ -47,6 +47,7 @@ export async function POST(
     // Live markup changed — old UTM selectors/rules can't be trusted, same
     // as any other live HTML replacement.
     field_selectors_json: null,
+    auto_field_selectors_json: null,
     updated_at: new Date().toISOString(),
   };
   if (page.draft_schema_json) {

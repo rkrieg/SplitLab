@@ -76,6 +76,8 @@ export interface UTMRule {
   is_fallback: boolean;
   priority: number;
   overrides_json: Record<string, string>;
+  hero_html?: string | null;
+  source?: string;
 }
 
 export interface FieldMapping {

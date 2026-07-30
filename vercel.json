@@ -13,5 +13,11 @@
       ],
       "destination": "/$1"
     }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron/utm-detect",
+      "schedule": "*/5 * * * *"
+    }
   ]
 }

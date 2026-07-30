@@ -926,6 +926,7 @@ export async function POST(
           // HTML was rewritten by the AI — old UTM selectors can't be trusted, so
           // clear mappings (and rules below), same as manual HTML edits do
           updatePayload.field_selectors_json = null;
+          updatePayload.auto_field_selectors_json = null;
         }
       }
       if (resultType === 'structural' && finalSchemaJson) {

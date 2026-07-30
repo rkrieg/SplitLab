@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { resolveWorkspaceRole } from '@/lib/workspace-auth';
+import { normalizedConditionSignature } from '@/lib/auto-personalize';
 
 const VALID_PARAMS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'] as const;
 const MAX_RULES = 20;
@@ -142,8 +143,9 @@ export async function POST(
     seenSignatures.set(signature, i);
 
     const overrides = rule.overrides_json as Record<string, string> | undefined;
+    const heroHtml = typeof rule.hero_html === 'string' ? rule.hero_html : null;
 
-    const hasFilledField = Object.values(overrides ?? {}).some(v => typeof v === 'string' && v.trim());
+    const hasFilledField = !!heroHtml?.trim() || Object.values(overrides ?? {}).some(v => typeof v === 'string' && v.trim());
     if (!hasFilledField) {
       return NextResponse.json(
         { error: `This rule does not change anything on the page. Fill in at least one field.` },
@@ -190,9 +192,12 @@ export async function POST(
       match_value: isFallback ? null : (firstCondition?.match_value as string),
       match_type: 'exact',
       conditions_json: isFallback ? null : conditions,
+      condition_signature: isFallback ? null : normalizedConditionSignature(conditions),
       overrides_json: r.overrides_json ?? {},
+      hero_html: typeof r.hero_html === 'string' ? r.hero_html : null,
       priority: typeof r.priority === 'number' ? r.priority : i,
       is_fallback: isFallback,
+      source: r.source === 'auto' ? 'auto' : 'manual',
     };
   });
 

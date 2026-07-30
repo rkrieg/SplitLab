@@ -64,6 +64,43 @@ function forwardInboundParams(target: URL, inbound: URLSearchParams): void {
   }
 }
 
+// UTM Personalization V2 (auto-detection): the server records a pageview row
+// itself (below) before tracker.js's client-side beacon can ever run, and
+// /api/event's one-pageview-per-visitor/test/day dedup means that beacon's
+// utm-carrying payload never lands — this row always wins the race. So the
+// signature has to be computed here, from the same inbound query params
+// tracker.js would have read off window.location.search. Click IDs are
+// excluded (gclid/fbclid/etc. are unique per click and would never
+// accumulate distinct visitors) — mirrors tracker.js's CLICK_ID_PARAMS.
+const CLICK_ID_PARAMS = new Set([
+  'gclid', 'fbclid', 'fbc_id', 'fbp', 'msclkid', 'ttclid', 'li_fat_id',
+  'twclid', 'dclid', 'wbraid', 'gbraid', 'epik', 'sccid', 'irclickid',
+]);
+const EXTRA_ID_PARAMS = new Set([
+  'h_ad_id', 'ad_id', 'adset_id', 'campaign_id', 'creative_id', 'placement_id',
+]);
+
+function isDetectionParam(key: string): boolean {
+  if (key.startsWith('sl_')) return false;
+  if (key.startsWith('utm_')) return true;
+  if (key.startsWith('hsa_')) return true;
+  if (EXTRA_ID_PARAMS.has(key)) return true;
+  return false;
+}
+
+function computeUtmSig(searchParams: URLSearchParams): { utm: Record<string, string>; utm_sig: string } | null {
+  const entries: Array<[string, string]> = [];
+  searchParams.forEach((value, key) => {
+    if (!value || CLICK_ID_PARAMS.has(key) || !isDetectionParam(key)) return;
+    entries.push([key, value]);
+  });
+  if (entries.length === 0) return null;
+  entries.sort(([a], [b]) => a.localeCompare(b));
+  const utm: Record<string, string> = {};
+  for (const [k, v] of entries) utm[k] = v;
+  return { utm, utm_sig: entries.map(([k, v]) => `${k}=${v}`).join('&') };
+}
+
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const domain = searchParams.get('domain') || '';
@@ -426,14 +463,24 @@ ${proxyTrackingSnippet}
         : Promise.resolve({ data: [] }),
       db.from('scripts').select('*').eq('workspace_id', workspaceId).eq('is_active', true).eq('test_id', test.id),
       selectedVariant.page_id
-        ? db.from('personalization_rules').select('match_param,match_value,is_fallback,overrides_json,conditions_json').eq('page_id', selectedVariant.page_id).order('is_fallback', { ascending: true }).order('priority', { ascending: true })
+        ? db.from('personalization_rules').select('match_param,match_value,is_fallback,overrides_json,conditions_json,hero_html').eq('page_id', selectedVariant.page_id).order('is_fallback', { ascending: true }).order('priority', { ascending: true })
         : Promise.resolve({ data: [] }),
       selectedVariant.page_id
-        ? db.from('pages').select('field_selectors_json').eq('id', selectedVariant.page_id).single()
+        ? db.from('pages').select('field_selectors_json, auto_field_selectors_json').eq('id', selectedVariant.page_id).single()
         : Promise.resolve({ data: null }),
       db.from('workspace_integrations').select('config').eq('workspace_id', workspaceId).eq('type', 'hubspot').eq('enabled', true).limit(1),
     ]);
-    const fieldSelectors = (utmPageRow?.data as { field_selectors_json?: Record<string, { selector: string; type: 'text' | 'image'; label: string }> } | null)?.field_selectors_json ?? null;
+    // Merge manual + auto-detected (hero.*) selector maps — the two stores
+    // use disjoint key namespaces (manual keys are slugified user labels,
+    // auto keys are fixed hero.* dot-paths), so a plain merge never
+    // collides. Without this, rules created via the auto-detection flow
+    // (overrides keyed by hero.headline etc.) would have no selector to
+    // swap against, since the swap script only ever looked at manual
+    // field_selectors_json.
+    const utmPageData = utmPageRow?.data as { field_selectors_json?: Record<string, { selector: string; type: 'text' | 'image'; label: string }>; auto_field_selectors_json?: Record<string, { selector: string; type: 'text' | 'image'; label: string }> } | null;
+    const fieldSelectors = (utmPageData?.field_selectors_json || utmPageData?.auto_field_selectors_json)
+      ? { ...(utmPageData?.field_selectors_json ?? {}), ...(utmPageData?.auto_field_selectors_json ?? {}) }
+      : null;
     const scripts = [...(workspaceScripts || []), ...(pageScripts || []), ...(testScripts || [])];
 
     const testHeadScriptsHtml = (test as { head_scripts?: string }).head_scripts || '';
@@ -505,13 +552,14 @@ ${proxyTrackingSnippet}
 
     // 10c. Record pageview (skip for cap, scan, and Open-button previews)
     if (!overVisitorCap && !isScan && !forcedVh) {
+      const utmMeta = computeUtmSig(searchParams);
       await db.from('events').insert({
         test_id: test.id,
         variant_id: selectedVariant.id,
         visitor_hash: visitorId,
         type: 'pageview',
         device_type: getDeviceType(request.headers.get('user-agent')),
-        metadata: {},
+        metadata: utmMeta ? { utm: utmMeta.utm, utm_sig: utmMeta.utm_sig } : {},
       });
     }
 

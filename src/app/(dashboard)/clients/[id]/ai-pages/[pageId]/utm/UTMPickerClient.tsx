@@ -10,6 +10,7 @@ import {
 import toast from 'react-hot-toast';
 import { cn } from '@/lib/utils';
 import Modal from '@/components/ui/Modal';
+import AutoRulesPanel from '@/components/utm/AutoRulesPanel';
 import type { UTMRule, UTMCondition, FieldMapping } from './page';
 
 export type StoredFieldSelectors = Record<string, { selector: string; type: 'text' | 'image'; label: string }>;
@@ -738,6 +739,10 @@ export default function UTMPickerClient({ clientId, page, initialRules }: Props)
     setRules(prev => prev.map((r, i) => i !== idx ? r : { ...r, overrides_json: { ...r.overrides_json, [fieldKey]: value } }));
   }
 
+  function updateRuleHeroHtml(idx: number, value: string) {
+    setRules(prev => prev.map((r, i) => i !== idx ? r : { ...r, hero_html: value }));
+  }
+
   async function saveRules(overrideRules?: Rule[]): Promise<boolean> {
     const rulesToSave = overrideRules ?? rules;
     // Order-insensitive, normalized signature of a rule's conditions — matches how the
@@ -893,6 +898,32 @@ export default function UTMPickerClient({ clientId, page, initialRules }: Props)
 
   function renderRuleFields(ruleIdx: number) {
     const rule = rules[ruleIdx];
+    if (rule.hero_html != null) {
+      // Rules generated via the hero-revamp path store a full HTML
+      // replacement for the hero section instead of per-field overrides.
+      // First pass: a raw-HTML textarea — no live rendering here, since the
+      // markup depends on the page's own CSS which isn't loaded in this
+      // dashboard shell (see docs/utm-personalization-v2-automation.md,
+      // "Visibility decision"). Use the UTM-simulator preview below for a
+      // real, styled render of this rule.
+      return (
+        <div className="p-4 space-y-2">
+          <label className="flex items-center gap-1.5 text-xs text-slate-400">
+            <Type size={11} /> Hero section HTML (replaces the entire hero container)
+          </label>
+          <textarea
+            value={rule.hero_html}
+            onChange={e => updateRuleHeroHtml(ruleIdx, e.target.value)}
+            rows={10}
+            spellCheck={false}
+            className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-xs font-mono text-slate-700 dark:text-slate-200 focus:outline-none focus:border-indigo-400"
+          />
+          <p className="text-[11px] text-slate-400">
+            Use the preview dropdown below to see this rendered with the page&apos;s real styles.
+          </p>
+        </div>
+      );
+    }
     return (
       <div className="p-4 space-y-3">
         {mappedFields.length === 0 && (
@@ -983,6 +1014,16 @@ export default function UTMPickerClient({ clientId, page, initialRules }: Props)
 
         {/* Scrollable content */}
         <div className="flex-1 overflow-y-auto p-5 space-y-6">
+
+          {/* ── Auto-detected UTM traffic (V2) ── */}
+          <section className="space-y-2 rounded-xl border border-slate-200 dark:border-slate-800 p-4">
+            <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">Setup with AI</h3>
+            <AutoRulesPanel pageId={page.id} />
+          </section>
+
+          {/* ── Manual Setup: Map Elements + UTM Rules ── */}
+          <section className="space-y-6 rounded-xl border border-slate-200 dark:border-slate-800 p-4">
+          <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">Manual Setup</h3>
 
           {/* ── Map Elements ── */}
           <section>
@@ -1198,6 +1239,11 @@ export default function UTMPickerClient({ clientId, page, initialRules }: Props)
                 return (
                 <div key={rule._key} className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-visible">
                   <div className="px-4 pt-2.5 pb-2 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 rounded-t-xl space-y-1.5">
+                    {rule.source === 'auto' && (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-medium text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/30 rounded-full px-1.5 py-0.5">
+                        <Sparkles size={9} /> Auto
+                      </span>
+                    )}
                     {renderConditionRows(idx)}
                     <div className="flex items-center justify-end gap-1">
                       {ruleQueryString(rule) && (
@@ -1286,6 +1332,7 @@ export default function UTMPickerClient({ clientId, page, initialRules }: Props)
             </>
             )}
           </section>
+          </section>
         </div>
       </div>
 
@@ -1305,7 +1352,7 @@ export default function UTMPickerClient({ clientId, page, initialRules }: Props)
             <option value="default">Default</option>
             {nonFallbackRules.filter(r => ruleQueryString(r)).map((r, i) => (
               <option key={i} value={ruleQueryString(r)} title={ruleSummary(r)}>
-                {ruleSummary(r)}
+                {r.source === 'auto' ? `⚡ ${ruleSummary(r)}` : ruleSummary(r)}
               </option>
             ))}
           </select>

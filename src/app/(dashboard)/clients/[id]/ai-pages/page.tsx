@@ -42,6 +42,19 @@ export default async function AIPagesPage({ params }: { params: { id: string } }
     .is('deleted_at', null)
     .order('created_at', { ascending: false });
 
+  // UTM Personalization V2 (auto-detection): drives the glowing dot on each
+  // page's "UTM personalization" link. See docs/utm-personalization-v2-automation.md.
+  const pageIds = (pages ?? []).map(p => p.id);
+  let pendingDetectionPageIds: string[] = [];
+  if (pageIds.length > 0) {
+    const { data: detections } = await db
+      .from('utm_auto_detections')
+      .select('page_id')
+      .in('page_id', pageIds)
+      .eq('status', 'notified');
+    pendingDetectionPageIds = Array.from(new Set((detections ?? []).map(d => d.page_id as string)));
+  }
+
   return (
     <div>
       <Header title="AI Pages" subtitle={client?.name} />
@@ -52,6 +65,7 @@ export default async function AIPagesPage({ params }: { params: { id: string } }
           workspaceId={workspace.id}
           canManage={wsRole !== 'viewer'}
           canUseAI={canUseAI}
+          pendingDetectionPageIds={pendingDetectionPageIds}
         />
       </div>
     </div>
