@@ -1,13 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/supabase-server';
-
-// Force this route to be evaluated only per-request, never at build time.
-// Next.js App Router GET handlers are statically evaluated by default unless
-// opted into dynamic rendering — without this, `npm run build` was actually
-// *executing* the cron logic (real DB writes, real Anthropic API calls) to
-// pre-render/cache a response, instead of running only on real invocations.
-export const dynamic = 'force-dynamic';
-
 import {
   filterRowsMatch,
   judgeUtmRowsMatch,
@@ -17,6 +9,13 @@ import {
   insertLiveAutoRule,
   type AutoRuleRow,
 } from '@/lib/auto-personalize';
+
+// Force this route to be evaluated only per-request, never at build time.
+// Next.js App Router GET handlers are statically evaluated by default unless
+// opted into dynamic rendering — without this, `npm run build` was actually
+// *executing* the cron logic (real DB writes, real Anthropic API calls) to
+// pre-render/cache a response, instead of running only on real invocations.
+export const dynamic = 'force-dynamic';
 
 // UTM Personalization V2 pivot (2026-07-30, refined 2026-07-31 "PIVOT 3").
 // See docs/utm-personalization-v2-automation.md. This job no longer discovers
