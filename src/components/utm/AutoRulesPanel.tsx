@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import { Sparkles, Plus, Trash2, Loader2, X } from "lucide-react";
 import toast from "react-hot-toast";
-import { cn } from "@/lib/utils";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 
 // UTM Personalization V2, PIVOT 3 (2026-07-31). See docs/utm-personalization-v2-automation.md,
@@ -317,36 +316,17 @@ export default function AutoRulesPanel({ pageId }: Props) {
       )}
 
       {creating ? (
-        <div className="p-3 rounded-xl border-2 border-indigo-400 dark:border-indigo-600 bg-indigo-50 dark:bg-indigo-900/20 space-y-2">
+        <div className="p-3 rounded-xl border-2 border-indigo-400 dark:border-indigo-600 bg-indigo-50 dark:bg-indigo-900/20 space-y-1.5">
           {rows.map((row, i) => (
-            <div
-              key={i}
-              className="space-y-2 p-2.5 rounded-lg bg-white dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700"
-            >
-              <div className="flex items-center justify-between">
-                {i > 0 && (
-                  <span className="text-[10px] font-semibold text-slate-400">
-                    AND
-                  </span>
-                )}
-                {rows.length > 1 && (
-                  <button
-                    type="button"
-                    onClick={() => removeRow(i)}
-                    className="p-1 -m-1 ml-auto text-slate-400 hover:text-red-500 flex-shrink-0"
-                  >
-                    <X size={12} />
-                  </button>
-                )}
-              </div>
-              <div>
-                <label className="block text-[10px] font-medium text-slate-500 dark:text-slate-400 mb-1">
-                  Field
-                </label>
+            <div key={i} className="space-y-1">
+              <span className="text-xs text-slate-400 font-medium block">
+                {i === 0 ? "When" : "AND"}
+              </span>
+              <div className="flex items-center gap-1.5">
                 <select
                   value={row.field}
                   onChange={(e) => updateRow(i, { field: e.target.value })}
-                  className="w-full text-[11px] px-1.5 py-1.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200"
+                  className="flex-shrink-0 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs text-slate-700 dark:text-slate-200 focus:outline-none focus:border-indigo-400"
                 >
                   {FIELD_OPTIONS.map((f) => {
                     const usedElsewhere = rows.some(
@@ -360,94 +340,52 @@ export default function AutoRulesPanel({ pageId }: Props) {
                     );
                   })}
                 </select>
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-medium text-slate-500 dark:text-slate-400 mb-1">
-                  Mode
-                </label>
-                <div className="grid grid-cols-2 gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => updateRow(i, { personalize: false })}
-                    className={cn(
-                      "text-left px-2 py-1.5 rounded-lg border text-[11px] transition-colors",
-                      !row.personalize
-                        ? "bg-indigo-600 border-indigo-600 text-white"
-                        : "bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-indigo-300",
-                    )}
-                  >
-                    <span className="font-medium block">Just filter</span>
-                    <span
-                      className={cn(
-                        "block text-[10px]",
-                        !row.personalize ? "text-indigo-100" : "text-slate-400",
-                      )}
-                    >
-                      No content change
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => updateRow(i, { personalize: true })}
-                    className={cn(
-                      "text-left px-2 py-1.5 rounded-lg border text-[11px] transition-colors",
-                      row.personalize
-                        ? "bg-indigo-600 border-indigo-600 text-white"
-                        : "bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-indigo-300",
-                    )}
-                  >
-                    <span className="font-medium block">
-                      Personalize with AI
-                    </span>
-                    <span
-                      className={cn(
-                        "block text-[10px]",
-                        row.personalize ? "text-indigo-100" : "text-slate-400",
-                      )}
-                    >
-                      AI rewrites Hero Section
-                    </span>
-                  </button>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-medium text-slate-500 dark:text-slate-400 mb-1">
-                  {row.personalize
-                    ? "What should AI look for in this field?"
-                    : "Only match traffic where this field contains"}
-                </label>
+                <select
+                  value={row.personalize ? "personalize" : "filter"}
+                  onChange={(e) =>
+                    updateRow(i, { personalize: e.target.value === "personalize" })
+                  }
+                  title={
+                    row.personalize
+                      ? "AI detects the value and rewrites the hero section"
+                      : "Just filters traffic — no content change"
+                  }
+                  className="flex-shrink-0 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs text-slate-700 dark:text-slate-200 focus:outline-none focus:border-indigo-400"
+                >
+                  <option value="filter">contains</option>
+                  <option value="personalize">personalize:</option>
+                </select>
                 <input
+                  type="text"
                   value={row.look_for}
                   onChange={(e) => updateRow(i, { look_for: e.target.value })}
                   placeholder={placeholderFor(row)}
-                  className="w-full text-[11px] px-2 py-1.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 placeholder-slate-400 focus:outline-none focus:border-indigo-400"
+                  className="min-w-0 flex-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs text-slate-700 dark:text-slate-200 placeholder-slate-400 focus:outline-none focus:border-indigo-400"
                 />
-                <p className="text-[10px] text-slate-400 mt-1">
-                  {row.personalize
-                    ? "A loose category, not an exact value — AI will detect whatever specific value actually shows up in this field."
-                    : "Case-insensitive, partial match — matches any value in this field that contains the text above."}
-                </p>
+                {rows.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => removeRow(i)}
+                    className="p-1 text-slate-400 hover:text-red-400 transition-colors flex-shrink-0"
+                    title="Remove row"
+                  >
+                    <X size={12} />
+                  </button>
+                )}
               </div>
-
               {row.personalize && (
                 <div>
-                  <label className="block text-[10px] font-medium text-slate-500 dark:text-slate-400 mb-1">
-                    How should AI use the detected value? (optional)
-                  </label>
-                  <textarea
+                  <span className="text-[10px] text-slate-400 block mb-1">
+                    → instructions
+                  </span>
+                  <input
+                    type="text"
                     value={row.instructions ?? ""}
                     onChange={(e) =>
                       updateRow(i, { instructions: e.target.value })
                     }
                     placeholder={instructionsPlaceholderFor(row)}
-                    rows={2}
-                    className={cn(
-                      "w-full text-[11px] px-2 py-1.5 rounded border border-slate-200 dark:border-slate-700",
-                      "bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 placeholder-slate-400",
-                      "focus:outline-none focus:border-indigo-400 resize-none",
-                    )}
+                    className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-[11px] text-slate-700 dark:text-slate-200 placeholder-slate-400 focus:outline-none focus:border-indigo-400"
                   />
                 </div>
               )}
