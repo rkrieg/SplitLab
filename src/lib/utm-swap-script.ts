@@ -48,7 +48,7 @@ export function buildUtmSwapScript(rules: PersonalizationRuleRow[], fieldSelecto
   function getInfo(field){var fm=fs[field];if(!fm)return{selector:null,type:'text'};if(typeof fm==='string')return{selector:fm,type:'text'};return{selector:fm.selector||null,type:fm.type||'text'};}
   function run(){
     if(active.hero_html){
-      var heroEl=document.querySelector('section.hero');
+      var heroEl=document.querySelector('section.hero')||document.querySelector('[data-hero-container]');
       if(heroEl)heroEl.outerHTML=active.hero_html;
       return;
     }
@@ -74,6 +74,31 @@ export function buildUtmSwapScript(rules: PersonalizationRuleRow[], fieldSelecto
   if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',run);}else{run();}
   // Safety net: re-apply after full load in case a page script overwrote us in between
   window.addEventListener('load',run);
+  // Further safety net (2026-07-31 — found live against an Unbounce-exported
+  // page): some page builders load their own runtime via <script async>,
+  // which hydrates/re-renders elements from an internal data model *after*
+  // window 'load' fires — async script timing isn't tied to the load event,
+  // so it can silently stomp our swap seconds later with no error. Same
+  // MutationObserver + debounce pattern already used in tracker.js's
+  // startStepperObserver() for the same class of "page re-renders itself
+  // after we've already acted" problem. The applying flag guards against
+  // reacting to our own writes and looping forever; observer disconnects
+  // after a bounded window so it doesn't run indefinitely.
+  if(window.MutationObserver){
+    var applying=false;
+    var debounceTimer=null;
+    var mo=new MutationObserver(function(){
+      if(applying)return;
+      clearTimeout(debounceTimer);
+      debounceTimer=setTimeout(function(){
+        applying=true;
+        run();
+        applying=false;
+      },150);
+    });
+    mo.observe(document.body,{childList:true,subtree:true,characterData:true,attributes:true,attributeFilter:['src','srcset']});
+    setTimeout(function(){mo.disconnect();},10000);
+  }
 })();
 </script>`;
 }

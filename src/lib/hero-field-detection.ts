@@ -85,18 +85,53 @@ export function detectHeroFieldsFromHtml(html: string): HeroFieldSelectors | nul
 // callers must treat a null return as "unsupported for this page," not
 // silently skip it.
 const SL_HERO_MARKER_RE = /<!--\s*SL:hero\s*-->([\s\S]*?)<!--\s*\/SL:hero\s*-->/i;
-const HERO_SECTION_RE = /<section\b[^>]*\bclass=(["'])(?:(?!\1).)*\bhero\b(?:(?!\1).)*\1[^>]*>[\s\S]*?<\/section>/i;
+const SECTION_OPEN_TAG_RE = /<section\b[^>]*>/gi;
+const CLASS_ATTR_RE = /\bclass=["']([^"']*)["']/i;
+
+/**
+ * Finds a `<section>` whose class *list* contains an exact `hero` token
+ * (space-separated, matching real CSS `.hero` selector semantics) and
+ * returns its outer HTML up to the next `</section>`.
+ *
+ * Deliberately NOT a single `\bhero\b` regex over the whole tag — `\b`
+ * treats `-` as a non-word boundary, so that naively matches inside
+ * hyphenated class names like `ue-hero-section` that have nothing to do
+ * with an actual `hero` class. This mismatch was found live (2026-07-31):
+ * a raw/uploaded page's `<section class="ue-hero-section">` got falsely
+ * detected as the hero container here, content got generated for it and a
+ * rule got created successfully — but the client-side swap script's real
+ * `document.querySelector('section.hero')` correctly does NOT match
+ * `ue-hero-section` (browsers match class tokens exactly, not substrings),
+ * so the rule silently never visually applied. Matching class tokens
+ * exactly here keeps server-side detection and the browser's own matching
+ * consistent, so this class of bug can't happen again.
+ */
+function findSectionByExactClassToken(html: string, token: string): string | null {
+  SECTION_OPEN_TAG_RE.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = SECTION_OPEN_TAG_RE.exec(html)) !== null) {
+    const openTag = match[0];
+    const classMatch = CLASS_ATTR_RE.exec(openTag);
+    if (!classMatch) continue;
+    if (!classMatch[1].split(/\s+/).includes(token)) continue;
+
+    const closeIdx = html.indexOf('</section>', SECTION_OPEN_TAG_RE.lastIndex);
+    if (closeIdx === -1) continue;
+    return html.slice(match.index, closeIdx + '</section>'.length);
+  }
+  return null;
+}
 
 /**
  * Extracts the outer HTML of the page's hero section from AI-generated page
  * HTML. Tries the `SL:hero` marker first, falls back to a `class="hero"`
- * regex. Returns null if neither is found — raw/uploaded HTML pages, or
- * AI-generated pages with no hero section, both fall through to this case.
+ * exact-token match. Returns null if neither is found — raw/uploaded HTML
+ * pages (which have neither) fall through here to the caller's raw-HTML
+ * detection fallback (see auto-personalize.ts's generateHeroRevamp()).
  */
 export function detectHeroContainerFromHtml(html: string): string | null {
   const markerMatch = SL_HERO_MARKER_RE.exec(html);
   if (markerMatch) return markerMatch[1].trim();
 
-  const classMatch = HERO_SECTION_RE.exec(html);
-  return classMatch ? classMatch[0] : null;
+  return findSectionByExactClassToken(html, 'hero');
 }

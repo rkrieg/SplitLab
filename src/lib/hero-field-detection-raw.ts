@@ -16,6 +16,7 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import { HERO_FIELD_CONFIG, HERO_FIELD_KEYS, detectHeroFieldsFromHtml, type HeroFieldSelectors } from '@/lib/hero-field-detection';
+import { extractJsonFromText } from '@/lib/ai-json';
 // htmlparser2 + dom-serializer are CJS packages already installed as transitive deps
 // (same pattern as inject-field-id/route.ts).
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -27,7 +28,18 @@ const render = require('dom-serializer').default as typeof import('dom-serialize
 type Node = any;
 
 const CANDIDATE_TAGS = ['h1', 'h2', 'h3', 'p', 'span', 'div', 'a', 'button', 'img'];
-const MAX_CANDIDATES = 120;
+// Was 120 — found live (2026-07-31) against a real Unbounce-exported page
+// (titan.html): heavy page-builder markup wraps every visual element in
+// several nested boxes, so 327 candidate-tag elements appeared BEFORE the
+// real hero content in document order. The true hero headline/CTA never
+// reached the AI as candidates at all — it picked the closest-looking text
+// from what it was given instead, silently mismatching the visible hero.
+// Raised well past that observed count to give real-world page-builder
+// exports enough headroom; still a heuristic cap, not a guarantee — an
+// even more bloated page could still exceed it (accepted tradeoff, same
+// cost/prompt-size class already flagged in docs/utm-personalization-v2-automation.md
+// under "Cost/rate limiting").
+const MAX_CANDIDATES = 400;
 const MAX_TEXT_PREVIEW = 80;
 
 interface Candidate {
@@ -101,6 +113,16 @@ async function identifyHeroElements(candidates: Candidate[]): Promise<Record<str
   const msg = await getClient().messages.create({
     model: 'claude-sonnet-5',
     max_tokens: 512,
+    // Extended thinking counts against max_tokens, and its length is not
+    // predictable — found live (2026-07-31): this exact call, same page,
+    // same candidates, non-deterministically hit stop_reason=max_tokens with
+    // content_types=thinking, consuming the entire budget on reasoning and
+    // leaving zero tokens for the actual JSON answer. `thinking: enabled`
+    // with an explicit budget was tried as a fix but this model rejects it
+    // outright (400: "thinking.type.enabled is not supported for this
+    // model") — so disabled is used instead, same as the already-working
+    // judgeUtmRowsMatch() call above, which has never hit this failure.
+    thinking: { type: 'disabled' },
     system: `You are identifying the hero section of a landing page from a list of candidate DOM elements (each with its indexPath, tag, and a short text/src preview). The hero section is the main above-the-fold block: a headline, optionally a subheadline/supporting text, a primary call-to-action, and optionally a background/hero image.
 
 Fields to identify:
@@ -120,15 +142,103 @@ Rules:
   });
 
   const textBlock = msg.content.find(b => b.type === 'text');
-  if (!textBlock || textBlock.type !== 'text') return {};
-
-  try {
-    const cleaned = textBlock.text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
-    const parsed = JSON.parse(cleaned);
-    return typeof parsed === 'object' && parsed !== null ? parsed : {};
-  } catch {
+  if (!textBlock || textBlock.type !== 'text') {
+    console.error(`[hero-field-detection-raw] identifyHeroElements -> no text block in response stop_reason=${msg.stop_reason} content_types=${msg.content.map(b => b.type).join(',')} usage(in/out)=${msg.usage.input_tokens}/${msg.usage.output_tokens}`);
     return {};
   }
+
+  try {
+    const parsed = JSON.parse(extractJsonFromText(textBlock.text));
+    return typeof parsed === 'object' && parsed !== null ? parsed : {};
+  } catch (err) {
+    console.error('[hero-field-detection-raw] identifyHeroElements -> failed to parse JSON response', err, textBlock.text);
+    return {};
+  }
+}
+
+// Hero-container detection for raw HTML (2026-07-31 follow-up to the
+// hero-revamp scope expansion — see docs/utm-personalization-v2-automation.md).
+// AI-generated pages get a container marker for free (`<!-- SL:hero -->`,
+// see hero-field-detection.ts); raw/uploaded HTML has none, so once the
+// individual hero fields are identified above, we derive the container as
+// their common DOM ancestor and inject the same kind of markers onto it —
+// a `<!-- SL:hero -->...<!-- /SL:hero -->` comment wrap (so the existing,
+// already-hardened `detectHeroContainerFromHtml()` regex just works, no new
+// server-side extraction path needed) plus a `data-hero-container="1"`
+// attribute (so the client-side swap script — which can't see HTML
+// comments via querySelector — has a real DOM hook to replace at runtime;
+// see utm-swap-script.ts).
+const MIN_FIELDS_FOR_CONTAINER = 2;
+const MAX_CONTAINER_DESCENDANT_TAGS = 80;
+
+function countDescendantTags(node: Node): number {
+  let count = 0;
+  function walk(n: Node) {
+    if (!n.children) return;
+    for (const child of n.children as Node[]) {
+      if (child.type === 'tag') count++;
+      walk(child);
+    }
+  }
+  walk(node);
+  return count;
+}
+
+function ancestorChain(node: Node): Node[] {
+  const chain: Node[] = [];
+  let cur = node.parent as Node | null;
+  while (cur) {
+    chain.push(cur);
+    cur = cur.parent as Node | null;
+  }
+  return chain; // nearest parent first, root last
+}
+
+/**
+ * Finds the nearest common ancestor of a set of elements, then validates
+ * it's plausible as a "hero container" rather than something far too broad
+ * (the whole <body>, or a wrapper that also contains nav/footer content).
+ * Returns null if no sane container can be found — callers must treat this
+ * as "container detection unsupported for this page," not guess.
+ */
+function findHeroContainer(fieldEls: Node[]): Node | null {
+  if (fieldEls.length < MIN_FIELDS_FOR_CONTAINER) return null;
+
+  const chains = fieldEls.map(ancestorChain);
+  const [first, ...rest] = chains;
+  let container: Node | null = null;
+  for (const candidate of first) {
+    if (rest.every(chain => chain.includes(candidate))) {
+      container = candidate;
+      break;
+    }
+  }
+  if (!container) return null;
+
+  const tag = (container.name as string | undefined)?.toLowerCase();
+  if (!tag || tag === 'html' || tag === 'body') return null; // too broad — not a real "section"
+
+  // Reject if the candidate ancestor also wraps clearly non-hero landmarks —
+  // a sign we've walked up too far (e.g. past the hero into a page-wide wrapper).
+  let containsForeignLandmark = false;
+  function scanForLandmarks(n: Node) {
+    if (!n.children) return;
+    for (const child of n.children as Node[]) {
+      if (child.type === 'tag') {
+        const childTag = (child.name as string).toLowerCase();
+        if (childTag === 'nav' || childTag === 'footer' || childTag === 'header') {
+          containsForeignLandmark = true;
+        }
+      }
+      scanForLandmarks(child);
+    }
+  }
+  scanForLandmarks(container);
+  if (containsForeignLandmark) return null;
+
+  if (countDescendantTags(container) > MAX_CONTAINER_DESCENDANT_TAGS) return null;
+
+  return container;
 }
 
 /**
@@ -136,6 +246,15 @@ Rules:
  * data-field="hero.X" attributes into the matched elements, and returns the
  * mutated HTML plus the resulting selector map (built by re-running the
  * same attribute-parser tier 1 uses, on the newly-injected markup).
+ *
+ * Also attempts hero-container detection (see findHeroContainer above) from
+ * the same identified elements and, if a plausible container is found,
+ * wraps it with `<!-- SL:hero -->` markers and tags it with
+ * `data-hero-container="1"` in the same HTML mutation — so both field-swap
+ * and full hero-section-revamp personalization can work on raw HTML pages,
+ * not just AI-generated ones. `containerFound` tells the caller whether
+ * this succeeded; it's independent of field detection succeeding (a page
+ * can get fields without a confident container, or vice versa).
  *
  * Returns null if no hero elements could be confidently identified (no hero
  * section, or ambiguous/messy markup) — callers should treat that as a
@@ -146,22 +265,27 @@ Rules:
  */
 export async function detectAndInjectHeroFieldsRawHtml(
   html: string
-): Promise<{ updatedHtml: string; selectors: HeroFieldSelectors } | null> {
+): Promise<{ updatedHtml: string; selectors: HeroFieldSelectors; containerFound: boolean } | null> {
   const dom = parseDocument(html);
   const htmlEl = (dom.children as Node[]).find((n: Node) => n.type === 'tag' && n.name === 'html');
   const rootChildren = htmlEl ? htmlEl.children : dom.children;
 
   const { candidates, nodesByPath } = collectCandidates(rootChildren);
-  if (candidates.length === 0) return null;
+  if (candidates.length === 0) {
+    console.log('[hero-field-detection-raw] no candidate elements found in HTML');
+    return null;
+  }
 
   let identified: Record<string, string | null>;
   try {
     identified = await identifyHeroElements(candidates);
-  } catch {
+  } catch (err) {
+    console.error(`[hero-field-detection-raw] identifyHeroElements API call failed (candidates=${candidates.length})`, err);
     return null;
   }
 
   let injectedAny = false;
+  const identifiedEls: Node[] = [];
   for (const key of HERO_FIELD_KEYS) {
     const indexPath = identified[key];
     if (!indexPath || typeof indexPath !== 'string') continue;
@@ -171,13 +295,42 @@ export async function detectAndInjectHeroFieldsRawHtml(
 
     el.attribs = { ...el.attribs, 'data-field': `hero.${key}` };
     injectedAny = true;
+    identifiedEls.push(el);
   }
 
-  if (!injectedAny) return null;
+  if (!injectedAny) {
+    console.log('[hero-field-detection-raw] AI could not confidently match any hero field');
+    return null;
+  }
+
+  let containerFound = false;
+  const container = findHeroContainer(identifiedEls);
+  if (container && container.children) {
+    container.attribs = { ...container.attribs, 'data-hero-container': '1' };
+    const parent = container.parent as Node | null;
+    if (parent && parent.children) {
+      const idx = (parent.children as Node[]).indexOf(container);
+      if (idx !== -1) {
+        // Plain comment-node objects — dom-serializer only reads `.type`/`.data`
+        // for comments, no need to pull in the domhandler Comment class for
+        // this (htmlparser2/dom-serializer are used here as loosely-typed CJS
+        // deps already, same pattern as the rest of this file).
+        const openMarker = { type: 'comment', data: ' SL:hero ' } as unknown as Node;
+        const closeMarker = { type: 'comment', data: ' /SL:hero ' } as unknown as Node;
+        (parent.children as Node[]).splice(idx + 1, 0, closeMarker);
+        (parent.children as Node[]).splice(idx, 0, openMarker);
+        containerFound = true;
+      }
+    }
+  }
 
   const updatedHtml = render(dom, { decodeEntities: false });
   const selectors = detectHeroFieldsFromHtml(updatedHtml);
-  if (!selectors) return null;
+  if (!selectors) {
+    console.error('[hero-field-detection-raw] injected data-field attributes but re-parsing them afterward found none — should not happen');
+    return null;
+  }
 
-  return { updatedHtml, selectors };
+  console.log(`[hero-field-detection-raw] fields=${Object.keys(selectors).length} containerFound=${containerFound}`);
+  return { updatedHtml, selectors, containerFound };
 }
