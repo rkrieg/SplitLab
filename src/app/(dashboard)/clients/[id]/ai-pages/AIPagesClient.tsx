@@ -17,7 +17,11 @@ interface AIPage {
   is_published: boolean;
   published_url: string | null;
   created_at: string;
+  updated_at: string;
   users: { name: string }[] | null;
+  is_variant_draft: boolean;
+  variant_name: string | null;
+  test_name: string | null;
 }
 
 interface Props {
@@ -163,13 +167,22 @@ export default function AIPagesClient({ pages: initialPages, clientId, workspace
                 <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">Status</th>
                 <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">Hosted URL</th>
                 <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">Created</th>
+                <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">Last Updated</th>
                 <th className="px-5 py-3" />
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-white/5">
               {pagedPages.map((page) => (
                 <tr key={page.id} className="hover:bg-slate-50 dark:hover:bg-white/[0.02] transition-colors">
-                  <td className="px-5 py-3.5 font-medium text-slate-900 dark:text-white">{page.name}</td>
+                  <td className="px-5 py-3.5 font-medium text-slate-900 dark:text-white">
+                    {page.name}
+                    {page.is_variant_draft && (
+                      <div className="mt-0.5 text-xs font-normal text-amber-400 dark:text-amber-500">
+                        Created from {page.variant_name ?? 'a'} variant
+                        {page.test_name ? ` of ${page.test_name}` : ''}, currently not associated with the test
+                      </div>
+                    )}
+                  </td>
                   <td className="px-5 py-3.5">
                     {page.vertical ? (
                       <span className={cn(
@@ -208,6 +221,9 @@ export default function AIPagesClient({ pages: initialPages, clientId, workspace
                   </td>
                   <td className="px-5 py-3.5 text-slate-500 dark:text-slate-400">
                     {new Date(page.created_at).toLocaleDateString()}
+                  </td>
+                  <td className="px-5 py-3.5 text-slate-500 dark:text-slate-400">
+                    {new Date(page.updated_at).toLocaleDateString()}
                   </td>
                   <td className="px-5 py-3.5">
                     <div className="flex items-center gap-2">
@@ -333,7 +349,12 @@ export default function AIPagesClient({ pages: initialPages, clientId, workspace
         {pageToDelete?.is_published && (
           <p className="text-amber-600 dark:text-yellow-400 text-xs mb-4">This page is currently published. Its public URL will return 404 after deletion.</p>
         )}
-        {!pageToDelete?.is_published && <div className="mb-4" />}
+        {pageToDelete?.is_variant_draft && (
+          <p className="text-amber-600 dark:text-yellow-400 text-xs mb-4">
+            This is the live HTML for the {pageToDelete.variant_name ?? ''} variant{pageToDelete.test_name ? ` on ${pageToDelete.test_name}` : ''}. Deleting it will remove that variant&apos;s page.
+          </p>
+        )}
+        {!pageToDelete?.is_published && !pageToDelete?.is_variant_draft && <div className="mb-4" />}
         <div className="flex justify-end gap-2">
           <Button variant="secondary" onClick={() => setDeleteId(null)} disabled={deleting}>
             Cancel
