@@ -67,22 +67,36 @@ export function detectHeroFieldsFromHtml(html: string): HeroFieldSelectors | nul
 // the whole hero container's outer HTML so it can be replaced wholesale by
 // an AI-generated layout/content rewrite, rather than swapped field-by-field.
 //
-// AI-generated pages always emit the hero as `<section class="hero">...
-// </section>` (confirmed via grep against ai-page-builder.ts) — this tier
-// only needs to find that one fixed marker, no attribute parsing required.
-// Raw/uploaded HTML pages have no such reliable marker; this is an explicit,
-// tracked gap (see "Bug found this session" / scope-expansion notes in
-// docs/utm-personalization-v2-automation.md) — callers must treat a null
-// return as "unsupported for this page," not silently skip it.
+// Primary signal: the `<!-- SL:hero -->...<!-- /SL:hero -->` section marker
+// that ai-page-builder.ts's system prompt requires around every top-level
+// section (named after its first CSS class — see ai-page-builder.ts:378-397).
+// This is more robust than matching on `class="hero"` directly: the comment
+// boundaries can't be confused by a nested `</section>` inside the hero
+// block, and they survive even if the section's class list ever changes.
+//
+// Fallback: raw `<section class="hero">...</section>` matching, for pages
+// generated before the SL marker convention existed, or on the rare chance
+// the LLM dropped the marker but still wrote the class.
+//
+// Neither signal is guaranteed — both depend on LLM prompt compliance, not
+// code-enforced structure. Raw/uploaded HTML pages have no reliable marker
+// at all; this is an explicit, tracked gap (see "Bug found this session" /
+// scope-expansion notes in docs/utm-personalization-v2-automation.md) —
+// callers must treat a null return as "unsupported for this page," not
+// silently skip it.
+const SL_HERO_MARKER_RE = /<!--\s*SL:hero\s*-->([\s\S]*?)<!--\s*\/SL:hero\s*-->/i;
 const HERO_SECTION_RE = /<section\b[^>]*\bclass=(["'])(?:(?!\1).)*\bhero\b(?:(?!\1).)*\1[^>]*>[\s\S]*?<\/section>/i;
 
 /**
- * Extracts the outer HTML of the page's `<section class="hero">...</section>`
- * container from AI-generated page HTML. Returns null if no such section is
- * found — raw/uploaded HTML pages, or AI-generated pages with no hero
- * section, both fall through to this case.
+ * Extracts the outer HTML of the page's hero section from AI-generated page
+ * HTML. Tries the `SL:hero` marker first, falls back to a `class="hero"`
+ * regex. Returns null if neither is found — raw/uploaded HTML pages, or
+ * AI-generated pages with no hero section, both fall through to this case.
  */
 export function detectHeroContainerFromHtml(html: string): string | null {
-  const match = HERO_SECTION_RE.exec(html);
-  return match ? match[0] : null;
+  const markerMatch = SL_HERO_MARKER_RE.exec(html);
+  if (markerMatch) return markerMatch[1].trim();
+
+  const classMatch = HERO_SECTION_RE.exec(html);
+  return classMatch ? classMatch[0] : null;
 }

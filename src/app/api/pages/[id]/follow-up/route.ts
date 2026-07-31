@@ -55,7 +55,7 @@ Example: instruction "make the form smaller so it's not massive on desktop and m
 
 ## Style rules (type:style only)
 - Return the complete HTML document — never a partial snippet
-- The returned HTML MUST include <!-- SL:name --> section markers around every top-level block (nav, each section, footer, and the style block in head) — same rules as the initial build
+- The returned HTML MUST include <!-- SL:name --> section markers around every top-level block (nav, each section, footer, and the style block in head) — same rules as the initial build. NEVER drop, rename, or omit an existing marker that was present in the HTML you were given — even sections you didn't touch must keep their original <!-- SL:name --> wrapper unchanged. These markers are relied on by downstream automation (hero personalization) and their loss silently breaks that feature.
 - Keep all existing data-field attributes intact
 - <!-- TRACKER_PLACEHOLDER --> must remain just before </body>
 - All CSS inline in <style> tag, fully responsive
