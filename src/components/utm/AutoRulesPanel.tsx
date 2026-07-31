@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Sparkles, Plus, Trash2, Loader2, X } from "lucide-react";
+import { Plus, Trash2, Loader2, X, Check } from "lucide-react";
 import toast from "react-hot-toast";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
+import Modal from "@/components/ui/Modal";
 
 // UTM Personalization V2, PIVOT 3 (2026-07-31). See docs/utm-personalization-v2-automation.md,
 // "PIVOT 3" section. A rule is an ordered list of per-field rows, not a
@@ -315,82 +316,117 @@ export default function AutoRulesPanel({ pageId }: Props) {
         ))
       )}
 
-      {creating ? (
-        <div className="p-3 rounded-xl border-2 border-indigo-400 dark:border-indigo-600 bg-indigo-50 dark:bg-indigo-900/20 space-y-1.5">
-          {rows.map((row, i) => (
-            <div key={i} className="space-y-1">
-              <span className="text-xs text-slate-400 font-medium block">
-                {i === 0 ? "When" : "AND"}
-              </span>
-              <div className="flex items-center gap-1.5">
-                <select
-                  value={row.field}
-                  onChange={(e) => updateRow(i, { field: e.target.value })}
-                  className="flex-shrink-0 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs text-slate-700 dark:text-slate-200 focus:outline-none focus:border-indigo-400"
-                >
-                  {FIELD_OPTIONS.map((f) => {
-                    const usedElsewhere = rows.some(
-                      (r, j) => j !== i && r.field === f,
-                    );
-                    return (
-                      <option key={f} value={f} disabled={usedElsewhere}>
-                        {f}
-                        {usedElsewhere ? " (in use)" : ""}
-                      </option>
-                    );
-                  })}
-                </select>
-                <select
-                  value={row.personalize ? "personalize" : "filter"}
-                  onChange={(e) =>
-                    updateRow(i, { personalize: e.target.value === "personalize" })
-                  }
-                  title={
-                    row.personalize
-                      ? "AI detects the value and rewrites the hero section"
-                      : "Just filters traffic — no content change"
-                  }
-                  className="flex-shrink-0 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs text-slate-700 dark:text-slate-200 focus:outline-none focus:border-indigo-400"
-                >
-                  <option value="filter">contains</option>
-                  <option value="personalize">personalize:</option>
-                </select>
-                <input
-                  type="text"
-                  value={row.look_for}
-                  onChange={(e) => updateRow(i, { look_for: e.target.value })}
-                  placeholder={placeholderFor(row)}
-                  className="min-w-0 flex-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs text-slate-700 dark:text-slate-200 placeholder-slate-400 focus:outline-none focus:border-indigo-400"
-                />
-                {rows.length > 1 && (
-                  <button
-                    type="button"
-                    onClick={() => removeRow(i)}
-                    className="p-1 text-slate-400 hover:text-red-400 transition-colors flex-shrink-0"
-                    title="Remove row"
+      <button
+        type="button"
+        onClick={() => setCreating(true)}
+        className="w-full flex items-center justify-center gap-1.5 text-xs px-3 py-2 rounded-lg border border-dashed border-slate-300 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:border-indigo-300 hover:text-indigo-500"
+      >
+        <Plus size={12} /> Add auto-personalization rule
+      </button>
+
+      <Modal
+        open={creating}
+        onClose={() => {
+          setCreating(false);
+          setRows([emptyRow()]);
+        }}
+        title="New Auto-Personalization Rule"
+        description="Tell the AI which UTM fields to watch, what to look for in each, and whether to personalize based on it."
+        size="md"
+      >
+        <div className="space-y-3">
+          <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_auto_auto] gap-x-2 px-1 text-[11px] font-medium text-slate-400">
+            <span>UTM field</span>
+            <span>Looking for</span>
+            <span className="text-center">Personalize</span>
+            <span />
+          </div>
+
+          <div className="space-y-2 max-h-[50vh] overflow-y-auto pr-1">
+            {rows.map((row, i) => (
+              <div
+                key={i}
+                className="rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 p-2"
+              >
+                <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_auto_auto] items-center gap-x-2">
+                  <select
+                    value={row.field}
+                    onChange={(e) => updateRow(i, { field: e.target.value })}
+                    className="w-full min-w-0 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-700 dark:text-slate-200 focus:outline-none focus:border-indigo-400"
                   >
-                    <X size={12} />
-                  </button>
-                )}
-              </div>
-              {row.personalize && (
-                <div>
-                  <span className="text-[10px] text-slate-400 block mb-1">
-                    → instructions
-                  </span>
+                    {FIELD_OPTIONS.map((f) => {
+                      const usedElsewhere = rows.some(
+                        (r, j) => j !== i && r.field === f,
+                      );
+                      return (
+                        <option key={f} value={f} disabled={usedElsewhere}>
+                          {f}
+                          {usedElsewhere ? " (in use)" : ""}
+                        </option>
+                      );
+                    })}
+                  </select>
+
                   <input
                     type="text"
-                    value={row.instructions ?? ""}
-                    onChange={(e) =>
-                      updateRow(i, { instructions: e.target.value })
-                    }
-                    placeholder={instructionsPlaceholderFor(row)}
-                    className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-[11px] text-slate-700 dark:text-slate-200 placeholder-slate-400 focus:outline-none focus:border-indigo-400"
+                    value={row.look_for}
+                    onChange={(e) => updateRow(i, { look_for: e.target.value })}
+                    placeholder={placeholderFor(row)}
+                    className="w-full min-w-0 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-700 dark:text-slate-200 placeholder-slate-400 focus:outline-none focus:border-indigo-400"
                   />
+
+                  <label
+                    className="flex items-center justify-center px-1 cursor-pointer"
+                    title={
+                      row.personalize
+                        ? "AI detects the value and rewrites the hero section"
+                        : "Just filters traffic — no content change"
+                    }
+                  >
+                    <input
+                      type="checkbox"
+                      checked={row.personalize}
+                      onChange={(e) =>
+                        updateRow(i, { personalize: e.target.checked })
+                      }
+                      className="h-4 w-4 rounded border-slate-300 dark:border-slate-600 text-indigo-600 focus:ring-indigo-400 cursor-pointer"
+                    />
+                  </label>
+
+                  {rows.length > 1 ? (
+                    <button
+                      type="button"
+                      onClick={() => removeRow(i)}
+                      className="p-1 text-slate-400 hover:text-red-400 transition-colors"
+                      title="Remove row"
+                    >
+                      <X size={14} />
+                    </button>
+                  ) : (
+                    <span />
+                  )}
                 </div>
-              )}
-            </div>
-          ))}
+
+                {row.personalize && (
+                  <div className="mt-2 pl-1">
+                    <span className="text-[10px] text-slate-400 block mb-1">
+                      Instructions (optional) — how should this change the hero
+                      content?
+                    </span>
+                    <input
+                      type="text"
+                      value={row.instructions ?? ""}
+                      onChange={(e) =>
+                        updateRow(i, { instructions: e.target.value })
+                      }
+                      placeholder={instructionsPlaceholderFor(row)}
+                      className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-700 dark:text-slate-200 placeholder-slate-400 focus:outline-none focus:border-indigo-400"
+                    />
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
 
           {rows.length < MAX_ROWS_PER_RULE && (
             <button
@@ -402,14 +438,14 @@ export default function AutoRulesPanel({ pageId }: Props) {
             </button>
           )}
 
-          <div className="flex items-center gap-2 pt-1">
+          <div className="flex justify-end gap-2 pt-1">
             <button
               type="button"
               onClick={() => {
                 setCreating(false);
                 setRows([emptyRow()]);
               }}
-              className="text-xs px-3 py-1.5 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700"
+              className="text-sm px-3 py-1.5 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 font-medium transition-colors"
             >
               Cancel
             </button>
@@ -417,26 +453,18 @@ export default function AutoRulesPanel({ pageId }: Props) {
               type="button"
               onClick={saveRule}
               disabled={saving}
-              className="flex-1 flex items-center justify-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-indigo-600 text-white font-medium disabled:opacity-40"
+              className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white font-medium transition-colors"
             >
               {saving ? (
-                <Loader2 size={12} className="animate-spin" />
+                <Loader2 size={13} className="animate-spin" />
               ) : (
-                <Sparkles size={12} />
+                <Check size={13} />
               )}
-              Save rule
+              Save
             </button>
           </div>
         </div>
-      ) : (
-        <button
-          type="button"
-          onClick={() => setCreating(true)}
-          className="w-full flex items-center justify-center gap-1.5 text-xs px-3 py-2 rounded-lg border border-dashed border-slate-300 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:border-indigo-300 hover:text-indigo-500"
-        >
-          <Plus size={12} /> Add auto-personalization rule
-        </button>
-      )}
+      </Modal>
     </div>
   );
 }
