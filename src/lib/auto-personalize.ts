@@ -1,7 +1,7 @@
 import { db } from '@/lib/supabase-server';
 import { downloadHtmlByPath, fileNameFromUrl, uploadHtml } from '@/lib/storage';
 import { detectHeroFieldsFromHtml, detectHeroContainerFromHtml, type HeroFieldSelectors } from '@/lib/hero-field-detection';
-import { detectAndInjectHeroFieldsRawHtml } from '@/lib/hero-field-detection-raw';
+import { detectAndInjectHeroFieldsRawHtml, detectHeroContainerRawHtml, detectHeroFieldsWithinContainer } from '@/lib/hero-field-detection-raw';
 import { readFieldValueFromHtml } from '@/lib/html-field-read';
 import { extractJsonFromText } from '@/lib/ai-json';
 import Anthropic from '@anthropic-ai/sdk';
@@ -129,6 +129,55 @@ interface PageRow {
   html_url: string | null;
 }
 
+/** Ensures a page's raw HTML has a hero container marker, running the cheap
+ *  container-only AI detector (see hero-field-detection-raw.ts) at most once
+ *  per page, ever. Persists the mutated HTML immediately on success so every
+ *  later call (from either generateHeroRevamp or generateHeroOverrides, this
+ *  run or any future cron run) finds the marker via detectHeroContainerFromHtml()'s
+ *  fast regex path instead of re-running detection — this is the fix for the
+ *  double-AI-call/non-determinism bug documented in
+ *  docs/utm-personalization-v2-automation.md ("Bug 2"). No-ops (and costs
+ *  nothing) for AI-generated pages, which already carry the marker from
+ *  generation time.
+ *
+ *  Returns the current html (possibly updated) and whether a container is
+ *  now present. Does not mutate `page` — callers should use the returned
+ *  `html` from here on for this invocation. */
+async function ensureRawHeroContainer(
+  page: PageRow,
+  html: string
+): Promise<{ html: string; containerFound: boolean }> {
+  if (detectHeroContainerFromHtml(html)) return { html, containerFound: true };
+
+  let result: Awaited<ReturnType<typeof detectHeroContainerRawHtml>> = null;
+  try {
+    result = await detectHeroContainerRawHtml(html);
+  } catch (err) {
+    console.error(`[auto-personalize/hero-container] detection failed page=${page.id}`, err);
+    return { html, containerFound: false };
+  }
+
+  if (!result) return { html, containerFound: false };
+
+  const updatePayload: Record<string, unknown> = { html_content: result.updatedHtml };
+  if (page.html_url) {
+    try {
+      updatePayload.html_url = await uploadHtml(fileNameFromUrl(page.html_url), result.updatedHtml);
+    } catch (err) {
+      console.error(`[auto-personalize/hero-container] failed to persist container-marked HTML page=${page.id}`, err);
+      return { html, containerFound: false };
+    }
+  }
+
+  const { error: saveError } = await db.from('pages').update(updatePayload).eq('id', page.id);
+  if (saveError) {
+    console.error(`[auto-personalize/hero-container] failed to save container marker page=${page.id}`, saveError);
+    return { html, containerFound: false };
+  }
+
+  return { html: result.updatedHtml, containerFound: true };
+}
+
 /** Detects (and persists, if newly detected) hero field selectors for a page,
  *  then generates personalized hero content for the given value-combination.
  *  Returns null if hero fields can't be identified — mirrors the "detection
@@ -156,35 +205,62 @@ export async function generateHeroOverrides(
       const { error: saveError } = await db.from('pages').update({ auto_field_selectors_json: tier1 }).eq('id', page.id);
       if (!saveError) heroFieldSelectors = tier1;
     } else {
-      let tier2: Awaited<ReturnType<typeof detectAndInjectHeroFieldsRawHtml>> = null;
-      try {
-        tier2 = await detectAndInjectHeroFieldsRawHtml(html);
-      } catch (err) {
-        console.error(`[auto-personalize/hero-overrides] tier2 raw field detection failed page=${page.id}`, err);
-        tier2 = null;
+      // Raw HTML: ensure a container marker exists first (shared, cached
+      // helper — see docstring on ensureRawHeroContainer), then run field
+      // detection scoped to just that container's subtree. This is what
+      // keeps this function's detection result consistent with whatever
+      // generateHeroRevamp found/persisted, instead of each independently
+      // re-guessing at the whole page (the old double-AI-call bug — see
+      // docs/utm-personalization-v2-automation.md).
+      const ensured = await ensureRawHeroContainer(page, html);
+      html = ensured.html;
+
+      let tier2: Awaited<ReturnType<typeof detectHeroFieldsWithinContainer>> = null;
+      if (ensured.containerFound) {
+        try {
+          tier2 = await detectHeroFieldsWithinContainer(html);
+        } catch (err) {
+          console.error(`[auto-personalize/hero-overrides] tier2 scoped field detection failed page=${page.id}`, err);
+          tier2 = null;
+        }
       }
 
-      if (tier2) {
+      // Container detection genuinely failed for this page (not just this
+      // run — ensureRawHeroContainer persists on success, so this means no
+      // sane wrapper could be found at all). Fall back to the original
+      // whole-page field detector so pages with no identifiable hero
+      // *container* can still get field-swap personalization, even without
+      // the richer hero-revamp experience.
+      let legacyResult: Awaited<ReturnType<typeof detectAndInjectHeroFieldsRawHtml>> = null;
+      if (!tier2 && !ensured.containerFound) {
+        try {
+          legacyResult = await detectAndInjectHeroFieldsRawHtml(html);
+        } catch (err) {
+          console.error(`[auto-personalize/hero-overrides] legacy whole-page field detection failed page=${page.id}`, err);
+          legacyResult = null;
+        }
+      }
+
+      const resolved = tier2 ?? legacyResult;
+      if (resolved) {
         const updatePayload: Record<string, unknown> = {
-          html_content: tier2.updatedHtml,
-          auto_field_selectors_json: tier2.selectors,
+          html_content: resolved.updatedHtml,
+          auto_field_selectors_json: resolved.selectors,
         };
         if (page.html_url) {
           try {
-            updatePayload.html_url = await uploadHtml(fileNameFromUrl(page.html_url), tier2.updatedHtml);
+            updatePayload.html_url = await uploadHtml(fileNameFromUrl(page.html_url), resolved.updatedHtml);
           } catch (err) {
-            console.error(`[auto-personalize/hero-overrides] failed to persist tier2 HTML page=${page.id}`, err);
-            tier2 = null;
+            console.error(`[auto-personalize/hero-overrides] failed to persist field-detected HTML page=${page.id}`, err);
+            return null;
           }
         }
-        if (tier2) {
-          const { error: saveError } = await db.from('pages').update(updatePayload).eq('id', page.id);
-          if (saveError) {
-            console.error(`[auto-personalize/hero-overrides] failed to save tier2 selectors page=${page.id}`, saveError);
-          } else {
-            heroFieldSelectors = tier2.selectors;
-            html = tier2.updatedHtml;
-          }
+        const { error: saveError } = await db.from('pages').update(updatePayload).eq('id', page.id);
+        if (saveError) {
+          console.error(`[auto-personalize/hero-overrides] failed to save field selectors page=${page.id}`, saveError);
+        } else {
+          heroFieldSelectors = resolved.selectors;
+          html = resolved.updatedHtml;
         }
       }
     }
@@ -276,13 +352,15 @@ Rules:
  *
  *  Container detection tries, in order: the `<!-- SL:hero -->` marker /
  *  `class="hero"` regex (AI-generated pages — see hero-field-detection.ts),
- *  then, if neither is found, a one-time raw-HTML detection+injection pass
- *  (2026-07-31 follow-up — see docs/utm-personalization-v2-automation.md,
- *  "Raw-HTML hero-container detection") that identifies the hero elements'
- *  common ancestor via AI and injects the same `SL:hero` marker onto it,
- *  persisted back to the page so future runs skip straight to the fast
- *  regex path. Returns null only if no container can be found by either
- *  route — callers should fall back to per-field `overrides_json` swap. */
+ *  then, if neither is found, `ensureRawHeroContainer()`'s cheap container-
+ *  only AI detector (2026-07-31 follow-up — see
+ *  docs/utm-personalization-v2-automation.md, "container-first detection
+ *  redesign") which identifies just the hero wrapper element and injects the
+ *  same `SL:hero` marker onto it, persisted back to the page so future runs
+ *  (this function or generateHeroOverrides, this cron pass or any later one)
+ *  skip straight to the fast regex path with zero further AI cost. Returns
+ *  null only if no container can be found by either route — callers should
+ *  fall back to per-field `overrides_json` swap. */
 export async function generateHeroRevamp(
   page: PageRow,
   conditionDescription: string,
@@ -302,37 +380,9 @@ export async function generateHeroRevamp(
   let heroHtml = detectHeroContainerFromHtml(html);
 
   if (!heroHtml) {
-    let rawResult: Awaited<ReturnType<typeof detectAndInjectHeroFieldsRawHtml>> = null;
-    try {
-      rawResult = await detectAndInjectHeroFieldsRawHtml(html);
-    } catch (err) {
-      console.error(`[auto-personalize/hero-revamp] raw container detection failed page=${page.id}`, err);
-      rawResult = null;
-    }
-
-    if (rawResult?.containerFound) {
-      const updatePayload: Record<string, unknown> = {
-        html_content: rawResult.updatedHtml,
-        auto_field_selectors_json: rawResult.selectors,
-      };
-      if (page.html_url) {
-        try {
-          updatePayload.html_url = await uploadHtml(fileNameFromUrl(page.html_url), rawResult.updatedHtml);
-        } catch (err) {
-          console.error(`[auto-personalize/hero-revamp] failed to persist raw-detected container page=${page.id}`, err);
-          rawResult = null;
-        }
-      }
-      if (rawResult) {
-        const { error: saveError } = await db.from('pages').update(updatePayload).eq('id', page.id);
-        if (saveError) {
-          console.error(`[auto-personalize/hero-revamp] failed to save raw-detected container page=${page.id}`, saveError);
-        } else {
-          html = rawResult.updatedHtml;
-          heroHtml = detectHeroContainerFromHtml(html);
-        }
-      }
-    }
+    const ensured = await ensureRawHeroContainer(page, html);
+    html = ensured.html;
+    if (ensured.containerFound) heroHtml = detectHeroContainerFromHtml(html);
   }
 
   if (!heroHtml) {

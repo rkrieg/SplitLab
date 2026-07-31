@@ -47,6 +47,18 @@ interface Candidate {
   tag: string;
   text?: string;
   src?: string;
+  // indexPath of the nearest ANCESTOR that is also a candidate, if any — lets
+  // the AI tell "this span IS the whole headline" apart from "this span is a
+  // highlighted sub-phrase nested inside a larger heading/paragraph". Found
+  // live (2026-07-31, titan.html): without this, a small gold-styled <span>
+  // holding just "11% A Year Get A Check Every Month" was picked as
+  // hero.headline instead of its parent <h2>, which wrapped the full
+  // sentence ("We Loan Your Money To Real Estate Builders To Pay You 11% A
+  // Year..."). Both the span and the h2 were separate flat candidates with
+  // no indication one contained the other, so the AI had no way to prefer
+  // the fuller element.
+  parentIndexPath?: string;
+  parentText?: string;
 }
 
 function textOf(el: Node): string {
@@ -67,7 +79,7 @@ function collectCandidates(rootChildren: Node[]): { candidates: Candidate[]; nod
   const candidates: Candidate[] = [];
   const nodesByPath = new Map<string, Node>();
 
-  function walk(nodes: Node[], prefix: number[]) {
+  function walk(nodes: Node[], prefix: number[], ancestorCandidate: Candidate | null) {
     if (candidates.length >= MAX_CANDIDATES) return;
     const elements = nodes.filter((n: { type: string }) => n.type === 'tag');
     elements.forEach((el, idx) => {
@@ -76,14 +88,132 @@ function collectCandidates(rootChildren: Node[]): { candidates: Candidate[]; nod
       const indexPath = path.join('/');
       const tag = (el.name as string).toLowerCase();
 
+      let nextAncestor = ancestorCandidate;
       if (CANDIDATE_TAGS.includes(tag)) {
         nodesByPath.set(indexPath, el);
+        let entry: Candidate | null = null;
         if (tag === 'img') {
           const src = el.attribs?.src ?? '';
-          if (src) candidates.push({ indexPath, tag, src });
+          if (src) entry = { indexPath, tag, src };
         } else {
           const text = textOf(el).slice(0, MAX_TEXT_PREVIEW);
-          if (text) candidates.push({ indexPath, tag, text });
+          if (text) entry = { indexPath, tag, text };
+        }
+        if (entry) {
+          if (ancestorCandidate) {
+            entry.parentIndexPath = ancestorCandidate.indexPath;
+            entry.parentText = ancestorCandidate.text;
+          }
+          candidates.push(entry);
+          nextAncestor = entry;
+        }
+      }
+
+      if (el.children) walk(el.children, path, nextAncestor);
+    });
+  }
+
+  walk(rootChildren, [], null);
+  return { candidates, nodesByPath };
+}
+
+// Deterministic fallback for headline/subhead: if the AI's picked element is
+// an inline formatting tag (span/b/em/...) rather than an actual heading/
+// paragraph, climb to the nearest h1-h6 ancestor instead. Found live
+// (2026-07-31, titan.html): a prompt-only fix (giving the AI truncated
+// parent-text context) still picked a small gold-styled <span> holding a
+// sub-phrase of the sentence, because the sentence is split across three
+// sibling <span> elements inside the <h2> — no single span wraps the full
+// text, only the <h2> does. Relying on the model to read truncated text
+// hints correctly was too fragile; walking the DOM to the real heading
+// element is deterministic and can't misfire the way a text hint can. Capped
+// hop count guards against pathological markup with no real heading ancestor
+// nearby (falls through to the AI's original pick in that case). Scoped to
+// headline/subhead only — cta_text and background_image are correctly small,
+// specific elements and must not be widened.
+const HEADING_ANCESTOR_MAX_HOPS = 6;
+function findHeadingAncestor(el: Node): Node | null {
+  let cur = el.parent as Node | null;
+  let hops = 0;
+  while (cur && hops < HEADING_ANCESTOR_MAX_HOPS) {
+    if (cur.type === 'tag' && /^h[1-6]$/.test((cur.name as string).toLowerCase())) {
+      return cur;
+    }
+    cur = cur.parent as Node | null;
+    hops++;
+  }
+  return null;
+}
+
+let anthropicClient: Anthropic | null = null;
+function getClient(): Anthropic {
+  if (!anthropicClient) {
+    const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
+    if (!apiKey) throw new Error('ANTHROPIC_API_KEY is not set');
+    anthropicClient = new Anthropic({ apiKey });
+  }
+  return anthropicClient;
+}
+
+// Container-first redesign (2026-07-31 follow-up). Previously the container
+// was derived as a side effect of full field detection (find all 4 fields,
+// compute their common ancestor) — a much harder/noisier AI task than "find
+// the one wrapper element that is the hero section," and the two independent
+// call sites in auto-personalize.ts (generateHeroRevamp/generateHeroOverrides)
+// each ran it separately, non-deterministically, and disagreed with each
+// other. See docs/utm-personalization-v2-automation.md, "decision to lead
+// with revamp on raw HTML, container-first detection redesign".
+//
+// This section finds ONLY the container, from a small, shallow candidate set
+// (block-level wrapper tags near the top of the doc, one line of context
+// each) — much cheaper than the full leaf-level field candidate dump below,
+// and a simpler/more reliable task for the model.
+const CONTAINER_CANDIDATE_TAGS = ['section', 'div', 'header', 'main'];
+const MAX_CONTAINER_CANDIDATES = 60;
+
+interface ContainerCandidate {
+  indexPath: string;
+  tag: string;
+  id?: string;
+  className?: string;
+  childTagCount: number;
+  textPreview?: string;
+}
+
+function firstHeadingOrTextPreview(el: Node): string {
+  const text = textOf(el);
+  return text.slice(0, MAX_TEXT_PREVIEW);
+}
+
+// Shallow, depth-first scan for block-level wrapper candidates near the top
+// of the document — deliberately not recursing into every leaf like
+// collectCandidates below, since we only need to see wrapper shapes here,
+// not individual text runs.
+function collectContainerCandidates(rootChildren: Node[]): { candidates: ContainerCandidate[]; nodesByPath: Map<string, Node> } {
+  const candidates: ContainerCandidate[] = [];
+  const nodesByPath = new Map<string, Node>();
+
+  function walk(nodes: Node[], prefix: number[]) {
+    if (candidates.length >= MAX_CONTAINER_CANDIDATES) return;
+    const elements = nodes.filter((n: { type: string }) => n.type === 'tag');
+    elements.forEach((el, idx) => {
+      if (candidates.length >= MAX_CONTAINER_CANDIDATES) return;
+      const path = [...prefix, idx];
+      const indexPath = path.join('/');
+      const tag = (el.name as string).toLowerCase();
+
+      if (CONTAINER_CANDIDATE_TAGS.includes(tag)) {
+        const text = firstHeadingOrTextPreview(el);
+        if (text) {
+          nodesByPath.set(indexPath, el);
+          candidates.push({
+            indexPath,
+            tag,
+            id: el.attribs?.id || undefined,
+            className: el.attribs?.class || undefined,
+            childTagCount: countDescendantTags(el),
+            textPreview: text,
+          });
         }
       }
 
@@ -95,14 +225,257 @@ function collectCandidates(rootChildren: Node[]): { candidates: Candidate[]; nod
   return { candidates, nodesByPath };
 }
 
-let anthropicClient: Anthropic | null = null;
-function getClient(): Anthropic {
-  if (!anthropicClient) {
-    const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
-    if (!apiKey) throw new Error('ANTHROPIC_API_KEY is not set');
-    anthropicClient = new Anthropic({ apiKey });
+async function identifyHeroContainer(candidates: ContainerCandidate[]): Promise<string | null> {
+  const msg = await getClient().messages.create({
+    model: 'claude-sonnet-5',
+    max_tokens: 50,
+    // One-word-ish answer (an indexPath string or "null") — no reasoning
+    // needed, same rationale as identifyHeroElements/judgeUtmRowsMatch above.
+    thinking: { type: 'disabled' },
+    system: `You are identifying the hero section WRAPPER of a landing page from a list of candidate block-level elements (each with indexPath, tag, id/class, a count of descendant tags, and a short text preview of what's inside it).
+
+The hero section is the main above-the-fold block: it contains a headline, usually a CTA, sometimes a subheadline/image. Pick the SINGLE element that most tightly wraps just that content — not the whole page body, not a wrapper that also contains the nav bar or footer, not a wrapper so deep it only contains one sub-piece (e.g. just the headline alone).
+
+Rules:
+- Prefer the smallest element that still contains the full hero content (headline + CTA together, if both are present).
+- Never pick an element whose text preview looks like navigation links, footer text/copyright, or an unrelated section further down the page.
+- If no candidate looks like a plausible hero wrapper, return null.
+- Return ONLY a JSON object: {"container": "<indexPath or null>"}. No explanation, no markdown, no code fences.`,
+    messages: [
+      {
+        role: 'user',
+        content: `Candidates:\n${JSON.stringify(candidates, null, 0)}`,
+      },
+    ],
+  });
+
+  const textBlock = msg.content.find(b => b.type === 'text');
+  if (!textBlock || textBlock.type !== 'text') {
+    console.error(`[hero-field-detection-raw] identifyHeroContainer -> no text block in response stop_reason=${msg.stop_reason}`);
+    return null;
   }
-  return anthropicClient;
+
+  try {
+    const parsed = JSON.parse(extractJsonFromText(textBlock.text));
+    const container = parsed && typeof parsed === 'object' ? parsed.container : null;
+    return typeof container === 'string' ? container : null;
+  } catch (err) {
+    console.error('[hero-field-detection-raw] identifyHeroContainer -> failed to parse JSON response', err, textBlock.text);
+    return null;
+  }
+}
+
+function wrapWithHeroMarkers(container: Node): boolean {
+  if (!container.children) return false;
+  container.attribs = { ...container.attribs, 'data-hero-container': '1' };
+  const parent = container.parent as Node | null;
+  if (!parent || !parent.children) return false;
+  const idx = (parent.children as Node[]).indexOf(container);
+  if (idx === -1) return false;
+
+  const openMarker = { type: 'comment', data: ' SL:hero ' } as unknown as Node;
+  const closeMarker = { type: 'comment', data: ' /SL:hero ' } as unknown as Node;
+  (parent.children as Node[]).splice(idx + 1, 0, closeMarker);
+  (parent.children as Node[]).splice(idx, 0, openMarker);
+  return true;
+}
+
+/**
+ * Cheap, container-only raw-HTML detection: finds just the hero section's
+ * wrapper element (not individual fields) via a small AI call over shallow
+ * block-level candidates, then wraps it with the same `<!-- SL:hero -->`
+ * marker + `data-hero-container="1"` attribute AI-generated pages already
+ * carry. Meant to run at most once per page, ever — once persisted, every
+ * later call (from either generateHeroRevamp or generateHeroOverrides) finds
+ * the marker via detectHeroContainerFromHtml()'s fast regex path, same as an
+ * AI-generated page, with zero further AI cost for container detection.
+ *
+ * Returns null if no candidates exist or no plausible container was found
+ * (e.g. a page with no real hero section, or markup too flat/messy to
+ * identify a sane wrapper) — callers should treat this as "container
+ * detection unsupported for this page," not retry indefinitely.
+ */
+export async function detectHeroContainerRawHtml(html: string): Promise<{ updatedHtml: string } | null> {
+  const dom = parseDocument(html);
+  const htmlEl = (dom.children as Node[]).find((n: Node) => n.type === 'tag' && n.name === 'html');
+  const rootChildren = htmlEl ? htmlEl.children : dom.children;
+
+  const { candidates, nodesByPath } = collectContainerCandidates(rootChildren);
+  if (candidates.length === 0) {
+    console.log('[hero-field-detection-raw] detectHeroContainerRawHtml -> no container candidates found');
+    return null;
+  }
+
+  let indexPath: string | null;
+  try {
+    indexPath = await identifyHeroContainer(candidates);
+  } catch (err) {
+    console.error(`[hero-field-detection-raw] identifyHeroContainer API call failed (candidates=${candidates.length})`, err);
+    return null;
+  }
+
+  if (!indexPath) {
+    console.log('[hero-field-detection-raw] detectHeroContainerRawHtml -> AI found no plausible container');
+    return null;
+  }
+
+  const container = nodesByPath.get(indexPath);
+  if (!container) {
+    console.log('[hero-field-detection-raw] detectHeroContainerRawHtml -> AI returned an indexPath not in candidates, skipping');
+    return null;
+  }
+
+  if (!wrapWithHeroMarkers(container)) {
+    console.log('[hero-field-detection-raw] detectHeroContainerRawHtml -> could not splice markers around chosen container');
+    return null;
+  }
+
+  const updatedHtml = render(dom, { decodeEntities: false });
+  console.log('[hero-field-detection-raw] detectHeroContainerRawHtml -> container found and marked');
+  return { updatedHtml };
+}
+
+/**
+ * Duplicate-breakpoint-aware field detection scoped to an already-known hero
+ * container (tagged `data-hero-container="1"` by detectHeroContainerRawHtml
+ * above — this is the raw-HTML tier only; AI-generated pages already have
+ * `data-field="hero.*"` baked in at generation time and are fully handled
+ * by tier 1's attribute parser, so this function is never reached for them).
+ * Only scans candidates within the container's subtree, so page-builder exports
+ * with hundreds of candidate tags elsewhere on the page (the original
+ * MAX_CANDIDATES problem) never reach the AI at all — cheaper prompt, and
+ * the model only ever sees genuinely-hero-relevant elements.
+ *
+ * Unbounce/page-builder exports commonly duplicate the same heading/CTA
+ * several times inside the hero wrapper itself, one per responsive
+ * breakpoint (mobile/tablet/desktop), toggled via CSS visibility classes
+ * rather than actually removed from the DOM. If only one such duplicate gets
+ * tagged with data-field, a field-swap would silently leave the other
+ * breakpoints showing stale default content. So once a field is identified,
+ * every OTHER element in the container whose text matches it near-exactly is
+ * tagged with the same data-field value too — utm-swap-script.ts must then
+ * apply the swap to every matching element (querySelectorAll), not just one.
+ *
+ * Returns null if the container marker isn't present in this HTML, or if no
+ * fields could be confidently identified within it.
+ */
+export async function detectHeroFieldsWithinContainer(
+  html: string
+): Promise<{ updatedHtml: string; selectors: HeroFieldSelectors } | null> {
+  const dom = parseDocument(html);
+  const htmlEl = (dom.children as Node[]).find((n: Node) => n.type === 'tag' && n.name === 'html');
+  const rootChildren = htmlEl ? htmlEl.children : dom.children;
+
+  let container: Node | null = null;
+  function findContainer(nodes: Node[]) {
+    for (const n of nodes) {
+      if (container) return;
+      if (n.type === 'tag') {
+        if (n.attribs?.['data-hero-container'] === '1') {
+          container = n;
+          return;
+        }
+        if (n.children) findContainer(n.children);
+      }
+    }
+  }
+  findContainer(rootChildren);
+
+  if (!container || !(container as Node).children) {
+    console.log('[hero-field-detection-raw] detectHeroFieldsWithinContainer -> no data-hero-container element found in HTML');
+    return null;
+  }
+  const containerNode = container as Node;
+
+  const { candidates, nodesByPath } = collectCandidates(containerNode.children as Node[]);
+  if (candidates.length === 0) {
+    console.log('[hero-field-detection-raw] detectHeroFieldsWithinContainer -> no field candidates found inside container');
+    return null;
+  }
+
+  let identified: Record<string, string | null>;
+  try {
+    identified = await identifyHeroElements(candidates);
+  } catch (err) {
+    console.error(`[hero-field-detection-raw] detectHeroFieldsWithinContainer identifyHeroElements failed (candidates=${candidates.length})`, err);
+    return null;
+  }
+
+  // All elements in the container, for duplicate-text lookup below.
+  const allContainerEls: Node[] = [];
+  (function collectAll(nodes: Node[]) {
+    for (const n of nodes) {
+      if (n.type === 'tag') {
+        allContainerEls.push(n);
+        if (n.children) collectAll(n.children);
+      }
+    }
+  })(containerNode.children as Node[]);
+
+  let injectedAny = false;
+  for (const key of HERO_FIELD_KEYS) {
+    const indexPath = identified[key];
+    if (!indexPath || typeof indexPath !== 'string') continue;
+
+    let el = nodesByPath.get(indexPath);
+    if (!el) continue;
+
+    if (key === 'headline' || key === 'subhead') {
+      const tag = (el.name as string | undefined)?.toLowerCase();
+      if (tag !== 'p' && !(tag && /^h[1-6]$/.test(tag))) {
+        const headingAncestor = findHeadingAncestor(el);
+        if (headingAncestor) el = headingAncestor;
+      }
+    }
+
+    el.attribs = { ...el.attribs, 'data-field': `hero.${key}` };
+    injectedAny = true;
+
+    // Tag near-duplicate elements (same tag, same non-empty text) as the
+    // same field — responsive-breakpoint clones, see function doc above.
+    // Images are matched by src instead of text; both are skipped if the
+    // primary element's signal is empty (nothing meaningful to match on).
+    if (el.name && (el.name as string).toLowerCase() !== 'img') {
+      const primaryText = textOf(el);
+      if (primaryText) {
+        for (const other of allContainerEls) {
+          if (other === el) continue;
+          if ((other.name as string)?.toLowerCase() !== (el.name as string).toLowerCase()) continue;
+          if (other.attribs?.['data-field']) continue; // already tagged (e.g. as a different field)
+          if (textOf(other) === primaryText) {
+            other.attribs = { ...other.attribs, 'data-field': `hero.${key}` };
+          }
+        }
+      }
+    } else {
+      const primarySrc = el.attribs?.src;
+      if (primarySrc) {
+        for (const other of allContainerEls) {
+          if (other === el) continue;
+          if ((other.name as string)?.toLowerCase() !== 'img') continue;
+          if (other.attribs?.['data-field']) continue;
+          if (other.attribs?.src === primarySrc) {
+            other.attribs = { ...other.attribs, 'data-field': `hero.${key}` };
+          }
+        }
+      }
+    }
+  }
+
+  if (!injectedAny) {
+    console.log('[hero-field-detection-raw] detectHeroFieldsWithinContainer -> AI could not confidently match any hero field within container');
+    return null;
+  }
+
+  const updatedHtml = render(dom, { decodeEntities: false });
+  const selectors = detectHeroFieldsFromHtml(updatedHtml);
+  if (!selectors) {
+    console.error('[hero-field-detection-raw] detectHeroFieldsWithinContainer -> injected data-field attributes but re-parsing found none — should not happen');
+    return null;
+  }
+
+  console.log(`[hero-field-detection-raw] detectHeroFieldsWithinContainer -> fields=${Object.keys(selectors).length}`);
+  return { updatedHtml, selectors };
 }
 
 async function identifyHeroElements(candidates: Candidate[]): Promise<Record<string, string | null>> {
@@ -130,6 +503,7 @@ ${fieldDescriptions}
 
 Rules:
 - Only pick elements that are actually part of the hero section — never a nav link, footer text, an unrelated card, or a secondary/repeated CTA further down the page.
+- Some candidates include "parentIndexPath"/"parentText": this means the candidate is nested inside another candidate element, and parentText is that parent's own text. For "headline" and "subhead", if a candidate's text is only a short sub-phrase of its parentText (e.g. a highlighted/bolded/colored span inside a larger sentence), prefer the PARENT element's indexPath instead — you want the element that contains the FULL headline/subhead sentence, not a styled fragment of it. Only pick the nested child directly if the parent's text is not meaningfully longer (i.e. the child effectively IS the whole heading).
 - If you are not confident an element matches a field, return null for that field rather than guessing.
 - If there is no identifiable hero section at all, return null for every field.
 - Return ONLY a valid JSON object mapping each of the ${HERO_FIELD_KEYS.length} field keys above to either the exact indexPath string of the matching candidate, or null. No explanation, no markdown, no code fences.`,
@@ -290,8 +664,16 @@ export async function detectAndInjectHeroFieldsRawHtml(
     const indexPath = identified[key];
     if (!indexPath || typeof indexPath !== 'string') continue;
 
-    const el = nodesByPath.get(indexPath);
+    let el = nodesByPath.get(indexPath);
     if (!el) continue; // AI returned a path that doesn't match a real candidate — skip, don't guess
+
+    if (key === 'headline' || key === 'subhead') {
+      const tag = (el.name as string | undefined)?.toLowerCase();
+      if (tag !== 'p' && !(tag && /^h[1-6]$/.test(tag))) {
+        const headingAncestor = findHeadingAncestor(el);
+        if (headingAncestor) el = headingAncestor;
+      }
+    }
 
     el.attribs = { ...el.attribs, 'data-field': `hero.${key}` };
     injectedAny = true;
