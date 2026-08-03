@@ -85,7 +85,7 @@ interface Variant {
   traffic_weight: number;
   redirect_url?: string | null;
   proxy_mode?: boolean;
-  pages?: { id: string; name: string } | null;
+  pages?: { id: string; name: string; draft_html_content?: string | null } | null;
   tracking_verified?: boolean | null;
 }
 
@@ -342,6 +342,31 @@ export default function AnalyticsClient({
   const [loadingHtml, setLoadingHtml] = useState(false);
   const [savingHtml, setSavingHtml] = useState(false);
   const [navigatingToAI, setNavigatingToAI] = useState(false);
+
+  // Discard unsaved AI draft
+  const [discardVariant, setDiscardVariant] = useState<Variant | null>(null);
+  const [discardingDraft, setDiscardingDraft] = useState(false);
+
+  async function confirmDiscardDraft() {
+    if (!discardVariant?.pages?.id) return;
+    setDiscardingDraft(true);
+    try {
+      const res = await fetch(`/api/pages/${discardVariant.pages.id}/discard-draft`, { method: 'POST' });
+      if (!res.ok) throw new Error();
+      setStats((prev) =>
+        prev.map((s) =>
+          s.variant.id === discardVariant.id && s.variant.pages
+            ? { ...s, variant: { ...s.variant, pages: { ...s.variant.pages, draft_html_content: null } } }
+            : s
+        )
+      );
+      setDiscardVariant(null);
+    } catch {
+      toast.error('Failed to discard draft. Please try again.');
+    } finally {
+      setDiscardingDraft(false);
+    }
+  }
 
   // Tracker card dismissal (persisted per test in localStorage)
   const trackerDismissKey = `sl_tracker_dismissed_${test.id}`;
@@ -2967,6 +2992,25 @@ export default function AnalyticsClient({
                             </td>
                           </tr>
 
+                          {stat.variant.pages?.draft_html_content && (
+                            <tr className={rowBg}>
+                              <td colSpan={11} className="px-5 py-2">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-xs font-medium text-amber-600 dark:text-amber-500">
+                                    Unsaved AI edits for this variant
+                                  </span>
+                                  <button
+                                    onClick={() => setDiscardVariant(stat.variant)}
+                                    className="p-1 rounded text-red-500 dark:text-red-400 hover:text-red-600 dark:hover:text-red-300 transition-colors"
+                                    title="Discard unsaved AI draft"
+                                  >
+                                    <Trash2 size={13} />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+
                           {isEditing && (
                             <tr>
                               <td
@@ -2991,16 +3035,17 @@ export default function AnalyticsClient({
                                     />
                                   </div>
                                   {stat.variant.pages?.id ? (
-                                    <div className="flex items-end gap-2">
+                                    <div className="flex items-center gap-2 pt-5">
                                       <button
                                         onClick={() =>
                                           openHtmlEditor(stat.variant)
                                         }
-                                        className="btn-secondary text-sm flex items-center gap-2"
+                                        className="btn-secondary text-sm flex items-center gap-2 w-fit"
                                       >
                                         <FileCode2 size={14} />
                                         Edit HTML
                                       </button>
+                                     
                                     </div>
                                   ) : (
                                     <div>
@@ -5169,6 +5214,16 @@ export default function AnalyticsClient({
         loading={savingVariant}
       />
 
+      <ConfirmDialog
+        open={!!discardVariant}
+        onClose={() => setDiscardVariant(null)}
+        onConfirm={confirmDiscardDraft}
+        title="Discard unsaved AI draft?"
+        description={`This will permanently discard the unsaved AI edits for the ${discardVariant?.name ?? ''} variant. The live page will keep serving its currently published HTML.`}
+        confirmLabel="Discard"
+        loading={discardingDraft}
+      />
+
       {/* Email Notifications Config Modal */}
       <Modal
         open={emailModalOpen}
@@ -5290,6 +5345,7 @@ export default function AnalyticsClient({
 
             <div className="flex items-center justify-between gap-3 px-5 py-4 border-t border-slate-200 dark:border-slate-700 flex-shrink-0">
               {htmlEditVariant.pages?.id ? (
+                <div className="flex items-center gap-2">
                 <button
                   onClick={() => {
                     setNavigatingToAI(true);
@@ -5301,6 +5357,12 @@ export default function AnalyticsClient({
                   {navigatingToAI ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
                   Edit using AI
                 </button>
+                {htmlEditVariant.pages?.draft_html_content && (
+                  <span className="text-xs font-medium text-amber-600 dark:text-amber-500 whitespace-nowrap">
+                    Unsaved AI edits for this variant, click Edit with AI to save the changes.
+                  </span>
+                )}
+                </div>
               ) : <div />}
               <div className="flex items-center gap-3">
                 <button
