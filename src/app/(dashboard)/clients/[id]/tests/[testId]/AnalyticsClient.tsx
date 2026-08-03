@@ -5359,7 +5359,7 @@ export default function AnalyticsClient({
                 </button>
                 {htmlEditVariant.pages?.draft_html_content && (
                   <span className="text-xs font-medium text-amber-600 dark:text-amber-500 whitespace-nowrap">
-                    Unsaved AI edits for this variant, click Edit with AI to save the changes.
+                    Unsaved AI edits for this variant.
                   </span>
                 )}
                 </div>

@@ -13,7 +13,7 @@ import { createSSEStream, sendSSE, closeSSE, SSE_HEADERS, type SSEEvent } from '
 import { isTestVariantPage } from '@/lib/page-drafts';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 300;
+export const maxDuration = 800;
 
 const SYSTEM_PROMPT = `You are editing an existing landing page. The user will give you an instruction to modify the page.
 
@@ -292,13 +292,16 @@ function tryDirectQuoteMatch(prompt: string, sections: SlSection[]): string | nu
 const ROUTING_SYSTEM_PROMPT = `You are a routing classifier for a landing-page AI edit assistant. Given a list of the page's sections (name + a short text/image preview of each) and an edit instruction, decide which section(s) the instruction targets and how big the change is.
 
 Return JSON only. No markdown fences, no explanation.
-{"type":"patch"|"style"|"structural"|"image_generate","target_sections":["section-name", ...],"confidence":"high"|"low","image_prompt":"..."}
+{"type":"patch"|"style"|"structural"|"image_generate"|"insert_section"|"remove_section"|"reorder_sections","target_sections":["section-name", ...],"confidence":"high"|"low","image_prompt":"...","anchor_section":"...","position":"before"|"after","new_order":["section-name", ...]}
 
 Rules:
-- "patch": the instruction clearly targets 1-3 specific existing sections you can identify from the previews below (a heading, button, image, paragraph, one section's design/spacing/color).
+- "patch": the instruction clearly targets 1-3 specific existing sections you can identify from the previews below (a heading, button, image, paragraph, one section's design/spacing/color, or a full redesign/rebuild of ONE existing section).
 - "style": the instruction touches 4+ sections, or a global CSS/font/color variable change (route this to the "head" section), or you cannot map it to specific sections from the previews given (e.g. "make the whole page feel more premium").
-- "structural": the instruction adds, removes, or reorders whole sections. Swapping/replacing an existing image with a user-attached image (see note below) is NOT structural — it's a "patch" on whichever section holds that image, same as swapping any other element.
-- "image_generate": the instruction asks for a brand-new image/logo to be AI-generated from a text description (no user-attached image, no existing image referenced by URL) AND the ONLY change is generating that image and placing it into 1-3 EXISTING sections — no sections are being added, removed, or reordered. Treat any instruction phrased as "create/generate a new X and replace/swap it with the current/existing one" as meaning "replace the CURRENT X with a NEW generated one" — that phrasing is a common but confusing way real users describe swapping in a new asset; never interpret it as "keep the old one unchanged" or "revert to the current one." If the request also restructures the page (e.g. "add a new testimonials section with AI-generated photos"), that is "structural", not "image_generate" — image_generate is only for a pure image-swap-via-generation on sections that already exist.
+- "insert_section": the instruction clearly asks to ADD exactly ONE brand-new section, and you can confidently name an existing section to place it relative to. Return "anchor_section" (an existing section name from the list) and "position" ("before" or "after" that anchor). If the instruction doesn't say where, pick the most sensible spot (e.g. right after the section it's most related to, or right before "footer" as a safe default). Do NOT use this for adding more than one new section, or when you can't confidently pick an anchor — use "structural" instead for those.
+- "remove_section": the instruction clearly asks to remove exactly ONE existing section entirely. Return that section's name as the single entry in "target_sections". Use "structural" instead if more than one section should be removed, or the target section is ambiguous.
+- "reorder_sections": the instruction asks to reorder 2 or more EXISTING sections relative to each other (e.g. "move testimonials above the stats section") without adding/removing anything or changing their content. Return the full new relative order of ONLY the sections that need to move, as "new_order" (an array of existing section names, in the desired new sequence) — e.g. for "move testimonials above stats", new_order:["testimonials","stats"] (testimonials will end up positioned immediately before "stats"). Use "structural" instead if the reorder is tangled up with content changes, or spans 4+ sections, or you're not confident of the exact target section names.
+- "structural": the instruction adds, removes, or reorders whole sections in a way that doesn't cleanly fit "insert_section"/"remove_section"/"reorder_sections" above (multiple sections at once, ambiguous placement, or combined with a broader redesign). Swapping/replacing an existing image with a user-attached image (see note below) is NOT structural — it's a "patch" on whichever section holds that image, same as swapping any other element.
+- "image_generate": the instruction asks for a brand-new image/logo to be AI-generated from a text description (no user-attached image, no existing image referenced by URL) AND the ONLY change is generating that image and placing it into 1-3 EXISTING sections — no sections are being added, removed, or reordered. Treat any instruction phrased as "create/generate a new X and replace/swap it with the current/existing one" as meaning "replace the CURRENT X with a NEW generated one" — that phrasing is a common but confusing way real users describe swapping in a new asset; never interpret it as "keep the old one unchanged" or "revert to the current one." If the request also restructures the page (e.g. "add a new testimonials section with AI-generated photos"), that is "insert_section" or "structural", not "image_generate" — image_generate is only for a pure image-swap-via-generation on sections that already exist.
   When you pick "image_generate", also return "image_prompt": a complete, standalone image-generation prompt — it is sent directly to an image model with NO other context, so it must stand on its own and must be fully decided, with zero ambiguity.
   **Pick exactly ONE business name.** The schema may mention more than one name-like string (a company name, a product name, a tagline). You MUST resolve this to a single definitive name before writing the prompt — never write "X or Y", never write two candidate names separated by "or"/"/", never hedge. If genuinely unclear, prefer whichever name appears in the nav/header/logo area of the schema over one that only appears in body copy.
   **User-specified details always win.** If the instruction itself states a color, style, icon idea, mood, or any other concrete visual detail (e.g. "make it blue", "minimalist", "use a mountain icon", "keep it playful"), that detail MUST appear in the image_prompt and overrides whatever the schema's palette/style would otherwise suggest. Only fall back to schema-derived colors/style/industry cues to fill in whatever the instruction left unspecified — never let a schema default silently override something the user actually asked for.
@@ -307,16 +310,26 @@ Rules:
   You are also given each section's background tone as "[background: dark]" or "[background: light]" in the section list below when detectable — the generated image MUST contrast against the background of the section(s) it's being placed into: for a dark-background section, specify light/white/pale coloring; for a light-background section, specify dark coloring. If tone isn't given, favor a mid-tone/colorful mark that isn't itself near-white or near-black, so it holds up on either background.
   Example: instruction "create a new logo and replace the current one" for a schema whose nav says "American Oil & Gas" (an oil and gas exploration company), targeting a section marked "[background: dark]" → image_prompt: "A flat vector logo icon for 'American Oil & Gas', an oil and gas exploration company. An oil derrick silhouette icon. Minimal geometric icon mark, warm gold and cream tones, flat solid colors only, no gradients, no drop shadows, no photorealism, no 3D rendering, clean vector illustration style, centered composition on a transparent background, generous negative space, high resolution."
   Always include "transparent background" and "high resolution" so it composites cleanly into the section.
-- Confidence is about WHICH SECTION, not about literal wording match. The instruction will often describe UI in generic terms ("button", "form", "banner") that don't literally match the underlying HTML tag — a labeled pill, badge, link, or div styled as a button all count as a match for "button." If exactly one section's preview clearly contains the referenced text/element, that is high confidence — do not lower it just because the HTML tag isn't literally a <button>/<form>/etc.
-- Set confidence "low" only when the referenced element/text could plausibly belong to two or more different sections, or doesn't appear in any preview at all — including truly ambiguous image references ("use this image" when multiple sections have images) or vague whole-page requests ("make it feel more premium"). When confidence is "low" it is fine to still fill in your best guess for type/target_sections — the caller ignores them and falls back to full-page handling.
+- Confidence is about WHICH SECTION, not about literal wording match. The instruction will often describe UI in generic terms ("button", "form", "banner") that don't literally match the underlying HTML tag — a labeled pill, badge, link, or div styled as a button all count as a match for "button." If exactly one section's preview clearly contains the referenced text/element, that is high confidence — do not lower it just because the HTML tag isn't literally a <button>/<form>/etc. The same applies to "insert_section"'s anchor, "remove_section"'s target, and "reorder_sections"' new_order — if you can confidently name the section(s) from the list, that is high confidence, even for a simple, plainly-worded request like "add a pricing section after X" or "remove the calculator."
+- Set confidence "low" only when the referenced element/text/section could plausibly belong to two or more different sections, or doesn't appear in any preview at all — including truly ambiguous image references ("use this image" when multiple sections have images) or vague whole-page requests ("make it feel more premium"). When confidence is "low" it is fine to still fill in your best guess for type/target_sections — the caller ignores them and falls back to full-page handling.
 - Only ever use section names EXACTLY as given in the list — never invent one.`;
+
+interface RoutingResult {
+  type: string;
+  target_sections: string[];
+  confidence: string;
+  image_prompt?: string;
+  anchor_section?: string;
+  position?: string;
+  new_order?: string[];
+}
 
 async function tryHaikuRouting(
   prompt: string,
   schema: unknown,
   sections: SlSection[],
   hasUserImages: boolean,
-): Promise<{ type: string; target_sections: string[]; confidence: string; image_prompt?: string } | null> {
+): Promise<RoutingResult | null> {
   try {
     const sectionList = sections.map((s) => `- ${s.name}: "${s.text.slice(0, 150)}"`).join('\n');
     const text = await askAI({
@@ -331,6 +344,7 @@ async function tryHaikuRouting(
       ],
       maxTokens: 300,
       model: 'claude-haiku-4-5-20251001',
+      label: 'follow-up:routing',
     });
     let raw = text.trim();
     if (raw.startsWith('```')) raw = raw.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
@@ -359,6 +373,7 @@ Rules:
 - Return the COMPLETE updated section HTML — do NOT include the <!-- SL:name --> markers themselves, they are added back by the caller.
 - Make the MINIMUM edit required. Do not restructure, reorganize, or rebuild the section beyond what the instruction asks.
 - Never leave old and new markup coexisting. If the instruction asks to redesign, rebuild, tighten, or otherwise change a part of the section (e.g. "the nav bar looks off, redesign it"), your output must REPLACE that part entirely — delete every old element it's replacing (old logo, old links, old buttons, old wrapper divs) before/while adding the new ones. Never append new elements next to old ones that do the same job, and never return a section where the same logical item (e.g. the same nav link, the same CTA button) appears twice.
+- Sections sometimes contain a visually distinct navigation bar or top logo/header strip nested inside them (e.g. a slim top bar with just a logo, or a <nav> element, sitting above the section's main content) — this can happen because the page has no separate "nav" section of its own. If the instruction does not explicitly mention the nav, logo, header, or top bar (e.g. it only talks about "the hero," "this section's layout," "the headline," "the CTA button" — not the nav/logo/header specifically), you MUST leave that nested nav/logo/header block completely untouched, byte-for-byte, and apply the requested change only to the rest of the section. Only touch the nav/logo/header block if the instruction is clearly about it.
 - Keep every existing data-field attribute intact unless the instruction specifically targets that field's content.
 - Before adding a scoped inline style override: if the existing rule for that property uses !important anywhere (including inside @media blocks), your override must also use !important on that property, or the change will silently not apply.
 - Never select or modify any element carrying a data-field attribute with decorative JS — that content must always stay visible/clickable.
@@ -391,6 +406,7 @@ async function runScopedPatch(
       system: SCOPED_PATCH_SYSTEM_PROMPT,
       messages: [{ role: 'user', content: userContent }],
       maxTokens: 4000,
+      label: 'follow-up:scoped-patch',
     });
     let raw = text.trim();
     if (raw.startsWith('```')) raw = raw.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
@@ -443,6 +459,207 @@ function sanityCheckScopedSection(original: string, updated: string): boolean {
   const origTag = outerTag(original);
   const newTag = outerTag(updated);
   return !!origTag && origTag === newTag;
+}
+
+// ── Scoped structural ops: insert / remove / reorder a section ─────────────
+// These handle the three most common "structural" requests (add a section,
+// delete a section, move sections around) WITHOUT the expensive full-page
+// reclassify-then-rebuild path — see docs/ai-edit-timeout-diagnosis.md.
+// remove/reorder never call the AI at all (pure string splicing on the
+// existing <!-- SL:name --> markers); insert makes one small, scoped AI call
+// for just the new section's HTML. All three fall back to the full-page path
+// (return null / not applied) if a target marker can't be confidently found —
+// same fallback discipline as the existing scoped-patch mechanism.
+
+// Locates the FULL <!-- SL:name --> ... <!-- /SL:name --> block, markers
+// included (unlike extractSlSections(), which returns the stripped inner
+// content only) — needed here because these ops move/delete/insert relative
+// to the marker comments themselves, not just the content between them.
+function findSlBlockBounds(html: string, name: string): [number, number] | null {
+  const safeName = name.replace(/[^a-zA-Z0-9_-]/g, '');
+  if (!safeName) return null;
+  const re = new RegExp(`<!-- SL:${safeName} -->[\\s\\S]*?<!-- /SL:${safeName} -->`);
+  const m = re.exec(html);
+  return m ? [m.index, m.index + m[0].length] : null;
+}
+
+function removeSlSection(html: string, name: string): string | null {
+  const bounds = findSlBlockBounds(html, name);
+  if (!bounds) return null;
+  const [start, end] = bounds;
+  return html.slice(0, start) + html.slice(end);
+}
+
+// Re-sequences the named sections to appear, contiguously, in `orderedNames`
+// order, starting at the position of whichever of them appears first in the
+// original document. Every other section (and everything else in the page)
+// is left byte-for-byte untouched. Returns null if any named section's
+// marker can't be found — caller falls back to the full-page path.
+function reorderSlSections(html: string, orderedNames: string[]): string | null {
+  const blocks: Array<{ name: string; start: number; end: number; text: string }> = [];
+  for (const name of orderedNames) {
+    const bounds = findSlBlockBounds(html, name);
+    if (!bounds) return null;
+    const [start, end] = bounds;
+    blocks.push({ name, start, end, text: html.slice(start, end) });
+  }
+
+  const insertAt = Math.min(...blocks.map((b) => b.start));
+
+  // Remove every matched block from the document, rightmost first, so an
+  // earlier removal never shifts the index of a removal still pending.
+  let result = html;
+  const byDocOrderDesc = [...blocks].sort((a, b) => b.start - a.start);
+  for (const b of byDocOrderDesc) {
+    result = result.slice(0, b.start) + result.slice(b.end);
+  }
+
+  // `insertAt` is the leftmost original block's start — nothing before it was
+  // ever removed, so it's still a valid split point in `result`.
+  const orderedText = orderedNames.map((name) => blocks.find((b) => b.name === name)!.text).join('\n');
+  return result.slice(0, insertAt) + orderedText + result.slice(insertAt);
+}
+
+function insertSlSectionBlock(
+  html: string,
+  anchorName: string,
+  position: 'before' | 'after',
+  wrappedNewBlock: string,
+): string | null {
+  const bounds = findSlBlockBounds(html, anchorName);
+  if (!bounds) return null;
+  const [start, end] = bounds;
+  return position === 'after'
+    ? html.slice(0, end) + '\n' + wrappedNewBlock + html.slice(end)
+    : html.slice(0, start) + wrappedNewBlock + '\n' + html.slice(start);
+}
+
+function dedupeSectionName(name: string, usedNames: string[]): string {
+  if (!usedNames.includes(name)) return name;
+  let n = 2;
+  while (usedNames.includes(`${name}-${n}`)) n++;
+  return `${name}-${n}`;
+}
+
+// Minimal local copy of schema-from-html's setPathValue — small enough that
+// sharing it isn't worth a cross-route import for this one call site.
+function setDotPathValue(root: Record<string, unknown>, path: string, value: unknown) {
+  const keys = path.split('.').filter(Boolean);
+  if (keys.length === 0) return;
+  let current: Record<string, unknown> = root;
+  for (let i = 0; i < keys.length - 1; i++) {
+    const key = keys[i];
+    const existing = current[key];
+    if (typeof existing !== 'object' || existing === null) current[key] = {};
+    current = current[key] as Record<string, unknown>;
+  }
+  current[keys[keys.length - 1]] = value;
+}
+
+// Builds the schema slice for a brand-new section from its own data-field
+// attributes — the same idea as schema-from-html's field extraction, but far
+// simpler here since we already have the exact new HTML in hand (no
+// text-matching against a larger document needed).
+function extractDataFieldsFromHtml(html: string): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  const tagRe = /<([a-zA-Z][a-zA-Z0-9]*)\b([^>]*?)data-field\s*=\s*["']([^"']+)["']([^>]*)>/g;
+  let m: RegExpExecArray | null;
+  while ((m = tagRe.exec(html))) {
+    const tag = m[1].toLowerCase();
+    const dotPath = m[3];
+    if (tag === 'img') {
+      const attrs = m[2] + m[4];
+      const srcMatch = /src\s*=\s*["']([^"']*)["']/.exec(attrs);
+      setDotPathValue(result, dotPath, srcMatch ? srcMatch[1] : '');
+    } else {
+      const closeIdx = html.indexOf(`</${tag}>`, tagRe.lastIndex);
+      const inner = closeIdx !== -1 ? html.slice(tagRe.lastIndex, closeIdx) : '';
+      const text = inner.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+      setDotPathValue(result, dotPath, text);
+    }
+  }
+  return result;
+}
+
+const SCOPED_INSERT_SYSTEM_PROMPT = `You are adding ONE brand-new section to an existing, already-designed landing page. You are given the page's global <style> block (for colors, fonts, spacing, existing CSS classes/variables) and one neighboring section's HTML (for structural/style reference). Do not touch or return anything except the new section.
+
+IMPORTANT: Your entire response must be ONLY the JSON object below — begin your response with { and end it with }. Do NOT write any explanation, reasoning, preamble, or markdown code fences before or after the JSON. Any text outside the JSON object will break the parser.
+
+{"name":"kebab-case-section-name","html":"...complete new section HTML, a single top-level element..."}
+
+Rules:
+- Match the page's existing visual design system as closely as possible — reuse existing CSS custom properties/:root variables, existing class names, and existing font/color choices where they fit, rather than inventing an unrelated new look.
+- If new CSS is genuinely needed for this section, add a small scoped <style> block inside the section itself (or inline styles) — never modify the page's shared/global stylesheet.
+- The new section must be a single top-level element (e.g. one <section>...</section>). Do NOT include <!-- SL:name --> markers yourself — the caller adds those around whatever you return.
+- Give every editable text/image element in the new section a data-field attribute, using the dot-path pattern "<name>.<field>" where <name> matches the "name" you return, e.g. data-field="pricing-tiers.title", data-field="pricing-tiers.items.0.price". Repeated items use indexed keys: .items.0, .items.1, ...
+- "name" must be a short, unique, kebab-case identifier describing the section (e.g. "pricing-tiers", "faq"), and must not collide with any of the page's existing section names given below.
+- Never select or modify any element outside the new section.
+- Never add an external <script src> to a third-party domain.
+- If any copy in your output contains a double-quote character, escape it as \\" — invalid JSON breaks the parser.`;
+
+async function runScopedInsert(
+  anchorSectionHtml: string,
+  headSectionHtml: string,
+  existingSectionNames: string[],
+  prompt: string,
+  imageUrls: string[] | undefined,
+): Promise<{ name: string; html: string } | null> {
+  try {
+    // Defensive cap — this is a small, scoped call (writing one section, not
+    // rebuilding the page), but a legacy page's global stylesheet can still be
+    // enormous; truncate rather than let one page blow up this call's cost.
+    const truncatedHead = headSectionHtml.length > 20_000
+      ? `${headSectionHtml.slice(0, 20_000)}\n/* ...truncated... */`
+      : headSectionHtml;
+    const imageUrlsNote = (imageUrls ?? []).length > 0
+      ? `\n\nAttached image URL(s) — use these EXACT strings verbatim in any src attribute, in the order attached:\n${(imageUrls ?? []).map((u, i) => `${i + 1}. ${u}`).join('\n')}`
+      : '';
+    const userContent: AIContent = [
+      ...(imageUrls ?? []).map((url): AIContentBlock => ({ type: 'image', url })),
+      {
+        type: 'text' as const,
+        text: `Page's existing section names (the new name must not match any of these): ${existingSectionNames.join(', ')}\n\nPage's global styles:\n${truncatedHead}\n\nNeighboring section HTML (for style/structure reference):\n${anchorSectionHtml}\n\nInstruction: ${prompt}${imageUrlsNote}`,
+      },
+    ];
+    const text = await askAI({
+      system: SCOPED_INSERT_SYSTEM_PROMPT,
+      messages: [{ role: 'user', content: userContent }],
+      maxTokens: 6000,
+      label: 'follow-up:scoped-insert',
+    });
+    let raw = text.trim();
+    if (raw.startsWith('```')) raw = raw.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
+    const jsonStart = raw.indexOf('{');
+    const jsonEnd = raw.lastIndexOf('}');
+    if (jsonStart >= 0 && jsonEnd > jsonStart) raw = raw.slice(jsonStart, jsonEnd + 1);
+    let parsed: { name?: string; html?: string };
+    try {
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        parsed = JSON.parse(jsonrepair(raw));
+      }
+    } catch {
+      console.error('[pages/follow-up] scoped insert returned unparseable JSON', {
+        rawLength: text.length,
+        rawPreview: text.slice(0, 1500),
+      });
+      return null;
+    }
+    if (!parsed.name || typeof parsed.name !== 'string' || !parsed.html || typeof parsed.html !== 'string') {
+      console.error('[pages/follow-up] scoped insert JSON missing name/html', { rawPreview: text.slice(0, 1500) });
+      return null;
+    }
+    const safeName = parsed.name.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
+    if (!safeName || !outerTag(parsed.html)) {
+      console.error('[pages/follow-up] scoped insert returned an unusable name or html', { rawPreview: text.slice(0, 500) });
+      return null;
+    }
+    return { name: dedupeSectionName(safeName, existingSectionNames), html: parsed.html };
+  } catch (err) {
+    console.error('[pages/follow-up] scoped insert generation failed, falling back to full-page path', err);
+    return null;
+  }
 }
 
 function countImagePrompts(node: unknown): number {
@@ -613,8 +830,85 @@ export async function POST(
             routing.target_sections.length <= 3 &&
             routing.target_sections.every((n) => slSections.some((s) => s.name === n));
 
+          // Three more scoped ops — see docs/ai-edit-timeout-diagnosis.md.
+          // These cover the common "add/remove/reorder a section" requests
+          // that used to always fall into the expensive full-page rebuild
+          // even though they're just as scoped as a text patch.
+          const removeShapeOk = !!routing &&
+            routing.type === 'remove_section' &&
+            routing.confidence === 'high' &&
+            routing.target_sections.length === 1 &&
+            slSections.some((s) => s.name === routing.target_sections[0]);
+
+          const reorderShapeOk = !!routing &&
+            routing.type === 'reorder_sections' &&
+            routing.confidence === 'high' &&
+            Array.isArray(routing.new_order) &&
+            routing.new_order.length >= 2 &&
+            new Set(routing.new_order).size === routing.new_order.length &&
+            routing.new_order.every((n) => slSections.some((s) => s.name === n));
+
+          const insertShapeOk = !!routing &&
+            routing.type === 'insert_section' &&
+            routing.confidence === 'high' &&
+            typeof routing.anchor_section === 'string' &&
+            slSections.some((s) => s.name === routing.anchor_section) &&
+            (routing.position === 'before' || routing.position === 'after');
+
           if (routingQualifies) {
             targetSections = (routing as { target_sections: string[] }).target_sections;
+          } else if (removeShapeOk) {
+            const removeName = routing!.target_sections[0];
+            sendSSE(controller, { type: 'status', message: 'Removing section...' });
+            const removedHtml = removeSlSection(html, removeName);
+            if (removedHtml) {
+              finalHtml = removedHtml;
+              scopedApplied = true;
+              if (schema && typeof schema === 'object' && removeName in (schema as Record<string, unknown>)) {
+                const schemaCopy = JSON.parse(JSON.stringify(schema)) as Record<string, unknown>;
+                delete schemaCopy[removeName];
+                finalSchemaJson = schemaCopy;
+              }
+            } else {
+              console.error(`[pages/follow-up] remove_section could not find marker for "${removeName}" — falling back to full-page path`);
+            }
+          } else if (reorderShapeOk) {
+            sendSSE(controller, { type: 'status', message: 'Reordering sections...' });
+            const reordered = reorderSlSections(html, routing!.new_order!);
+            if (reordered) {
+              finalHtml = reordered;
+              scopedApplied = true;
+            } else {
+              console.error('[pages/follow-up] reorder_sections failed to locate all target markers — falling back to full-page path', { new_order: routing!.new_order });
+            }
+          } else if (insertShapeOk) {
+            if (request.signal.aborted) { closeSSE(controller); return; }
+            sendSSE(controller, { type: 'status', message: 'Writing new section...' });
+            const anchorName = routing!.anchor_section!;
+            const anchorSection = slSections.find((s) => s.name === anchorName)!;
+            const headSection = slSections.find((s) => s.name === 'head');
+            const usedNames = slSections.map((s) => s.name);
+            const inserted = await runScopedInsert(anchorSection.html, headSection?.html ?? '', usedNames, prompt, effectiveImageUrls);
+            if (inserted) {
+              const wrappedBlock = `<!-- SL:${inserted.name} -->\n${inserted.html.trim()}\n<!-- /SL:${inserted.name} -->`;
+              const spliced = insertSlSectionBlock(html, anchorName, routing!.position as 'before' | 'after', wrappedBlock);
+              if (spliced) {
+                finalHtml = spliced;
+                scopedApplied = true;
+                const newFields = extractDataFieldsFromHtml(inserted.html);
+                if (Object.keys(newFields).length > 0) {
+                  const schemaCopy = (schema && typeof schema === 'object'
+                    ? JSON.parse(JSON.stringify(schema))
+                    : {}) as Record<string, unknown>;
+                  schemaCopy[inserted.name] = newFields;
+                  finalSchemaJson = schemaCopy;
+                }
+              } else {
+                console.error(`[pages/follow-up] insert_section could not splice new section near anchor "${anchorName}" — falling back to full-page path`);
+              }
+            } else {
+              console.error('[pages/follow-up] insert_section generation failed — falling back to full-page path');
+            }
           } else if (imageGenerateShapeOk) {
             const pageSlugForImage = page.slug ?? crypto.randomUUID();
             sendSSE(controller, { type: 'status', message: 'Generating image...' });
@@ -745,6 +1039,7 @@ export async function POST(
               { role: 'user' as const, content: userContent },
             ],
             maxTokens: 32000,
+            label: 'follow-up:pass1-classify',
           },
           (chunk) => {
             pass1Buffer += chunk;
@@ -848,6 +1143,7 @@ export async function POST(
             competitorPageContent: competitorContext?.pageContent ?? undefined,
             userPrompt: prompt,
             styleReferenceNote,
+            callerLabel: 'follow-up:structural',
             onChunk: (chunk) => {
               statusBuffer += chunk;
               statusBuffer = statusBuffer.replace(
@@ -928,7 +1224,13 @@ export async function POST(
           updatePayload.field_selectors_json = null;
         }
       }
-      if (resultType === 'structural' && finalSchemaJson) {
+      // finalSchemaJson is only ever set when there's an updated schema to
+      // persist — the full-page structural rebuild sets it every time, and
+      // the new scoped insert/remove ops (which are NOT tagged resultType
+      // 'structural', they stay 'patch') set it only when the section
+      // actually had schema fields to add/drop. Checking finalSchemaJson
+      // directly (rather than gating on resultType) covers both.
+      if (finalSchemaJson) {
         if (isVariant) {
           updatePayload.draft_schema_json = finalSchemaJson;
         } else {
