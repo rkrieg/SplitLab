@@ -33,6 +33,7 @@ interface Message {
   image_urls?: string[];
   isQuestions?: boolean;
   questions?: string[];
+  elapsedMs?: number;
 }
 
 interface InitialPage {
@@ -907,7 +908,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       return;
     }
 
-    type FollowUpDone = { html_url: string; schema_json?: unknown; competitor_fetch_failed?: boolean };
+    type FollowUpDone = { html_url: string; schema_json?: unknown; competitor_fetch_failed?: boolean; elapsed_ms?: number };
     let doneData: FollowUpDone | null = null;
     let followUpError = false;
 
@@ -918,6 +919,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
           html_url: event.html_url,
           schema_json: event.schema_json,
           competitor_fetch_failed: event.competitor_fetch_failed,
+          elapsed_ms: event.elapsed_ms,
         };
       } else if (event.type === 'error') {
         followUpError = true;
@@ -940,7 +942,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     setHtmlUrl(done.html_url + `?t=${Date.now()}`);
     if (isTestVariantPage) setHasDraft(true);
     if (!silent) {
-      addMessage({ role: 'assistant', content: 'Done! The page has been updated.' });
+      addMessage({ role: 'assistant', content: 'Done! The page has been updated.', elapsedMs: done.elapsed_ms });
     }
     setConversationJson(prev => [
       ...prev,
@@ -1156,7 +1158,12 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                     </div>
                   </div>
                   {/* Message actions */}
-                  <div className="flex items-center gap-0.5 pl-8">
+                  <div className="flex items-center gap-1.5 pl-8">
+                    {typeof msg.elapsedMs === 'number' && (
+                      <span className="text-[11px] text-amber-400 dark:text-amber-500">
+                        {(msg.elapsedMs / 1000).toFixed(1)}s
+                      </span>
+                    )}
                     <button className="p-1 text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 transition-colors"><RotateCcw size={12} /></button>
                     {/* <button className="p-1 text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 transition-colors"><ThumbsUp size={12} /></button> */}
                     {/* <button className="p-1 text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 transition-colors"><ThumbsDown size={12} /></button> */}

@@ -680,6 +680,8 @@ export async function POST(
 ) {
   // ── Pre-stream validation (can still return NextResponse.json) ─────────────
 
+  const startedAt = Date.now();
+
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
@@ -1254,6 +1256,7 @@ export async function POST(
         html_url: htmlUrl,
         ...(finalSchemaJson ? { schema_json: finalSchemaJson } : {}),
         ...(competitorUrls.length > 0 && !competitorContext ? { competitor_fetch_failed: true } : {}),
+        elapsed_ms: Date.now() - startedAt,
       };
       sendSSE(controller, doneEvent);
       closeSSE(controller);
