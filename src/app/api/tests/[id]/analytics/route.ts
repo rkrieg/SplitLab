@@ -23,7 +23,7 @@ export async function GET(
   // Fetch test with variants and primary goal
   const { data: test, error: testError } = await db
     .from('tests')
-    .select('*, test_variants(*, pages(id, name)), conversion_goals(*)')
+    .select('*, test_variants(*, pages(id, name, draft_html_content)), conversion_goals(*)')
     .eq('id', params.id)
     .single();
 

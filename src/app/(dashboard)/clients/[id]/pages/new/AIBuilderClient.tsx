@@ -355,7 +355,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     }
     restored.push({
       role: 'assistant',
-      content: initialPage.schema_json
+      content: (initialPage.draft_schema_json ?? initialPage.schema_json)
         ? 'Welcome back. Click any text in the preview to edit, or ask me to make changes.'
         : "This page hasn't been set up for AI editing yet — preparing it now. In the meantime, describe any change below and I'll apply it once ready.",
     });
@@ -370,7 +370,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   // until this completes to avoid two concurrent writes to the same page row.
   useEffect(() => {
     if (!initialPage || !initialPage.html_url) return;
-    if (initialPage.schema_json) return;
+    if (initialPage.draft_schema_json ?? initialPage.schema_json) return;
     if (schemaFromHtmlFiredRef.current) return;
     schemaFromHtmlFiredRef.current = true;
     setPreparingSchema(true);
