@@ -474,6 +474,7 @@ async function getDesignBrief(
       system: DESIGN_BRIEF_SYSTEM_PROMPT,
       messages: [{ role: 'user', content: briefContent }],
       maxTokens: 400,
+      label: 'build-html:design-brief',
     });
 
     let raw = text.trim();
@@ -511,6 +512,8 @@ export interface BuildHtmlOptions {
    * events to the frontend. When absent, falls back to non-streaming askAI().
    */
   onChunk?: (chunk: string) => void;
+  /** Identifies the calling route for ai-client logs, e.g. "build" or "follow-up:structural". */
+  callerLabel?: string;
 }
 
 /**
@@ -591,11 +594,15 @@ export async function buildHtmlFromSchema(
 
   const systemPrompt = hasCompetitorContext ? COMPETITOR_SYSTEM_PROMPT : SYSTEM_PROMPT;
 
+  const label = `build-html:${options.callerLabel ?? 'unknown-caller'}`;
   const aiOptions = {
     system: systemPrompt,
     messages: [{ role: 'user' as const, content: userContent }],
     maxTokens: 32000,
+    label,
   };
+
+  console.log(`[buildHtmlFromSchema] label=${label} hasCompetitorContext=${hasCompetitorContext} hasImages=${hasImages} schemaBytes=${JSON.stringify(schema).length} streaming=${Boolean(options.onChunk)}`);
 
   const text = options.onChunk
     ? await askAIStream(aiOptions, options.onChunk)

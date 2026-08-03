@@ -143,6 +143,7 @@ async function extractCssTokens(cssBlocks: string, htmlStructure: string): Promi
       ],
       maxTokens: 600,
       model: 'claude-sonnet-4-6',
+      label: 'competitor-scrape:extract-css-tokens',
     });
     return result.trim() || null;
   } catch (err) {
