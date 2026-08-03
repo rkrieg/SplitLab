@@ -7,7 +7,7 @@ import AnalyticsClient from './AnalyticsClient';
 async function getTest(testId: string) {
   const { data, error } = await db
     .from('tests')
-    .select('*, test_variants(*, pages(id, name)), conversion_goals(*)')
+    .select('*, test_variants(*, pages(id, name, draft_html_content)), conversion_goals(*)')
     .eq('id', testId)
     .single();
   if (error) return null;

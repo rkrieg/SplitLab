@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
+import { jsonrepair } from 'jsonrepair';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { askAIStream, isRateLimited, AIResponseTruncatedError } from '@/lib/ai-client';
@@ -429,7 +430,14 @@ export async function POST(
     if (jsonText.startsWith('```')) {
       jsonText = jsonText.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
     }
-    parsed = JSON.parse(jsonText);
+    try {
+      parsed = JSON.parse(jsonText);
+    } catch {
+      // Most common real-world cause: match_text echoes a quoted phrase from
+      // the source HTML without escaping the inner quotes. jsonrepair fixes
+      // that and other minor near-JSON issues before we give up entirely.
+      parsed = JSON.parse(jsonrepair(jsonText));
+    }
   } catch (err) {
     if (err instanceof AIResponseTruncatedError) {
       return NextResponse.json({ error: 'This page is too large to prepare for AI editing in one pass.' }, { status: 500 });
