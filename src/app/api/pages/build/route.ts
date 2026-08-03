@@ -9,7 +9,7 @@ import { buildHtmlFromSchema } from '@/lib/ai-page-builder';
 import { createSSEStream, sendSSE, closeSSE, SSE_HEADERS } from '@/lib/sse';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 300;
+export const maxDuration = 800;
 
 function countImagePrompts(node: unknown): number {
   if (!node || typeof node !== 'object') return 0;
@@ -117,6 +117,7 @@ export async function POST(request: NextRequest) {
           competitorPageContent: typeof competitor_page_content === 'string' ? competitor_page_content : undefined,
           userPrompt: typeof user_prompt === 'string' ? user_prompt : undefined,
           imageUrls: hasImages ? (image_urls as string[]) : [],
+          callerLabel: 'build',
           onChunk: (chunk) => {
             statusBuffer += chunk;
             statusBuffer = statusBuffer.replace(

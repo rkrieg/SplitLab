@@ -26,6 +26,13 @@ export interface AskAIOptions {
   maxTokens: number;
   /** Rarely needed — overrides the active provider's default model for this one call. */
   model?: string;
+  /**
+   * Identifies which route/step made this call (e.g. "follow-up:structural-build",
+   * "schema-from-html", "build"). Required in practice — every call site sets
+   * this so a start/finish/error log can be traced back to a specific AI call
+   * in a flow that makes several of them per request.
+   */
+  label: string;
 }
 
 /**
@@ -88,26 +95,36 @@ function toAnthropicContent(content: AIContent): string | Anthropic.Messages.Con
 async function askAnthropic(options: AskAIOptions): Promise<string> {
   const anthropic = getAnthropicClient();
   const model = options.model ?? process.env.ANTHROPIC_MODEL?.trim() ?? 'claude-sonnet-4-6';
+  const callId = `${options.label}:${Date.now().toString(36)}`;
+  const startedAt = Date.now();
+
+  console.log(`[ai-client start] callId=${callId} label=${options.label} model=${model} maxTokens=${options.maxTokens} stream=false`);
 
   // Stream + collect the final message instead of a plain non-streaming
   // `.create()` call. At the max_tokens these routes use (8192/16000 for
   // build/follow-up), a non-streaming request risks hitting the SDK's HTTP
   // timeout before the full response arrives — streaming has no such
   // ceiling. Callers here still just get the final text back, unchanged.
-  const stream = anthropic.messages.stream({
-    model,
-    max_tokens: options.maxTokens,
-    // These system prompts (section vocabulary, motion-safety rules) are
-    // large and byte-identical across every generate/build/follow-up call.
-    // Marking the block cacheable means repeat calls within the same
-    // editing session pay ~10x less for it instead of full price every time.
-    system: [{ type: 'text', text: options.system, cache_control: { type: 'ephemeral' } }],
-    messages: options.messages.map((m) => ({ role: m.role, content: toAnthropicContent(m.content) })),
-  });
+  let response;
+  try {
+    const stream = anthropic.messages.stream({
+      model,
+      max_tokens: options.maxTokens,
+      // These system prompts (section vocabulary, motion-safety rules) are
+      // large and byte-identical across every generate/build/follow-up call.
+      // Marking the block cacheable means repeat calls within the same
+      // editing session pay ~10x less for it instead of full price every time.
+      system: [{ type: 'text', text: options.system, cache_control: { type: 'ephemeral' } }],
+      messages: options.messages.map((m) => ({ role: m.role, content: toAnthropicContent(m.content) })),
+    });
+    response = await stream.finalMessage();
+  } catch (err) {
+    console.error(`[ai-client error] callId=${callId} label=${options.label} model=${model} elapsedMs=${Date.now() - startedAt}`, err);
+    throw err;
+  }
 
-  const response = await stream.finalMessage();
   const { input_tokens, output_tokens } = response.usage;
-  console.log(`[AI tokens] input=${input_tokens} output=${output_tokens} total=${input_tokens + output_tokens} model=${model} maxTokens=${options.maxTokens} stop_reason=${response.stop_reason}`);
+  console.log(`[AI tokens] callId=${callId} label=${options.label} elapsedMs=${Date.now() - startedAt} input=${input_tokens} output=${output_tokens} total=${input_tokens + output_tokens} model=${model} maxTokens=${options.maxTokens} stop_reason=${response.stop_reason}`);
 
   if (response.stop_reason === 'max_tokens') {
     throw new AIResponseTruncatedError(output_tokens, options.maxTokens);
@@ -123,6 +140,10 @@ async function askAnthropic(options: AskAIOptions): Promise<string> {
 async function askAnthropicStream(options: AskAIOptions, onChunk: (text: string) => void): Promise<string> {
   const anthropic = getAnthropicClient();
   const model = options.model ?? process.env.ANTHROPIC_MODEL?.trim() ?? 'claude-sonnet-4-6';
+  const callId = `${options.label}:${Date.now().toString(36)}`;
+  const startedAt = Date.now();
+
+  console.log(`[ai-client start] callId=${callId} label=${options.label} model=${model} maxTokens=${options.maxTokens} stream=true`);
 
   const stream = anthropic.messages.stream({
     model,
@@ -132,19 +153,35 @@ async function askAnthropicStream(options: AskAIOptions, onChunk: (text: string)
   });
 
   let fullText = '';
-  for await (const event of stream) {
-    if (
-      event.type === 'content_block_delta' &&
-      event.delta.type === 'text_delta'
-    ) {
-      onChunk(event.delta.text);
-      fullText += event.delta.text;
+  let firstChunkAt: number | null = null;
+  let chunkCount = 0;
+  try {
+    for await (const event of stream) {
+      if (
+        event.type === 'content_block_delta' &&
+        event.delta.type === 'text_delta'
+      ) {
+        if (firstChunkAt === null) {
+          firstChunkAt = Date.now();
+          console.log(`[ai-client first-chunk] callId=${callId} label=${options.label} timeToFirstChunkMs=${firstChunkAt - startedAt}`);
+        }
+        chunkCount += 1;
+        onChunk(event.delta.text);
+        fullText += event.delta.text;
+      }
     }
+  } catch (err) {
+    console.error(`[ai-client error] callId=${callId} label=${options.label} model=${model} elapsedMs=${Date.now() - startedAt} chunksReceived=${chunkCount} gotFirstChunk=${firstChunkAt !== null}`, err);
+    throw err;
+  }
+
+  if (firstChunkAt === null) {
+    console.warn(`[ai-client warn] callId=${callId} label=${options.label} stream ended with zero text_delta chunks — elapsedMs=${Date.now() - startedAt}`);
   }
 
   const response = await stream.finalMessage();
   const { input_tokens, output_tokens } = response.usage;
-  console.log(`[AI tokens stream] input=${input_tokens} output=${output_tokens} total=${input_tokens + output_tokens} model=${model} maxTokens=${options.maxTokens} stop_reason=${response.stop_reason}`);
+  console.log(`[AI tokens stream] callId=${callId} label=${options.label} elapsedMs=${Date.now() - startedAt} chunks=${chunkCount} input=${input_tokens} output=${output_tokens} total=${input_tokens + output_tokens} model=${model} maxTokens=${options.maxTokens} stop_reason=${response.stop_reason}`);
 
   if (response.stop_reason === 'max_tokens') {
     throw new AIResponseTruncatedError(output_tokens, options.maxTokens);
@@ -163,6 +200,8 @@ export async function generateAndUploadImage(
   pageSlug: string,
   quality: 'low' | 'medium' | 'high' = 'low',
 ): Promise<string | null> {
+  const startedAt = Date.now();
+  console.log(`[generateAndUploadImage start] pageSlug=${pageSlug} quality=${quality} prompt="${prompt.slice(0, 60)}…"`);
   try {
     const openai = getOpenAIImageClient();
     const result = await openai.images.generate({
@@ -198,7 +237,7 @@ export async function generateAndUploadImage(
     }
 
     const publicUrl = await uploadImage(pageSlug, buffer, mimeType, ext);
-    console.log(`[generateAndUploadImage] uploaded image for prompt: "${prompt.slice(0, 60)}…"`);
+    console.log(`[generateAndUploadImage] uploaded image for prompt: "${prompt.slice(0, 60)}…" elapsedMs=${Date.now() - startedAt}`);
     return publicUrl;
   } catch (err) {
     const e = err as Record<string, unknown>;
@@ -207,6 +246,7 @@ export async function generateAndUploadImage(
       status: e.status,
       type: e.type,
       code: e.code,
+      elapsedMs: Date.now() - startedAt,
     });
     return null;
   }
@@ -238,6 +278,7 @@ export async function generatePageImages(
 
   const capped = jobs.slice(0, 8);
   console.log(`[generatePageImages] generating ${capped.length} image(s) for page ${pageSlug}`);
+  const startedAt = Date.now();
 
   await Promise.all(
     capped.map(async ({ obj, prompt }) => {
@@ -248,6 +289,7 @@ export async function generatePageImages(
     }),
   );
 
+  console.log(`[generatePageImages] done for page ${pageSlug} elapsedMs=${Date.now() - startedAt}`);
   return schema;
 }
 
