@@ -13,7 +13,7 @@ import { createSSEStream, sendSSE, closeSSE, SSE_HEADERS, type SSEEvent } from '
 import { isTestVariantPage } from '@/lib/page-drafts';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 300;
+export const maxDuration = 800;
 
 const SYSTEM_PROMPT = `You are editing an existing landing page. The user will give you an instruction to modify the page.
 
