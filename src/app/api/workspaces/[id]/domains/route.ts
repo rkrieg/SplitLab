@@ -190,7 +190,7 @@ export async function POST(
 
       if ((count ?? 0) >= limit) {
         return NextResponse.json(
-          { error: `You have reached the domain limit for your plan (${limit}). Please upgrade to add more domains.`, limitError: true },
+          { error: `You have reached the domain limit (${limit}) for your plan . Please upgrade to add more domains.`, limitError: true },
           { status: 403 }
         );
       }
