@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
-import { resolveWorkspaceRole } from '@/lib/workspace-auth';
+import { resolveWorkspaceRole, resolveOwnerPlan } from '@/lib/workspace-auth';
+import { PLAN_LIMITS } from '@/lib/plans';
 
 const VALID_PARAMS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'] as const;
 const MAX_RULES = 20;
@@ -73,6 +74,16 @@ export async function POST(
 
   const wsRole = await resolveWorkspaceRole(page.workspace_id, session.user.id, session.user.role);
   if (!wsRole || wsRole === 'viewer') return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+
+  if (session.user.role !== 'admin') {
+    const ownerPlan = await resolveOwnerPlan(page.workspace_id);
+    if (!PLAN_LIMITS[ownerPlan]?.utm) {
+      return NextResponse.json(
+        { error: 'UTM personalization requires a Growth, Agency, or Scale plan. Please upgrade to use this feature.', limitError: true },
+        { status: 403 }
+      );
+    }
+  }
 
   let rules: unknown[];
   try {

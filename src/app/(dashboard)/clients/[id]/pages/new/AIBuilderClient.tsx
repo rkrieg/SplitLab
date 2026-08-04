@@ -174,7 +174,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
             AI Page Builder is not available on your plan
           </h2>
           <p className="text-sm text-slate-500 dark:text-slate-400 leading-relaxed mb-2">
-            AI website generation is available on the <strong className="text-slate-700 dark:text-slate-300">Agency</strong> and <strong className="text-slate-700 dark:text-slate-300">Scale</strong> plans.
+            AI website generation is available on the <strong className="text-slate-700 dark:text-slate-300">Growth</strong>, <strong className="text-slate-700 dark:text-slate-300">Agency</strong>, and <strong className="text-slate-700 dark:text-slate-300">Scale</strong> plans.
           </p>
           <p className="text-sm text-slate-400 dark:text-slate-500 leading-relaxed mb-8">
             Upgrade to generate landing pages with AI, edit them with chat, and publish them directly as A/B test variants.
@@ -904,7 +904,23 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Edit failed' }));
-      toast.error(err.error || 'Edit failed');
+      const message = err.error || 'Edit failed';
+      if (err.limitError) {
+        toast.error((t) => (
+          <span>
+            {message}{' '}
+            <a
+              href="/billing"
+              onClick={() => toast.dismiss(t.id)}
+              className="underline font-semibold"
+            >
+              Upgrade Plan
+            </a>
+          </span>
+        ), { duration: 8000 });
+      } else {
+        toast.error(message);
+      }
       setFollowUpEvents(null);
       setPhase('editing');
       return;
