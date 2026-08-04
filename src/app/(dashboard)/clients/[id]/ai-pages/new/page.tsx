@@ -43,7 +43,7 @@ export default async function AIBuilderPage({ params, searchParams }: PageProps)
 
   const { data: initialPage } = await db
     .from('pages')
-    .select('id, name, vertical, schema_json, conversation_json, html_url, html_content, slug, is_published, published_url, draft_html_content, draft_schema_json')
+    .select('id, name, vertical, schema_json, conversation_json, html_url, html_content, slug, is_published, published_url, draft_html_content, draft_schema_json, source_type')
     .eq('id', searchParams.page_id)
     .eq('workspace_id', workspace.id)
     .single();
@@ -66,6 +66,11 @@ export default async function AIBuilderPage({ params, searchParams }: PageProps)
     .maybeSingle();
 
   const isTestVariantPage = !!linkedVariant;
+  // Publishing a standalone URL and serving as a test variant are independent
+  // concerns — only pages with no independent identity (raw HTML pasted
+  // straight into a test's "Add Variant" flow, never touching the AI Pages
+  // list) have nothing meaningful to publish.
+  const canPublish = initialPage.source_type === 'ai_generated';
   const backPath = isTestVariantPage
     ? `/clients/${params.id}/tests/${linkedVariant.test_id}`
     : `/clients/${params.id}/ai-pages`;
@@ -91,6 +96,7 @@ export default async function AIBuilderPage({ params, searchParams }: PageProps)
       backPath={backPath}
       canUseAI={canUseAI}
       isTestVariantPage={isTestVariantPage}
+      canPublish={canPublish}
     />
   );
 }

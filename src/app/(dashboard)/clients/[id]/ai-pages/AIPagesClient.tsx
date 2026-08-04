@@ -279,7 +279,7 @@ export default function AIPagesClient({ pages: initialPages, clientId, workspace
           ) : undefined}
         />
       ) : (
-        <div className="card overflow-hidden">
+        <div className="card overflow-visible">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-white/[0.02]">
