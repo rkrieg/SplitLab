@@ -65,10 +65,13 @@ interface Props {
   initialPage?: InitialPage | null;
   backPath?: string;
   canUseAI?: boolean;
-  // True when this page is the html source for a test_variants row — those
-  // pages are already served live from this same row (see /api/serve), so
-  // Publish would only create an unused, unrelated standalone URL.
+  // True when this page is the html source for a test_variants row.
   isTestVariantPage?: boolean;
+  // False only for pages with no independent identity outside a test — raw
+  // HTML pasted straight into a test's "Add Variant" flow. AI-generated
+  // pages can always publish a standalone URL, even once linked to a test —
+  // publishing and serving test traffic are independent concerns.
+  canPublish?: boolean;
 }
 
 // Soft cap on the initial prompt — generous enough for a detailed multi-section
@@ -151,7 +154,7 @@ function hasUnfilledPlaceholders(text: string): boolean {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function AIBuilderClient({ workspaceId, clientId, clientName, variantName, initialPage, backPath, canUseAI = true, isTestVariantPage = false }: Props) {
+export default function AIBuilderClient({ workspaceId, clientId, clientName, variantName, initialPage, backPath, canUseAI = true, isTestVariantPage = false, canPublish = true }: Props) {
   const router = useRouter();
 
   // Variant pages ask the preview route for the in-progress draft; every
@@ -1629,103 +1632,105 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                 UTM
               </button>
             )}
-            {/* Primary publish/update button — hidden for test-variant pages, which
-                are already served live from this same row via /api/serve.
-                Publish there would only create an unused, unrelated URL.
-                "Back to Test" gives an explicit finish action instead, since
-                there's no publish step to signal "you're done" here. */}
-            {isTestVariantPage ? (
-              showPreview && (
-                <>
-                  {hasDraft && (
-                    <span className="hidden sm:inline text-[11px] text-amber-600 dark:text-amber-400 font-medium">
-                      Unsaved draft — not live yet
-                    </span>
-                  )}
-                  <button
-                    onClick={() => { router.push(backPath ?? `/clients/${clientId}/ai-pages`); router.refresh(); }}
-                    className="flex items-center gap-1.5 text-xs bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600 px-3 py-1.5 rounded-full font-medium transition-colors"
-                  >
-                    Back to Test
-                  </button>
-                  <div className="relative">
-                    <button
-                      onClick={() => setShowSaveMenu(v => !v)}
-                      disabled={!hasDraft || savingVariant !== null}
-                      className="flex items-center gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white px-3 py-1.5 rounded-full font-medium transition-colors shadow-md shadow-emerald-600/20"
-                    >
-                      {savingVariant && <Loader2 size={12} className="animate-spin" />}
-                      Save
-                      <ChevronDown size={12} className={cn('transition-transform', showSaveMenu && 'rotate-180')} />
-                    </button>
-                    {showSaveMenu && (
-                      <>
-                        <div className="fixed inset-0 z-10" onClick={() => setShowSaveMenu(false)} />
-                        <div className="absolute right-0 top-full mt-1 z-20 w-56 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-lg py-1 overflow-hidden">
-                          <button
-                            onClick={() => { setShowSaveMenu(false); setReplaceConfirmOpen(true); }}
-                            className="w-full flex flex-col items-start gap-0.5 px-3 py-2 text-left hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
-                          >
-                            <span className="text-xs font-medium text-slate-700 dark:text-slate-200">Replace Current Variant</span>
-                            <span className="text-[11px] text-slate-400 dark:text-slate-500">Overwrite what this test is serving live</span>
-                          </button>
-                          <button
-                            onClick={() => { setShowSaveMenu(false); handleSaveAsNew(); }}
-                            className="w-full flex flex-col items-start gap-0.5 px-3 py-2 text-left hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
-                          >
-                            <span className="text-xs font-medium text-slate-700 dark:text-slate-200">Save as New</span>
-                            <span className="text-[11px] text-slate-400 dark:text-slate-500">Create a new variant on this test</span>
-                          </button>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                </>
-              )
-            ) : (
+            {/* Back to Test + Replace/Save-as-New — pages already linked to a test */}
+            {isTestVariantPage && showPreview && (
               <>
-                {showPreview && !!pageId && (
-                  <div className="relative">
-                    <button
-                      onClick={() => setShowCreateSaveMenu(v => !v)}
-                      disabled={isLoading}
-                      className="flex items-center gap-1.5 text-xs bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600 disabled:opacity-40 disabled:cursor-not-allowed px-3 py-1.5 rounded-full font-medium transition-colors"
-                    >
-                      Save
-                      <ChevronDown size={12} className={cn('transition-transform', showCreateSaveMenu && 'rotate-180')} />
-                    </button>
-                    {showCreateSaveMenu && (
-                      <>
-                        <div className="fixed inset-0 z-10" onClick={() => setShowCreateSaveMenu(false)} />
-                        <div className="absolute right-0 top-full mt-1 z-20 w-56 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-lg py-1 overflow-hidden">
-                          <button
-                            onClick={openSaveAsTestModal}
-                            className="w-full flex flex-col items-start gap-0.5 px-3 py-2 text-left hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
-                          >
-                            <span className="text-xs font-medium text-slate-700 dark:text-slate-200">Save as a New Test</span>
-                            <span className="text-[11px] text-slate-400 dark:text-slate-500">Create a new test with this page</span>
-                          </button>
-                          <button
-                            onClick={openSaveAsVariantModal}
-                            className="w-full flex flex-col items-start gap-0.5 px-3 py-2 text-left hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
-                          >
-                            <span className="text-xs font-medium text-slate-700 dark:text-slate-200">Save as a Variant</span>
-                            <span className="text-[11px] text-slate-400 dark:text-slate-500">Add to an existing test at 0% traffic</span>
-                          </button>
-                        </div>
-                      </>
-                    )}
-                  </div>
+                {hasDraft && (
+                  <span className="hidden sm:inline text-[11px] text-amber-600 dark:text-amber-400 font-medium">
+                    Unsaved draft — not live yet
+                  </span>
                 )}
                 <button
-                  onClick={() => setPublishConfirmOpen(true)}
-                  disabled={!showPreview || isLoading}
-                  className="flex items-center gap-1.5 text-xs bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white px-3 py-1.5 rounded-full font-medium transition-colors shadow-md shadow-indigo-600/20"
+                  onClick={() => { router.push(backPath ?? `/clients/${clientId}/ai-pages`); router.refresh(); }}
+                  className="flex items-center gap-1.5 text-xs bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600 px-3 py-1.5 rounded-full font-medium transition-colors"
                 >
-                  {phase === 'publishing' ? <Loader2 size={12} className="animate-spin" /> : <Globe size={12} />}
-                  {publishedUrl ? 'Update' : 'Publish'}
+                  Back to Test
                 </button>
+                <div className="relative">
+                  <button
+                    onClick={() => setShowSaveMenu(v => !v)}
+                    disabled={!hasDraft || savingVariant !== null}
+                    title={!hasDraft ? 'Make an edit to enable Save' : undefined}
+                    className="flex items-center gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white px-3 py-1.5 rounded-full font-medium transition-colors shadow-md shadow-emerald-600/20"
+                  >
+                    {savingVariant && <Loader2 size={12} className="animate-spin" />}
+                    Save
+                    <ChevronDown size={12} className={cn('transition-transform', showSaveMenu && 'rotate-180')} />
+                  </button>
+                  {showSaveMenu && (
+                    <>
+                      <div className="fixed inset-0 z-10" onClick={() => setShowSaveMenu(false)} />
+                      <div className="absolute right-0 top-full mt-1 z-20 w-56 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-lg py-1 overflow-hidden">
+                        <button
+                          onClick={() => { setShowSaveMenu(false); setReplaceConfirmOpen(true); }}
+                          className="w-full flex flex-col items-start gap-0.5 px-3 py-2 text-left hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+                        >
+                          <span className="text-xs font-medium text-slate-700 dark:text-slate-200">Replace Current Variant</span>
+                          <span className="text-[11px] text-slate-400 dark:text-slate-500">Overwrite what this test is serving live</span>
+                        </button>
+                        <button
+                          onClick={() => { setShowSaveMenu(false); handleSaveAsNew(); }}
+                          className="w-full flex flex-col items-start gap-0.5 px-3 py-2 text-left hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+                        >
+                          <span className="text-xs font-medium text-slate-700 dark:text-slate-200">Save as New</span>
+                          <span className="text-[11px] text-slate-400 dark:text-slate-500">Create a new variant on this test</span>
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
               </>
+            )}
+
+            {/* Save as New Test / Save as a Variant — only for pages not yet linked to a test */}
+            {!isTestVariantPage && showPreview && !!pageId && (
+              <div className="relative">
+                <button
+                  onClick={() => setShowCreateSaveMenu(v => !v)}
+                  disabled={isLoading}
+                  className="flex items-center gap-1.5 text-xs bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600 disabled:opacity-40 disabled:cursor-not-allowed px-3 py-1.5 rounded-full font-medium transition-colors"
+                >
+                  Save
+                  <ChevronDown size={12} className={cn('transition-transform', showCreateSaveMenu && 'rotate-180')} />
+                </button>
+                {showCreateSaveMenu && (
+                  <>
+                    <div className="fixed inset-0 z-10" onClick={() => setShowCreateSaveMenu(false)} />
+                    <div className="absolute right-0 top-full mt-1 z-20 w-56 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-lg py-1 overflow-hidden">
+                      <button
+                        onClick={openSaveAsTestModal}
+                        className="w-full flex flex-col items-start gap-0.5 px-3 py-2 text-left hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+                      >
+                        <span className="text-xs font-medium text-slate-700 dark:text-slate-200">Save as a New Test</span>
+                        <span className="text-[11px] text-slate-400 dark:text-slate-500">Create a new test with this page</span>
+                      </button>
+                      <button
+                        onClick={openSaveAsVariantModal}
+                        className="w-full flex flex-col items-start gap-0.5 px-3 py-2 text-left hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+                      >
+                        <span className="text-xs font-medium text-slate-700 dark:text-slate-200">Save as a Variant</span>
+                        <span className="text-[11px] text-slate-400 dark:text-slate-500">Add to an existing test at 0% traffic</span>
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* Primary publish/update button — independent of test-linkage.
+                Publishing a standalone URL and serving as a test variant are
+                separate concerns; only pages with no independent identity
+                (raw HTML pasted into a test's "Add Variant" flow) have
+                nothing meaningful to publish, so canPublish is false there. */}
+            {canPublish && (
+              <button
+                onClick={() => setPublishConfirmOpen(true)}
+                disabled={!showPreview || isLoading}
+                className="flex items-center gap-1.5 text-xs bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white px-3 py-1.5 rounded-full font-medium transition-colors shadow-md shadow-indigo-600/20"
+              >
+                {phase === 'publishing' ? <Loader2 size={12} className="animate-spin" /> : <Globe size={12} />}
+                {publishedUrl ? 'Update' : 'Publish'}
+              </button>
             )}
 
             {/* More actions dropdown */}
@@ -1742,7 +1747,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                   <>
                     <div className="fixed inset-0 z-10" onClick={() => setShowPageActions(false)} />
                     <div className="absolute right-0 top-full mt-1 z-20 w-44 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-lg py-1 overflow-hidden">
-                      {slug && !isTestVariantPage && (
+                      {slug && canPublish && (
                         <a
                           href={phase === 'publishing' || isUnpublishing ? undefined : `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.trysplitlab.com'}/pages/${slug}`}
                           target="_blank"
