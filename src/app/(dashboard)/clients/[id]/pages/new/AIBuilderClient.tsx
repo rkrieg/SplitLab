@@ -6,7 +6,7 @@ import {
   Sparkles, Send, Globe, Copy, Check, ChevronLeft, Loader2,
   Wand2, Layout, Palette, RefreshCw, Monitor, Smartphone,
   ExternalLink, RotateCcw, Plus, Download, Lock, ArrowRight,
-  Sliders, Trash2, AlertTriangle, MoreHorizontal, MousePointer2,
+  Sliders, Trash2, AlertTriangle, MoreHorizontal, MousePointer2, ChevronDown,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { cn } from '@/lib/utils';
@@ -245,6 +245,8 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   const [hasDraft, setHasDraft] = useState(false);
   const [replaceConfirmOpen, setReplaceConfirmOpen] = useState(false);
   const [savingVariant, setSavingVariant] = useState<'replace' | 'new' | null>(null);
+  const [saveAsNewOpen, setSaveAsNewOpen] = useState(false);
+  const [newVariantForkName, setNewVariantForkName] = useState('');
 
   // Chat image attachments (paste / file-picker / drag-and-drop)
   const [chatImages, setChatImages] = useState<{ file: File; preview: string }[]>([]);
@@ -1004,19 +1006,29 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     }
   }
 
-  async function handleSaveAsNew() {
+  function handleSaveAsNew() {
+    setNewVariantForkName('');
+    setSaveAsNewOpen(true);
+  }
+
+  async function handleConfirmSaveAsNew(e: React.FormEvent) {
+    e.preventDefault();
     if (!pageId) return;
     setSavingVariant('new');
     try {
-      const res = await fetch(`/api/pages/${pageId}/save-as-new`, { method: 'POST' });
+      const res = await fetch(`/api/pages/${pageId}/save-as-new`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newVariantForkName.trim() || undefined }),
+      });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        toast.error(err.error || 'Failed to save as a new page');
+        toast.error(err.error || 'Failed to save as a new variant');
         return;
       }
-      const data = await res.json();
-      toast.success('Saved as a new draft in AI Pages');
-      router.push(`/clients/${clientId}/ai-pages/new?page_id=${data.pageId}`);
+      setSaveAsNewOpen(false);
+      toast.success('Added to the test as a new variant at 0% traffic');
+      router.push(backPath ?? `/clients/${clientId}/ai-pages`);
       router.refresh();
     } finally {
       setSavingVariant(null);
@@ -1514,8 +1526,9 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                       disabled={!hasDraft || savingVariant !== null}
                       className="flex items-center gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white px-3 py-1.5 rounded-full font-medium transition-colors shadow-md shadow-emerald-600/20"
                     >
-                      {savingVariant ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+                      {savingVariant && <Loader2 size={12} className="animate-spin" />}
                       Save
+                      <ChevronDown size={12} className={cn('transition-transform', showSaveMenu && 'rotate-180')} />
                     </button>
                     {showSaveMenu && (
                       <>
@@ -1533,7 +1546,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                             className="w-full flex flex-col items-start gap-0.5 px-3 py-2 text-left hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
                           >
                             <span className="text-xs font-medium text-slate-700 dark:text-slate-200">Save as New</span>
-                            <span className="text-[11px] text-slate-400 dark:text-slate-500">Fork into a new page in AI Pages — live variant untouched</span>
+                            <span className="text-[11px] text-slate-400 dark:text-slate-500">Create a new variant on this test</span>
                           </button>
                         </div>
                       </>
@@ -1743,6 +1756,45 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                 Yes, replace it
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {saveAsNewOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => !savingVariant && setSaveAsNewOpen(false)}>
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl p-6 w-full max-w-sm mx-4 shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="mb-3">
+              <h3 className="text-slate-900 dark:text-slate-100 font-semibold text-base">Save as a new variant</h3>
+            </div>
+            <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
+              This forks your draft into a new variant on this test at 0% traffic — the live variant and everyone else's traffic split stay untouched.
+            </p>
+            <form onSubmit={handleConfirmSaveAsNew}>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+                Variant Name
+              </label>
+              <input
+                type="text"
+                value={newVariantForkName}
+                onChange={(e) => setNewVariantForkName(e.target.value)}
+                placeholder={`${variantName ?? 'Variant'} copy`}
+                className="input-base w-full"
+                autoFocus
+              />
+              <div className="flex justify-end gap-2 mt-5">
+                <button type="button" onClick={() => setSaveAsNewOpen(false)} disabled={!!savingVariant} className="btn-secondary text-sm rounded-xl">
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={!!savingVariant}
+                  className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white text-sm px-4 py-2 rounded-xl font-medium transition-colors"
+                >
+                  {savingVariant === 'new' && <Loader2 size={13} className="animate-spin" />}
+                  Save as New
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

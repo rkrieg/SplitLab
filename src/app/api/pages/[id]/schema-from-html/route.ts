@@ -421,7 +421,7 @@ export async function POST(
       {
         system: SYSTEM_PROMPT,
         messages: [{ role: 'user', content: `Existing page HTML:\n${htmlForModel}` }],
-        maxTokens: 8000,
+        maxTokens: 16000,
         label: 'schema-from-html',
       },
       () => {},
