@@ -248,6 +248,22 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   const [saveAsNewOpen, setSaveAsNewOpen] = useState(false);
   const [newVariantForkName, setNewVariantForkName] = useState('');
 
+  // Save as New Test / Save as a Variant — only reachable for pages that
+  // aren't yet linked to any test (isTestVariantPage === false); once linked,
+  // this whole toolbar branch stops rendering in favor of the Replace/Save as
+  // New dropdown above.
+  const [showCreateSaveMenu, setShowCreateSaveMenu] = useState(false);
+  const [saveAsTestOpen, setSaveAsTestOpen] = useState(false);
+  const [newTestName, setNewTestName] = useState('');
+  const [newTestUrlPath, setNewTestUrlPath] = useState('/');
+  const [savingAsTest, setSavingAsTest] = useState(false);
+  const [saveAsVariantOpen, setSaveAsVariantOpen] = useState(false);
+  const [workspaceTestsForSave, setWorkspaceTestsForSave] = useState<{ id: string; name: string; test_variants: { id: string }[] }[]>([]);
+  const [loadingWorkspaceTests, setLoadingWorkspaceTests] = useState(false);
+  const [selectedSaveTestId, setSelectedSaveTestId] = useState('');
+  const [saveVariantName, setSaveVariantName] = useState('');
+  const [savingAsVariant, setSavingAsVariant] = useState(false);
+
   // Chat image attachments (paste / file-picker / drag-and-drop)
   const [chatImages, setChatImages] = useState<{ file: File; preview: string }[]>([]);
   const chatImageInputRef = useRef<HTMLInputElement>(null);
@@ -1051,6 +1067,102 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     }
   }
 
+  function openSaveAsTestModal() {
+    setShowCreateSaveMenu(false);
+    setNewTestName(pageName || 'New Test');
+    setNewTestUrlPath('/');
+    setSaveAsTestOpen(true);
+  }
+
+  async function handleConfirmSaveAsTest(e: React.FormEvent) {
+    e.preventDefault();
+    if (!pageId || !newTestName.trim() || !newTestUrlPath.trim()) return;
+    setSavingAsTest(true);
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}/tests`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: newTestName.trim(),
+          url_path: newTestUrlPath.trim(),
+          variants: [{ name: 'Control', page_id: pageId, traffic_weight: 100, is_control: true }],
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.error || 'Failed to create test');
+        return;
+      }
+      const test = await res.json();
+      toast.success('Test created');
+      setSaveAsTestOpen(false);
+      router.push(`/clients/${clientId}/tests/${test.id}`);
+    } catch {
+      toast.error('Unexpected error');
+    } finally {
+      setSavingAsTest(false);
+    }
+  }
+
+  function nextSaveVariantName(test: { test_variants: { id: string }[] }) {
+    const count = test.test_variants?.length ?? 0;
+    return `Variant ${String.fromCharCode(65 + count)}`;
+  }
+
+  async function openSaveAsVariantModal() {
+    setShowCreateSaveMenu(false);
+    setSelectedSaveTestId('');
+    setSaveVariantName('');
+    setSaveAsVariantOpen(true);
+    setLoadingWorkspaceTests(true);
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}/tests`);
+      if (!res.ok) throw new Error();
+      const tests = await res.json();
+      setWorkspaceTestsForSave(tests);
+      if (tests.length > 0) {
+        setSelectedSaveTestId(tests[0].id);
+        setSaveVariantName(nextSaveVariantName(tests[0]));
+      }
+    } catch {
+      toast.error('Failed to load tests');
+    } finally {
+      setLoadingWorkspaceTests(false);
+    }
+  }
+
+  function handleSelectSaveTest(testId: string) {
+    setSelectedSaveTestId(testId);
+    const test = workspaceTestsForSave.find((t) => t.id === testId);
+    if (test) setSaveVariantName(nextSaveVariantName(test));
+  }
+
+  async function handleConfirmSaveAsVariant(e: React.FormEvent) {
+    e.preventDefault();
+    if (!pageId || !selectedSaveTestId || !saveVariantName.trim()) return;
+    setSavingAsVariant(true);
+    try {
+      const res = await fetch(`/api/pages/${pageId}/save-as-variant`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ test_id: selectedSaveTestId, name: saveVariantName.trim() }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.error || 'Failed to add as a variant');
+        return;
+      }
+      const { testId } = await res.json();
+      toast.success('Added to the test as a new variant at 0% traffic');
+      setSaveAsVariantOpen(false);
+      router.push(`/clients/${clientId}/tests/${testId}`);
+    } catch {
+      toast.error('Unexpected error');
+    } finally {
+      setSavingAsVariant(false);
+    }
+  }
+
   async function handlePublish(id?: string) {
     const pid = id ?? pageId;
     if (!pid) return;
@@ -1571,14 +1683,49 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                 </>
               )
             ) : (
-              <button
-                onClick={() => setPublishConfirmOpen(true)}
-                disabled={!showPreview || isLoading}
-                className="flex items-center gap-1.5 text-xs bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white px-3 py-1.5 rounded-full font-medium transition-colors shadow-md shadow-indigo-600/20"
-              >
-                {phase === 'publishing' ? <Loader2 size={12} className="animate-spin" /> : <Globe size={12} />}
-                {publishedUrl ? 'Update' : 'Publish'}
-              </button>
+              <>
+                {showPreview && !!pageId && (
+                  <div className="relative">
+                    <button
+                      onClick={() => setShowCreateSaveMenu(v => !v)}
+                      disabled={isLoading}
+                      className="flex items-center gap-1.5 text-xs bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600 disabled:opacity-40 disabled:cursor-not-allowed px-3 py-1.5 rounded-full font-medium transition-colors"
+                    >
+                      Save
+                      <ChevronDown size={12} className={cn('transition-transform', showCreateSaveMenu && 'rotate-180')} />
+                    </button>
+                    {showCreateSaveMenu && (
+                      <>
+                        <div className="fixed inset-0 z-10" onClick={() => setShowCreateSaveMenu(false)} />
+                        <div className="absolute right-0 top-full mt-1 z-20 w-56 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-lg py-1 overflow-hidden">
+                          <button
+                            onClick={openSaveAsTestModal}
+                            className="w-full flex flex-col items-start gap-0.5 px-3 py-2 text-left hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+                          >
+                            <span className="text-xs font-medium text-slate-700 dark:text-slate-200">Save as a New Test</span>
+                            <span className="text-[11px] text-slate-400 dark:text-slate-500">Create a new test with this page</span>
+                          </button>
+                          <button
+                            onClick={openSaveAsVariantModal}
+                            className="w-full flex flex-col items-start gap-0.5 px-3 py-2 text-left hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+                          >
+                            <span className="text-xs font-medium text-slate-700 dark:text-slate-200">Save as a Variant</span>
+                            <span className="text-[11px] text-slate-400 dark:text-slate-500">Add to an existing test at 0% traffic</span>
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+                <button
+                  onClick={() => setPublishConfirmOpen(true)}
+                  disabled={!showPreview || isLoading}
+                  className="flex items-center gap-1.5 text-xs bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white px-3 py-1.5 rounded-full font-medium transition-colors shadow-md shadow-indigo-600/20"
+                >
+                  {phase === 'publishing' ? <Loader2 size={12} className="animate-spin" /> : <Globe size={12} />}
+                  {publishedUrl ? 'Update' : 'Publish'}
+                </button>
+              </>
             )}
 
             {/* More actions dropdown */}
@@ -1811,6 +1958,114 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {saveAsTestOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => !savingAsTest && setSaveAsTestOpen(false)}>
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl p-6 w-full max-w-sm mx-4 shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="mb-3">
+              <h3 className="text-slate-900 dark:text-slate-100 font-semibold text-base">Save as a New Test</h3>
+            </div>
+            <form onSubmit={handleConfirmSaveAsTest}>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+                Test Name <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={newTestName}
+                onChange={(e) => setNewTestName(e.target.value)}
+                className="input-base w-full mb-3"
+                required
+                autoFocus
+              />
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+                URL Path <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={newTestUrlPath}
+                onChange={(e) => setNewTestUrlPath(e.target.value)}
+                placeholder="/"
+                className="input-base w-full"
+                required
+              />
+              <p className="text-xs text-slate-400 dark:text-slate-500 mt-3">
+                This page will become the control variant at 100% traffic.
+              </p>
+              <div className="flex justify-end gap-2 mt-5">
+                <button type="button" onClick={() => setSaveAsTestOpen(false)} disabled={savingAsTest} className="btn-secondary text-sm rounded-xl">
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingAsTest || !newTestName.trim() || !newTestUrlPath.trim()}
+                  className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 disabled:cursor-not-allowed text-white text-sm px-4 py-2 rounded-xl font-medium transition-colors"
+                >
+                  {savingAsTest && <Loader2 size={13} className="animate-spin" />}
+                  Create Test
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {saveAsVariantOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => !savingAsVariant && setSaveAsVariantOpen(false)}>
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl p-6 w-full max-w-sm mx-4 shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="mb-3">
+              <h3 className="text-slate-900 dark:text-slate-100 font-semibold text-base">Save as a Variant</h3>
+            </div>
+            {loadingWorkspaceTests ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 size={20} className="animate-spin text-slate-400" />
+              </div>
+            ) : workspaceTestsForSave.length === 0 ? (
+              <p className="text-sm text-slate-500 dark:text-slate-400">
+                No tests in this workspace yet. Create one first, or use &quot;Save as a New Test&quot; instead.
+              </p>
+            ) : (
+              <form onSubmit={handleConfirmSaveAsVariant}>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Test</label>
+                <select
+                  value={selectedSaveTestId}
+                  onChange={(e) => handleSelectSaveTest(e.target.value)}
+                  className="input-base w-full mb-3"
+                >
+                  {workspaceTestsForSave.map((t) => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
+                  ))}
+                </select>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+                  Variant Name <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={saveVariantName}
+                  onChange={(e) => setSaveVariantName(e.target.value)}
+                  className="input-base w-full"
+                  required
+                />
+                <p className="text-xs text-slate-400 dark:text-slate-500 mt-3">
+                  Added at 0% traffic — existing variants and traffic split stay untouched.
+                </p>
+                <div className="flex justify-end gap-2 mt-5">
+                  <button type="button" onClick={() => setSaveAsVariantOpen(false)} disabled={savingAsVariant} className="btn-secondary text-sm rounded-xl">
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={savingAsVariant || !saveVariantName.trim()}
+                    className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 disabled:cursor-not-allowed text-white text-sm px-4 py-2 rounded-xl font-medium transition-colors"
+                  >
+                    {savingAsVariant && <Loader2 size={13} className="animate-spin" />}
+                    Add as Variant
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       )}
