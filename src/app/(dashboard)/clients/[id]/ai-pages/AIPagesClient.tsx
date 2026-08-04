@@ -37,7 +37,8 @@ function UpgradeModal({ onClose }: { onClose: () => void }) {
       </div>
       <p className="text-slate-500 dark:text-slate-400 text-sm leading-relaxed mb-1">
         This feature is only available on the{' '}
-        <strong className="text-slate-900 dark:text-white">Agency</strong> and{' '}
+        <strong className="text-slate-900 dark:text-white">Growth</strong>,{' '}
+        <strong className="text-slate-900 dark:text-white">Agency</strong>, and{' '}
         <strong className="text-slate-900 dark:text-white">Scale</strong> plans.
       </p>
       <p className="text-slate-400 dark:text-slate-500 text-sm leading-relaxed mb-6">

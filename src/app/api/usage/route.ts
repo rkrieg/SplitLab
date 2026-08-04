@@ -43,7 +43,8 @@ export async function GET() {
 
   const clientCount = (clients ?? []).length;
 
-  // Count unique team members (including owner) across all workspaces owned by this user
+  // Count invited team members (owner excluded — maxTeamSeats is invite-only,
+  // same convention as /api/team's GET/POST) across all workspaces owned by this user
   let teamMemberCount = 0;
   if (limits.maxTeamSeats > 0) {
     const { data: workspaces } = await db
@@ -56,13 +57,11 @@ export async function GET() {
       const { data: memberRows } = await db
         .from('workspace_members')
         .select('user_id')
-        .in('workspace_id', workspaceIds);
+        .in('workspace_id', workspaceIds)
+        .neq('user_id', userId);
 
-      // Count all unique members including the owner
       teamMemberCount = new Set(memberRows?.map((m) => m.user_id)).size;
     }
-    // Owner always counts as 1 seat minimum
-    if (teamMemberCount === 0) teamMemberCount = 1;
   }
 
   // Count domains across all workspaces owned by this user

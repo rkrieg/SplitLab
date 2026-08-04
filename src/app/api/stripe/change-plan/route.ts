@@ -8,6 +8,7 @@ export const dynamic = 'force-dynamic';
 
 const PLAN_PRICE_MAP: Record<string, string | undefined> = {
   pro:    process.env.STRIPE_PRICE_PRO,
+  growth: process.env.STRIPE_PRICE_GROWTH,
   agency: process.env.STRIPE_PRICE_AGENCY,
   scale:  process.env.STRIPE_PRICE_SCALE,
 };
@@ -50,8 +51,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Subscription item not found' }, { status: 400 });
     }
 
-    const currentIdx = ['free', 'pro', 'agency', 'scale'].indexOf(u.plan ?? 'free');
-    const newIdx     = ['free', 'pro', 'agency', 'scale'].indexOf(plan);
+    const currentIdx = ['free', 'pro', 'growth', 'agency', 'scale'].indexOf(u.plan ?? 'free');
+    const newIdx     = ['free', 'pro', 'growth', 'agency', 'scale'].indexOf(plan);
     const isUpgrade  = newIdx > currentIdx;
 
     const updatedSub = await stripe.subscriptions.update(u.stripe_subscription_id, {

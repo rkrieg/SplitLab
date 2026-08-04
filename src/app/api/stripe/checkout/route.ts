@@ -9,6 +9,7 @@ export const dynamic = 'force-dynamic';
 // Map plan ID → Stripe price ID. Must be set in environment variables.
 const PLAN_PRICE_MAP: Record<string, string | undefined> = {
   pro:    process.env.STRIPE_PRICE_PRO,
+  growth: process.env.STRIPE_PRICE_GROWTH,
   agency: process.env.STRIPE_PRICE_AGENCY,
   scale:  process.env.STRIPE_PRICE_SCALE,
 };
