@@ -1546,7 +1546,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                             className="w-full flex flex-col items-start gap-0.5 px-3 py-2 text-left hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
                           >
                             <span className="text-xs font-medium text-slate-700 dark:text-slate-200">Save as New</span>
-                            <span className="text-[11px] text-slate-400 dark:text-slate-500">Fork into a new page in AI Pages — live variant untouched</span>
+                            <span className="text-[11px] text-slate-400 dark:text-slate-500">Create a new variant on this test</span>
                           </button>
                         </div>
                       </>
