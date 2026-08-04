@@ -134,7 +134,7 @@ function SignupFlow() {
   }
 
   return (
-    <div className="w-full max-w-4xl mx-auto px-4">
+    <div className="w-full max-w-6xl mx-auto px-4">
       <div className="flex items-center justify-center mb-8">
         <Link href="/">
           <img src="/splitlab-logo-light.png" alt="SplitLab" className="dark:hidden" style={{ height: '90px', width: 'auto' }} />
@@ -149,7 +149,7 @@ function SignupFlow() {
             <p className="text-slate-500 dark:text-slate-400 text-sm">Start free or unlock more with a paid plan. No setup fees. Cancel anytime.</p>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
             {PLANS.map(plan => (
               <button
                 key={plan.id}

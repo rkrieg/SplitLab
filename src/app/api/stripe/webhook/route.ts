@@ -9,6 +9,7 @@ export const dynamic = 'force-dynamic';
 // metadata.plan is always the primary source — this is just a fallback.
 const PRICE_TO_PLAN: Record<string, string> = {
   ...(process.env.STRIPE_PRICE_PRO    ? { [process.env.STRIPE_PRICE_PRO]:    'pro'    } : {}),
+  ...(process.env.STRIPE_PRICE_GROWTH ? { [process.env.STRIPE_PRICE_GROWTH]: 'growth' } : {}),
   ...(process.env.STRIPE_PRICE_AGENCY ? { [process.env.STRIPE_PRICE_AGENCY]: 'agency' } : {}),
   ...(process.env.STRIPE_PRICE_SCALE  ? { [process.env.STRIPE_PRICE_SCALE]:  'scale'  } : {}),
 };
@@ -133,7 +134,7 @@ export async function POST(request: NextRequest) {
         const custId = extractId(sub.customer);
         if (!custId) break;
 
-        // ⚠ Use 'free', NOT 'starter' — DB constraint is CHECK (plan IN ('free','pro','agency','scale'))
+        // ⚠ Use 'free', NOT 'starter' — DB constraint is CHECK (plan IN ('free','pro','growth','agency','scale'))
         await db.from('users').update({
           plan:                   'free',
           subscription_status:    'canceled',

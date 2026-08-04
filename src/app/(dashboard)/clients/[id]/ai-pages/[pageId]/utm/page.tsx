@@ -2,7 +2,8 @@ import { getServerSession } from 'next-auth';
 import { redirect, notFound } from 'next/navigation';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
-import { resolveWorkspaceRole } from '@/lib/workspace-auth';
+import { resolveWorkspaceRole, resolveOwnerPlan } from '@/lib/workspace-auth';
+import { PLAN_LIMITS } from '@/lib/plans';
 import UTMPickerClient, { type StoredFieldSelectors } from './UTMPickerClient';
 
 interface PageProps {
@@ -34,6 +35,9 @@ export default async function UTMPickerPage({ params }: PageProps) {
 
   if (!page) notFound();
 
+  const ownerPlan = await resolveOwnerPlan(workspace.id);
+  const canUseUtm = session.user.role === 'admin' || (PLAN_LIMITS[ownerPlan]?.utm ?? false);
+
   const { data: rules } = await db
     .from('personalization_rules')
     .select('*')
@@ -44,6 +48,7 @@ export default async function UTMPickerPage({ params }: PageProps) {
   return (
     <UTMPickerClient
       clientId={params.id}
+      canUseUtm={canUseUtm}
       page={{
         id: page.id,
         name: page.name,

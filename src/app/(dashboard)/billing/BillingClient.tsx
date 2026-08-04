@@ -43,8 +43,8 @@ function MeterBar({ pct, limit }: { pct: number; limit: number | null }) {
   );
 }
 
-const PAID_PLANS: PlanId[] = ["pro", "agency", "scale"];
-const PLAN_ORDER: PlanId[] = ["free", "pro", "agency", "scale"];
+const PAID_PLANS: PlanId[] = ["pro", "growth", "agency", "scale"];
+const PLAN_ORDER: PlanId[] = ["free", "pro", "growth", "agency", "scale"];
 
 export default function BillingClient({
   initialPlan,
@@ -342,7 +342,7 @@ export default function BillingClient({
             <Zap size={14} className="text-indigo-500" />
             {currentPlan === 'free' ? 'Choose a plan' : 'Change plan'}
           </h3>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {PAID_PLANS.map((planId) => {
               const p = PLAN_DETAILS[planId];
               const isCurrent = planId === currentPlan;

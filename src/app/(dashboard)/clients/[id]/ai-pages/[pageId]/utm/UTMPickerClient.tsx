@@ -5,7 +5,7 @@ import { useRouter, usePathname } from 'next/navigation';
 import {
   ChevronLeft, ChevronDown, Plus, Trash2, Check, Loader2, Sparkles,
   ExternalLink, AlertTriangle, MousePointer2, X, Image as ImageIcon, Type,
-  Monitor, Smartphone,
+  Monitor, Smartphone, Lock, ArrowRight,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { cn } from '@/lib/utils';
@@ -65,6 +65,7 @@ interface Props {
   clientId: string;
   page: PageInfo;
   initialRules: UTMRule[];
+  canUseUtm?: boolean;
 }
 
 const UTM_PARAMS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'];
@@ -259,11 +260,45 @@ function buildHtmlPickerScript(activeField: string): string {
 `;
 }
 
-export default function UTMPickerClient({ clientId, page, initialRules }: Props) {
+export default function UTMPickerClient({ clientId, page, initialRules, canUseUtm = true }: Props) {
   const router = useRouter();
   const pathname = usePathname();
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const isHtmlPage = !page.isAiPage;
+
+  if (!canUseUtm) {
+    return (
+      <div className="fixed inset-0 z-20 flex items-center justify-center bg-slate-50 dark:bg-slate-900 transition-[left] duration-200" style={{ left: 'var(--sl-sidebar-w, 15rem)' }}>
+        <div className="flex flex-col items-center text-center max-w-md px-6">
+          <div className="w-16 h-16 rounded-2xl bg-indigo-50 dark:bg-indigo-600/10 border border-indigo-100 dark:border-indigo-600/20 flex items-center justify-center mb-5">
+            <Lock size={26} className="text-indigo-500 dark:text-indigo-400" />
+          </div>
+          <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100 mb-2">
+            UTM Personalization is not available on your plan
+          </h2>
+          <p className="text-sm text-slate-500 dark:text-slate-400 leading-relaxed mb-2">
+            UTM personalization is available on the <strong className="text-slate-700 dark:text-slate-300">Growth</strong>, <strong className="text-slate-700 dark:text-slate-300">Agency</strong>, and <strong className="text-slate-700 dark:text-slate-300">Scale</strong> plans.
+          </p>
+          <p className="text-sm text-slate-400 dark:text-slate-500 leading-relaxed mb-8">
+            Upgrade to personalize page content based on UTM parameters from your ad campaigns.
+          </p>
+          <a
+            href="/billing"
+            className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold transition-colors shadow-lg shadow-indigo-600/25"
+          >
+            Upgrade Plan
+            <ArrowRight size={15} />
+          </a>
+          <button
+            onClick={() => router.push(`/clients/${clientId}/${isHtmlPage ? 'pages' : 'ai-pages'}`)}
+            className="mt-4 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+          >
+            ← Back to pages
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   // ── Field mappings ──
   const [fields, setFields] = useState<Field[]>(() => {
@@ -797,7 +832,27 @@ export default function UTMPickerClient({ clientId, page, initialRules }: Props)
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ rules: rulesToSave }),
       });
-      if (!res.ok) throw new Error((await res.json()).error);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        const message = body.error || 'Failed to save rules.';
+        if (body.limitError) {
+          toast.error((t) => (
+            <span>
+              {message}{' '}
+              <a
+                href="/billing"
+                onClick={() => toast.dismiss(t.id)}
+                className="underline font-semibold"
+              >
+                Upgrade Plan
+              </a>
+            </span>
+          ), { duration: 8000 });
+        } else {
+          toast.error(message);
+        }
+        return false;
+      }
       toast.success('UTM rules saved.');
       setPreviewRefresh(v => v + 1);
       return true;

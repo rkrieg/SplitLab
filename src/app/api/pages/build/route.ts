@@ -67,7 +67,7 @@ export async function POST(request: NextRequest) {
     const ownerPlan = await resolveOwnerPlan(workspace_id);
     if (!PLAN_LIMITS[ownerPlan]?.aiPages) {
       return NextResponse.json(
-        { error: 'AI page generation requires an Agency or Scale plan. Please upgrade to use this feature.', limitError: true },
+        { error: 'AI page generation requires a Growth, Agency, or Scale plan. Please upgrade to use this feature.', limitError: true },
         { status: 403 }
       );
     }

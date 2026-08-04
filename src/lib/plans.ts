@@ -9,20 +9,25 @@
  *
  * Free    → 0 domains, 1 test, 2 variants/test, 1 client
  * Pro     → 1 domain, 10 tests, unlimited variants, 1 client
+ * Growth  → 2 domains, 10 tests, unlimited variants, 1 client, AI + UTM
  * Agency  → 10 domains, 50 tests, unlimited variants, 10 clients
  * Scale   → unlimited everything
  */
-// Domain limit is 1 per client/workspace (confirmed by client).
+// Domain limit is 1 per client/workspace for Free/Pro/Agency (confirmed by client).
 // "Up to 10 custom domains" on Agency = 10 clients × 1 domain each, not 10 per workspace.
-export const PLAN_LIMITS: Record<string, { domains: number; tests: number; variants: number; clients: number; teamSeats: number; aiPages: boolean }> = {
-  free:   { domains: 0,        tests: 1,        variants: 2,         clients: 1,         teamSeats: 0,        aiPages: false },
-  pro:    { domains: 1,        tests: 10,       variants: Infinity,  clients: 1,         teamSeats: 1,        aiPages: false },
-  agency: { domains: 1,        tests: 50,       variants: Infinity,  clients: 10,        teamSeats: 10,       aiPages: true  },
-  scale:  { domains: Infinity, tests: Infinity, variants: Infinity,  clients: Infinity,  teamSeats: Infinity, aiPages: true  },
+// Growth is the one exception: 1 client, but 2 domains allowed on that single client.
+// teamSeats excludes the owner (see /api/team) — Pro is owner-only; Growth's "two users"
+// means 1 invite on top of the owner.
+export const PLAN_LIMITS: Record<string, { domains: number; tests: number; variants: number; clients: number; teamSeats: number; aiPages: boolean; utm: boolean }> = {
+  free:   { domains: 0,        tests: 1,        variants: 2,         clients: 1,         teamSeats: 0,        aiPages: false, utm: false },
+  pro:    { domains: 1,        tests: 10,       variants: Infinity,  clients: 1,         teamSeats: 0,        aiPages: false, utm: false },
+  growth: { domains: 2,        tests: 10,       variants: Infinity,  clients: 1,         teamSeats: 1,        aiPages: true,  utm: true  },
+  agency: { domains: 1,        tests: 50,       variants: Infinity,  clients: 10,        teamSeats: 10,       aiPages: true,  utm: true  },
+  scale:  { domains: Infinity, tests: Infinity, variants: Infinity,  clients: Infinity,  teamSeats: Infinity, aiPages: true,  utm: true  },
 };
 
 export interface Plan {
-  id: 'free' | 'pro' | 'agency' | 'scale';
+  id: 'free' | 'pro' | 'growth' | 'agency' | 'scale';
   label: string;
   price: string;
   sub: string;
@@ -35,7 +40,7 @@ export interface Plan {
 // ─── Billing UI helpers ──────────────────────────────────────────────────────
 
 /** Canonical plan IDs used in the DB and Stripe metadata. */
-export type PlanId = 'free' | 'pro' | 'agency' | 'scale';
+export type PlanId = 'free' | 'pro' | 'growth' | 'agency' | 'scale';
 
 /** Rich plan details used by the billing page. */
 export interface PlanDetails {
@@ -69,8 +74,18 @@ export const PLAN_DETAILS: Record<PlanId, PlanDetails> = {
     maxClients: 1,
     monthlyVisitors: 25_000,
     maxDomains: 1,
-    maxTeamSeats: 1,
+    maxTeamSeats: 0,
     features: ['10 active tests', 'Unlimited variants', '25,000 visitors/mo', '1 custom domain', 'CSV export', 'Priority email support'],
+  },
+  growth: {
+    name: 'Growth',
+    monthlyPrice: 99,
+    maxActiveTests: 10,
+    maxClients: 1,
+    monthlyVisitors: 50_000,
+    maxDomains: 2,
+    maxTeamSeats: 1,
+    features: ['10 active tests', 'Unlimited variants', '50,000 visitors/mo', '2 custom domains', 'Build & Edit with AI', 'UTM personalization', '1 team seat', 'CSV export', 'Priority email support'],
   },
   agency: {
     name: 'Agency',
@@ -129,6 +144,16 @@ export const PLANS: Plan[] = [
     cta: 'Start Pro',
     highlight: false,
     signupHref: '/signup?plan=pro',
+  },
+  {
+    id: 'growth',
+    label: 'Growth',
+    price: '$99',
+    sub: 'For teams ready to test faster with AI',
+    features: ['10 active tests', 'Unlimited variants', '50,000 visitors/mo', '2 custom domains', 'Build & Edit with AI', 'UTM personalization', '1 team seat', 'CSV export', 'Priority email support'],
+    cta: 'Start Growth',
+    highlight: false,
+    signupHref: '/signup?plan=growth',
   },
   {
     id: 'agency',
