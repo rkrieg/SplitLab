@@ -9,7 +9,7 @@ import { PLAN_LIMITS } from '@/lib/plans';
 import { z } from 'zod';
 
 const saveAsNewSchema = z.object({
-  name: z.string().min(1).max(255).optional(),
+  name: z.string().trim().min(1, 'Variant name is required').max(255),
 });
 
 // Forks a variant page's draft into a brand-new page and immediately wires
@@ -27,7 +27,8 @@ export async function POST(
   try {
     body = await request.json();
   } catch {
-    // no body sent — fine, name is optional
+    // no body sent — falls through to the schema check below, which
+    // rejects it since name is required
   }
   const parsed = saveAsNewSchema.safeParse(body);
   if (!parsed.success) {
@@ -59,7 +60,7 @@ export async function POST(
   const testName = Array.isArray(linkedVariant.tests)
     ? (linkedVariant.tests[0] as { name: string } | undefined)?.name
     : (linkedVariant.tests as { name: string } | null)?.name;
-  const variantName = parsed.data.name?.trim() || `${linkedVariant.name} copy`;
+  const variantName = parsed.data.name;
   const pageName = `${testName ?? 'Test'} - ${variantName}`;
 
   // Enforce plan's variant-per-test limit — this fork becomes a real variant,

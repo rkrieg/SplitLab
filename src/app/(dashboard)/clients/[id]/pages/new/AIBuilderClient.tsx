@@ -1007,19 +1007,19 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   }
 
   function handleSaveAsNew() {
-    setNewVariantForkName('');
+    setNewVariantForkName(`${variantName ?? 'Variant'} copy`);
     setSaveAsNewOpen(true);
   }
 
   async function handleConfirmSaveAsNew(e: React.FormEvent) {
     e.preventDefault();
-    if (!pageId) return;
+    if (!pageId || !newVariantForkName.trim()) return;
     setSavingVariant('new');
     try {
       const res = await fetch(`/api/pages/${pageId}/save-as-new`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newVariantForkName.trim() || undefined }),
+        body: JSON.stringify({ name: newVariantForkName.trim() }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -1771,14 +1771,14 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
             </p>
             <form onSubmit={handleConfirmSaveAsNew}>
               <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
-                Variant Name
+                Variant Name <span className="text-red-500">*</span>
               </label>
               <input
                 type="text"
                 value={newVariantForkName}
                 onChange={(e) => setNewVariantForkName(e.target.value)}
-                placeholder={`${variantName ?? 'Variant'} copy`}
                 className="input-base w-full"
+                required
                 autoFocus
               />
               <div className="flex justify-end gap-2 mt-5">
@@ -1787,8 +1787,8 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                 </button>
                 <button
                   type="submit"
-                  disabled={!!savingVariant}
-                  className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white text-sm px-4 py-2 rounded-xl font-medium transition-colors"
+                  disabled={!!savingVariant || !newVariantForkName.trim()}
+                  className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 disabled:cursor-not-allowed text-white text-sm px-4 py-2 rounded-xl font-medium transition-colors"
                 >
                   {savingVariant === 'new' && <Loader2 size={13} className="animate-spin" />}
                   Save as New
