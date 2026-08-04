@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { resolveWorkspaceRole } from '@/lib/workspace-auth';
 import { PLAN_LIMITS } from '@/lib/plans';
+import { getLinkedVariant } from '@/lib/page-drafts';
 import { z } from 'zod';
 
 const variantSchema = z.object({
@@ -71,6 +72,18 @@ export async function POST(
   try {
     const body = await request.json();
     const data = createSchema.parse(body);
+
+    // An AI page can only be live in one place at a time — linking the same
+    // page into a second test would let an edit meant for one test silently
+    // change what the other is serving (they'd share the same HTML row).
+    for (const v of data.variants) {
+      if (v.page_id && await getLinkedVariant(v.page_id)) {
+        return NextResponse.json(
+          { error: 'This page is already associated with a test.' },
+          { status: 400 }
+        );
+      }
+    }
 
     // Enforce plan limits (admins bypass).
     // Use workspace owner's plan — invited managers have plan:'free' on their own row.

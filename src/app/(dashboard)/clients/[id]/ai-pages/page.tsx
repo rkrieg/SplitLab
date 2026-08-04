@@ -36,18 +36,42 @@ export default async function AIPagesPage({ params }: { params: { id: string } }
 
   const { data: pages } = await db
     .from('pages')
-    .select('id, name, vertical, is_published, published_url, created_at, updated_at, created_by, users(name)')
+    .select('id, name, vertical, is_published, published_url, html_url, created_at, updated_at, created_by, users(name)')
     .eq('workspace_id', workspace.id)
     .eq('source_type', 'ai_generated')
     .is('deleted_at', null)
     .order('created_at', { ascending: false });
+
+  // Look up which of these pages are already wired into a test as a live
+  // variant, so the list can show an "Associated with..." badge and disable
+  // the Save action for them (a page can only be linked into one test — see
+  // /api/pages/[id]/save-as-variant).
+  const pageIds = (pages ?? []).map((p) => p.id);
+  const { data: linkedVariants } = pageIds.length
+    ? await db
+        .from('test_variants')
+        .select('page_id, name, test_id, tests(name)')
+        .in('page_id', pageIds)
+    : { data: [] as { page_id: string; name: string; test_id: string; tests: { name: string } | { name: string }[] | null }[] };
+
+  const linkedByPageId = new Map(
+    (linkedVariants ?? []).map((lv) => {
+      const testName = Array.isArray(lv.tests) ? lv.tests[0]?.name : lv.tests?.name;
+      return [lv.page_id, { testId: lv.test_id, testName: testName ?? 'Test', variantName: lv.name }];
+    })
+  );
+
+  const pagesWithLinks = (pages ?? []).map((p) => ({
+    ...p,
+    linked_variant: linkedByPageId.get(p.id) ?? null,
+  }));
 
   return (
     <div>
       <Header title="AI Pages" subtitle={client?.name} />
       <div className="p-6">
         <AIPagesClient
-          pages={pages ?? []}
+          pages={pagesWithLinks}
           clientId={params.id}
           workspaceId={workspace.id}
           canManage={wsRole !== 'viewer'}

@@ -2,7 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
-import { Plus, Sparkles, ExternalLink, Edit2, Globe, Trash2, Loader2, Lock, ArrowRight, Sliders, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, Sparkles, ExternalLink, Edit2, Globe, Trash2, Loader2, Lock, ArrowRight, Sliders, ChevronLeft, ChevronRight, ChevronDown, Link2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import toast from 'react-hot-toast';
 import { VERTICALS, VERTICAL_LABELS, VERTICAL_COLORS } from '@/lib/ai-page-verticals';
@@ -10,15 +10,29 @@ import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
 import EmptyState from '@/components/ui/EmptyState';
 
+interface LinkedVariant {
+  testId: string;
+  testName: string;
+  variantName: string;
+}
+
 interface AIPage {
   id: string;
   name: string;
   vertical: string | null;
   is_published: boolean;
   published_url: string | null;
+  html_url: string | null;
   created_at: string;
   updated_at: string;
   users: { name: string }[] | null;
+  linked_variant: LinkedVariant | null;
+}
+
+interface WorkspaceTest {
+  id: string;
+  name: string;
+  test_variants: { id: string }[];
 }
 
 interface Props {
@@ -76,6 +90,19 @@ export default function AIPagesClient({ pages: initialPages, clientId, workspace
   const [newVertical, setNewVertical] = useState('lead_gen');
   const [creating, setCreating] = useState(false);
 
+  // Save as New Test / Save as a Variant
+  const [openSaveMenuId, setOpenSaveMenuId] = useState<string | null>(null);
+  const [saveAsTestPage, setSaveAsTestPage] = useState<AIPage | null>(null);
+  const [testName, setTestName] = useState('');
+  const [testUrlPath, setTestUrlPath] = useState('/');
+  const [savingAsTest, setSavingAsTest] = useState(false);
+  const [saveAsVariantPage, setSaveAsVariantPage] = useState<AIPage | null>(null);
+  const [workspaceTests, setWorkspaceTests] = useState<WorkspaceTest[]>([]);
+  const [loadingTests, setLoadingTests] = useState(false);
+  const [selectedTestId, setSelectedTestId] = useState('');
+  const [newVariantName, setNewVariantName] = useState('');
+  const [savingAsVariant, setSavingAsVariant] = useState(false);
+
   const pageToDelete = pages.find((p) => p.id === deleteId);
 
   const totalPages = Math.max(1, Math.ceil(pages.length / PAGE_SIZE));
@@ -111,6 +138,102 @@ export default function AIPagesClient({ pages: initialPages, clientId, workspace
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to create page');
       setCreating(false);
+    }
+  }
+
+  function nextVariantName(test: WorkspaceTest) {
+    const count = test.test_variants?.length ?? 0;
+    return `Variant ${String.fromCharCode(65 + count)}`;
+  }
+
+  function openSaveAsTest(page: AIPage) {
+    setOpenSaveMenuId(null);
+    setSaveAsTestPage(page);
+    setTestName(page.name);
+    setTestUrlPath('/');
+  }
+
+  async function handleConfirmSaveAsTest(e: React.FormEvent) {
+    e.preventDefault();
+    if (!saveAsTestPage || !testName.trim() || !testUrlPath.trim()) return;
+    setSavingAsTest(true);
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}/tests`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: testName.trim(),
+          url_path: testUrlPath.trim(),
+          variants: [{ name: 'Control', page_id: saveAsTestPage.id, traffic_weight: 100, is_control: true }],
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.error || 'Failed to create test');
+        return;
+      }
+      const test = await res.json();
+      toast.success('Test created');
+      setSaveAsTestPage(null);
+      router.push(`/clients/${clientId}/tests/${test.id}`);
+    } catch {
+      toast.error('Unexpected error');
+    } finally {
+      setSavingAsTest(false);
+    }
+  }
+
+  async function openSaveAsVariant(page: AIPage) {
+    setOpenSaveMenuId(null);
+    setSaveAsVariantPage(page);
+    setSelectedTestId('');
+    setNewVariantName('');
+    setLoadingTests(true);
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}/tests`);
+      if (!res.ok) throw new Error();
+      const tests: WorkspaceTest[] = await res.json();
+      setWorkspaceTests(tests);
+      if (tests.length > 0) {
+        setSelectedTestId(tests[0].id);
+        setNewVariantName(nextVariantName(tests[0]));
+      }
+    } catch {
+      toast.error('Failed to load tests');
+    } finally {
+      setLoadingTests(false);
+    }
+  }
+
+  function handleSelectTest(testId: string) {
+    setSelectedTestId(testId);
+    const test = workspaceTests.find((t) => t.id === testId);
+    if (test) setNewVariantName(nextVariantName(test));
+  }
+
+  async function handleConfirmSaveAsVariant(e: React.FormEvent) {
+    e.preventDefault();
+    if (!saveAsVariantPage || !selectedTestId || !newVariantName.trim()) return;
+    setSavingAsVariant(true);
+    try {
+      const res = await fetch(`/api/pages/${saveAsVariantPage.id}/save-as-variant`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ test_id: selectedTestId, name: newVariantName.trim() }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.error || 'Failed to add as a variant');
+        return;
+      }
+      const { testId } = await res.json();
+      toast.success('Added to the test as a new variant at 0% traffic');
+      setSaveAsVariantPage(null);
+      router.push(`/clients/${clientId}/tests/${testId}`);
+    } catch {
+      toast.error('Unexpected error');
+    } finally {
+      setSavingAsVariant(false);
     }
   }
 
@@ -156,7 +279,7 @@ export default function AIPagesClient({ pages: initialPages, clientId, workspace
           ) : undefined}
         />
       ) : (
-        <div className="card overflow-hidden">
+        <div className="card overflow-visible">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-white/[0.02]">
@@ -173,7 +296,13 @@ export default function AIPagesClient({ pages: initialPages, clientId, workspace
               {pagedPages.map((page) => (
                 <tr key={page.id} className="hover:bg-slate-50 dark:hover:bg-white/[0.02] transition-colors">
                   <td className="px-5 py-3.5 font-medium text-slate-900 dark:text-white">
-                    {page.name}
+                    <div>{page.name}</div>
+                    {page.linked_variant && (
+                      <div className="mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/10 text-amber-600 dark:text-yellow-400 border border-amber-500/20">
+                        <Link2 className="w-2.5 h-2.5" />
+                        Associated with {page.linked_variant.testName} – {page.linked_variant.variantName}
+                      </div>
+                    )}
                   </td>
                   <td className="px-5 py-3.5">
                     {page.vertical ? (
@@ -233,6 +362,46 @@ export default function AIPagesClient({ pages: initialPages, clientId, workspace
                         <Sliders className="w-3 h-3" />
                         UTM personalization
                       </a>
+                      {canManage && (
+                        <div className="relative">
+                          <button
+                            onClick={() => setOpenSaveMenuId(openSaveMenuId === page.id ? null : page.id)}
+                            disabled={!!page.linked_variant || !page.html_url}
+                            title={
+                              page.linked_variant
+                                ? `Already associated with ${page.linked_variant.testName} – ${page.linked_variant.variantName}`
+                                : !page.html_url
+                                ? 'Build this page before adding it to a test'
+                                : undefined
+                            }
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-slate-100 dark:bg-white/5 hover:bg-slate-200 dark:hover:bg-white/10 text-slate-600 dark:text-slate-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-slate-100 dark:disabled:hover:bg-white/5"
+                          >
+                            Save
+                            <ChevronDown className={cn('w-3 h-3 transition-transform', openSaveMenuId === page.id && 'rotate-180')} />
+                          </button>
+                          {openSaveMenuId === page.id && (
+                            <>
+                              <div className="fixed inset-0 z-10" onClick={() => setOpenSaveMenuId(null)} />
+                              <div className="absolute right-0 top-full mt-1 z-20 w-56 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-lg py-1 overflow-hidden">
+                                <button
+                                  onClick={() => openSaveAsTest(page)}
+                                  className="w-full flex flex-col items-start gap-0.5 px-3 py-2 text-left hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+                                >
+                                  <span className="text-xs font-medium text-slate-700 dark:text-slate-200">Save as a New Test</span>
+                                  <span className="text-[11px] text-slate-400 dark:text-slate-500">Create a new test with this page</span>
+                                </button>
+                                <button
+                                  onClick={() => openSaveAsVariant(page)}
+                                  className="w-full flex flex-col items-start gap-0.5 px-3 py-2 text-left hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+                                >
+                                  <span className="text-xs font-medium text-slate-700 dark:text-slate-200">Save as a Variant</span>
+                                  <span className="text-[11px] text-slate-400 dark:text-slate-500">Add to an existing test at 0% traffic</span>
+                                </button>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      )}
                       {canManage && (
                         <button
                           onClick={() => setDeleteId(page.id)}
@@ -350,6 +519,95 @@ export default function AIPagesClient({ pages: initialPages, clientId, workspace
             {deleting ? 'Deleting…' : 'Delete'}
           </Button>
         </div>
+      </Modal>
+
+      {/* Save as New Test modal */}
+      <Modal open={!!saveAsTestPage} onClose={() => !savingAsTest && setSaveAsTestPage(null)} title="Save as a New Test" size="sm">
+        <form onSubmit={handleConfirmSaveAsTest} className="space-y-3">
+          <div>
+            <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">Test name</label>
+            <input
+              type="text"
+              value={testName}
+              onChange={(e) => setTestName(e.target.value)}
+              className="input-base"
+              required
+              autoFocus
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">URL path</label>
+            <input
+              type="text"
+              value={testUrlPath}
+              onChange={(e) => setTestUrlPath(e.target.value)}
+              placeholder="/"
+              className="input-base"
+              required
+            />
+          </div>
+          <p className="text-xs text-slate-400 dark:text-slate-500">
+            &quot;{saveAsTestPage?.name}&quot; will become the control variant at 100% traffic.
+          </p>
+          <div className="flex justify-end gap-2 mt-2">
+            <Button variant="secondary" type="button" onClick={() => setSaveAsTestPage(null)} disabled={savingAsTest}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={savingAsTest || !testName.trim() || !testUrlPath.trim()} loading={savingAsTest}>
+              {savingAsTest ? 'Creating…' : 'Create Test'}
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Save as a Variant modal */}
+      <Modal open={!!saveAsVariantPage} onClose={() => !savingAsVariant && setSaveAsVariantPage(null)} title="Save as a Variant" size="sm">
+        {loadingTests ? (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="w-5 h-5 animate-spin text-slate-400" />
+          </div>
+        ) : workspaceTests.length === 0 ? (
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            No tests in this workspace yet. Create one first, or use &quot;Save as a New Test&quot; instead.
+          </p>
+        ) : (
+          <form onSubmit={handleConfirmSaveAsVariant} className="space-y-3">
+            <div>
+              <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">Test</label>
+              <select
+                value={selectedTestId}
+                onChange={(e) => handleSelectTest(e.target.value)}
+                className="input-base"
+              >
+                {workspaceTests.map((t) => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">Variant name</label>
+              <input
+                type="text"
+                value={newVariantName}
+                onChange={(e) => setNewVariantName(e.target.value)}
+                className="input-base"
+                required
+                autoFocus
+              />
+            </div>
+            <p className="text-xs text-slate-400 dark:text-slate-500">
+              Added at 0% traffic — existing variants and traffic split stay untouched.
+            </p>
+            <div className="flex justify-end gap-2 mt-2">
+              <Button variant="secondary" type="button" onClick={() => setSaveAsVariantPage(null)} disabled={savingAsVariant}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={savingAsVariant || !newVariantName.trim()} loading={savingAsVariant}>
+                {savingAsVariant ? 'Adding…' : 'Add as Variant'}
+              </Button>
+            </div>
+          </form>
+        )}
       </Modal>
     </div>
   );
