@@ -41,15 +41,34 @@ async function getTeamMembers(userId: string) {
 
   // Deduplicate by user_id
   const seen = new Set<string>();
-  return (rows ?? [])
+  const members = (rows ?? [])
     .filter((m) => {
       if (seen.has(m.user_id)) return false;
       seen.add(m.user_id);
       return true;
     })
-    .map((m) => ({ ...(m.users as unknown as Record<string, unknown>), workspaceRole: m.role })) as Array<{
-      id: string; name: string; email: string; status: string; created_at: string; workspaceRole: 'manager' | 'viewer';
-    }>;
+    .map((m) => ({ ...(m.users as unknown as Record<string, unknown>), workspaceRole: m.role, pending: false }));
+
+  // Existing users invited into a new workspace sit in pending_invites until
+  // they accept the emailed link — surface them so the manager can see the
+  // invite is queued (and cancel it) rather than seeing nothing happen.
+  const { data: pendingRows } = await db
+    .from('pending_invites')
+    .select('user_id, role, users(id, name, email, status, created_at)')
+    .in('workspace_id', workspaceIds);
+
+  const pendingSeen = new Set<string>();
+  const pending = (pendingRows ?? [])
+    .filter((p) => {
+      if (seen.has(p.user_id) || pendingSeen.has(p.user_id)) return false;
+      pendingSeen.add(p.user_id);
+      return true;
+    })
+    .map((p) => ({ ...(p.users as unknown as Record<string, unknown>), workspaceRole: p.role, pending: true }));
+
+  return [...members, ...pending] as Array<{
+    id: string; name: string; email: string; status: string; created_at: string; workspaceRole: 'manager' | 'viewer'; pending: boolean;
+  }>;
 }
 
 export default async function TeamPage() {

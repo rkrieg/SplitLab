@@ -2,6 +2,7 @@ import { getServerSession } from 'next-auth';
 import { redirect } from 'next/navigation';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
+import { getAccessibleWorkspaceIds } from '@/lib/workspace-auth';
 import Header from '@/components/layout/Header';
 import Link from 'next/link';
 import { FileCode2 } from 'lucide-react';
@@ -17,19 +18,7 @@ async function getTests(userId: string, userRole: string) {
     return data ?? [];
   }
 
-  let workspaceIds: string[] = [];
-
-  if (userRole === 'manager') {
-    const { data: ownedClients } = await db.from('clients').select('id').eq('owner_id', userId);
-    const clientIds = ownedClients?.map(c => c.id) ?? [];
-    if (clientIds.length === 0) return [];
-    const { data: workspaces } = await db.from('workspaces').select('id').in('client_id', clientIds);
-    workspaceIds = workspaces?.map(w => w.id) ?? [];
-  } else {
-    const { data: memberships } = await db.from('workspace_members').select('workspace_id').eq('user_id', userId);
-    workspaceIds = memberships?.map(m => m.workspace_id) ?? [];
-  }
-
+  const workspaceIds = await getAccessibleWorkspaceIds(userId, userRole);
   if (workspaceIds.length === 0) return [];
 
   const { data } = await db

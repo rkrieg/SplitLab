@@ -30,6 +30,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useTheme } from 'next-themes';
 import toast from 'react-hot-toast';
 import Spinner from '@/components/ui/Spinner';
+import ClaimAccountModal from '@/components/layout/ClaimAccountModal';
 
 const COLLAPSE_DEFAULT_PATHS = ['/utm', '/pages/new'];
 
@@ -41,6 +42,7 @@ interface Client {
   id: string;
   name: string;
   slug: string;
+  owner_id: string | null;
 }
 
 const globalNavItems = [
@@ -85,6 +87,7 @@ export default function Sidebar() {
   const [navigating, setNavigating] = useState(false);
   const [clientToDelete, setClientToDelete] = useState<Client | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [claimModalOpen, setClaimModalOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => setMounted(true), []);
@@ -130,15 +133,19 @@ export default function Sidebar() {
   const isAdmin   = session?.user?.role === 'admin';
   const isViewer  = session?.user?.role === 'viewer';
   const userPlan  = session?.user?.plan ?? 'free';
-  // Show multi-client dropdown only for admins or plans that allow > 1 client
-  const multiClientEnabled = isAdmin || (PLAN_LIMITS[userPlan]?.clients ?? 1) > 1;
+  // Show the multi-client dropdown for admins, plans that allow > 1 owned client,
+  // or anyone who actually has access to more than one client (e.g. an invited
+  // team member added to a second client's workspace) — plan limits only cap
+  // how many clients *this* user can own/create, not how many they can be a
+  // member of via invites.
+  const multiClientEnabled = isAdmin || clients.length > 1 || (PLAN_LIMITS[userPlan]?.clients ?? 1) > 1;
   // Fetch clients on mount
   useEffect(() => {
     fetch('/api/clients')
       .then((res) => res.json())
       .then((data) => {
         if (Array.isArray(data)) {
-          setClients(data.map((c: Record<string, unknown>) => ({ id: c.id as string, name: c.name as string, slug: c.slug as string })));
+          setClients(data.map((c: Record<string, unknown>) => ({ id: c.id as string, name: c.name as string, slug: c.slug as string, owner_id: (c.owner_id as string | null) ?? null })));
         }
       })
       .catch(() => {})
@@ -239,7 +246,7 @@ export default function Sidebar() {
         return;
       }
       const client = await res.json();
-      setClients((prev) => [{ id: client.id, name: client.name, slug: client.slug }, ...prev]);
+      setClients((prev) => [{ id: client.id, name: client.name, slug: client.slug, owner_id: client.owner_id ?? null }, ...prev]);
       setCreateModalOpen(false);
       setNewClientName('');
       setCreateClientError(null);
@@ -375,9 +382,15 @@ export default function Sidebar() {
                       >
                         <Building2 size={13} className="flex-shrink-0" />
                         <span className="flex-1 text-left truncate">{client.name}</span>
+                        {!isAdmin && client.owner_id !== session?.user?.id && (
+                          <span className="flex-shrink-0 text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-400">
+                            Invited
+                          </span>
+                        )}
                         {selectedClientId === client.id && <Check size={13} className="text-indigo-400 flex-shrink-0" />}
                       </button>
-                      {!isViewer && (
+                      {/* Delete only for owned clients (admins treat null owner_id as manageable) */}
+                      {(isAdmin || client.owner_id === session?.user?.id) && (
                         <button
                           onClick={(e) => { e.stopPropagation(); setClientToDelete(client); }}
                           title="Delete client"
@@ -390,15 +403,27 @@ export default function Sidebar() {
                   ))}
                 </div>
 
-                {/* New Client button */}
+                {/* New Client / claim upsell */}
                 <div className="border-t border-slate-200 dark:border-slate-700">
                   <button
-                    onClick={() => { setCreateModalOpen(true); setDropdownOpen(false); }}
+                    onClick={() => {
+                      setDropdownOpen(false);
+                      if (isViewer) setClaimModalOpen(true);
+                      else setCreateModalOpen(true);
+                    }}
                     className="w-full flex items-center gap-2 px-3 py-2 text-sm text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
                   >
                     <Plus size={13} />
                     New Client
                   </button>
+                  {isViewer && (
+                    <button
+                      onClick={() => { setClaimModalOpen(true); setDropdownOpen(false); }}
+                      className="w-full px-3 py-2 text-left text-xs text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                    >
+                      Need your own workspace? Set up your account
+                    </button>
+                  )}
                 </div>
               </div>
             )}
@@ -490,6 +515,15 @@ export default function Sidebar() {
               ? 'absolute bottom-16 left-2 w-48 z-50'
               : 'mt-1'
           )}>
+            {/* Invitee upsell — viewers have no plan row */}
+            {isViewer && (
+              <button
+                onClick={() => { setClaimModalOpen(true); setUserMenuOpen(false); }}
+                className="w-full px-3 py-2.5 text-left text-xs font-medium text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors border-b border-slate-100 dark:border-slate-700"
+              >
+                Need your own workspace? Set up your account
+              </button>
+            )}
             {/* Current plan + upgrade — hidden for invited members (viewers) */}
             {!isViewer && (
               <div className="px-3 py-2 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between gap-2">
@@ -563,6 +597,17 @@ export default function Sidebar() {
           </div>
         </div>
       )}
+
+      <ClaimAccountModal
+        open={claimModalOpen}
+        onClose={() => setClaimModalOpen(false)}
+        onClaimed={(client) => {
+          setClients((prev) => {
+            if (prev.some((c) => c.id === client.id)) return prev;
+            return [client, ...prev];
+          });
+        }}
+      />
 
       {/* Delete Client Modal */}
       {clientToDelete && (

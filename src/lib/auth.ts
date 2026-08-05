@@ -56,14 +56,16 @@ export const authOptions: NextAuthOptions = {
         token.role = user.role as UserRole;
         token.plan = user.plan ?? 'free';
       }
-      // Re-read plan from DB when session is explicitly refreshed (e.g. after Stripe upgrade)
+      // Re-read plan + role from DB when session is explicitly refreshed
+      // (e.g. after Stripe upgrade or invitee account claim)
       if (trigger === 'update' && token.id) {
         const { data } = await db
           .from('users')
-          .select('plan')
+          .select('plan, role')
           .eq('id', token.id as string)
           .single();
         if (data?.plan) token.plan = data.plan;
+        if (data?.role) token.role = data.role as UserRole;
       }
       return token;
     },

@@ -12,6 +12,7 @@ const ALLOWED_TYPES: Record<string, string> = {
   'image/vnd.microsoft.icon': 'ico',
 };
 
+/** Logo is client identity — owner or admin only, not invitees. */
 async function canManageClient(clientId: string, userId: string, userRole: string) {
   if (userRole === 'viewer') return false;
   if (userRole === 'admin') return true;
@@ -22,25 +23,7 @@ async function canManageClient(clientId: string, userId: string, userRole: strin
     .eq('id', clientId)
     .single();
 
-  if (client?.owner_id === userId) return true;
-
-  const { data: workspaces } = await db
-    .from('workspaces')
-    .select('id')
-    .eq('client_id', clientId);
-
-  const workspaceIds = workspaces?.map(w => w.id) ?? [];
-  if (workspaceIds.length === 0) return false;
-
-  const { data: member } = await db
-    .from('workspace_members')
-    .select('id')
-    .eq('user_id', userId)
-    .in('workspace_id', workspaceIds)
-    .limit(1)
-    .single();
-
-  return !!member;
+  return client?.owner_id === userId;
 }
 
 async function removeOldLogo(clientId: string) {
