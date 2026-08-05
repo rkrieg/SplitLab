@@ -30,6 +30,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useTheme } from 'next-themes';
 import toast from 'react-hot-toast';
 import Spinner from '@/components/ui/Spinner';
+import ClaimAccountModal from '@/components/layout/ClaimAccountModal';
 
 const COLLAPSE_DEFAULT_PATHS = ['/utm', '/pages/new'];
 
@@ -86,6 +87,7 @@ export default function Sidebar() {
   const [navigating, setNavigating] = useState(false);
   const [clientToDelete, setClientToDelete] = useState<Client | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [claimModalOpen, setClaimModalOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => setMounted(true), []);
@@ -401,15 +403,27 @@ export default function Sidebar() {
                   ))}
                 </div>
 
-                {/* New Client button */}
+                {/* New Client / claim upsell */}
                 <div className="border-t border-slate-200 dark:border-slate-700">
                   <button
-                    onClick={() => { setCreateModalOpen(true); setDropdownOpen(false); }}
+                    onClick={() => {
+                      setDropdownOpen(false);
+                      if (isViewer) setClaimModalOpen(true);
+                      else setCreateModalOpen(true);
+                    }}
                     className="w-full flex items-center gap-2 px-3 py-2 text-sm text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
                   >
                     <Plus size={13} />
                     New Client
                   </button>
+                  {isViewer && (
+                    <button
+                      onClick={() => { setClaimModalOpen(true); setDropdownOpen(false); }}
+                      className="w-full px-3 py-2 text-left text-xs text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                    >
+                      Need your own workspace? Set up your account
+                    </button>
+                  )}
                 </div>
               </div>
             )}
@@ -501,6 +515,15 @@ export default function Sidebar() {
               ? 'absolute bottom-16 left-2 w-48 z-50'
               : 'mt-1'
           )}>
+            {/* Invitee upsell — viewers have no plan row */}
+            {isViewer && (
+              <button
+                onClick={() => { setClaimModalOpen(true); setUserMenuOpen(false); }}
+                className="w-full px-3 py-2.5 text-left text-xs font-medium text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors border-b border-slate-100 dark:border-slate-700"
+              >
+                Need your own workspace? Set up your account
+              </button>
+            )}
             {/* Current plan + upgrade — hidden for invited members (viewers) */}
             {!isViewer && (
               <div className="px-3 py-2 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between gap-2">
@@ -574,6 +597,17 @@ export default function Sidebar() {
           </div>
         </div>
       )}
+
+      <ClaimAccountModal
+        open={claimModalOpen}
+        onClose={() => setClaimModalOpen(false)}
+        onClaimed={(client) => {
+          setClients((prev) => {
+            if (prev.some((c) => c.id === client.id)) return prev;
+            return [client, ...prev];
+          });
+        }}
+      />
 
       {/* Delete Client Modal */}
       {clientToDelete && (
