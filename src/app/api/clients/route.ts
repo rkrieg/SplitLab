@@ -20,6 +20,24 @@ const CLIENT_SELECT = `
   )
 `;
 
+/** Client IDs the user can reach via workspace_members (owned or invited). */
+async function clientIdsFromMemberships(userId: string): Promise<string[]> {
+  const { data: memberships } = await db
+    .from('workspace_members')
+    .select('workspace_id')
+    .eq('user_id', userId);
+
+  const workspaceIds = memberships?.map((m) => m.workspace_id) ?? [];
+  if (workspaceIds.length === 0) return [];
+
+  const { data: workspaces } = await db
+    .from('workspaces')
+    .select('client_id')
+    .in('id', workspaceIds);
+
+  return Array.from(new Set(workspaces?.map((w) => w.client_id) ?? []));
+}
+
 export async function GET() {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -36,30 +54,31 @@ export async function GET() {
   }
 
   if (role === 'manager') {
+    // Owned clients + clients reached via workspace invites (deduped —
+    // owners are also workspace_members on their own client from signup).
+    const { data: owned, error: ownedError } = await db
+      .from('clients')
+      .select('id')
+      .eq('owner_id', userId);
+    if (ownedError) return NextResponse.json({ error: ownedError.message }, { status: 500 });
+
+    const memberClientIds = await clientIdsFromMemberships(userId);
+    const clientIds = Array.from(
+      new Set([...(owned?.map((c) => c.id) ?? []), ...memberClientIds])
+    );
+    if (clientIds.length === 0) return NextResponse.json([]);
+
     const { data, error } = await db
       .from('clients')
       .select(CLIENT_SELECT)
-      .eq('owner_id', userId)
+      .in('id', clientIds)
       .order('created_at', { ascending: false });
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     return NextResponse.json(data);
   }
 
   // viewer: only clients they have workspace membership in
-  const { data: memberships } = await db
-    .from('workspace_members')
-    .select('workspace_id')
-    .eq('user_id', userId);
-
-  const workspaceIds = memberships?.map(m => m.workspace_id) ?? [];
-  if (workspaceIds.length === 0) return NextResponse.json([]);
-
-  const { data: workspaces } = await db
-    .from('workspaces')
-    .select('client_id')
-    .in('id', workspaceIds);
-
-  const clientIds = Array.from(new Set(workspaces?.map(w => w.client_id) ?? []));
+  const clientIds = await clientIdsFromMemberships(userId);
   if (clientIds.length === 0) return NextResponse.json([]);
 
   const { data, error } = await db

@@ -42,6 +42,20 @@ async function canAccessClient(clientId: string, userId: string, userRole: strin
   return !!member;
 }
 
+/** Client identity (name, logo, delete) — owner or admin only, not invitees. */
+async function canOwnClient(clientId: string, userId: string, userRole: string) {
+  if (userRole === 'admin') return true;
+  if (userRole === 'viewer') return false;
+
+  const { data: client } = await db
+    .from('clients')
+    .select('owner_id')
+    .eq('id', clientId)
+    .single();
+
+  return client?.owner_id === userId;
+}
+
 export async function GET(
   _req: NextRequest,
   { params }: { params: { id: string } }
@@ -76,12 +90,9 @@ export async function PATCH(
 ) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  if (session.user.role === 'viewer') {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  }
 
-  if (!await canAccessClient(params.id, session.user.id, session.user.role)) {
-    return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  if (!await canOwnClient(params.id, session.user.id, session.user.role)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
   try {
@@ -111,12 +122,9 @@ export async function DELETE(
 ) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  if (session.user.role === 'viewer') {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  }
 
-  if (!await canAccessClient(params.id, session.user.id, session.user.role)) {
-    return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  if (!await canOwnClient(params.id, session.user.id, session.user.role)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
   const { error } = await db.from('clients').delete().eq('id', params.id);

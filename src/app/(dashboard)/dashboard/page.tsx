@@ -1,6 +1,7 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
+import { getAccessibleClientIds, getAccessibleWorkspaceIds } from '@/lib/workspace-auth';
 import Header from '@/components/layout/Header';
 import Link from 'next/link';
 import { Building2, FlaskConical, FileCode2, Eye, TrendingUp } from 'lucide-react';
@@ -31,43 +32,13 @@ async function getDashboardStats(userId: string, userRole: string) {
     };
   }
 
-  // For managers: scope to owned clients.
-  // For viewers: scope to clients they have workspace membership in.
-  let clientIds: string[] = [];
-
-  if (userRole === 'manager') {
-    const { data: ownedClients } = await db
-      .from('clients')
-      .select('id')
-      .eq('owner_id', userId)
-      .eq('status', 'active');
-    clientIds = ownedClients?.map(c => c.id) ?? [];
-  } else {
-    // viewer — derive from workspace_members
-    const { data: memberships } = await db
-      .from('workspace_members')
-      .select('workspace_id')
-      .eq('user_id', userId);
-    const workspaceIds = memberships?.map(m => m.workspace_id) ?? [];
-    if (workspaceIds.length > 0) {
-      const { data: workspaces } = await db
-        .from('workspaces')
-        .select('client_id')
-        .in('id', workspaceIds);
-      clientIds = Array.from(new Set(workspaces?.map(w => w.client_id) ?? []));
-    }
-  }
+  // Managers: owned ∪ invited. Viewers: membership only.
+  const clientIds = await getAccessibleClientIds(userId, userRole, { activeOnly: true });
+  const workspaceIds = await getAccessibleWorkspaceIds(userId, userRole);
 
   if (clientIds.length === 0) {
     return { clientCount: 0, activeTestCount: 0, totalViews: 0, recentTests: [] };
   }
-
-  const { data: workspaces } = await db
-    .from('workspaces')
-    .select('id')
-    .in('client_id', clientIds);
-
-  const workspaceIds = workspaces?.map(w => w.id) ?? [];
 
   if (workspaceIds.length === 0) {
     return {

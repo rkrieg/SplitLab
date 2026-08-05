@@ -13,11 +13,13 @@ export async function sendInvitationEmail({
   toEmail,
   setupLink,
   role,
+  existingAccount = false,
 }: {
   toName: string;
   toEmail: string;
   setupLink: string;
   role: string;
+  existingAccount?: boolean;
 }) {
   const resend = getResend();
   const { error } = await resend.emails.send({
@@ -47,10 +49,12 @@ export async function sendInvitationEmail({
     </div>
     <div class="body">
       <p>Hi ${toName},</p>
-      <p>You've been invited to join <strong style="color:#e2e8f0">SplitLab</strong> as a <strong style="color:#e2e8f0; text-transform:capitalize">${role}</strong>. Click below to set your password and get started. This link expires in 7 days.</p>
+      <p>${existingAccount
+          ? `You've been added as a <strong style="color:#e2e8f0; text-transform:capitalize">${role}</strong> to a new client on <strong style="color:#e2e8f0">SplitLab</strong>. Click below to accept the invite with your existing account. This link expires in 7 days.`
+          : `You've been invited to join <strong style="color:#e2e8f0">SplitLab</strong> as a <strong style="color:#e2e8f0; text-transform:capitalize">${role}</strong>. Click below to set your password and get started. This link expires in 7 days.`}</p>
 
       <p style="text-align:center; margin: 28px 0;">
-        <a href="${setupLink}" class="btn">Set your password</a>
+        <a href="${setupLink}" class="btn">${existingAccount ? 'Accept invite' : 'Set your password'}</a>
       </p>
 
       <p style="font-size:13px; color:#64748b;">If you weren't expecting this invitation, you can ignore this email.</p>

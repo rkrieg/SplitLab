@@ -41,6 +41,7 @@ interface Client {
   id: string;
   name: string;
   slug: string;
+  owner_id: string | null;
 }
 
 const globalNavItems = [
@@ -130,15 +131,19 @@ export default function Sidebar() {
   const isAdmin   = session?.user?.role === 'admin';
   const isViewer  = session?.user?.role === 'viewer';
   const userPlan  = session?.user?.plan ?? 'free';
-  // Show multi-client dropdown only for admins or plans that allow > 1 client
-  const multiClientEnabled = isAdmin || (PLAN_LIMITS[userPlan]?.clients ?? 1) > 1;
+  // Show the multi-client dropdown for admins, plans that allow > 1 owned client,
+  // or anyone who actually has access to more than one client (e.g. an invited
+  // team member added to a second client's workspace) — plan limits only cap
+  // how many clients *this* user can own/create, not how many they can be a
+  // member of via invites.
+  const multiClientEnabled = isAdmin || clients.length > 1 || (PLAN_LIMITS[userPlan]?.clients ?? 1) > 1;
   // Fetch clients on mount
   useEffect(() => {
     fetch('/api/clients')
       .then((res) => res.json())
       .then((data) => {
         if (Array.isArray(data)) {
-          setClients(data.map((c: Record<string, unknown>) => ({ id: c.id as string, name: c.name as string, slug: c.slug as string })));
+          setClients(data.map((c: Record<string, unknown>) => ({ id: c.id as string, name: c.name as string, slug: c.slug as string, owner_id: (c.owner_id as string | null) ?? null })));
         }
       })
       .catch(() => {})
@@ -239,7 +244,7 @@ export default function Sidebar() {
         return;
       }
       const client = await res.json();
-      setClients((prev) => [{ id: client.id, name: client.name, slug: client.slug }, ...prev]);
+      setClients((prev) => [{ id: client.id, name: client.name, slug: client.slug, owner_id: client.owner_id ?? null }, ...prev]);
       setCreateModalOpen(false);
       setNewClientName('');
       setCreateClientError(null);
@@ -375,9 +380,15 @@ export default function Sidebar() {
                       >
                         <Building2 size={13} className="flex-shrink-0" />
                         <span className="flex-1 text-left truncate">{client.name}</span>
+                        {!isAdmin && client.owner_id !== session?.user?.id && (
+                          <span className="flex-shrink-0 text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-400">
+                            Invited
+                          </span>
+                        )}
                         {selectedClientId === client.id && <Check size={13} className="text-indigo-400 flex-shrink-0" />}
                       </button>
-                      {!isViewer && (
+                      {/* Delete only for owned clients (admins treat null owner_id as manageable) */}
+                      {(isAdmin || client.owner_id === session?.user?.id) && (
                         <button
                           onClick={(e) => { e.stopPropagation(); setClientToDelete(client); }}
                           title="Delete client"

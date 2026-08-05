@@ -20,6 +20,7 @@ interface Member {
   status: string;
   created_at: string;
   workspaceRole: 'manager' | 'viewer';
+  pending?: boolean;
 }
 
 interface Props {
@@ -74,7 +75,9 @@ export default function ManagerTeamClient({ initialMembers, seatLimit, currentUs
       setModalOpen(false);
       resetForm();
       if (json.emailError) {
-        toast.error(`Member added but invite email failed: ${json.emailError}`);
+        toast.error(`Invite created but email failed to send: ${json.emailError}`);
+      } else if (json.pending) {
+        toast.success('Invite sent — they already have an account, so they must accept via email before gaining access.');
       } else {
         toast.success('Invite sent successfully');
       }
@@ -115,7 +118,7 @@ export default function ManagerTeamClient({ initialMembers, seatLimit, currentUs
         </div>
         <h3 className="text-base font-semibold text-slate-800 dark:text-slate-200 mb-2">Team seats not included</h3>
         <p className="text-sm text-slate-500 dark:text-slate-400 mb-5 max-w-sm mx-auto">
-          Your current plan does not include team seats. Upgrade to Pro or higher to invite collaborators.
+          Your current plan does not include team seats. Upgrade to Growth or higher to invite collaborators.
         </p>
         <Link href="/billing">
           <Button>Upgrade plan</Button>
@@ -183,8 +186,8 @@ export default function ManagerTeamClient({ initialMembers, seatLimit, currentUs
                     </Badge>
                   </td>
                   <td className="px-5 py-3.5">
-                    <Badge variant={member.status === 'active' ? 'success' : 'default'}>
-                      {member.status}
+                    <Badge variant={member.pending ? 'default' : member.status === 'active' ? 'success' : 'default'}>
+                      {member.pending ? 'Pending' : member.status}
                     </Badge>
                   </td>
                   <td className="px-5 py-3.5 text-slate-500 dark:text-slate-400">{formatDate(member.created_at)}</td>
@@ -271,7 +274,7 @@ export default function ManagerTeamClient({ initialMembers, seatLimit, currentUs
               </select>
             </div>
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              They&apos;ll receive an email with a link to set their own password.
+              They&apos;ll receive an email — to set a password if they&apos;re new, or to accept the invite if they already have a SplitLab account.
             </p>
             {inviteError && (
               <div className="flex items-start gap-2 rounded-lg bg-red-500/10 border border-red-500/30 px-3 py-2.5 text-sm text-red-400">
@@ -297,7 +300,7 @@ export default function ManagerTeamClient({ initialMembers, seatLimit, currentUs
         onClose={() => setDeleteId(null)}
         onConfirm={handleRemove}
         title="Remove Team Member"
-        description="This person will lose access to all your workspaces. Their account will be deleted."
+        description="This person will lose access to your workspaces (or their pending invite will be cancelled). Their account is only deleted if they have no other clients or memberships left."
         confirmLabel="Remove"
         loading={deleting}
       />

@@ -7,8 +7,8 @@ import { db } from '@/lib/supabase-server';
  *           Sees and controls everything across all client accounts.
  *
  * manager — Assigned automatically to every self-signup (free or paid).
- *           Sees only their own clients, pages, scripts, tests, and stats.
- *           Can create/delete clients, invite viewers to their workspaces.
+ *           Sees owned clients plus any clients/workspaces they were invited to.
+ *           Can create/delete owned clients, invite viewers to their workspaces.
  *
  * viewer  — Assigned when a manager invites a team member.
  *           Scoped to the specific workspaces they were invited to.
@@ -122,4 +122,90 @@ export async function resolveTestWorkspaceRole(
   if (!test) return null;
   const role = await resolveWorkspaceRole(test.workspace_id, userId, userRole);
   return { workspaceId: test.workspace_id, role };
+}
+
+/**
+ * Client IDs the user can see in global lists / dashboard.
+ * Admins should not use this — they see everything.
+ * Managers: owned clients ∪ clients reached via workspace_members.
+ * Viewers: membership clients only.
+ */
+export async function getAccessibleClientIds(
+  userId: string,
+  userRole: string,
+  opts?: { activeOnly?: boolean }
+): Promise<string[]> {
+  if (userRole === 'admin') return []; // callers should short-circuit admins
+
+  let memberClientIds = await clientIdsFromMemberships(userId);
+  if (opts?.activeOnly && memberClientIds.length > 0) {
+    const { data: activeMembers } = await db
+      .from('clients')
+      .select('id')
+      .in('id', memberClientIds)
+      .eq('status', 'active');
+    memberClientIds = activeMembers?.map((c) => c.id) ?? [];
+  }
+
+  if (userRole === 'viewer') return memberClientIds;
+
+  let ownedQuery = db.from('clients').select('id').eq('owner_id', userId);
+  if (opts?.activeOnly) ownedQuery = ownedQuery.eq('status', 'active');
+  const { data: owned } = await ownedQuery;
+
+  return Array.from(new Set([...(owned?.map((c) => c.id) ?? []), ...memberClientIds]));
+}
+
+/**
+ * Workspace IDs the user can see in global pages/scripts lists.
+ * Managers: all workspaces under owned clients ∪ explicit memberships.
+ * Viewers: membership workspaces only.
+ */
+export async function getAccessibleWorkspaceIds(
+  userId: string,
+  userRole: string
+): Promise<string[]> {
+  if (userRole === 'admin') return []; // callers should short-circuit admins
+
+  const { data: memberships } = await db
+    .from('workspace_members')
+    .select('workspace_id')
+    .eq('user_id', userId);
+  const memberWsIds = memberships?.map((m) => m.workspace_id) ?? [];
+
+  if (userRole === 'viewer') return memberWsIds;
+
+  const { data: ownedClients } = await db
+    .from('clients')
+    .select('id')
+    .eq('owner_id', userId);
+  const ownedClientIds = ownedClients?.map((c) => c.id) ?? [];
+
+  let ownedWsIds: string[] = [];
+  if (ownedClientIds.length > 0) {
+    const { data: workspaces } = await db
+      .from('workspaces')
+      .select('id')
+      .in('client_id', ownedClientIds);
+    ownedWsIds = workspaces?.map((w) => w.id) ?? [];
+  }
+
+  return Array.from(new Set([...ownedWsIds, ...memberWsIds]));
+}
+
+async function clientIdsFromMemberships(userId: string): Promise<string[]> {
+  const { data: memberships } = await db
+    .from('workspace_members')
+    .select('workspace_id')
+    .eq('user_id', userId);
+
+  const workspaceIds = memberships?.map((m) => m.workspace_id) ?? [];
+  if (workspaceIds.length === 0) return [];
+
+  const { data: workspaces } = await db
+    .from('workspaces')
+    .select('client_id')
+    .in('id', workspaceIds);
+
+  return Array.from(new Set(workspaces?.map((w) => w.client_id) ?? []));
 }

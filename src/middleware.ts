@@ -54,7 +54,7 @@ export async function middleware(request: NextRequest) {
   // and Next.js internals are never rewritten.
   const APP_ROUTES = [
     '/login', '/dashboard', '/clients', '/api', '/tests', '/pages',
-    '/scripts', '/team', '/settings', '/_next', '/favicon.ico', '/static', '/tracker.js',
+    '/scripts', '/team', '/settings', '/invite', '/_next', '/favicon.ico', '/static', '/tracker.js',
   ];
   const isAppRoute = APP_ROUTES.some((r) => pathname === r || pathname.startsWith(r + '/') || pathname.startsWith(r + '?'));
 
@@ -74,6 +74,7 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith('/team') ||
     pathname.startsWith('/settings') ||
     pathname.startsWith('/billing') ||
+    pathname.startsWith('/invite') ||
     pathname.startsWith('/affiliates'); // admin affiliate mgmt (NOT public /affiliate)
 
   if (isDashboardRoute) {
@@ -84,7 +85,7 @@ export async function middleware(request: NextRequest) {
 
     if (!token) {
       const loginUrl = new URL('/login', request.url);
-      loginUrl.searchParams.set('callbackUrl', pathname);
+      loginUrl.searchParams.set('callbackUrl', pathname + request.nextUrl.search);
       return NextResponse.redirect(loginUrl);
     }
   }
