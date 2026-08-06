@@ -9,7 +9,7 @@ import { resolveWorkspaceRole, resolveOwnerPlan } from '@/lib/workspace-auth';
 import { PLAN_LIMITS } from '@/lib/plans';
 import { isTestVariantPage } from '@/lib/page-drafts';
 import { extractDataUris, restoreDataUris, restoreDataUrisInValue } from '@/lib/data-uri-strip';
-import { createSSEStream, sendSSE, closeSSE, SSE_HEADERS } from '@/lib/sse';
+import { createSSEStream, sendSSE, sendSSEPing, closeSSE, SSE_HEADERS } from '@/lib/sse';
 
 export const dynamic = 'force-dynamic';
 // The AI call returns a compact field/section list (not the full page), but
@@ -445,16 +445,10 @@ export async function POST(
       // flowing on the SSE connection the whole time the AI call is in
       // flight, so an idle-connection proxy timeout (Cloudflare, Vercel) never
       // sees a multi-minute silent gap and kills the stream before "Saving…".
-      let heartbeatAlive = true;
-      const heartbeat = setInterval(() => {
-        if (!heartbeatAlive) return;
-        try {
-          sendSSE(controller, { type: 'status', message: 'Analyzing structure…' });
-        } catch {
-          heartbeatAlive = false;
-          clearInterval(heartbeat);
-        }
-      }, 15_000);
+      // Sent as an SSE comment line, not a real event — readSSEStream only
+      // reacts to "data: " lines, so this never reaches LiveProgressPanel and
+      // never duplicates the "Analyzing structure…" checklist row.
+      const heartbeat = setInterval(() => sendSSEPing(controller), 15_000);
       try {
         // Streamed even though we don't need the chunks — matches every other
         // AI call in this app to avoid the Anthropic SDK's non-streaming HTTP
