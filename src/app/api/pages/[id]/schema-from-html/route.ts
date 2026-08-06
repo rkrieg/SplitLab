@@ -439,6 +439,22 @@ export async function POST(
       sendSSE(controller, { type: 'status', message: 'Analyzing structure…' });
 
       let parsed: FieldListResponse;
+      // The model can sit on a large page for 2+ minutes before emitting its
+      // first token, and askAIStream's onChunk isn't called during that gap —
+      // so a chunk-driven heartbeat wouldn't help. A plain timer keeps bytes
+      // flowing on the SSE connection the whole time the AI call is in
+      // flight, so an idle-connection proxy timeout (Cloudflare, Vercel) never
+      // sees a multi-minute silent gap and kills the stream before "Saving…".
+      let heartbeatAlive = true;
+      const heartbeat = setInterval(() => {
+        if (!heartbeatAlive) return;
+        try {
+          sendSSE(controller, { type: 'status', message: 'Analyzing structure…' });
+        } catch {
+          heartbeatAlive = false;
+          clearInterval(heartbeat);
+        }
+      }, 15_000);
       try {
         // Streamed even though we don't need the chunks — matches every other
         // AI call in this app to avoid the Anthropic SDK's non-streaming HTTP
@@ -466,6 +482,7 @@ export async function POST(
           parsed = JSON.parse(jsonrepair(jsonText));
         }
       } catch (err) {
+        clearInterval(heartbeat);
         if (err instanceof AIResponseTruncatedError) {
           sendSSE(controller, { type: 'error', message: 'This page is too large to prepare for AI editing in one pass.' });
           closeSSE(controller);
@@ -476,6 +493,7 @@ export async function POST(
         closeSSE(controller);
         return;
       }
+      clearInterval(heartbeat);
 
       sendSSE(controller, { type: 'status', message: 'Mapping fields…' });
 
