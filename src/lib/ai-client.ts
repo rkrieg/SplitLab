@@ -91,6 +91,49 @@ function toAnthropicContent(content: AIContent): string | Anthropic.Messages.Con
   });
 }
 
+/** How many times to try a single AI call when the Anthropic TCP stream drops. */
+const AI_TRANSIENT_MAX_ATTEMPTS = 3;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * True for the flaky undici / Anthropic wire failures we see in production
+ * (`TypeError: terminated`, `UND_ERR_SOCKET`, "other side closed") — the
+ * connection died, the request itself was fine. Never true for truncation,
+ * auth, or ordinary 4xx API errors.
+ */
+export function isTransientAIConnectionError(err: unknown): boolean {
+  if (err == null) return false;
+  if (err instanceof AIResponseTruncatedError) return false;
+
+  // Anthropic SDK APIError — only retry overload / upstream blips, never 4xx
+  // (except 429, which is transient rate limiting).
+  const status = (err as { status?: unknown }).status;
+  if (typeof status === 'number') {
+    if (status === 429 || status === 500 || status === 502 || status === 503 || status === 504 || status === 529) {
+      return true;
+    }
+    if (status >= 400 && status < 500) return false;
+  }
+
+  const TRANSIENT_CODE = /^(UND_ERR_SOCKET|ECONNRESET|ETIMEDOUT|EPIPE|ECONNREFUSED|ENOTFOUND|EAI_AGAIN)$/;
+  const TRANSIENT_MSG = /terminated|other side closed|socket hang up|connection error|network error|fetch failed|econnreset|etimedout/i;
+
+  let current: unknown = err;
+  const seen = new Set<unknown>();
+  while (current && typeof current === 'object' && !seen.has(current)) {
+    seen.add(current);
+    const obj = current as { message?: unknown; code?: unknown; name?: unknown; cause?: unknown };
+    const message = typeof obj.message === 'string' ? obj.message : '';
+    const code = typeof obj.code === 'string' ? obj.code : '';
+    if (TRANSIENT_CODE.test(code) || TRANSIENT_MSG.test(message)) return true;
+    // undici wraps the real SocketError under `.cause`
+    current = obj.cause;
+  }
+  return false;
+}
 
 async function askAnthropic(options: AskAIOptions): Promise<string> {
   const anthropic = getAnthropicClient();
@@ -98,43 +141,53 @@ async function askAnthropic(options: AskAIOptions): Promise<string> {
   const callId = `${options.label}:${Date.now().toString(36)}`;
   const startedAt = Date.now();
 
-  console.log(`[ai-client start] callId=${callId} label=${options.label} model=${model} maxTokens=${options.maxTokens} stream=false`);
-
   // Stream + collect the final message instead of a plain non-streaming
   // `.create()` call. At the max_tokens these routes use (8192/16000 for
   // build/follow-up), a non-streaming request risks hitting the SDK's HTTP
   // timeout before the full response arrives — streaming has no such
   // ceiling. Callers here still just get the final text back, unchanged.
-  let response;
-  try {
-    const stream = anthropic.messages.stream({
-      model,
-      max_tokens: options.maxTokens,
-      // These system prompts (section vocabulary, motion-safety rules) are
-      // large and byte-identical across every generate/build/follow-up call.
-      // Marking the block cacheable means repeat calls within the same
-      // editing session pay ~10x less for it instead of full price every time.
-      system: [{ type: 'text', text: options.system, cache_control: { type: 'ephemeral' } }],
-      messages: options.messages.map((m) => ({ role: m.role, content: toAnthropicContent(m.content) })),
-    });
-    response = await stream.finalMessage();
-  } catch (err) {
-    console.error(`[ai-client error] callId=${callId} label=${options.label} model=${model} elapsedMs=${Date.now() - startedAt}`, err);
-    throw err;
-  }
+  // Safe to retry the whole attempt: nothing is returned to the caller until
+  // success, so a dropped Anthropic socket never leaks partial text.
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= AI_TRANSIENT_MAX_ATTEMPTS; attempt++) {
+    console.log(`[ai-client start] callId=${callId} label=${options.label} model=${model} maxTokens=${options.maxTokens} stream=false attempt=${attempt}/${AI_TRANSIENT_MAX_ATTEMPTS}`);
+    try {
+      const stream = anthropic.messages.stream({
+        model,
+        max_tokens: options.maxTokens,
+        // These system prompts (section vocabulary, motion-safety rules) are
+        // large and byte-identical across every generate/build/follow-up call.
+        // Marking the block cacheable means repeat calls within the same
+        // editing session pay ~10x less for it instead of full price every time.
+        system: [{ type: 'text', text: options.system, cache_control: { type: 'ephemeral' } }],
+        messages: options.messages.map((m) => ({ role: m.role, content: toAnthropicContent(m.content) })),
+      });
+      const response = await stream.finalMessage();
 
-  const { input_tokens, output_tokens } = response.usage;
-  console.log(`[AI tokens] callId=${callId} label=${options.label} elapsedMs=${Date.now() - startedAt} input=${input_tokens} output=${output_tokens} total=${input_tokens + output_tokens} model=${model} maxTokens=${options.maxTokens} stop_reason=${response.stop_reason}`);
+      const { input_tokens, output_tokens } = response.usage;
+      console.log(`[AI tokens] callId=${callId} label=${options.label} elapsedMs=${Date.now() - startedAt} input=${input_tokens} output=${output_tokens} total=${input_tokens + output_tokens} model=${model} maxTokens=${options.maxTokens} stop_reason=${response.stop_reason} attempt=${attempt}`);
 
-  if (response.stop_reason === 'max_tokens') {
-    throw new AIResponseTruncatedError(output_tokens, options.maxTokens);
-  }
+      if (response.stop_reason === 'max_tokens') {
+        throw new AIResponseTruncatedError(output_tokens, options.maxTokens);
+      }
 
-  const block = response.content[0];
-  if (block.type !== 'text') {
-    throw new Error(`Unexpected response block type from Anthropic: ${block.type}`);
+      const block = response.content[0];
+      if (block.type !== 'text') {
+        throw new Error(`Unexpected response block type from Anthropic: ${block.type}`);
+      }
+      return block.text;
+    } catch (err) {
+      lastErr = err;
+      if (err instanceof AIResponseTruncatedError) throw err;
+      const retryable = isTransientAIConnectionError(err) && attempt < AI_TRANSIENT_MAX_ATTEMPTS;
+      console.error(`[ai-client error] callId=${callId} label=${options.label} model=${model} elapsedMs=${Date.now() - startedAt} attempt=${attempt} retryable=${retryable}`, err);
+      if (!retryable) throw err;
+      const backoffMs = 1000 * attempt;
+      console.warn(`[ai-client retry] callId=${callId} label=${options.label} attempt=${attempt}/${AI_TRANSIENT_MAX_ATTEMPTS} backoffMs=${backoffMs} reason=transient-connection`);
+      await sleep(backoffMs);
+    }
   }
-  return block.text;
+  throw lastErr;
 }
 
 async function askAnthropicStream(options: AskAIOptions, onChunk: (text: string) => void): Promise<string> {
@@ -143,51 +196,73 @@ async function askAnthropicStream(options: AskAIOptions, onChunk: (text: string)
   const callId = `${options.label}:${Date.now().toString(36)}`;
   const startedAt = Date.now();
 
-  console.log(`[ai-client start] callId=${callId} label=${options.label} model=${model} maxTokens=${options.maxTokens} stream=true`);
+  // Retry ONLY when zero text_delta chunks were delivered to onChunk.
+  // If we already streamed partial tokens to the client (follow-up/build SSE),
+  // retrying would duplicate that text in the UI — so we fail closed instead.
+  // The production schema-from-html failure mode is exactly zero chunks +
+  // undici "terminated" / "other side closed", which is safe to retry.
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= AI_TRANSIENT_MAX_ATTEMPTS; attempt++) {
+    console.log(`[ai-client start] callId=${callId} label=${options.label} model=${model} maxTokens=${options.maxTokens} stream=true attempt=${attempt}/${AI_TRANSIENT_MAX_ATTEMPTS}`);
 
-  const stream = anthropic.messages.stream({
-    model,
-    max_tokens: options.maxTokens,
-    system: [{ type: 'text', text: options.system, cache_control: { type: 'ephemeral' } }],
-    messages: options.messages.map((m) => ({ role: m.role, content: toAnthropicContent(m.content) })),
-  });
+    const stream = anthropic.messages.stream({
+      model,
+      max_tokens: options.maxTokens,
+      system: [{ type: 'text', text: options.system, cache_control: { type: 'ephemeral' } }],
+      messages: options.messages.map((m) => ({ role: m.role, content: toAnthropicContent(m.content) })),
+    });
 
-  let fullText = '';
-  let firstChunkAt: number | null = null;
-  let chunkCount = 0;
-  try {
-    for await (const event of stream) {
-      if (
-        event.type === 'content_block_delta' &&
-        event.delta.type === 'text_delta'
-      ) {
-        if (firstChunkAt === null) {
-          firstChunkAt = Date.now();
-          console.log(`[ai-client first-chunk] callId=${callId} label=${options.label} timeToFirstChunkMs=${firstChunkAt - startedAt}`);
+    let fullText = '';
+    let firstChunkAt: number | null = null;
+    let chunkCount = 0;
+    try {
+      for await (const event of stream) {
+        if (
+          event.type === 'content_block_delta' &&
+          event.delta.type === 'text_delta'
+        ) {
+          if (firstChunkAt === null) {
+            firstChunkAt = Date.now();
+            console.log(`[ai-client first-chunk] callId=${callId} label=${options.label} timeToFirstChunkMs=${firstChunkAt - startedAt} attempt=${attempt}`);
+          }
+          chunkCount += 1;
+          onChunk(event.delta.text);
+          fullText += event.delta.text;
         }
-        chunkCount += 1;
-        onChunk(event.delta.text);
-        fullText += event.delta.text;
       }
+
+      if (firstChunkAt === null) {
+        console.warn(`[ai-client warn] callId=${callId} label=${options.label} stream ended with zero text_delta chunks — elapsedMs=${Date.now() - startedAt} attempt=${attempt}`);
+      }
+
+      const response = await stream.finalMessage();
+      const { input_tokens, output_tokens } = response.usage;
+      console.log(`[AI tokens stream] callId=${callId} label=${options.label} elapsedMs=${Date.now() - startedAt} chunks=${chunkCount} input=${input_tokens} output=${output_tokens} total=${input_tokens + output_tokens} model=${model} maxTokens=${options.maxTokens} stop_reason=${response.stop_reason} attempt=${attempt}`);
+
+      if (response.stop_reason === 'max_tokens') {
+        throw new AIResponseTruncatedError(output_tokens, options.maxTokens);
+      }
+
+      return fullText;
+    } catch (err) {
+      lastErr = err;
+      if (err instanceof AIResponseTruncatedError) throw err;
+      // Only retry when nothing was flushed to the caller yet.
+      const retryable =
+        isTransientAIConnectionError(err) &&
+        chunkCount === 0 &&
+        attempt < AI_TRANSIENT_MAX_ATTEMPTS;
+      console.error(
+        `[ai-client error] callId=${callId} label=${options.label} model=${model} elapsedMs=${Date.now() - startedAt} chunksReceived=${chunkCount} gotFirstChunk=${firstChunkAt !== null} attempt=${attempt} retryable=${retryable}`,
+        err,
+      );
+      if (!retryable) throw err;
+      const backoffMs = 1000 * attempt;
+      console.warn(`[ai-client retry] callId=${callId} label=${options.label} attempt=${attempt}/${AI_TRANSIENT_MAX_ATTEMPTS} backoffMs=${backoffMs} reason=transient-connection-before-first-chunk`);
+      await sleep(backoffMs);
     }
-  } catch (err) {
-    console.error(`[ai-client error] callId=${callId} label=${options.label} model=${model} elapsedMs=${Date.now() - startedAt} chunksReceived=${chunkCount} gotFirstChunk=${firstChunkAt !== null}`, err);
-    throw err;
   }
-
-  if (firstChunkAt === null) {
-    console.warn(`[ai-client warn] callId=${callId} label=${options.label} stream ended with zero text_delta chunks — elapsedMs=${Date.now() - startedAt}`);
-  }
-
-  const response = await stream.finalMessage();
-  const { input_tokens, output_tokens } = response.usage;
-  console.log(`[AI tokens stream] callId=${callId} label=${options.label} elapsedMs=${Date.now() - startedAt} chunks=${chunkCount} input=${input_tokens} output=${output_tokens} total=${input_tokens + output_tokens} model=${model} maxTokens=${options.maxTokens} stop_reason=${response.stop_reason}`);
-
-  if (response.stop_reason === 'max_tokens') {
-    throw new AIResponseTruncatedError(output_tokens, options.maxTokens);
-  }
-
-  return fullText;
+  throw lastErr;
 }
 
 /**
@@ -325,7 +400,9 @@ export async function askAI(options: AskAIOptions): Promise<string> {
 
 /**
  * Streaming variant of askAI. Calls onChunk for each text_delta token as it
- * arrives, then returns the full accumulated text. Does not modify askAI().
+ * arrives, then returns the full accumulated text. Retries transient
+ * Anthropic connection drops only when no chunks have been delivered yet
+ * (avoids duplicating partial SSE text to the client).
  */
 export async function askAIStream(
   options: AskAIOptions,
