@@ -40,3 +40,14 @@ export function sendSSE(
 export function closeSSE(controller: ReadableStreamDefaultController<Uint8Array>): void {
   try { controller.close(); } catch { /* already closed */ }
 }
+
+// SSE comment line (":" prefix) — valid per spec, keeps bytes flowing on the
+// connection for idle-timeout proxies (e.g. Cloudflare) without ever reaching
+// the client's event parser, since readSSEStream only reacts to "data: " lines.
+export function sendSSEPing(controller: ReadableStreamDefaultController<Uint8Array>): void {
+  try {
+    controller.enqueue(encoder.encode(`: ping\n\n`));
+  } catch {
+    // Stream may already be closed — swallow silently
+  }
+}
