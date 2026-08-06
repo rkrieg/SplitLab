@@ -94,7 +94,7 @@ function toAnthropicContent(content: AIContent): string | Anthropic.Messages.Con
 
 async function askAnthropic(options: AskAIOptions): Promise<string> {
   const anthropic = getAnthropicClient();
-  const model = options.model ?? process.env.ANTHROPIC_MODEL?.trim() ?? 'claude-sonnet-4-6';
+  const model = options.model ?? process.env.ANTHROPIC_MODEL?.trim() ?? 'claude-sonnet-5';
   const callId = `${options.label}:${Date.now().toString(36)}`;
   const startedAt = Date.now();
 
@@ -139,7 +139,7 @@ async function askAnthropic(options: AskAIOptions): Promise<string> {
 
 async function askAnthropicStream(options: AskAIOptions, onChunk: (text: string) => void): Promise<string> {
   const anthropic = getAnthropicClient();
-  const model = options.model ?? process.env.ANTHROPIC_MODEL?.trim() ?? 'claude-sonnet-4-6';
+  const model = options.model ?? process.env.ANTHROPIC_MODEL?.trim() ?? 'claude-sonnet-5';
   const callId = `${options.label}:${Date.now().toString(36)}`;
   const startedAt = Date.now();
 

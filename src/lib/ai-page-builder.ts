@@ -473,7 +473,7 @@ async function getDesignBrief(
     const text = await askAI({
       system: DESIGN_BRIEF_SYSTEM_PROMPT,
       messages: [{ role: 'user', content: briefContent }],
-      maxTokens: 400,
+      maxTokens: 128000,
       label: 'build-html:design-brief',
     });
 
@@ -598,7 +598,7 @@ export async function buildHtmlFromSchema(
   const aiOptions = {
     system: systemPrompt,
     messages: [{ role: 'user' as const, content: userContent }],
-    maxTokens: 32000,
+    maxTokens: 128000,
     label,
   };
 

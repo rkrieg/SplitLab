@@ -177,7 +177,7 @@ export async function POST(request: NextRequest) {
     // to the client and forwarded to /build where Claude uses it as a visual reference.
     let text: string;
     try {
-      text = await askAI({ system: systemPrompt, messages, maxTokens: 16000, label: 'generate' });
+      text = await askAI({ system: systemPrompt, messages, maxTokens: 128000, label: 'generate' });
     } catch (err) {
       if (err instanceof AIResponseTruncatedError) {
         console.error('[pages/generate] response truncated at maxTokens', {
