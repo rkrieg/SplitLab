@@ -405,7 +405,7 @@ async function runScopedPatch(
     const text = await askAI({
       system: SCOPED_PATCH_SYSTEM_PROMPT,
       messages: [{ role: 'user', content: userContent }],
-      maxTokens: 4000,
+      maxTokens: 128000,
       label: 'follow-up:scoped-patch',
     });
     let raw = text.trim();
@@ -624,7 +624,7 @@ async function runScopedInsert(
     const text = await askAI({
       system: SCOPED_INSERT_SYSTEM_PROMPT,
       messages: [{ role: 'user', content: userContent }],
-      maxTokens: 6000,
+      maxTokens: 128000,
       label: 'follow-up:scoped-insert',
     });
     let raw = text.trim();
@@ -1040,7 +1040,7 @@ export async function POST(
               ...history.map(({ role, content }) => ({ role, content })),
               { role: 'user' as const, content: userContent },
             ],
-            maxTokens: 32000,
+            maxTokens: 128000,
             label: 'follow-up:pass1-classify',
           },
           (chunk) => {

@@ -141,8 +141,8 @@ async function extractCssTokens(cssBlocks: string, htmlStructure: string): Promi
           content: `CSS (from all <style> blocks on the page):\n${cssBlocks}\n\nHTML structure (cleaned DOM for section order):\n${htmlStructure}\n\nExtract and return ONLY this format:\n\nCOLORS:\n  Background: #...\n  Surface/card: #...\n  Primary text: #...\n  Muted text: #...\n  Accent/CTA: #...\n\nTYPOGRAPHY:\n  Headline font: '...' — weight ...\n  Body font: '...' — weight ...\n\nLAYOUT TOKENS:\n  Card border radius: ...\n  Section padding: ...\n  Border style: ...\n  Container max-width: ...\n\nSECTION ORDER:\n  Nav → Hero → ... → Footer`,
         },
       ],
-      maxTokens: 600,
-      model: 'claude-sonnet-4-6',
+      maxTokens: 128000,
+      model: 'claude-sonnet-5',
       label: 'competitor-scrape:extract-css-tokens',
     });
     return result.trim() || null;
