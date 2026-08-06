@@ -10,11 +10,13 @@ import { PLAN_LIMITS } from '@/lib/plans';
 import { isTestVariantPage } from '@/lib/page-drafts';
 
 export const dynamic = 'force-dynamic';
-// The AI call now returns a compact field/section list (not the full page),
-// so this should complete well under the old 300s ceiling — kept at 120 as
-// a safety margin rather than the previous 300s (which was needed only
-// because the old approach echoed the whole page back).
-export const maxDuration = 120;
+// The AI call returns a compact field/section list (not the full page), but
+// maxTokens is set to 128000 (the model's actual ceiling) so a field-dense
+// page never gets cut off mid-JSON — for a large page that can legitimately
+// take several minutes, so this matches the same 800s ceiling already used
+// by rebuild-with-ai/follow-up for the same kind of call, rather than the
+// mismatched 120s this used to have back when maxTokens was capped at 16000.
+export const maxDuration = 800;
 
 // Prepares an existing raw-HTML page (e.g. a hand-authored test variant) for
 // the schema-driven AI Pages editor — WITHOUT redesigning it.
