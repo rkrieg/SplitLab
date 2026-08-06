@@ -63,6 +63,7 @@ import {
   Monitor,
   Smartphone,
   Sparkles,
+  MoreHorizontal,
 } from "lucide-react";
 import Spinner from "@/components/ui/Spinner";
 import Button from "@/components/ui/Button";
@@ -87,6 +88,7 @@ interface Variant {
   proxy_mode?: boolean;
   pages?: { id: string; name: string; draft_html_content?: string | null } | null;
   tracking_verified?: boolean | null;
+  duplicated_from_id?: string | null;
 }
 
 interface Goal {
@@ -444,6 +446,10 @@ export default function AnalyticsClient({
   const [newVariantHtml, setNewVariantHtml] = useState("");
   const [addingVariant, setAddingVariant] = useState(false);
   const [addVariantError, setAddVariantError] = useState<{ message: string; isLimit: boolean } | null>(null);
+
+  // Duplicate variant (per-row "⋯" menu)
+  const [variantMenuOpenId, setVariantMenuOpenId] = useState<string | null>(null);
+  const [duplicatingVariantId, setDuplicatingVariantId] = useState<string | null>(null);
 
   // Tracking verification
   const [checkingTracking, setCheckingTracking] = useState<string | null>(null);
@@ -1088,6 +1094,7 @@ export default function AnalyticsClient({
 
   async function saveHtml() {
     const pageId = htmlEditVariant?.pages?.id;
+    const variantId = htmlEditVariant?.id;
     if (!pageId) return;
     setSavingHtml(true);
     try {
@@ -1099,6 +1106,17 @@ export default function AnalyticsClient({
       if (!res.ok) {
         toast.error("Failed to save HTML");
         return;
+      }
+      // Backend just cleared this variant's cached scan (HTML changed, old
+      // selectors are stale) — mirror that locally so the "Setup Goal
+      // Tracking" button reverts to red (unscanned) instead of staying
+      // yellow (scanned) until a manual refresh.
+      if (variantId) {
+        setScanResults((prev) => {
+          if (!prev) return prev;
+          const filtered = prev.variants.filter((v) => v.variant_id !== variantId);
+          return filtered.length > 0 ? { ...prev, variants: filtered } : null;
+        });
       }
       toast.success("HTML updated — live variant will reflect the changes");
       setHtmlEditVariant(null);
@@ -1228,6 +1246,43 @@ export default function AnalyticsClient({
       toast.error("Failed to add variant");
     } finally {
       setAddingVariant(false);
+    }
+  }
+
+  // ─── Duplicate variant ──────────────────────────────────────────────
+
+  async function handleDuplicateVariant(variantId: string) {
+    setVariantMenuOpenId(null);
+    setDuplicatingVariantId(variantId);
+    try {
+      const res = await fetch(`/api/tests/${test.id}/variants/${variantId}/duplicate`, {
+        method: "POST",
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.error || "Failed to duplicate variant");
+        return;
+      }
+      const finalTest = await res.json();
+      setTest(finalTest);
+      // Backend returns the scan_results with the source variant's scan
+      // entry cloned onto the new variant_id — merge it in so the copied
+      // variant immediately shows "Setup Goal Tracking" (yellow) instead of
+      // "no scan yet" (red) without waiting for a full page reload.
+      if (finalTest.scan_results) setScanResults(finalTest.scan_results);
+      const previousIds = new Set(variants.map((v) => v.id));
+      const newVariant = (finalTest.test_variants || []).find(
+        (v: Variant) => !previousIds.has(v.id),
+      );
+      // New variant starts at 0% weight — never disturbs live traffic split.
+      // Auto-check tracker for redirect/proxy copies, same as add-variant.
+      if (newVariant?.redirect_url) autoCheckVariant(newVariant.id, newVariant.redirect_url);
+      toast.success("Variant duplicated");
+      fetchAnalytics();
+    } catch {
+      toast.error("Failed to duplicate variant");
+    } finally {
+      setDuplicatingVariantId(null);
     }
   }
 
@@ -2765,6 +2820,14 @@ export default function AnalyticsClient({
                                   />
                                 )}
                               </div>
+                              {stat.variant.duplicated_from_id && (
+                                <p className="text-slate-400 dark:text-slate-500 text-[10px] flex items-center gap-1 mt-0.5">
+                                  <Copy size={9} className="flex-shrink-0" />
+                                  Duplicate of{" "}
+                                  {variants.find((v) => v.id === stat.variant.duplicated_from_id)?.name ??
+                                    "a deleted variant"}
+                                </p>
+                              )}
                               {stat.variant.redirect_url &&
                                 !isEditing && (
                                   <p className="text-slate-500 text-xs font-mono truncate max-w-[250px] mt-0.5">
@@ -2988,6 +3051,34 @@ export default function AnalyticsClient({
                                 >
                                   <Pencil size={13} />
                                 </button>
+                                <div className="relative">
+                                  <button
+                                    onClick={() =>
+                                      setVariantMenuOpenId(
+                                        variantMenuOpenId === stat.variant.id ? null : stat.variant.id,
+                                      )
+                                    }
+                                    disabled={duplicatingVariantId === stat.variant.id}
+                                    className="p-1 rounded transition-colors text-slate-400 dark:text-slate-600 hover:text-slate-700 dark:hover:text-slate-300 disabled:opacity-40"
+                                    title="More actions"
+                                  >
+                                    {duplicatingVariantId === stat.variant.id ? (
+                                      <Loader2 size={13} className="animate-spin" />
+                                    ) : (
+                                      <MoreHorizontal size={13} />
+                                    )}
+                                  </button>
+                                  {variantMenuOpenId === stat.variant.id && (
+                                    <div className="absolute right-0 top-full mt-1 w-40 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl z-10 overflow-hidden">
+                                      <button
+                                        onClick={() => handleDuplicateVariant(stat.variant.id)}
+                                        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
+                                      >
+                                        <Copy size={13} /> Duplicate
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
                               </div>
                             </td>
                           </tr>

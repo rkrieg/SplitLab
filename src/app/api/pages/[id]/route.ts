@@ -4,7 +4,7 @@ import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { uploadHtml, deleteHtmlFile, deletePageImages, fileNameFromUrl } from '@/lib/storage';
 import { resolveWorkspaceRole } from '@/lib/workspace-auth';
-import { isTestVariantPage } from '@/lib/page-drafts';
+import { isTestVariantPage, getLinkedVariant } from '@/lib/page-drafts';
 import { z } from 'zod';
 
 const updateSchema = z.object({
@@ -120,8 +120,25 @@ export async function PATCH(
     };
 
     // If HTML is being replaced, wipe personalization rules (selectors no longer valid)
+    // and prune this variant's cached scan — the elements it found no longer
+    // reflect the live page. Only runs on live writes (isDraftWrite returns above),
+    // since a draft hasn't reached /api/serve yet and the current scan is still accurate.
     if (htmlReplaced) {
       await db.from('personalization_rules').delete().eq('page_id', params.id);
+
+      const linkedVariant = await getLinkedVariant(params.id);
+      if (linkedVariant) {
+        const { data: testRow } = await db
+          .from('tests')
+          .select('scan_results')
+          .eq('id', linkedVariant.test_id)
+          .single();
+        const existingScans = testRow?.scan_results as { variants?: { variant_id: string }[] } | null;
+        if (existingScans?.variants?.some((v) => v.variant_id === linkedVariant.id)) {
+          const pruned = { variants: existingScans.variants.filter((v) => v.variant_id !== linkedVariant.id) };
+          await db.from('tests').update({ scan_results: pruned }).eq('id', linkedVariant.test_id);
+        }
+      }
     }
 
     const { data: updated, error } = await db
