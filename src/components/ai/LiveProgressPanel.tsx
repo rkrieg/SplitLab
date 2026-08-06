@@ -15,7 +15,7 @@ export function LiveProgressPanel({ events, isComplete = false }: Props) {
 
   if (errorEvent) {
     return (
-      <div className="flex items-center gap-2 text-xs text-red-400">
+      <div className="flex items-center gap-2 text-xs text-red-600 dark:text-red-400">
         <span className="w-4 h-4 rounded-full bg-red-500/15 border border-red-500/30 flex items-center justify-center text-[9px] flex-shrink-0">✕</span>
         {errorEvent.message}
       </div>
@@ -59,12 +59,12 @@ export function LiveProgressPanel({ events, isComplete = false }: Props) {
               <div key={i}>
                 <div className={cn(
                   'flex items-center gap-2 text-xs',
-                  isActive ? 'text-slate-200' : 'text-slate-500 dark:text-slate-500'
+                  isActive ? 'text-slate-700 dark:text-slate-200 font-medium' : 'text-slate-400 dark:text-slate-500'
                 )}>
                   {isDone || !isActive ? (
-                    <Check size={11} className="text-green-500 flex-shrink-0" />
+                    <Check size={11} className="text-green-600 dark:text-green-500 flex-shrink-0" />
                   ) : (
-                    <Loader2 size={11} className="animate-spin text-indigo-400 flex-shrink-0" />
+                    <Loader2 size={11} className="animate-spin text-indigo-600 dark:text-indigo-400 flex-shrink-0" />
                   )}
                   <span>{(event as { type: 'status'; message: string }).message}</span>
                 </div>
@@ -79,13 +79,13 @@ export function LiveProgressPanel({ events, isComplete = false }: Props) {
                           key={si}
                           className={cn(
                             'flex items-center gap-1.5 text-[11px]',
-                            isLastSection ? 'text-indigo-400' : 'text-slate-600'
+                            isLastSection ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-400 dark:text-slate-600'
                           )}
                         >
                           {isLastSection ? (
-                            <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 flex-shrink-0 animate-pulse" />
+                            <span className="w-1.5 h-1.5 rounded-full bg-indigo-600 dark:bg-indigo-400 flex-shrink-0 animate-pulse" />
                           ) : (
-                            <span className="w-1.5 h-1.5 rounded-full bg-slate-600 flex-shrink-0" />
+                            <span className="w-1.5 h-1.5 rounded-full bg-slate-300 dark:bg-slate-600 flex-shrink-0" />
                           )}
                           {(s as { type: 'section_status'; message: string }).message}
                         </div>
@@ -101,8 +101,8 @@ export function LiveProgressPanel({ events, isComplete = false }: Props) {
             thinkingRendered = true;
             return (
               <div key={i} className="flex items-start gap-1.5 pl-0.5">
-                <Sparkles size={10} className="text-indigo-400 flex-shrink-0 mt-0.5" />
-                <span className="text-[11px] text-slate-400 italic leading-relaxed">
+                <Sparkles size={10} className="text-indigo-600 dark:text-indigo-400 flex-shrink-0 mt-0.5" />
+                <span className="text-[11px] text-slate-500 dark:text-slate-400 italic leading-relaxed">
                   &ldquo;{(event as { type: 'thinking'; message: string }).message}&rdquo;
                 </span>
               </div>
@@ -150,7 +150,7 @@ export function LiveProgressPanel({ events, isComplete = false }: Props) {
 
       {/* Done state */}
       {isDone && (
-        <div className="flex items-center gap-1.5 text-xs text-green-400 pt-0.5">
+        <div className="flex items-center gap-1.5 text-xs text-green-600 dark:text-green-400 pt-0.5">
           <Check size={11} />
           Done
         </div>

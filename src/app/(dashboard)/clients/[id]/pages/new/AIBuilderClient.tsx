@@ -278,6 +278,11 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   // have HTML but no schema, and only once per page (guarded below and
   // idempotently on the server).
   const [preparingSchema, setPreparingSchema] = useState(false);
+  // Live SSE checklist for the schema-from-html background prep — null when
+  // idle/not applicable, [] once the stream opens, populated with status/
+  // done/error events as they arrive. Separate from preparingSchema (which
+  // only gates input disabling) since this drives the LiveProgressPanel.
+  const [schemaEvents, setSchemaEvents] = useState<SSEEvent[] | null>(null);
   const schemaFromHtmlFiredRef = useRef(false);
 
   const [questions, setQuestions] = useState<string[]>([]);
@@ -396,6 +401,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     if (schemaFromHtmlFiredRef.current) return;
     schemaFromHtmlFiredRef.current = true;
     setPreparingSchema(true);
+    setSchemaEvents([]);
     (async () => {
       try {
         const res = await fetch(`/api/pages/${initialPage.id}/schema-from-html`, { method: 'POST' });
@@ -404,15 +410,44 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
           toast.error(err.error || "Couldn't prepare this page for full AI editing — chat edits will still work.");
           return;
         }
-        const data = await res.json();
-        if (data.schema_json) {
-          schemaRef.current = data.schema_json;
-          setSchemaJson(data.schema_json);
+
+        let resultSchemaJson: unknown;
+        let resultHtmlUrl: string | undefined;
+        let resultAlready = false;
+        let streamFailed = false;
+
+        // The route returns a plain JSON body for the "already prepared"
+        // fast path (idempotency guard, before any SSE stream opens) and an
+        // SSE stream for the real multi-minute pipeline — content-type tells
+        // them apart, no change needed to the fast path's response shape.
+        if (res.headers.get('content-type')?.includes('text/event-stream')) {
+          await readSSEStream(res, (event) => {
+            setSchemaEvents(prev => prev ? [...prev, event] : [event]);
+            if (event.type === 'done') {
+              resultSchemaJson = event.schema_json;
+              resultHtmlUrl = event.html_url;
+              resultAlready = !!event.already;
+            } else if (event.type === 'error') {
+              streamFailed = true;
+              toast.error(event.message || "Couldn't prepare this page for full AI editing — chat edits will still work.");
+            }
+          });
+          if (streamFailed) return;
+        } else {
+          const data = await res.json();
+          resultSchemaJson = data.schema_json;
+          resultHtmlUrl = data.html_url;
+          resultAlready = !!data.already;
         }
-        if (data.html_url) {
-          setHtmlUrl(`${data.html_url}?t=${Date.now()}`);
+
+        if (resultSchemaJson) {
+          schemaRef.current = resultSchemaJson;
+          setSchemaJson(resultSchemaJson);
         }
-        if (isTestVariantPage && !data.already) setHasDraft(true);
+        if (resultHtmlUrl) {
+          setHtmlUrl(`${resultHtmlUrl}?t=${Date.now()}`);
+        }
+        if (isTestVariantPage && !resultAlready) setHasDraft(true);
         // Transient confirmation only — the chat message below carries the
         // same info permanently, so this doesn't need to persist like the
         // UTM warning toast does (which stays until the user dismisses it).
@@ -425,6 +460,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         toast.error("Couldn't prepare this page for full AI editing — chat edits will still work.");
       } finally {
         setPreparingSchema(false);
+        setSchemaEvents(null);
       }
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1360,11 +1396,18 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
               <div className="w-6 h-6 rounded-full bg-indigo-50 dark:bg-indigo-600/15 border border-indigo-100 dark:border-indigo-600/25 flex items-center justify-center flex-shrink-0 mt-0.5">
                 <Sparkles size={11} className="text-indigo-600 dark:text-indigo-400" />
               </div>
-              <div className="flex-1 pt-0.5">
-                <div className="flex items-center gap-2 text-xs text-slate-400 dark:text-slate-500">
-                  <Loader2 size={11} className="animate-spin text-indigo-600 dark:text-indigo-400" />
-                  Preparing this page for editing…
-                </div>
+              <div className="flex-1 pt-0.5 space-y-2">
+                {schemaEvents && schemaEvents.length > 0 ? (
+                  <LiveProgressPanel events={schemaEvents} />
+                ) : (
+                  <div className="flex items-center gap-2 text-xs text-slate-400 dark:text-slate-500">
+                    <Loader2 size={11} className="animate-spin text-indigo-600 dark:text-indigo-400" />
+                    Preparing this page for editing…
+                  </div>
+                )}
+                <p className="text-[11px] text-amber-600 dark:text-amber-400/80">
+                  Please don&apos;t close this tab — we&apos;re working on your HTML.
+                </p>
               </div>
             </div>
           )}

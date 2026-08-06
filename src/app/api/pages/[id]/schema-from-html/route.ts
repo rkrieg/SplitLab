@@ -9,6 +9,7 @@ import { resolveWorkspaceRole, resolveOwnerPlan } from '@/lib/workspace-auth';
 import { PLAN_LIMITS } from '@/lib/plans';
 import { isTestVariantPage } from '@/lib/page-drafts';
 import { extractDataUris, restoreDataUris, restoreDataUrisInValue } from '@/lib/data-uri-strip';
+import { createSSEStream, sendSSE, closeSSE, SSE_HEADERS } from '@/lib/sse';
 
 export const dynamic = 'force-dynamic';
 // The AI call returns a compact field/section list (not the full page), but
@@ -410,140 +411,181 @@ export async function POST(
     return NextResponse.json({ error: 'Too many requests. Please wait a moment before trying again.' }, { status: 429 });
   }
 
-  const html = page.html_content ?? (page.html_url ? await downloadHtmlByPath(fileNameFromUrl(page.html_url)) : null);
-  if (!html) return NextResponse.json({ error: 'Could not load current HTML' }, { status: 400 });
+  // ── Open SSE stream — no NextResponse.json after this point ───────────────
+  // Everything above this line is a fast guard (auth/plan/rate-limit/already-
+  // prepared) and stays a plain JSON response; only the actual multi-minute
+  // pipeline below streams progress.
+  const { stream, controller } = createSSEStream();
+  const response = new Response(stream, { headers: SSE_HEADERS });
 
-  // Matching/annotation below all runs against `htmlNoDataUris` (placeholders
-  // in place of real image bytes) so positions line up with what the model
-  // saw; the real bytes go back in at the very end via dataUriMap.
-  const { html: htmlNoDataUris, map: dataUriMap } = extractDataUris(html);
-  const htmlForModel = minifyHtmlForModel(htmlNoDataUris);
-
-  let parsed: FieldListResponse;
-  try {
-    // Streamed even though we don't need the chunks — matches every other
-    // AI call in this app to avoid the Anthropic SDK's non-streaming HTTP
-    // timeout at high maxTokens.
-    const text = await askAIStream(
-      {
-        system: SYSTEM_PROMPT,
-        messages: [{ role: 'user', content: `Existing page HTML:\n${htmlForModel}` }],
-        maxTokens: 128000,
-        label: 'schema-from-html',
-      },
-      () => {},
-    );
-
-    let jsonText = text.trim();
-    if (jsonText.startsWith('```')) {
-      jsonText = jsonText.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
-    }
+  void (async () => {
     try {
-      parsed = JSON.parse(jsonText);
-    } catch {
-      // Most common real-world cause: match_text echoes a quoted phrase from
-      // the source HTML without escaping the inner quotes. jsonrepair fixes
-      // that and other minor near-JSON issues before we give up entirely.
-      parsed = JSON.parse(jsonrepair(jsonText));
+      sendSSE(controller, { type: 'status', message: 'Loading page…' });
+      const html = page.html_content ?? (page.html_url ? await downloadHtmlByPath(fileNameFromUrl(page.html_url)) : null);
+      if (!html) {
+        sendSSE(controller, { type: 'error', message: 'Could not load current HTML' });
+        closeSSE(controller);
+        return;
+      }
+
+      // Matching/annotation below all runs against `htmlNoDataUris` (placeholders
+      // in place of real image bytes) so positions line up with what the model
+      // saw; the real bytes go back in at the very end via dataUriMap.
+      const { html: htmlNoDataUris, map: dataUriMap } = extractDataUris(html);
+      const htmlForModel = minifyHtmlForModel(htmlNoDataUris);
+
+      sendSSE(controller, { type: 'status', message: 'Analyzing structure…' });
+
+      let parsed: FieldListResponse;
+      try {
+        // Streamed even though we don't need the chunks — matches every other
+        // AI call in this app to avoid the Anthropic SDK's non-streaming HTTP
+        // timeout at high maxTokens.
+        const text = await askAIStream(
+          {
+            system: SYSTEM_PROMPT,
+            messages: [{ role: 'user', content: `Existing page HTML:\n${htmlForModel}` }],
+            maxTokens: 128000,
+            label: 'schema-from-html',
+          },
+          () => {},
+        );
+
+        let jsonText = text.trim();
+        if (jsonText.startsWith('```')) {
+          jsonText = jsonText.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
+        }
+        try {
+          parsed = JSON.parse(jsonText);
+        } catch {
+          // Most common real-world cause: match_text echoes a quoted phrase from
+          // the source HTML without escaping the inner quotes. jsonrepair fixes
+          // that and other minor near-JSON issues before we give up entirely.
+          parsed = JSON.parse(jsonrepair(jsonText));
+        }
+      } catch (err) {
+        if (err instanceof AIResponseTruncatedError) {
+          sendSSE(controller, { type: 'error', message: 'This page is too large to prepare for AI editing in one pass.' });
+          closeSSE(controller);
+          return;
+        }
+        console.error('[schema-from-html] field-list generation failed', err);
+        sendSSE(controller, { type: 'error', message: 'Could not prepare this page for AI editing' });
+        closeSSE(controller);
+        return;
+      }
+
+      sendSSE(controller, { type: 'status', message: 'Mapping fields…' });
+
+      const {
+        annotatedHtml: annotatedHtmlWithPlaceholders,
+        schemaJson: schemaJsonWithPlaceholders,
+        matchedCount,
+        requestedCount,
+        matchedSectionCount,
+        requestedSectionCount,
+      } = annotateHtml(htmlNoDataUris, parsed);
+
+      // Swap real image bytes back in now that positions/markers are locked in —
+      // both in the saved HTML and in the schema values the editor reads to show
+      // "current image" thumbnails.
+      const annotatedHtml = restoreDataUris(annotatedHtmlWithPlaceholders, dataUriMap);
+      const schemaJson = restoreDataUrisInValue(schemaJsonWithPlaceholders, dataUriMap) as Record<string, unknown>;
+
+      // If almost nothing the AI listed could actually be located in the HTML,
+      // something is structurally wrong (not just one-off text drift) — treat
+      // as a failure rather than shipping a near-empty schema.
+      if (requestedCount === 0 || matchedCount / requestedCount < 0.3) {
+        console.error(`[schema-from-html] low field match rate: ${matchedCount}/${requestedCount}`);
+        sendSSE(controller, { type: 'error', message: 'Could not prepare this page for AI editing' });
+        closeSSE(controller);
+        return;
+      }
+
+      // Always logged (not just on failure) so match rate can be checked against
+      // real client pages without needing to reproduce a failure first.
+      console.log(`[schema-from-html] match rate — fields: ${matchedCount}/${requestedCount}, sections: ${matchedSectionCount}/${requestedSectionCount}`);
+
+      // A page that comes out with zero (or almost zero) SL section markers has
+      // no way to receive `type:"patch"` edits later — `follow-up/route.ts`
+      // falls back to `type:"style"` (full-document 32k-token rewrite) for
+      // EVERY future chat edit on this page, which is the actual latency
+      // complaint. Failing here (same as the field guard above) forces a retry
+      // instead of silently shipping a page that will always be slow to edit.
+      if (requestedSectionCount === 0 || matchedSectionCount === 0) {
+        console.error(`[schema-from-html] no sections matched: ${matchedSectionCount}/${requestedSectionCount} — page would have no SL markers and every future follow-up would be forced into a full-page rewrite`);
+        sendSSE(controller, { type: 'error', message: 'Could not prepare this page for AI editing' });
+        closeSSE(controller);
+        return;
+      }
+
+      sendSSE(controller, { type: 'status', message: 'Saving…' });
+
+      let updatePayload: Record<string, unknown>;
+      let idempotencyColumn: 'schema_json' | 'draft_schema_json';
+
+      if (isVariant) {
+        // Annotated markup goes into the draft only — the live storage file and
+        // live columns a test is actually serving stay untouched, same as any
+        // other draft edit.
+        updatePayload = {
+          draft_schema_json: schemaJson,
+          draft_html_content: annotatedHtml,
+          updated_at: new Date().toISOString(),
+        };
+        idempotencyColumn = 'draft_schema_json';
+      } else {
+        const storagePath = page.html_url ? fileNameFromUrl(page.html_url) : `pages/${page.workspace_id}/${params.id}.html`;
+        const htmlUrl = await uploadHtml(storagePath, annotatedHtml);
+        updatePayload = {
+          schema_json: schemaJson,
+          html_url: htmlUrl,
+          html_content: annotatedHtml.length < 500_000 ? annotatedHtml : null,
+          field_selectors_json: null,
+          updated_at: new Date().toISOString(),
+        };
+        idempotencyColumn = 'schema_json';
+      }
+
+      // Idempotency guard #2 — atomic write, only applies if still schema-less.
+      // If a concurrent call already set schema_json/draft_schema_json, this
+      // update matches zero rows and we fall back to returning the row's current state.
+      const { data: updated } = await db
+        .from('pages')
+        .update(updatePayload)
+        .eq('id', params.id)
+        .is(idempotencyColumn, null)
+        .select('schema_json, html_url, draft_schema_json')
+        .single();
+
+      if (!updated) {
+        const { data: current } = await db.from('pages').select('schema_json, html_url, draft_schema_json').eq('id', params.id).single();
+        sendSSE(controller, {
+          type: 'done',
+          already: true,
+          html_url: current?.html_url ?? '',
+          schema_json: isVariant ? current?.draft_schema_json : current?.schema_json,
+        });
+        closeSSE(controller);
+        return;
+      }
+
+      if (!isVariant) {
+        await db.from('personalization_rules').delete().eq('page_id', params.id);
+      }
+
+      sendSSE(controller, {
+        type: 'done',
+        html_url: updated.html_url ?? '',
+        schema_json: isVariant ? updated.draft_schema_json : updated.schema_json,
+      });
+      closeSSE(controller);
+    } catch (err) {
+      console.error('[schema-from-html]', err);
+      sendSSE(controller, { type: 'error', message: 'Could not prepare this page for AI editing' });
+      closeSSE(controller);
     }
-  } catch (err) {
-    if (err instanceof AIResponseTruncatedError) {
-      return NextResponse.json({ error: 'This page is too large to prepare for AI editing in one pass.' }, { status: 500 });
-    }
-    console.error('[schema-from-html] field-list generation failed', err);
-    return NextResponse.json({ error: 'Could not prepare this page for AI editing' }, { status: 500 });
-  }
+  })();
 
-  const {
-    annotatedHtml: annotatedHtmlWithPlaceholders,
-    schemaJson: schemaJsonWithPlaceholders,
-    matchedCount,
-    requestedCount,
-    matchedSectionCount,
-    requestedSectionCount,
-  } = annotateHtml(htmlNoDataUris, parsed);
-
-  // Swap real image bytes back in now that positions/markers are locked in —
-  // both in the saved HTML and in the schema values the editor reads to show
-  // "current image" thumbnails.
-  const annotatedHtml = restoreDataUris(annotatedHtmlWithPlaceholders, dataUriMap);
-  const schemaJson = restoreDataUrisInValue(schemaJsonWithPlaceholders, dataUriMap) as Record<string, unknown>;
-
-  // If almost nothing the AI listed could actually be located in the HTML,
-  // something is structurally wrong (not just one-off text drift) — treat
-  // as a failure rather than shipping a near-empty schema.
-  if (requestedCount === 0 || matchedCount / requestedCount < 0.3) {
-    console.error(`[schema-from-html] low field match rate: ${matchedCount}/${requestedCount}`);
-    return NextResponse.json({ error: 'Could not prepare this page for AI editing' }, { status: 500 });
-  }
-
-  // Always logged (not just on failure) so match rate can be checked against
-  // real client pages without needing to reproduce a failure first.
-  console.log(`[schema-from-html] match rate — fields: ${matchedCount}/${requestedCount}, sections: ${matchedSectionCount}/${requestedSectionCount}`);
-
-  // A page that comes out with zero (or almost zero) SL section markers has
-  // no way to receive `type:"patch"` edits later — `follow-up/route.ts`
-  // falls back to `type:"style"` (full-document 32k-token rewrite) for
-  // EVERY future chat edit on this page, which is the actual latency
-  // complaint. Failing here (same as the field guard above) forces a retry
-  // instead of silently shipping a page that will always be slow to edit.
-  if (requestedSectionCount === 0 || matchedSectionCount === 0) {
-    console.error(`[schema-from-html] no sections matched: ${matchedSectionCount}/${requestedSectionCount} — page would have no SL markers and every future follow-up would be forced into a full-page rewrite`);
-    return NextResponse.json({ error: 'Could not prepare this page for AI editing' }, { status: 500 });
-  }
-
-  let updatePayload: Record<string, unknown>;
-  let idempotencyColumn: 'schema_json' | 'draft_schema_json';
-
-  if (isVariant) {
-    // Annotated markup goes into the draft only — the live storage file and
-    // live columns a test is actually serving stay untouched, same as any
-    // other draft edit.
-    updatePayload = {
-      draft_schema_json: schemaJson,
-      draft_html_content: annotatedHtml,
-      updated_at: new Date().toISOString(),
-    };
-    idempotencyColumn = 'draft_schema_json';
-  } else {
-    const storagePath = page.html_url ? fileNameFromUrl(page.html_url) : `pages/${page.workspace_id}/${params.id}.html`;
-    const htmlUrl = await uploadHtml(storagePath, annotatedHtml);
-    updatePayload = {
-      schema_json: schemaJson,
-      html_url: htmlUrl,
-      html_content: annotatedHtml.length < 500_000 ? annotatedHtml : null,
-      field_selectors_json: null,
-      updated_at: new Date().toISOString(),
-    };
-    idempotencyColumn = 'schema_json';
-  }
-
-  // Idempotency guard #2 — atomic write, only applies if still schema-less.
-  // If a concurrent call already set schema_json/draft_schema_json, this
-  // update matches zero rows and we fall back to returning the row's current state.
-  const { data: updated } = await db
-    .from('pages')
-    .update(updatePayload)
-    .eq('id', params.id)
-    .is(idempotencyColumn, null)
-    .select('schema_json, html_url, draft_schema_json')
-    .single();
-
-  if (!updated) {
-    const { data: current } = await db.from('pages').select('schema_json, html_url, draft_schema_json').eq('id', params.id).single();
-    return NextResponse.json({
-      already: true,
-      schema_json: isVariant ? current?.draft_schema_json : current?.schema_json,
-      html_url: current?.html_url,
-    });
-  }
-
-  if (!isVariant) {
-    await db.from('personalization_rules').delete().eq('page_id', params.id);
-  }
-
-  return NextResponse.json({
-    schema_json: isVariant ? updated.draft_schema_json : updated.schema_json,
-    html_url: updated.html_url,
-  });
+  return response;
 }

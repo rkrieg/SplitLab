@@ -4,7 +4,7 @@ export type SSEEvent =
   | { type: 'section_status'; message: string }
   | { type: 'image_ready'; url: string }
   | { type: 'error'; message: string }
-  | { type: 'done'; html_url: string; slug?: string; schema_json?: unknown; competitor_fetch_failed?: boolean; elapsed_ms?: number };
+  | { type: 'done'; html_url: string; slug?: string; schema_json?: unknown; competitor_fetch_failed?: boolean; elapsed_ms?: number; already?: boolean };
 
 export const SSE_HEADERS = {
   'Content-Type': 'text/event-stream',
