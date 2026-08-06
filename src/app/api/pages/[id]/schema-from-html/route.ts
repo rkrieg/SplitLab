@@ -360,6 +360,8 @@ export async function POST(
   _request: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  const startedAt = Date.now();
+
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
@@ -565,6 +567,7 @@ export async function POST(
           already: true,
           html_url: current?.html_url ?? '',
           schema_json: isVariant ? current?.draft_schema_json : current?.schema_json,
+          elapsed_ms: Date.now() - startedAt,
         });
         closeSSE(controller);
         return;
@@ -578,6 +581,7 @@ export async function POST(
         type: 'done',
         html_url: updated.html_url ?? '',
         schema_json: isVariant ? updated.draft_schema_json : updated.schema_json,
+        elapsed_ms: Date.now() - startedAt,
       });
       closeSSE(controller);
     } catch (err) {

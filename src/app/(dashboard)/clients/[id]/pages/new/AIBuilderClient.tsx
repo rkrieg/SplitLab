@@ -414,6 +414,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         let resultSchemaJson: unknown;
         let resultHtmlUrl: string | undefined;
         let resultAlready = false;
+        let resultElapsedMs: number | undefined;
         let streamFailed = false;
 
         // The route returns a plain JSON body for the "already prepared"
@@ -427,6 +428,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
               resultSchemaJson = event.schema_json;
               resultHtmlUrl = event.html_url;
               resultAlready = !!event.already;
+              resultElapsedMs = event.elapsed_ms;
             } else if (event.type === 'error') {
               streamFailed = true;
               toast.error(event.message || "Couldn't prepare this page for full AI editing — chat edits will still work.");
@@ -455,7 +457,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
           id: 'schema-from-html-ready',
           duration: 4000,
         });
-        addMessage({ role: 'assistant', content: 'Done preparing this page! Click any text in the preview to edit it, or ask me to make changes.' });
+        addMessage({ role: 'assistant', content: 'Done preparing this page! Click any text in the preview to edit it, or ask me to make changes.', elapsedMs: resultElapsedMs });
       } catch {
         toast.error("Couldn't prepare this page for full AI editing — chat edits will still work.");
       } finally {
