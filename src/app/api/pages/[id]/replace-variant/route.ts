@@ -4,7 +4,7 @@ import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { uploadHtml, fileNameFromUrl } from '@/lib/storage';
 import { resolveWorkspaceRole } from '@/lib/workspace-auth';
-import { isTestVariantPage } from '@/lib/page-drafts';
+import { getLinkedVariant } from '@/lib/page-drafts';
 
 // Promotes a variant page's draft (accumulated via AI chat / WYSIWYG edits)
 // onto the live HTML a test is actually serving. This is the only place a
@@ -28,7 +28,8 @@ export async function POST(
   const wsRole = await resolveWorkspaceRole(page.workspace_id, session.user.id, session.user.role);
   if (!wsRole || wsRole === 'viewer') return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
-  if (!(await isTestVariantPage(params.id))) {
+  const linkedVariant = await getLinkedVariant(params.id);
+  if (!linkedVariant) {
     return NextResponse.json({ error: 'This page is not linked to a test variant' }, { status: 400 });
   }
 
@@ -54,6 +55,20 @@ export async function POST(
   }
 
   await db.from('personalization_rules').delete().eq('page_id', params.id);
+
+  // Live markup replaced by the AI draft — this variant's cached scan no
+  // longer reflects the page (same reasoning as the manual-edit path in
+  // pages/[id]/route.ts).
+  const { data: testRow } = await db
+    .from('tests')
+    .select('scan_results')
+    .eq('id', linkedVariant.test_id)
+    .single();
+  const existingScans = testRow?.scan_results as { variants?: { variant_id: string }[] } | null;
+  if (existingScans?.variants?.some((v) => v.variant_id === linkedVariant.id)) {
+    const pruned = { variants: existingScans.variants.filter((v) => v.variant_id !== linkedVariant.id) };
+    await db.from('tests').update({ scan_results: pruned }).eq('id', linkedVariant.test_id);
+  }
 
   const { data: updated, error } = await db
     .from('pages')
