@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
-import { uploadHtml, deleteHtmlFile, deletePageImages, fileNameFromUrl } from '@/lib/storage';
+import { uploadHtml, deleteHtmlFile, deletePageImages, fileNameFromUrl, downloadHtmlByPath } from '@/lib/storage';
 import { resolveWorkspaceRole } from '@/lib/workspace-auth';
 import { isTestVariantPage, getLinkedVariant } from '@/lib/page-drafts';
 import { z } from 'zod';
@@ -43,6 +43,15 @@ export async function GET(
 
   const wsRole = await resolveWorkspaceRole(data.workspace_id, session.user.id, session.user.role);
   if (!wsRole) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+
+  if (!data.html_content && data.html_url) {
+    const filePath = fileNameFromUrl(data.html_url);
+    if (filePath) {
+      try {
+        data.html_content = await downloadHtmlByPath(filePath);
+      } catch { /* fall through with html_content still null */ }
+    }
+  }
 
   return NextResponse.json(data);
 }
