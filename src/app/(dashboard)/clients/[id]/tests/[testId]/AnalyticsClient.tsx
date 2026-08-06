@@ -451,6 +451,17 @@ export default function AnalyticsClient({
   const [variantMenuOpenId, setVariantMenuOpenId] = useState<string | null>(null);
   const [duplicatingVariantId, setDuplicatingVariantId] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (!variantMenuOpenId) return;
+    function handleClick(e: MouseEvent) {
+      if (!(e.target as HTMLElement).closest('[data-variant-menu]')) {
+        setVariantMenuOpenId(null);
+      }
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [variantMenuOpenId]);
+
   // Tracking verification
   const [checkingTracking, setCheckingTracking] = useState<string | null>(null);
   const [variantOverrides, setVariantOverrides] = useState<
@@ -3051,7 +3062,7 @@ export default function AnalyticsClient({
                                 >
                                   <Pencil size={13} />
                                 </button>
-                                <div className="relative">
+                                <div className="relative" data-variant-menu>
                                   <button
                                     onClick={() =>
                                       setVariantMenuOpenId(
