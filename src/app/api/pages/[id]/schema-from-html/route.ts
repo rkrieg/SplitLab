@@ -8,6 +8,7 @@ import { uploadHtml, downloadHtmlByPath, fileNameFromUrl } from '@/lib/storage';
 import { resolveWorkspaceRole, resolveOwnerPlan } from '@/lib/workspace-auth';
 import { PLAN_LIMITS } from '@/lib/plans';
 import { isTestVariantPage } from '@/lib/page-drafts';
+import { extractDataUris, restoreDataUris, restoreDataUrisInValue } from '@/lib/data-uri-strip';
 
 export const dynamic = 'force-dynamic';
 // The AI call returns a compact field/section list (not the full page), but
@@ -412,7 +413,11 @@ export async function POST(
   const html = page.html_content ?? (page.html_url ? await downloadHtmlByPath(fileNameFromUrl(page.html_url)) : null);
   if (!html) return NextResponse.json({ error: 'Could not load current HTML' }, { status: 400 });
 
-  const htmlForModel = minifyHtmlForModel(html);
+  // Matching/annotation below all runs against `htmlNoDataUris` (placeholders
+  // in place of real image bytes) so positions line up with what the model
+  // saw; the real bytes go back in at the very end via dataUriMap.
+  const { html: htmlNoDataUris, map: dataUriMap } = extractDataUris(html);
+  const htmlForModel = minifyHtmlForModel(htmlNoDataUris);
 
   let parsed: FieldListResponse;
   try {
@@ -450,13 +455,19 @@ export async function POST(
   }
 
   const {
-    annotatedHtml,
-    schemaJson,
+    annotatedHtml: annotatedHtmlWithPlaceholders,
+    schemaJson: schemaJsonWithPlaceholders,
     matchedCount,
     requestedCount,
     matchedSectionCount,
     requestedSectionCount,
-  } = annotateHtml(html, parsed);
+  } = annotateHtml(htmlNoDataUris, parsed);
+
+  // Swap real image bytes back in now that positions/markers are locked in —
+  // both in the saved HTML and in the schema values the editor reads to show
+  // "current image" thumbnails.
+  const annotatedHtml = restoreDataUris(annotatedHtmlWithPlaceholders, dataUriMap);
+  const schemaJson = restoreDataUrisInValue(schemaJsonWithPlaceholders, dataUriMap) as Record<string, unknown>;
 
   // If almost nothing the AI listed could actually be located in the HTML,
   // something is structurally wrong (not just one-off text drift) — treat

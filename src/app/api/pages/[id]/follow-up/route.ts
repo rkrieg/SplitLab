@@ -11,6 +11,7 @@ import { extractUrls, scrapeCompetitorUrl } from '@/lib/ai-competitor-scrape';
 import { buildHtmlFromSchema } from '@/lib/ai-page-builder';
 import { createSSEStream, sendSSE, closeSSE, SSE_HEADERS, type SSEEvent } from '@/lib/sse';
 import { isTestVariantPage } from '@/lib/page-drafts';
+import { extractDataUris, restoreDataUris, restoreDataUrisInValue } from '@/lib/data-uri-strip';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 800;
@@ -744,9 +745,26 @@ export async function POST(
   // reverting to what's actually live on the test.
   const baseSchema = isVariant ? (page.draft_schema_json ?? page.schema_json) : page.schema_json;
   const baseHtml = isVariant ? (page.draft_html_content ?? page.html_content) : page.html_content;
-  const schema = current_schema ?? baseSchema;
-  const html = current_html ?? baseHtml ?? (page.html_url ? await downloadHtmlByPath(fileNameFromUrl(page.html_url)) : null);
+  let schema = current_schema ?? baseSchema;
+  let html = current_html ?? baseHtml ?? (page.html_url ? await downloadHtmlByPath(fileNameFromUrl(page.html_url)) : null);
   if (!html) return NextResponse.json({ error: 'Could not load current HTML' }, { status: 400 });
+
+  // Every AI call below (routing, scoped patch/insert, and the full-page
+  // fallback) reads `html`/`schema` — schema_json now stores REAL base64 for
+  // image fields (so the editor shows real thumbnails), and a handful of
+  // embedded images routinely pushes the combined prompt past the model's
+  // token ceiling (seen in practice: a 2.2MB page → 2M+ tokens, rejected
+  // outright). Swap real image bytes for short placeholders once here, before
+  // any AI call or section/string splicing happens, and restore them only
+  // once at the very end (see `finalHtmlReal`/`finalSchemaJsonReal` below) —
+  // every intermediate operation (splicing, matching, prompting) works
+  // identically on placeholders since none of it inspects image byte content.
+  const DATA_URI_SPLIT = ' __SL_HTML_SCHEMA_BOUNDARY__ ';
+  const combinedForStrip = html + DATA_URI_SPLIT + JSON.stringify(schema ?? null);
+  const { html: combinedStripped, map: dataUriMap } = extractDataUris(combinedForStrip);
+  const [htmlNoDataUris, schemaStrNoDataUris] = combinedStripped.split(DATA_URI_SPLIT);
+  html = htmlNoDataUris;
+  schema = JSON.parse(schemaStrNoDataUris);
 
   // Prepare synchronous data
   const history: { role: 'user' | 'assistant'; content: string; image_urls?: string[] }[] =
@@ -1190,8 +1208,18 @@ export async function POST(
 
       // No-op guard: if nothing actually changed (e.g. a patch matched no markers),
       // skip the upload and the UTM mapping/rule wipe — don't destroy the user's
-      // personalization work for an edit that had no effect
+      // personalization work for an edit that had no effect. Both sides are still
+      // placeholder'd here, so the comparison is unaffected by the swap.
       const htmlUnchanged = finalHtml === html;
+
+      // Every AI call and string splice above only ever saw placeholders — swap
+      // real image bytes back in now, exactly once, for everything that gets
+      // persisted or sent back to the client from this point on.
+      const finalHtmlReal = restoreDataUris(finalHtml, dataUriMap);
+      const finalSchemaJsonReal = finalSchemaJson
+        ? (restoreDataUrisInValue(finalSchemaJson, dataUriMap) as Record<string, unknown>)
+        : undefined;
+      const schemaReal = restoreDataUrisInValue(schema, dataUriMap);
 
       // Variant pages write to draft_* columns and never touch the live storage
       // file a test is actually serving — only "Replace Current Variant" uploads
@@ -1199,7 +1227,7 @@ export async function POST(
       let htmlUrl: string = page.html_url ?? '';
       if (!htmlUnchanged && !isVariant) {
         const storagePath = fileNameFromUrl(page.html_url);
-        htmlUrl = await uploadHtml(storagePath, finalHtml);
+        htmlUrl = await uploadHtml(storagePath, finalHtmlReal);
       }
 
       // Save conversation
@@ -1208,7 +1236,7 @@ export async function POST(
       const updatedConversation = [
         ...history,
         userEntry,
-        { role: 'assistant', content: JSON.stringify({ type: resultType, schema_json: finalSchemaJson ?? schema }) },
+        { role: 'assistant', content: JSON.stringify({ type: resultType, schema_json: finalSchemaJsonReal ?? schemaReal }) },
       ];
 
       const updatePayload: Record<string, unknown> = {
@@ -1217,10 +1245,10 @@ export async function POST(
       };
       if (!htmlUnchanged) {
         if (isVariant) {
-          updatePayload.draft_html_content = finalHtml;
+          updatePayload.draft_html_content = finalHtmlReal;
         } else {
           updatePayload.html_url = htmlUrl;
-          updatePayload.html_content = finalHtml.length < 500_000 ? finalHtml : null;
+          updatePayload.html_content = finalHtmlReal.length < 500_000 ? finalHtmlReal : null;
           // HTML was rewritten by the AI — old UTM selectors can't be trusted, so
           // clear mappings (and rules below), same as manual HTML edits do
           updatePayload.field_selectors_json = null;
@@ -1232,11 +1260,11 @@ export async function POST(
       // 'structural', they stay 'patch') set it only when the section
       // actually had schema fields to add/drop. Checking finalSchemaJson
       // directly (rather than gating on resultType) covers both.
-      if (finalSchemaJson) {
+      if (finalSchemaJsonReal) {
         if (isVariant) {
-          updatePayload.draft_schema_json = finalSchemaJson;
+          updatePayload.draft_schema_json = finalSchemaJsonReal;
         } else {
-          updatePayload.schema_json = finalSchemaJson;
+          updatePayload.schema_json = finalSchemaJsonReal;
         }
       }
 
@@ -1254,7 +1282,7 @@ export async function POST(
         // uses it as a cache-busting trigger to refetch /preview, which serves
         // the draft content directly.
         html_url: htmlUrl,
-        ...(finalSchemaJson ? { schema_json: finalSchemaJson } : {}),
+        ...(finalSchemaJsonReal ? { schema_json: finalSchemaJsonReal } : {}),
         ...(competitorUrls.length > 0 && !competitorContext ? { competitor_fetch_failed: true } : {}),
         elapsed_ms: Date.now() - startedAt,
       };
