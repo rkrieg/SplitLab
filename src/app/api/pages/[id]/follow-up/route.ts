@@ -325,7 +325,7 @@ interface RoutingResult {
   new_order?: string[];
 }
 
-async function tryHaikuRouting(
+async function tryRoutingCall(
   prompt: string,
   schema: unknown,
   sections: SlSection[],
@@ -343,8 +343,16 @@ async function tryHaikuRouting(
             (hasUserImages ? '\n\n(User has attached image(s) along with this instruction.)' : ''),
         },
       ],
-      maxTokens: 300,
-      model: 'claude-haiku-4-5-20251001',
+      // Sonnet 5 runs adaptive thinking by default, which competes with
+      // maxTokens against the same budget as the actual JSON output — 300
+      // was sized for Haiku (no thinking overhead) and would truncate a
+      // Sonnet response mid-object. Matches the ceiling already used for
+      // every other Sonnet call in this file (no extra cost: Anthropic
+      // bills actual output tokens generated, not this ceiling).
+      maxTokens: 128000,
+      // No explicit `model` — defaults to Sonnet (see askAnthropic), same as
+      // every other AI call in this file. Was pinned to Haiku; switched to
+      // the default model for better routing accuracy/confidence-calibration.
       label: 'follow-up:routing',
     });
     let raw = text.trim();
@@ -837,7 +845,7 @@ export async function POST(
 
         if (!targetSections) {
           sendSSE(controller, { type: 'status', message: 'Locating section...' });
-          const routing = await tryHaikuRouting(prompt, schema, slSections, hasUserImages);
+          const routing = await tryRoutingCall(prompt, schema, slSections, hasUserImages);
           const basicShapeOk = !!routing &&
             routing.type === 'patch' &&
             routing.target_sections.length >= 1 &&
