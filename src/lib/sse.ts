@@ -3,6 +3,7 @@ export type SSEEvent =
   | { type: 'thinking'; message: string }
   | { type: 'section_status'; message: string }
   | { type: 'image_ready'; url: string }
+  | { type: 'clarify'; message: string }
   | { type: 'error'; message: string }
   | { type: 'done'; html_url: string; slug?: string; schema_json?: unknown; competitor_fetch_failed?: boolean; elapsed_ms?: number; already?: boolean };
 
