@@ -3,7 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { jsonrepair } from 'jsonrepair';
-import { askAI, askAIStream, isRateLimited, generatePageImages, generateAndUploadImage, AIResponseTruncatedError, isPromptTooLongError, type AIContent, type AIContentBlock } from '@/lib/ai-client';
+import { askAI, askAIStream, isRateLimited, generatePageImages, generateAndUploadImage, AIResponseTruncatedError, isPromptTooLongError, userFacingAIErrorMessage, type AIContent, type AIContentBlock } from '@/lib/ai-client';
 import { uploadHtml, downloadHtmlByPath, fileNameFromUrl } from '@/lib/storage';
 import { resolveWorkspaceRole, resolveOwnerPlan } from '@/lib/workspace-auth';
 import { PLAN_LIMITS } from '@/lib/plans';
@@ -269,7 +269,7 @@ function extractSlSections(html: string): SlSection[] {
 // Pass 0 — free, no AI call. If the instruction quotes actual page copy
 // verbatim (8+ chars, single- or double-quoted) and that quote appears in
 // exactly one section's text, we know the target section with certainty —
-// skip the Haiku routing call entirely.
+// skip the routing call entirely.
 function extractQuotedPhrases(prompt: string): string[] {
   const phrases: string[] = [];
   const re = /["']([^"']{8,})["']/g;
@@ -278,16 +278,162 @@ function extractQuotedPhrases(prompt: string): string[] {
   return phrases;
 }
 
+/** Leading verbs that mark an instruction line (not pasted page copy). */
+const INSTRUCTION_LINE_START =
+  /^(change|rewrite|rephrase|improve|update|make|fix|edit|replace|please|can you|could you|i want|we'd like|we want)\b/i;
+
+/**
+ * Copy candidates for routing / surgical edits: quoted phrases PLUS unquoted
+ * pasted lines (clients often paste a headline then write "change this…"
+ * on the next line without quotes — see production logs).
+ */
+function extractCopyCandidates(prompt: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  const push = (raw: string) => {
+    const phrase = raw.replace(/\s+/g, ' ').trim();
+    if (phrase.length < 8 || seen.has(phrase.toLowerCase())) return;
+    seen.add(phrase.toLowerCase());
+    out.push(phrase);
+  };
+  for (const q of extractQuotedPhrases(prompt)) push(q);
+  for (const line of prompt.split(/\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || INSTRUCTION_LINE_START.test(trimmed)) continue;
+    push(trimmed);
+  }
+  return out;
+}
+
+function findUniqueSectionForPhrase(phrase: string, sections: SlSection[]): string | null {
+  const matched = sections.filter((s) => s.text.includes(phrase));
+  return matched.length === 1 ? matched[0].name : null;
+}
+
 function tryDirectQuoteMatch(prompt: string, sections: SlSection[]): string | null {
-  const phrases = extractQuotedPhrases(prompt).filter(Boolean);
+  const phrases = extractCopyCandidates(prompt);
   if (phrases.length === 0) return null;
   const matchedNames = new Set<string>();
   for (const phrase of phrases) {
-    for (const section of sections) {
-      if (section.text.includes(phrase)) matchedNames.add(section.name);
-    }
+    const name = findUniqueSectionForPhrase(phrase, sections);
+    if (name) matchedNames.add(name);
   }
   return matchedNames.size === 1 ? Array.from(matchedNames)[0] : null;
+}
+
+/** True when the prompt is a copy rewrite, not a layout/structure/image ask. */
+function isSimpleTextRewritePrompt(prompt: string): boolean {
+  const p = prompt.toLowerCase();
+  if (/\b(https?:\/\/|www\.)/i.test(prompt)) return false;
+  if (
+    /\b(redesign|rebuild|restructure|layout|spacing|padding|margin|font-size|color|colour|background|image|logo|photo|section|add a |remove |delete |reorder|move .+ (above|below|before|after)|button style|css|stylesheet)\b/i.test(
+      p,
+    )
+  ) {
+    return false;
+  }
+  return (
+    /\b(change|rewrite|rephrase|improve|update|better|alternative)\b/i.test(p) &&
+    /\b(text|copy|headline|heading|title|subhead|sub-head|tagline|wording|this)\b/i.test(p)
+  );
+}
+
+function replaceUniqueTextInHtml(html: string, oldText: string, newText: string): string | null {
+  if (!oldText || !newText || oldText === newText) return null;
+  const exactCount = html.split(oldText).length - 1;
+  if (exactCount === 1) return html.replace(oldText, newText);
+  // Allow flexible whitespace between words (HTML may differ slightly from pasted line).
+  const escaped = oldText
+    .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    .replace(/\s+/g, '\\s+');
+  const global = new RegExp(escaped, 'g');
+  const matches = html.match(global);
+  if (!matches || matches.length !== 1) return null;
+  return html.replace(new RegExp(escaped), newText);
+}
+
+const SURGICAL_TEXT_SYSTEM_PROMPT = `You rewrite a single piece of landing-page copy. Return JSON only — no markdown fences, no explanation.
+{"text":"the new copy here"}
+
+Rules:
+- Return ONLY the new plain-text copy in "text" (no HTML tags).
+- Keep a similar length and tone unless the instruction asks otherwise.
+- Do not wrap the whole string in extra quotation marks unless they are part of the copy itself.`;
+
+/**
+ * Cheap path for "paste headline + change this text": rewrite the string in
+ * place instead of asking Sonnet to regenerate the whole section HTML (which
+ * often returns an inner <div> fragment and fails the outer-tag sanity check).
+ */
+async function trySurgicalTextEdit(
+  prompt: string,
+  sections: SlSection[],
+): Promise<{ sectionName: string; html: string } | null> {
+  if (!isSimpleTextRewritePrompt(prompt)) return null;
+  const candidates = extractCopyCandidates(prompt);
+  let oldText: string | null = null;
+  let section: SlSection | null = null;
+  for (const phrase of candidates) {
+    const name = findUniqueSectionForPhrase(phrase, sections);
+    if (!name) continue;
+    const s = sections.find((x) => x.name === name);
+    if (!s) continue;
+    // Must be uniquely replaceable inside the raw section HTML (not only in
+    // stripped text — headlines split across tags can't use this path).
+    if (replaceUniqueTextInHtml(s.html, phrase, '\u0001') === null) continue;
+    oldText = phrase;
+    section = s;
+    break;
+  }
+  if (!oldText || !section) return null;
+
+  try {
+    const text = await askAI({
+      system: SURGICAL_TEXT_SYSTEM_PROMPT,
+      messages: [
+        {
+          role: 'user',
+          content: `Current copy:\n${oldText}\n\nInstruction:\n${prompt}`,
+        },
+      ],
+      maxTokens: 1000,
+      label: 'follow-up:surgical-text',
+    });
+    let raw = text.trim();
+    if (raw.startsWith('```')) raw = raw.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
+    const jsonStart = raw.indexOf('{');
+    const jsonEnd = raw.lastIndexOf('}');
+    if (jsonStart >= 0 && jsonEnd > jsonStart) raw = raw.slice(jsonStart, jsonEnd + 1);
+    let parsed: { text?: string };
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      parsed = JSON.parse(jsonrepair(raw));
+    }
+    const newText = typeof parsed.text === 'string' ? parsed.text.trim() : '';
+    if (!newText) {
+      console.error('[pages/follow-up] surgical text returned empty text', { rawPreview: text.slice(0, 500) });
+      return null;
+    }
+    const updated = replaceUniqueTextInHtml(section.html, oldText, newText);
+    if (!updated) {
+      console.error('[pages/follow-up] surgical text could not uniquely replace copy in HTML', {
+        section: section.name,
+        oldPreview: oldText.slice(0, 120),
+      });
+      return null;
+    }
+    if (!sanityCheckScopedSection(section.html, updated)) {
+      console.error('[pages/follow-up] surgical text broke outer-tag sanity (unexpected)', {
+        section: section.name,
+      });
+      return null;
+    }
+    return { sectionName: section.name, html: updated };
+  } catch (err) {
+    console.error('[pages/follow-up] surgical text rewrite failed', err);
+    return null;
+  }
 }
 
 const ROUTING_SYSTEM_PROMPT = `You are a routing classifier for a landing-page AI edit assistant. Given a list of the page's sections (name + a short text/image preview of each) and an edit instruction, decide which section(s) the instruction targets and how big the change is.
@@ -395,6 +541,8 @@ async function runScopedPatch(
   schemaSlice: unknown,
   prompt: string,
   imageUrls: string[] | undefined,
+  /** Optional corrective note appended on a retry (outer-tag / JSON shape). */
+  correctionNote?: string,
 ): Promise<string | null> {
   try {
     // The image content blocks below only give the model PIXELS — the
@@ -405,18 +553,19 @@ async function runScopedPatch(
     const imageUrlsNote = (imageUrls ?? []).length > 0
       ? `\n\nAttached image URL(s) — use these EXACT strings verbatim in any src attribute, in the order attached:\n${(imageUrls ?? []).map((u, i) => `${i + 1}. ${u}`).join('\n')}`
       : '';
+    const correctionBlock = correctionNote ? `\n\n${correctionNote}` : '';
     const userContent: AIContent = [
       ...(imageUrls ?? []).map((url): AIContentBlock => ({ type: 'image', url })),
       {
         type: 'text' as const,
-        text: `Schema slice for this section:\n${JSON.stringify(schemaSlice)}\n\nCurrent section HTML:\n${sectionHtml}\n\nInstruction: ${prompt}${imageUrlsNote}`,
+        text: `Schema slice for this section:\n${JSON.stringify(schemaSlice)}\n\nCurrent section HTML:\n${sectionHtml}\n\nInstruction: ${prompt}${imageUrlsNote}${correctionBlock}`,
       },
     ];
     const text = await askAI({
       system: SCOPED_PATCH_SYSTEM_PROMPT,
       messages: [{ role: 'user', content: userContent }],
       maxTokens: 128000,
-      label: 'follow-up:scoped-patch',
+      label: correctionNote ? 'follow-up:scoped-patch-retry' : 'follow-up:scoped-patch',
     });
     let raw = text.trim();
     if (raw.startsWith('```')) raw = raw.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
@@ -439,6 +588,7 @@ async function runScopedPatch(
       console.error('[pages/follow-up] scoped patch returned unparseable JSON', {
         rawLength: text.length,
         rawPreview: text.slice(0, 1500),
+        isRetry: !!correctionNote,
       });
       return null;
     }
@@ -446,14 +596,59 @@ async function runScopedPatch(
       console.error('[pages/follow-up] scoped patch JSON parsed but had no "html" field', {
         rawLength: text.length,
         rawPreview: text.slice(0, 1500),
+        isRetry: !!correctionNote,
       });
       return null;
     }
     return parsed.html;
   } catch (err) {
-    console.error('[pages/follow-up] scoped patch generation failed, falling back to full-page path', err);
+    console.error('[pages/follow-up] scoped patch generation failed', err);
     return null;
   }
+}
+
+/**
+ * Scoped patch with one corrective retry when the model returns unparseable
+ * JSON / empty html, or when the outer tag doesn't match (Claude-extension-style
+ * "you got the wrapper wrong — fix it" loop).
+ */
+async function runScopedPatchWithRetry(
+  sectionHtml: string,
+  schemaSlice: unknown,
+  prompt: string,
+  imageUrls: string[] | undefined,
+): Promise<{ html: string | null; failedSanity: boolean; failedParse: boolean }> {
+  const requiredTag = outerTag(sectionHtml);
+
+  const first = await runScopedPatch(sectionHtml, schemaSlice, prompt, imageUrls);
+  if (first && sanityCheckScopedSection(sectionHtml, first)) {
+    return { html: first, failedSanity: false, failedParse: false };
+  }
+
+  const gotTag = first ? outerTag(first) : null;
+  const correction = first
+    ? `CRITICAL CORRECTION — your previous answer was rejected.\n` +
+      `- You returned HTML whose outermost tag was <${gotTag ?? 'unknown'}>.\n` +
+      `- The section's outermost tag MUST remain <${requiredTag}> (same as the input).\n` +
+      `- Return the COMPLETE section HTML starting with <${requiredTag} ...>, not an inner fragment (e.g. not a nested <div class="herotop"> alone).\n` +
+      `- Response must still be ONLY {"html":"..."} JSON.`
+    : `CRITICAL CORRECTION — your previous answer was not valid JSON with an "html" string.\n` +
+      `- Respond with ONLY {"html":"...complete section HTML..."}.\n` +
+      `- Outermost tag MUST be <${requiredTag}>.`;
+
+  console.warn('[pages/follow-up] scoped patch retrying once after', first ? 'sanity-check failure' : 'parse/empty failure', {
+    requiredTag,
+    gotTag,
+  });
+
+  const second = await runScopedPatch(sectionHtml, schemaSlice, prompt, imageUrls, correction);
+  if (second && sanityCheckScopedSection(sectionHtml, second)) {
+    return { html: second, failedSanity: false, failedParse: false };
+  }
+  if (!second) {
+    return { html: null, failedSanity: false, failedParse: true };
+  }
+  return { html: null, failedSanity: true, failedParse: false };
 }
 
 // Crude but effective corruption guard: the model swapping in a whole document,
@@ -843,7 +1038,22 @@ export async function POST(
         // untouched for this path (see follow-up-input-scoping.md).
         let generatedImageUrl: string | null = null;
 
-        if (!targetSections) {
+        // Surgical copy rewrite first — avoids full-section HTML regeneration
+        // for "paste headline + change this text" prompts (no images / competitor).
+        if (!hasUserImages && !scopedApplied && isSimpleTextRewritePrompt(prompt)) {
+          sendSSE(controller, { type: 'status', message: 'Updating text...' });
+          const surgical = await trySurgicalTextEdit(prompt, slSections);
+          if (surgical) {
+            finalHtml = applyPatch(html, [{ name: surgical.sectionName, html: surgical.html }]);
+            scopedApplied = true;
+            console.log('[pages/follow-up] surgical text edit applied', {
+              section: surgical.sectionName,
+              promptPreview: prompt.slice(0, 300),
+            });
+          }
+        }
+
+        if (!scopedApplied && !targetSections) {
           sendSSE(controller, { type: 'status', message: 'Locating section...' });
           const routing = await tryRoutingCall(prompt, schema, slSections, hasUserImages);
           const basicShapeOk = !!routing &&
@@ -979,7 +1189,7 @@ export async function POST(
           }
         }
 
-        if (targetSections && targetSections.length > 0) {
+        if (!scopedApplied && targetSections && targetSections.length > 0) {
           if (request.signal.aborted) { closeSSE(controller); return; }
           sendSSE(controller, { type: 'status', message: 'Applying patch...' });
 
@@ -999,21 +1209,18 @@ export async function POST(
               break;
             }
             const schemaSlice = { [name]: (schema as Record<string, unknown> | null | undefined)?.[name] };
-            const updated = await runScopedPatch(section.html, schemaSlice, scopedPrompt, scopedImageUrls);
+            const patchResult = await runScopedPatchWithRetry(section.html, schemaSlice, scopedPrompt, scopedImageUrls);
+            const updated = patchResult.html;
             if (!updated) {
-              console.error(`[pages/follow-up] scoped patch returned no html for section "${name}" — this is our own bug, not falling back to full-page`);
-              scopedFailureReason = 'scoped_patch_empty_result';
-              allOk = false;
-              break;
-            }
-            if (!sanityCheckScopedSection(section.html, updated)) {
-              console.error(`[pages/follow-up] scoped patch failed sanity check for section "${name}" — this is our own bug, not falling back to full-page`, {
+              console.error(`[pages/follow-up] scoped patch failed for section "${name}" after retry`, {
+                failedSanity: patchResult.failedSanity,
+                failedParse: patchResult.failedParse,
                 promptPreview: prompt.slice(0, 300),
                 originalOuterTag: outerTag(section.html),
-                updatedOuterTag: outerTag(updated),
-                updatedPreview: updated.slice(0, 300),
               });
-              scopedFailureReason = 'scoped_patch_sanity_check_failed';
+              scopedFailureReason = patchResult.failedSanity
+                ? 'scoped_patch_sanity_check_failed'
+                : 'scoped_patch_empty_result';
               allOk = false;
               break;
             }
@@ -1056,7 +1263,11 @@ export async function POST(
           scopedFailureReason,
           promptLength: prompt.length,
         });
-        sendSSE(controller, { type: 'error', message: 'Something went wrong applying that edit. Please try again.' });
+        sendSSE(controller, {
+          type: 'error',
+          message:
+            'We found the right section but couldn\'t apply the edit cleanly. Please try again — quoting the exact text you want changed usually helps.',
+        });
         closeSSE(controller);
         return;
       }
@@ -1316,6 +1527,16 @@ export async function POST(
         htmlUnchanged,
       });
 
+      if (htmlUnchanged) {
+        sendSSE(controller, {
+          type: 'error',
+          message:
+            'No changes were applied to the page. Try rephrasing your request, or quote the exact text you want changed.',
+        });
+        closeSSE(controller);
+        return;
+      }
+
       // Every AI call and string splice above only ever saw placeholders — swap
       // real image bytes back in now, exactly once, for everything that gets
       // persisted or sent back to the client from this point on.
@@ -1328,7 +1549,7 @@ export async function POST(
       // file a test is actually serving — only "Replace Current Variant" uploads
       // to the live path. Non-variant pages behave exactly as before.
       let htmlUrl: string = page.html_url ?? '';
-      if (!htmlUnchanged && !isVariant) {
+      if (!isVariant) {
         const storagePath = fileNameFromUrl(page.html_url);
         htmlUrl = await uploadHtml(storagePath, finalHtmlReal);
       }
@@ -1351,16 +1572,14 @@ export async function POST(
         conversation_json: updatedConversation,
         updated_at: new Date().toISOString(),
       };
-      if (!htmlUnchanged) {
-        if (isVariant) {
-          updatePayload.draft_html_content = finalHtmlReal;
-        } else {
-          updatePayload.html_url = htmlUrl;
-          updatePayload.html_content = finalHtmlReal.length < 500_000 ? finalHtmlReal : null;
-          // HTML was rewritten by the AI — old UTM selectors can't be trusted, so
-          // clear mappings (and rules below), same as manual HTML edits do
-          updatePayload.field_selectors_json = null;
-        }
+      if (isVariant) {
+        updatePayload.draft_html_content = finalHtmlReal;
+      } else {
+        updatePayload.html_url = htmlUrl;
+        updatePayload.html_content = finalHtmlReal.length < 500_000 ? finalHtmlReal : null;
+        // HTML was rewritten by the AI — old UTM selectors can't be trusted, so
+        // clear mappings (and rules below), same as manual HTML edits do
+        updatePayload.field_selectors_json = null;
       }
       // finalSchemaJson is only ever set when there's an updated schema to
       // persist — the full-page structural rebuild sets it every time, and
@@ -1379,7 +1598,7 @@ export async function POST(
       // Live selector/personalization invalidation only applies when live HTML
       // actually changed — variant drafts don't touch live HTML, so nothing to wipe
       // here; that happens instead when the draft is promoted via Replace.
-      if (!htmlUnchanged && !isVariant) {
+      if (!isVariant) {
         await db.from('personalization_rules').delete().eq('page_id', params.id);
       }
       await db.from('pages').update(updatePayload).eq('id', params.id);
@@ -1398,7 +1617,7 @@ export async function POST(
       closeSSE(controller);
     } catch (err) {
       console.error('[pages/follow-up]', err);
-      sendSSE(controller, { type: 'error', message: 'Internal server error' });
+      sendSSE(controller, { type: 'error', message: userFacingAIErrorMessage(err) });
       closeSSE(controller);
     }
   })();

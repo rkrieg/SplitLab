@@ -152,6 +152,30 @@ export function isPromptTooLongError(err: unknown): boolean {
   return /prompt is too long|exceed(?:s)? context limit|maximum context length|input length and max_tokens/i.test(message);
 }
 
+/**
+ * Maps known AI / transport failures to short, user-facing copy.
+ * Prefer this over a generic "Internal server error" in SSE/API handlers.
+ */
+export function userFacingAIErrorMessage(err: unknown): string {
+  if (err instanceof AIResponseTruncatedError) {
+    return 'Your instruction asked for more content than we can generate in one pass. Try a smaller or more specific edit.';
+  }
+  if (isPromptTooLongError(err)) {
+    return 'This page is too large for a full-page edit. Try a more specific change (name the section or quote the text to change), or split the request into smaller edits.';
+  }
+  if (isTransientAIConnectionError(err)) {
+    const status = err && typeof err === 'object' ? (err as { status?: unknown }).status : undefined;
+    if (status === 429) {
+      return 'Too many AI requests right now. Please wait a moment and try again.';
+    }
+    if (status === 503 || status === 529) {
+      return 'The AI service is busy right now. Please try again in a moment.';
+    }
+    return 'The connection to the AI service dropped before the edit finished. Please try again.';
+  }
+  return 'Something went wrong while applying your edit. Please try again.';
+}
+
 async function askAnthropic(options: AskAIOptions): Promise<string> {
   const anthropic = getAnthropicClient();
   const model = options.model ?? process.env.ANTHROPIC_MODEL?.trim() ?? 'claude-sonnet-5';
