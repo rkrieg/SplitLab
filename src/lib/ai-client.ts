@@ -171,9 +171,12 @@ async function askAnthropic(options: AskAIOptions): Promise<string> {
         throw new AIResponseTruncatedError(output_tokens, options.maxTokens);
       }
 
-      const block = response.content[0];
-      if (block.type !== 'text') {
-        throw new Error(`Unexpected response block type from Anthropic: ${block.type}`);
+      // Claude Sonnet 5 runs adaptive thinking by default (no `thinking` param
+      // needed to trigger it), which puts a `thinking` block ahead of the
+      // `text` block in `content` — content[0] is no longer reliably the answer.
+      const block = response.content.find((b) => b.type === 'text');
+      if (!block) {
+        throw new Error(`No text block in Anthropic response (block types: ${response.content.map((b) => b.type).join(', ')})`);
       }
       return block.text;
     } catch (err) {
