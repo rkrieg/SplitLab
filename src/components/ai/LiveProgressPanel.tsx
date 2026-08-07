@@ -11,6 +11,7 @@ interface Props {
 
 export function LiveProgressPanel({ events, isComplete = false }: Props) {
   const errorEvent = events.find(e => e.type === 'error');
+  const clarifyEvent = events.find(e => e.type === 'clarify');
   const isDone = isComplete || events.some(e => e.type === 'done');
 
   if (errorEvent) {
@@ -18,6 +19,15 @@ export function LiveProgressPanel({ events, isComplete = false }: Props) {
       <div className="flex items-center gap-2 text-xs text-red-600 dark:text-red-400">
         <span className="w-4 h-4 rounded-full bg-red-500/15 border border-red-500/30 flex items-center justify-center text-[9px] flex-shrink-0">✕</span>
         {errorEvent.message}
+      </div>
+    );
+  }
+
+  if (clarifyEvent) {
+    return (
+      <div className="flex items-start gap-2 text-xs text-slate-600 dark:text-slate-300">
+        <Sparkles size={11} className="text-indigo-600 dark:text-indigo-400 flex-shrink-0 mt-0.5" />
+        <span className="leading-relaxed">{clarifyEvent.message}</span>
       </div>
     );
   }

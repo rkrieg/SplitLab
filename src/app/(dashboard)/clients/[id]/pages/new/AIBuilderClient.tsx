@@ -1003,6 +1003,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     type FollowUpDone = { html_url: string; schema_json?: unknown; competitor_fetch_failed?: boolean; elapsed_ms?: number };
     let doneData: FollowUpDone | null = null;
     let followUpError = false;
+    let clarifyMessage: string | null = null;
 
     await readSSEStream(res, (event) => {
       setFollowUpEvents(prev => prev ? [...prev, event] : [event]);
@@ -1013,6 +1014,8 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
           competitor_fetch_failed: event.competitor_fetch_failed,
           elapsed_ms: event.elapsed_ms,
         };
+      } else if (event.type === 'clarify') {
+        clarifyMessage = event.message || 'Which part of the page should I edit?';
       } else if (event.type === 'error') {
         followUpError = true;
         const msg = event.message || 'Edit failed';
@@ -1024,6 +1027,20 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     });
 
     setFollowUpEvents(null);
+
+    if (clarifyMessage) {
+      const clarifyText = clarifyMessage;
+      if (!silent) {
+        addMessage({ role: 'assistant', content: clarifyText });
+      }
+      setConversationJson(prev => [
+        ...prev,
+        { role: 'user', content: instruction },
+        { role: 'assistant', content: clarifyText },
+      ]);
+      setPhase('editing');
+      return;
+    }
 
     if (followUpError || !doneData) {
       setPhase('editing');

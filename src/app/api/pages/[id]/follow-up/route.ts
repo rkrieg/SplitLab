@@ -439,7 +439,7 @@ async function trySurgicalTextEdit(
 const ROUTING_SYSTEM_PROMPT = `You are a routing classifier for a landing-page AI edit assistant. Given a list of the page's sections (name + a short text/image preview of each) and an edit instruction, decide which section(s) the instruction targets and how big the change is.
 
 Return JSON only. No markdown fences, no explanation.
-{"type":"patch"|"style"|"structural"|"image_generate"|"insert_section"|"remove_section"|"reorder_sections","target_sections":["section-name", ...],"confidence":"high"|"low","image_prompt":"...","anchor_section":"...","position":"before"|"after","new_order":["section-name", ...]}
+{"type":"patch"|"style"|"structural"|"image_generate"|"insert_section"|"remove_section"|"reorder_sections","target_sections":["section-name", ...],"confidence":"high"|"low","clarifying_question":"...","image_prompt":"...","anchor_section":"...","position":"before"|"after","new_order":["section-name", ...]}
 
 Rules:
 - "patch": the instruction clearly targets 1-3 specific existing sections you can identify from the previews below (a heading, button, image, paragraph, one section's design/spacing/color, or a full redesign/rebuild of ONE existing section).
@@ -458,37 +458,82 @@ Rules:
   Example: instruction "create a new logo and replace the current one" for a schema whose nav says "American Oil & Gas" (an oil and gas exploration company), targeting a section marked "[background: dark]" → image_prompt: "A flat vector logo icon for 'American Oil & Gas', an oil and gas exploration company. An oil derrick silhouette icon. Minimal geometric icon mark, warm gold and cream tones, flat solid colors only, no gradients, no drop shadows, no photorealism, no 3D rendering, clean vector illustration style, centered composition on a transparent background, generous negative space, high resolution."
   Always include "transparent background" and "high resolution" so it composites cleanly into the section.
 - Confidence is about WHICH SECTION, not about literal wording match. The instruction will often describe UI in generic terms ("button", "form", "banner") that don't literally match the underlying HTML tag — a labeled pill, badge, link, or div styled as a button all count as a match for "button." If exactly one section's preview clearly contains the referenced text/element, that is high confidence — do not lower it just because the HTML tag isn't literally a <button>/<form>/etc. The same applies to "insert_section"'s anchor, "remove_section"'s target, and "reorder_sections"' new_order — if you can confidently name the section(s) from the list, that is high confidence, even for a simple, plainly-worded request like "add a pricing section after X" or "remove the calculator."
-- Set confidence "low" only when the referenced element/text/section could plausibly belong to two or more different sections, or doesn't appear in any preview at all — including truly ambiguous image references ("use this image" when multiple sections have images) or vague whole-page requests ("make it feel more premium"). When confidence is "low" it is fine to still fill in your best guess for type/target_sections — the caller ignores them and falls back to full-page handling.
+- Set confidence "low" when the referenced element/text/section could plausibly belong to two or more different sections, or doesn't appear in any preview at all — including truly ambiguous image references ("use this image" when multiple sections have images) or vague whole-page requests ("make it feel more premium"). When confidence is "low", still fill in your best guess for type/target_sections, AND you MUST also return "clarifying_question": a short plain-English question for the user that names the plausible section options using EXACT section names from the list (e.g. "Did you mean the form in cta-form, or the FAQ in faq?"). The product will ask the user instead of guessing.
+- **Attached screenshots (vision):** When image(s) are included with the instruction, LOOK at them. Screenshots of a lead form / dropdown questions / "investment range" style fields almost always mean a form section (names like cta-form, form, popup, contact — whatever matches the list), NOT faq. FAQ is for Q&A accordion copy. Prefer the section whose preview/schema looks like a form when the screenshot shows form fields.
 - Only ever use section names EXACTLY as given in the list — never invent one.`;
 
 interface RoutingResult {
   type: string;
   target_sections: string[];
   confidence: string;
+  clarifying_question?: string;
   image_prompt?: string;
   anchor_section?: string;
   position?: string;
   new_order?: string[];
 }
 
+function buildDefaultClarifyQuestion(routing: RoutingResult, sections: SlSection[]): string {
+  const validGuess = (routing.target_sections ?? []).filter((n) =>
+    sections.some((s) => s.name === n),
+  );
+  const allNames = sections.map((s) => s.name);
+  if (validGuess.length > 0) {
+    const alternatives = allNames.filter((n) => !validGuess.includes(n)).slice(0, 4);
+    const guessLabel = validGuess.map((n) => `"${n}"`).join(' or ');
+    const altNote = alternatives.length > 0 ? ` Or did you mean ${alternatives.map((n) => `"${n}"`).join(', ')}?` : '';
+    return `I want to make sure I edit the right place. Did you mean the ${guessLabel} section?${altNote} Reply with the section name or describe which part of the page (e.g. the form, the FAQ, the hero).`;
+  }
+  const listed = allNames.slice(0, 12).map((n) => `"${n}"`).join(', ');
+  return `I'm not sure which part of the page to edit. Which section should I change? Available: ${listed}.`;
+}
+
+/**
+ * Production miss: screenshots of a lead form + "rewrite the questions" still
+ * routed to faq with confidence high (routing used to be text-only). Even with
+ * vision, force a clarifying question when form-like language + images point at
+ * FAQ while a form/cta section exists on the page.
+ */
+function shouldForceClarifyFaqVsForm(
+  prompt: string,
+  routing: RoutingResult,
+  hasUserImages: boolean,
+  sections: SlSection[],
+): boolean {
+  if (!hasUserImages) return false;
+  if (!/\b(question|questions|answer|answers|form|dropdown|select|investment range)\b/i.test(prompt)) {
+    return false;
+  }
+  const targets = routing.target_sections ?? [];
+  if (targets.length !== 1) return false;
+  if (!/^faq/i.test(targets[0])) return false;
+  return sections.some((s) => /cta|form|popup|contact|lead/i.test(s.name));
+}
+
 async function tryRoutingCall(
   prompt: string,
   schema: unknown,
   sections: SlSection[],
-  hasUserImages: boolean,
+  imageUrls: string[],
 ): Promise<RoutingResult | null> {
   try {
     const sectionList = sections.map((s) => `- ${s.name}: "${s.text.slice(0, 150)}"`).join('\n');
+    const textPart =
+      `Schema:\n${JSON.stringify(schema)}\n\nSections:\n${sectionList}\n\nInstruction: ${prompt}` +
+      (imageUrls.length > 0
+        ? '\n\nUser attached image(s) above — use them to identify which part of the page they mean (form vs FAQ vs hero, etc.).'
+        : '');
+    const userContent: AIContent =
+      imageUrls.length > 0
+        ? [
+            ...imageUrls.map((url): AIContentBlock => ({ type: 'image', url })),
+            { type: 'text', text: textPart },
+          ]
+        : textPart;
+
     const text = await askAI({
       system: ROUTING_SYSTEM_PROMPT,
-      messages: [
-        {
-          role: 'user',
-          content:
-            `Schema:\n${JSON.stringify(schema)}\n\nSections:\n${sectionList}\n\nInstruction: ${prompt}` +
-            (hasUserImages ? '\n\n(User has attached image(s) along with this instruction.)' : ''),
-        },
-      ],
+      messages: [{ role: 'user', content: userContent }],
       // Sonnet 5 runs adaptive thinking by default, which competes with
       // maxTokens against the same budget as the actual JSON output — 300
       // was sized for Haiku (no thinking overhead) and would truncate a
@@ -1136,7 +1181,7 @@ export async function POST(
 
         if (!scopedApplied && !targetSections) {
           sendSSE(controller, { type: 'status', message: 'Locating section...' });
-          const routing = await tryRoutingCall(prompt, schema, slSections, hasUserImages);
+          const routing = await tryRoutingCall(prompt, schema, slSections, effectiveImageUrls);
           const basicShapeOk = !!routing &&
             routing.type === 'patch' &&
             routing.target_sections.length >= 1 &&
@@ -1186,11 +1231,63 @@ export async function POST(
             slSections.some((s) => s.name === routing.anchor_section) &&
             (routing.position === 'before' || routing.position === 'after');
 
+          const anyScopedPath =
+            routingQualifies || removeShapeOk || reorderShapeOk || insertShapeOk || imageGenerateShapeOk;
+
           console.log('[pages/follow-up] routing decision', {
             promptPreview: prompt.slice(0, 300),
             routing,
-            qualifies: routingQualifies || removeShapeOk || reorderShapeOk || insertShapeOk || imageGenerateShapeOk,
+            qualifies: anyScopedPath,
+            hasUserImages,
           });
+
+          const forceFaqVsFormClarify =
+            !!routing && shouldForceClarifyFaqVsForm(prompt, routing, hasUserImages, slSections);
+
+          // Unsure which section → ask the user instead of guessing or
+          // falling into an expensive/oversized full-page rebuild.
+          const routingUnsure =
+            !!routing &&
+            ((routing.confidence === 'low' && !namesItsSingleSection && !anyScopedPath) ||
+              forceFaqVsFormClarify);
+
+          if (routingUnsure) {
+            const formLike = slSections
+              .filter((s) => /cta|form|popup|contact|lead/i.test(s.name))
+              .map((s) => s.name);
+            const questionFromModel =
+              typeof routing!.clarifying_question === 'string' && routing!.clarifying_question.trim()
+                ? routing!.clarifying_question.trim()
+                : null;
+            const question =
+              questionFromModel ||
+              (forceFaqVsFormClarify && formLike.length > 0
+                ? `Your screenshots look like a form. Did you mean the "${formLike[0]}" section (the form), or "${routing!.target_sections[0]}" (FAQ)? Reply with the section name.`
+                : buildDefaultClarifyQuestion(routing!, slSections));
+            console.log('[pages/follow-up] routing unsure — asking user to clarify', {
+              promptPreview: prompt.slice(0, 300),
+              routing,
+              forceFaqVsFormClarify,
+              question,
+            });
+            const userEntry: Record<string, unknown> = { role: 'user', content: prompt };
+            if (Array.isArray(image_urls) && image_urls.length > 0) userEntry.image_urls = image_urls;
+            const updatedConversation = [
+              ...history,
+              userEntry,
+              { role: 'assistant', content: question },
+            ];
+            await db
+              .from('pages')
+              .update({
+                conversation_json: updatedConversation,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', params.id);
+            sendSSE(controller, { type: 'clarify', message: question });
+            closeSSE(controller);
+            return;
+          }
 
           if (routingQualifies) {
             targetSections = (routing as { target_sections: string[] }).target_sections;
