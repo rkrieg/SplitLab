@@ -1015,7 +1015,11 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         };
       } else if (event.type === 'error') {
         followUpError = true;
-        toast.error(event.message || 'Edit failed');
+        const msg = event.message || 'Edit failed';
+        toast.error(msg);
+        if (!silent) {
+          addMessage({ role: 'assistant', content: msg });
+        }
       }
     });
 
@@ -1033,6 +1037,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     if (done.schema_json) { schemaRef.current = done.schema_json; setSchemaJson(done.schema_json); }
     setHtmlUrl(done.html_url + `?t=${Date.now()}`);
     if (isTestVariantPage) setHasDraft(true);
+    // Server only emits `done` when HTML actually changed — never claim success otherwise.
     if (!silent) {
       addMessage({ role: 'assistant', content: 'Done! The page has been updated.', elapsedMs: done.elapsed_ms });
     }

@@ -182,6 +182,38 @@ export async function PATCH(
 
     // Delete variant if requested
     if (delete_variant_id) {
+      const { data: allVariants } = await db
+        .from('test_variants')
+        .select('id, page_id')
+        .eq('test_id', params.id);
+
+      if (!allVariants || allVariants.length <= 1) {
+        return NextResponse.json(
+          { error: 'Cannot delete the last variant' },
+          { status: 400 },
+        );
+      }
+
+      const target = allVariants.find((v) => v.id === delete_variant_id);
+      if (!target) {
+        return NextResponse.json({ error: 'Variant not found' }, { status: 404 });
+      }
+
+      // Soft-delete the linked HTML page when no other variant still uses it
+      // (matches whole-test delete; UTM rules live on the page and go with it)
+      if (target.page_id) {
+        const pageStillUsed = allVariants.some(
+          (v) => v.id !== delete_variant_id && v.page_id === target.page_id,
+        );
+        if (!pageStillUsed) {
+          await db
+            .from('pages')
+            .update({ deleted_at: new Date().toISOString() })
+            .eq('id', target.page_id)
+            .is('deleted_at', null);
+        }
+      }
+
       const { error: delErr } = await db
         .from('test_variants')
         .delete()

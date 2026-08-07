@@ -1148,7 +1148,8 @@ export default function AnalyticsClient({
         body: JSON.stringify({ delete_variant_id: deleteVariantId }),
       });
       if (!res.ok) {
-        toast.error("Failed to delete variant");
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.error || "Failed to delete variant");
         return;
       }
       const updated = await res.json();
@@ -3087,6 +3088,17 @@ export default function AnalyticsClient({
                                       >
                                         <Copy size={13} /> Duplicate
                                       </button>
+                                      {variants.length > 1 && (
+                                        <button
+                                          onClick={() => {
+                                            setVariantMenuOpenId(null);
+                                            setDeleteVariantId(stat.variant.id);
+                                          }}
+                                          className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10"
+                                        >
+                                          <Trash2 size={13} /> Delete
+                                        </button>
+                                      )}
                                     </div>
                                   )}
                                 </div>
@@ -5299,7 +5311,7 @@ export default function AnalyticsClient({
         onClose={() => setDeleteVariantId(null)}
         onConfirm={deleteVariant}
         title="Delete Variant"
-        description="This will permanently delete the variant and its event data. Traffic weights will need to be adjusted."
+        description="This will permanently delete the variant and its event data. Linked pages and UTM rules will be archived. Traffic weights will be redistributed equally among the remaining variants."
         loading={deletingVariant}
       />
 
