@@ -135,6 +135,23 @@ export function isTransientAIConnectionError(err: unknown): boolean {
   return false;
 }
 
+/**
+ * True for Anthropic's "prompt is too long" / context-limit 400s — the
+ * request itself was fine, the combined system+messages payload just
+ * exceeded the model's context window (seen in practice on full-page
+ * fallback calls for large/bloated pages). Callers use this to show a
+ * specific, actionable message instead of a generic error.
+ */
+export function isPromptTooLongError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const status = (err as { status?: unknown }).status;
+  if (status !== 400) return false;
+  const message = typeof (err as { message?: unknown }).message === 'string'
+    ? (err as { message: string }).message
+    : '';
+  return /prompt is too long|exceed(?:s)? context limit|maximum context length|input length and max_tokens/i.test(message);
+}
+
 async function askAnthropic(options: AskAIOptions): Promise<string> {
   const anthropic = getAnthropicClient();
   const model = options.model ?? process.env.ANTHROPIC_MODEL?.trim() ?? 'claude-sonnet-5';
