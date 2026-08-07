@@ -608,9 +608,36 @@ async function runScopedPatch(
 }
 
 /**
- * Scoped patch with one corrective retry when the model returns unparseable
- * JSON / empty html, or when the outer tag doesn't match (Claude-extension-style
- * "you got the wrapper wrong — fix it" loop).
+ * Accept a scoped-patch candidate: exact outer-tag match, OR repair by
+ * re-wrapping the model's HTML in the original opening tag (section→div case).
+ */
+function acceptScopedPatchHtml(
+  sectionHtml: string,
+  candidate: string | null,
+  source: 'first-attempt' | 'retry',
+): string | null {
+  if (!candidate) return null;
+  if (sanityCheckScopedSection(sectionHtml, candidate)) return candidate;
+  const repaired = repairScopedSectionOuterTag(sectionHtml, candidate);
+  if (repaired) {
+    console.warn('[pages/follow-up] scoped patch outer-tag repaired', {
+      requiredTag: outerTag(sectionHtml),
+      gotTag: outerTag(candidate),
+      source,
+      originalLen: sectionHtml.length,
+      candidateLen: candidate.length,
+      repairedLen: repaired.length,
+    });
+    return repaired;
+  }
+  return null;
+}
+
+/**
+ * Scoped patch self-heal:
+ * 1) generate
+ * 2) if outer tag wrong → repair wrapper (keep original <section …>, use model HTML inside)
+ * 3) only if repair can't save it → one corrective model retry, then repair again
  */
 async function runScopedPatchWithRetry(
   sectionHtml: string,
@@ -621,8 +648,9 @@ async function runScopedPatchWithRetry(
   const requiredTag = outerTag(sectionHtml);
 
   const first = await runScopedPatch(sectionHtml, schemaSlice, prompt, imageUrls);
-  if (first && sanityCheckScopedSection(sectionHtml, first)) {
-    return { html: first, failedSanity: false, failedParse: false };
+  const firstOk = acceptScopedPatchHtml(sectionHtml, first, 'first-attempt');
+  if (firstOk) {
+    return { html: firstOk, failedSanity: false, failedParse: false };
   }
 
   const gotTag = first ? outerTag(first) : null;
@@ -636,16 +664,17 @@ async function runScopedPatchWithRetry(
       `- Respond with ONLY {"html":"...complete section HTML..."}.\n` +
       `- Outermost tag MUST be <${requiredTag}>.`;
 
-  console.warn('[pages/follow-up] scoped patch retrying once after', first ? 'sanity-check failure' : 'parse/empty failure', {
+  console.warn('[pages/follow-up] scoped patch retrying once after', first ? 'sanity-check/repair failure' : 'parse/empty failure', {
     requiredTag,
     gotTag,
   });
 
   const second = await runScopedPatch(sectionHtml, schemaSlice, prompt, imageUrls, correction);
-  if (second && sanityCheckScopedSection(sectionHtml, second)) {
-    return { html: second, failedSanity: false, failedParse: false };
+  const secondOk = acceptScopedPatchHtml(sectionHtml, second, 'retry');
+  if (secondOk) {
+    return { html: secondOk, failedSanity: false, failedParse: false };
   }
-  if (!second) {
+  if (!first && !second) {
     return { html: null, failedSanity: false, failedParse: true };
   }
   return { html: null, failedSanity: true, failedParse: false };
@@ -664,6 +693,58 @@ function sanityCheckScopedSection(original: string, updated: string): boolean {
   const origTag = outerTag(original);
   const newTag = outerTag(updated);
   return !!origTag && origTag === newTag;
+}
+
+/**
+ * Self-heal for the common scoped-patch failure: model returns a solid edit
+ * rooted at <div> (or another tag) instead of the original <section>.
+ *
+ * Keep the original opening tag byte-for-byte (classes, ids, data-*), wrap the
+ * model's HTML as the body, close with the original tag name.
+ *
+ * Rejects full documents and tiny collapsed fragments so we don't "heal"
+ * garbage into the page.
+ */
+function repairScopedSectionOuterTag(original: string, updated: string): string | null {
+  const origTag = outerTag(original);
+  const newTag = outerTag(updated);
+  if (!origTag || !newTag) return null;
+  if (origTag === newTag) return updated;
+
+  if (
+    newTag === 'html' ||
+    newTag === 'head' ||
+    newTag === 'body' ||
+    /^\s*<!DOCTYPE/i.test(updated)
+  ) {
+    return null;
+  }
+
+  // Opening tag with attributes — do not use a bare <section>.
+  const openMatch = new RegExp(`^\\s*(<${origTag}\\b[^>]*>)`, 'i').exec(original);
+  if (!openMatch) return null;
+  const openTag = openMatch[1];
+
+  const inner = updated.trim();
+  // Collapsed junk guard (e.g. only a nested herotop strip). Require the
+  // candidate to be a meaningful fraction of the original — absolute floor
+  // so tiny originals aren't trivially "repaired" with a short div.
+  const origLen = original.trim().length;
+  const minLen = Math.max(150, Math.floor(origLen * 0.25));
+  if (inner.length < minLen) {
+    console.warn('[pages/follow-up] outer-tag repair skipped — candidate too small', {
+      requiredTag: origTag,
+      gotTag: newTag,
+      innerLen: inner.length,
+      minLen,
+      originalLen: origLen,
+    });
+    return null;
+  }
+
+  const repaired = `${openTag}\n${inner}\n</${origTag}>`;
+  if (!sanityCheckScopedSection(original, repaired)) return null;
+  return repaired;
 }
 
 // ── Scoped structural ops: insert / remove / reorder a section ─────────────
