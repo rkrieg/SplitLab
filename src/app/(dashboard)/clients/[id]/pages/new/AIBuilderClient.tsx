@@ -278,11 +278,17 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   // have HTML but no schema, and only once per page (guarded below and
   // idempotently on the server).
   const [preparingSchema, setPreparingSchema] = useState(false);
+  // True when the schema-from-html prep failed (fetch error, SSE error
+  // event, or thrown exception). Editing stays locked while this is true —
+  // there is no valid schema to edit against — until a retry succeeds.
+  const [schemaPrepFailed, setSchemaPrepFailed] = useState(false);
   // Live SSE checklist for the schema-from-html background prep — null when
   // idle/not applicable, [] once the stream opens, populated with status/
   // done/error events as they arrive. Separate from preparingSchema (which
   // only gates input disabling) since this drives the LiveProgressPanel.
   const [schemaEvents, setSchemaEvents] = useState<SSEEvent[] | null>(null);
+  // Guards only the automatic first fire in the effect below — the "Try
+  // again" retry calls runSchemaPrep() directly and must not be blocked by it.
   const schemaFromHtmlFiredRef = useRef(false);
 
   const [questions, setQuestions] = useState<string[]>([]);
@@ -395,76 +401,87 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   // structural follow-up edits both need one. Synthesize it in the background
   // so the user can start typing immediately; chat submission is gated below
   // until this completes to avoid two concurrent writes to the same page row.
+  // Extracted so both the automatic first-run effect below and the manual
+  // "Try again" button (rendered when schemaPrepFailed is true) can invoke
+  // the exact same prep flow. Does not consult schemaFromHtmlFiredRef —
+  // that ref only exists to stop the effect from auto-firing twice, not to
+  // block a deliberate retry.
+  async function runSchemaPrep() {
+    if (!initialPage || !initialPage.html_url) return;
+    setPreparingSchema(true);
+    setSchemaPrepFailed(false);
+    setSchemaEvents([]);
+    try {
+      const res = await fetch(`/api/pages/${initialPage.id}/schema-from-html`, { method: 'POST' });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.error || "Couldn't prepare this page for AI editing.");
+        setSchemaPrepFailed(true);
+        return;
+      }
+
+      let resultSchemaJson: unknown;
+      let resultHtmlUrl: string | undefined;
+      let resultAlready = false;
+      let resultElapsedMs: number | undefined;
+      let streamFailed = false;
+
+      // The route returns a plain JSON body for the "already prepared"
+      // fast path (idempotency guard, before any SSE stream opens) and an
+      // SSE stream for the real multi-minute pipeline — content-type tells
+      // them apart, no change needed to the fast path's response shape.
+      if (res.headers.get('content-type')?.includes('text/event-stream')) {
+        await readSSEStream(res, (event) => {
+          setSchemaEvents(prev => prev ? [...prev, event] : [event]);
+          if (event.type === 'done') {
+            resultSchemaJson = event.schema_json;
+            resultHtmlUrl = event.html_url;
+            resultAlready = !!event.already;
+            resultElapsedMs = event.elapsed_ms;
+          } else if (event.type === 'error') {
+            streamFailed = true;
+            toast.error(event.message || "Couldn't prepare this page for AI editing.");
+          }
+        });
+        if (streamFailed) { setSchemaPrepFailed(true); return; }
+      } else {
+        const data = await res.json();
+        resultSchemaJson = data.schema_json;
+        resultHtmlUrl = data.html_url;
+        resultAlready = !!data.already;
+      }
+
+      if (resultSchemaJson) {
+        schemaRef.current = resultSchemaJson;
+        setSchemaJson(resultSchemaJson);
+      }
+      if (resultHtmlUrl) {
+        setHtmlUrl(`${resultHtmlUrl}?t=${Date.now()}`);
+      }
+      if (isTestVariantPage && !resultAlready) setHasDraft(true);
+      // Transient confirmation only — the chat message below carries the
+      // same info permanently, so this doesn't need to persist like the
+      // UTM warning toast does (which stays until the user dismisses it).
+      toast.success('This page is ready for AI editing.', {
+        id: 'schema-from-html-ready',
+        duration: 4000,
+      });
+      addMessage({ role: 'assistant', content: 'Done preparing this page! Click any text in the preview to edit it, or ask me to make changes.', elapsedMs: resultElapsedMs });
+    } catch {
+      toast.error("Couldn't prepare this page for AI editing.");
+      setSchemaPrepFailed(true);
+    } finally {
+      setPreparingSchema(false);
+      setSchemaEvents(null);
+    }
+  }
+
   useEffect(() => {
     if (!initialPage || !initialPage.html_url) return;
     if (initialPage.draft_schema_json ?? initialPage.schema_json) return;
     if (schemaFromHtmlFiredRef.current) return;
     schemaFromHtmlFiredRef.current = true;
-    setPreparingSchema(true);
-    setSchemaEvents([]);
-    (async () => {
-      try {
-        const res = await fetch(`/api/pages/${initialPage.id}/schema-from-html`, { method: 'POST' });
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          toast.error(err.error || "Couldn't prepare this page for full AI editing — chat edits will still work.");
-          return;
-        }
-
-        let resultSchemaJson: unknown;
-        let resultHtmlUrl: string | undefined;
-        let resultAlready = false;
-        let resultElapsedMs: number | undefined;
-        let streamFailed = false;
-
-        // The route returns a plain JSON body for the "already prepared"
-        // fast path (idempotency guard, before any SSE stream opens) and an
-        // SSE stream for the real multi-minute pipeline — content-type tells
-        // them apart, no change needed to the fast path's response shape.
-        if (res.headers.get('content-type')?.includes('text/event-stream')) {
-          await readSSEStream(res, (event) => {
-            setSchemaEvents(prev => prev ? [...prev, event] : [event]);
-            if (event.type === 'done') {
-              resultSchemaJson = event.schema_json;
-              resultHtmlUrl = event.html_url;
-              resultAlready = !!event.already;
-              resultElapsedMs = event.elapsed_ms;
-            } else if (event.type === 'error') {
-              streamFailed = true;
-              toast.error(event.message || "Couldn't prepare this page for full AI editing — chat edits will still work.");
-            }
-          });
-          if (streamFailed) return;
-        } else {
-          const data = await res.json();
-          resultSchemaJson = data.schema_json;
-          resultHtmlUrl = data.html_url;
-          resultAlready = !!data.already;
-        }
-
-        if (resultSchemaJson) {
-          schemaRef.current = resultSchemaJson;
-          setSchemaJson(resultSchemaJson);
-        }
-        if (resultHtmlUrl) {
-          setHtmlUrl(`${resultHtmlUrl}?t=${Date.now()}`);
-        }
-        if (isTestVariantPage && !resultAlready) setHasDraft(true);
-        // Transient confirmation only — the chat message below carries the
-        // same info permanently, so this doesn't need to persist like the
-        // UTM warning toast does (which stays until the user dismisses it).
-        toast.success('This page is ready for AI editing.', {
-          id: 'schema-from-html-ready',
-          duration: 4000,
-        });
-        addMessage({ role: 'assistant', content: 'Done preparing this page! Click any text in the preview to edit it, or ask me to make changes.', elapsedMs: resultElapsedMs });
-      } catch {
-        toast.error("Couldn't prepare this page for full AI editing — chat edits will still work.");
-      } finally {
-        setPreparingSchema(false);
-        setSchemaEvents(null);
-      }
-    })();
+    runSchemaPrep();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialPage]);
 
@@ -1029,7 +1046,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
 
   async function handleFollowUp(e: React.FormEvent) {
     e.preventDefault();
-    if ((!followUpInput.trim() && chatImages.length === 0) || !pageId || preparingSchema) return;
+    if ((!followUpInput.trim() && chatImages.length === 0) || !pageId || preparingSchema || schemaPrepFailed) return;
     const instruction = followUpInput.trim() || 'Please incorporate these reference images into the page.';
     const attachedImages = chatImages;
     setFollowUpInput('');
@@ -1413,6 +1430,28 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
               </div>
             </div>
           )}
+
+          {/* Prep failed — chat stays locked (see schemaPrepFailed gates below) until a retry succeeds */}
+          {schemaPrepFailed && !isLoading && followUpEvents === null && (
+            <div className="flex items-start gap-2.5">
+              <div className="w-6 h-6 rounded-full bg-red-50 dark:bg-red-600/15 border border-red-100 dark:border-red-600/25 flex items-center justify-center flex-shrink-0 mt-0.5">
+                <AlertTriangle size={11} className="text-red-600 dark:text-red-400" />
+              </div>
+              <div className="flex-1 pt-0.5 space-y-2">
+                <p className="text-xs text-red-600 dark:text-red-400">
+                  Couldn&apos;t prepare this page for editing.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => runSchemaPrep()}
+                  className="inline-flex items-center gap-1.5 text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:underline"
+                >
+                  <RefreshCw size={11} />
+                  Try again
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* ── Input area ── */}
@@ -1593,10 +1632,10 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                     el.style.height = 'auto';
                     el.style.height = `${Math.min(el.scrollHeight, FOLLOW_UP_MAX_HEIGHT)}px`;
                   }}
-                  disabled={isLoading || preparingSchema}
+                  disabled={isLoading || preparingSchema || schemaPrepFailed}
                   className="w-full bg-transparent px-3.5 pt-3 pb-2 text-sm text-slate-700 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none resize-none disabled:opacity-40 overflow-y-auto"
                   style={{ maxHeight: FOLLOW_UP_MAX_HEIGHT }}
-                  placeholder={preparingSchema ? 'Preparing this page for editing…' : 'Ask Splitlab…'}
+                  placeholder={schemaPrepFailed ? 'Preparation failed — try again above' : preparingSchema ? 'Preparing this page for editing…' : 'Ask Splitlab…'}
                   rows={2}
                   onKeyDown={e => {
                     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); }
@@ -1607,7 +1646,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                   <div className="flex items-center gap-0.5">
                     <button
                       type="button"
-                      disabled={isLoading || preparingSchema || chatImages.length >= 3}
+                      disabled={isLoading || preparingSchema || schemaPrepFailed || chatImages.length >= 3}
                       onClick={() => chatImageInputRef.current?.click()}
                       className="p-1.5 text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                       title="Attach image (max 3)"
@@ -1618,7 +1657,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                   <div className="flex items-center gap-1.5">
                     <button
                       type="submit"
-                      disabled={(!followUpInput.trim() && chatImages.length === 0) || isLoading || preparingSchema}
+                      disabled={(!followUpInput.trim() && chatImages.length === 0) || isLoading || preparingSchema || schemaPrepFailed}
                       className="w-7 h-7 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-30 disabled:cursor-not-allowed rounded-full flex items-center justify-center transition-colors"
                     >
                       <Send size={12} className="text-white" />

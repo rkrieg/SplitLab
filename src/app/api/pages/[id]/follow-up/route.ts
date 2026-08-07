@@ -3,7 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { jsonrepair } from 'jsonrepair';
-import { askAI, askAIStream, isRateLimited, generatePageImages, generateAndUploadImage, AIResponseTruncatedError, type AIContent, type AIContentBlock } from '@/lib/ai-client';
+import { askAI, askAIStream, isRateLimited, generatePageImages, generateAndUploadImage, AIResponseTruncatedError, isPromptTooLongError, type AIContent, type AIContentBlock } from '@/lib/ai-client';
 import { uploadHtml, downloadHtmlByPath, fileNameFromUrl } from '@/lib/storage';
 import { resolveWorkspaceRole, resolveOwnerPlan } from '@/lib/workspace-auth';
 import { PLAN_LIMITS } from '@/lib/plans';
@@ -803,6 +803,17 @@ export async function POST(
       let finalHtml = '';
       let finalSchemaJson: unknown | undefined;
       let scopedApplied = false;
+      // Set only when routing already qualified a request for a scoped op
+      // (patch/insert/remove/reorder/image_generate) and OUR OWN code then
+      // failed to execute it (parse failure, deterministic splice failure,
+      // generation failure, etc.) — as opposed to routing legitimately
+      // declining to qualify (vague prompt, low confidence, no markers),
+      // which must still fall through to the full-page path below unchanged.
+      // When set, we short-circuit before the full-page path even starts —
+      // retrying as a full-page rebuild would blame the user's wording for
+      // a bug that isn't theirs, and can trigger an expensive/oversized call
+      // on a page a cheap scoped op was already meant to avoid touching.
+      let scopedFailureReason: string | null = null;
       let competitorContext: Awaited<ReturnType<typeof scrapeCompetitorUrl>> | null = null;
       // Mirrors parsed.type from the full-page path — scoped patches are
       // always a 'patch' by construction, so this is set once up front and
@@ -890,7 +901,8 @@ export async function POST(
                 finalSchemaJson = schemaCopy;
               }
             } else {
-              console.error(`[pages/follow-up] remove_section could not find marker for "${removeName}" — falling back to full-page path`);
+              console.error(`[pages/follow-up] remove_section could not find marker for "${removeName}" — this is our own bug, not falling back to full-page`);
+              scopedFailureReason = 'remove_section_marker_not_found';
             }
           } else if (reorderShapeOk) {
             sendSSE(controller, { type: 'status', message: 'Reordering sections...' });
@@ -899,7 +911,8 @@ export async function POST(
               finalHtml = reordered;
               scopedApplied = true;
             } else {
-              console.error('[pages/follow-up] reorder_sections failed to locate all target markers — falling back to full-page path', { new_order: routing!.new_order });
+              console.error('[pages/follow-up] reorder_sections failed to locate all target markers — this is our own bug, not falling back to full-page', { new_order: routing!.new_order });
+              scopedFailureReason = 'reorder_sections_marker_not_found';
             }
           } else if (insertShapeOk) {
             if (request.signal.aborted) { closeSSE(controller); return; }
@@ -924,10 +937,12 @@ export async function POST(
                   finalSchemaJson = schemaCopy;
                 }
               } else {
-                console.error(`[pages/follow-up] insert_section could not splice new section near anchor "${anchorName}" — falling back to full-page path`);
+                console.error(`[pages/follow-up] insert_section could not splice new section near anchor "${anchorName}" — this is our own bug, not falling back to full-page`);
+                scopedFailureReason = 'insert_section_splice_failed';
               }
             } else {
-              console.error('[pages/follow-up] insert_section generation failed — falling back to full-page path');
+              console.error('[pages/follow-up] insert_section generation failed — this is our own bug, not falling back to full-page');
+              scopedFailureReason = 'insert_section_generation_failed';
             }
           } else if (imageGenerateShapeOk) {
             const pageSlugForImage = page.slug ?? crypto.randomUUID();
@@ -938,7 +953,8 @@ export async function POST(
               targetSections = routing!.target_sections;
               generatedImageUrl = generatedUrl;
             } else {
-              console.error('[pages/follow-up] image_generate routing qualified but image generation failed — falling back to full-page path', { routing });
+              console.error('[pages/follow-up] image_generate routing qualified but image generation failed — this is our own bug, not falling back to full-page', { routing });
+              scopedFailureReason = 'image_generate_failed';
             }
           } else {
             console.log('[pages/follow-up] routing did not qualify for scoped patch, falling back to full-page path', {
@@ -961,20 +977,27 @@ export async function POST(
           let allOk = true;
           for (const name of targetSections) {
             const section = slSections.find((s) => s.name === name);
-            if (!section) { allOk = false; break; }
+            if (!section) {
+              console.error(`[pages/follow-up] target section "${name}" vanished before scoped patch — this is our own bug, not falling back to full-page`);
+              scopedFailureReason = 'scoped_patch_target_section_missing';
+              allOk = false;
+              break;
+            }
             const schemaSlice = { [name]: (schema as Record<string, unknown> | null | undefined)?.[name] };
             const updated = await runScopedPatch(section.html, schemaSlice, scopedPrompt, scopedImageUrls);
             if (!updated) {
-              console.error(`[pages/follow-up] scoped patch returned no html for section "${name}" — falling back to full-page path`);
+              console.error(`[pages/follow-up] scoped patch returned no html for section "${name}" — this is our own bug, not falling back to full-page`);
+              scopedFailureReason = 'scoped_patch_empty_result';
               allOk = false;
               break;
             }
             if (!sanityCheckScopedSection(section.html, updated)) {
-              console.error(`[pages/follow-up] scoped patch failed sanity check for section "${name}" — falling back to full-page path`, {
+              console.error(`[pages/follow-up] scoped patch failed sanity check for section "${name}" — this is our own bug, not falling back to full-page`, {
                 originalOuterTag: outerTag(section.html),
                 updatedOuterTag: outerTag(updated),
                 updatedPreview: updated.slice(0, 300),
               });
+              scopedFailureReason = 'scoped_patch_sanity_check_failed';
               allOk = false;
               break;
             }
@@ -984,10 +1007,11 @@ export async function POST(
             // it without embedding it) — treat that as a failure rather than
             // shipping a response that looks done but visually didn't change.
             if (generatedImageUrl && !updated.includes(generatedImageUrl)) {
-              console.error(`[pages/follow-up] image_generate patch for section "${name}" did not embed the generated image URL — falling back to full-page path`, {
+              console.error(`[pages/follow-up] image_generate patch for section "${name}" did not embed the generated image URL — this is our own bug, not falling back to full-page`, {
                 generatedImageUrl,
                 updatedPreview: updated.slice(0, 500),
               });
+              scopedFailureReason = 'image_generate_patch_did_not_embed';
               allOk = false;
               break;
             }
@@ -999,6 +1023,22 @@ export async function POST(
             scopedApplied = true;
           }
         }
+      }
+
+      // A scoped op was already qualified (routing/quote-match confidently
+      // identified what to do) and OUR OWN code then failed to execute it —
+      // stop here instead of silently retrying as an expensive/oversized
+      // full-page rebuild that would misattribute the failure to vague
+      // wording. See scopedFailureReason assignments above for the exact
+      // failure site.
+      if (!scopedApplied && scopedFailureReason) {
+        console.error(`[pages/follow-up] scoped op qualified but failed (${scopedFailureReason}) — not falling back to full-page`, {
+          scopedFailureReason,
+          promptLength: prompt.length,
+        });
+        sendSSE(controller, { type: 'error', message: 'Something went wrong applying that edit. Please try again.' });
+        closeSSE(controller);
+        return;
       }
 
       // ── Fallback: today's full-page single-call path, unchanged ──────────
@@ -1055,7 +1095,11 @@ export async function POST(
           {
             system: systemPrompt,
             messages: [
-              ...history.map(({ role, content }) => ({ role, content })),
+              // Defensive strip: conversation_json rows written before this fix
+              // (or any other future accidental restoration) may still carry real
+              // base64 image bytes per turn — stripping again here is a no-op on
+              // clean history and a safety net on old/dirty rows either way.
+              ...history.map(({ role, content }) => ({ role, content: extractDataUris(content).html })),
               { role: 'user' as const, content: userContent },
             ],
             maxTokens: 128000,
@@ -1080,6 +1124,22 @@ export async function POST(
             promptLength: prompt.length,
           });
           sendSSE(controller, { type: 'error', message: 'Your instruction asked for more content than we can generate in one pass. Try a smaller or more specific edit.' });
+          closeSSE(controller);
+          return;
+        }
+        if (isPromptTooLongError(err)) {
+          console.error('[pages/follow-up] pass1-classify exceeded model context limit', {
+            promptLength: prompt.length,
+            htmlLength: htmlForModel.length,
+            historyEntries: history.length,
+            hasCompetitorContext,
+          });
+          sendSSE(controller, {
+            type: 'error',
+            message: hasCompetitorContext
+              ? "This page is too large to rebuild alongside a competitor reference in one pass. Try a more specific change, or split the request into smaller edits."
+              : 'This page is too large for a full-page edit. Try a more specific change (name the section or quote the text to change), or split the request into smaller edits.',
+          });
           closeSSE(controller);
           return;
         }
@@ -1177,7 +1237,22 @@ export async function POST(
             },
           });
         } catch (err) {
-          sendSSE(controller, { type: 'error', message: 'AI provider returned invalid HTML' });
+          if (isPromptTooLongError(err)) {
+            console.error('[pages/follow-up] structural rebuild exceeded model context limit', {
+              promptLength: prompt.length,
+              htmlLength: htmlForModel.length,
+              hasCompetitorContext,
+            });
+            sendSSE(controller, {
+              type: 'error',
+              message: hasCompetitorContext
+                ? "This page is too large to rebuild alongside a competitor reference in one pass. Try a more specific change, or split the request into smaller edits."
+                : 'This page is too large for a full-page edit. Try a more specific change (name the section or quote the text to change), or split the request into smaller edits.',
+            });
+          } else {
+            console.error('[pages/follow-up] structural rebuild failed', err);
+            sendSSE(controller, { type: 'error', message: 'AI provider returned invalid HTML' });
+          }
           closeSSE(controller);
           return;
         }
@@ -1219,7 +1294,6 @@ export async function POST(
       const finalSchemaJsonReal = finalSchemaJson
         ? (restoreDataUrisInValue(finalSchemaJson, dataUriMap) as Record<string, unknown>)
         : undefined;
-      const schemaReal = restoreDataUrisInValue(schema, dataUriMap);
 
       // Variant pages write to draft_* columns and never touch the live storage
       // file a test is actually serving — only "Replace Current Variant" uploads
@@ -1236,7 +1310,12 @@ export async function POST(
       const updatedConversation = [
         ...history,
         userEntry,
-        { role: 'assistant', content: JSON.stringify({ type: resultType, schema_json: finalSchemaJsonReal ?? schemaReal }) },
+        // Store the placeholder (pre-restore) schema, not finalSchemaJsonReal —
+        // conversation_json is only ever replayed back to the AI as text context (see the
+        // history.map above and AIBuilderClient, which never renders this raw), so it never
+        // needed real image bytes. Storing the restored version here is what let each turn's
+        // real base64 images compound in the prompt on every subsequent follow-up.
+        { role: 'assistant', content: JSON.stringify({ type: resultType, schema_json: finalSchemaJson ?? schema }) },
       ];
 
       const updatePayload: Record<string, unknown> = {
