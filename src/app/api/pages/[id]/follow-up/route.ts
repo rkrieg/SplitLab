@@ -886,6 +886,12 @@ export async function POST(
             slSections.some((s) => s.name === routing.anchor_section) &&
             (routing.position === 'before' || routing.position === 'after');
 
+          console.log('[pages/follow-up] routing decision', {
+            promptPreview: prompt.slice(0, 300),
+            routing,
+            qualifies: routingQualifies || removeShapeOk || reorderShapeOk || insertShapeOk || imageGenerateShapeOk,
+          });
+
           if (routingQualifies) {
             targetSections = (routing as { target_sections: string[] }).target_sections;
           } else if (removeShapeOk) {
@@ -993,6 +999,7 @@ export async function POST(
             }
             if (!sanityCheckScopedSection(section.html, updated)) {
               console.error(`[pages/follow-up] scoped patch failed sanity check for section "${name}" — this is our own bug, not falling back to full-page`, {
+                promptPreview: prompt.slice(0, 300),
                 originalOuterTag: outerTag(section.html),
                 updatedOuterTag: outerTag(updated),
                 updatedPreview: updated.slice(0, 300),
@@ -1021,6 +1028,10 @@ export async function POST(
           if (allOk && patchedSections.length === targetSections.length) {
             finalHtml = applyPatch(html, patchedSections);
             scopedApplied = true;
+            console.log('[pages/follow-up] scoped patch applied successfully', {
+              promptPreview: prompt.slice(0, 300),
+              sections: targetSections,
+            });
           }
         }
       }
@@ -1286,6 +1297,15 @@ export async function POST(
       // personalization work for an edit that had no effect. Both sides are still
       // placeholder'd here, so the comparison is unaffected by the swap.
       const htmlUnchanged = finalHtml === html;
+      // The single line that answers "did Done actually mean something changed" —
+      // without this, a technically-successful AI call that didn't apply the
+      // requested edit is indistinguishable in logs from one that did.
+      console.log('[pages/follow-up] request resolved', {
+        promptPreview: prompt.slice(0, 300),
+        scopedApplied,
+        resultType,
+        htmlUnchanged,
+      });
 
       // Every AI call and string splice above only ever saw placeholders — swap
       // real image bytes back in now, exactly once, for everything that gets
