@@ -22,6 +22,21 @@ export function LiveProgressPanel({ events, isComplete = false }: Props) {
     );
   }
 
+  // No events yet — the request is still mid-flight (auth/plan checks, page
+  // load, data-URI stripping, etc. all happen before the first SSE event is
+  // sent). Without this, the panel renders nothing and the loading indicator
+  // that was showing beforehand (see AIBuilderClient's isLoading branch)
+  // disappears for a beat right as the request does its heaviest pre-work,
+  // which reads as a glitch/freeze right before the first status pops in.
+  if (events.length === 0 && !isDone) {
+    return (
+      <div className="flex items-center gap-2 text-xs text-slate-400 dark:text-slate-500">
+        <Loader2 size={11} className="animate-spin text-indigo-600 dark:text-indigo-400 flex-shrink-0" />
+        <span>Thinking…</span>
+      </div>
+    );
+  }
+
   // Collect image URLs in order
   const imageUrls = events.filter(e => e.type === 'image_ready').map(e => (e as { type: 'image_ready'; url: string }).url);
 
