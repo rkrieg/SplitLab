@@ -5,8 +5,10 @@ import { db } from '@/lib/supabase-server';
 import { jsonrepair } from 'jsonrepair';
 import { askAI, askAIStream, isRateLimited, generatePageImages, generateAndUploadImage, AIResponseTruncatedError, isPromptTooLongError, userFacingAIErrorMessage, type AIContent, type AIContentBlock } from '@/lib/ai-client';
 import { uploadHtml, downloadHtmlByPath, fileNameFromUrl } from '@/lib/storage';
-import { resolveWorkspaceRole, resolveOwnerPlan } from '@/lib/workspace-auth';
+import { resolveWorkspaceRole, resolveOwnerPlan, resolveWorkspaceOwner } from '@/lib/workspace-auth';
 import { PLAN_LIMITS } from '@/lib/plans';
+import { checkAiAllowance, type UsageContext } from '@/lib/ai-usage';
+import { reportAiOverageUsage } from '@/lib/ai-overage-billing';
 import { extractUrls, scrapeCompetitorUrl } from '@/lib/ai-competitor-scrape';
 import { buildHtmlFromSchema } from '@/lib/ai-page-builder';
 import { createSSEStream, sendSSE, closeSSE, SSE_HEADERS, type SSEEvent } from '@/lib/sse';
@@ -14,6 +16,8 @@ import { isTestVariantPage } from '@/lib/page-drafts';
 import { extractDataUris, restoreDataUris, restoreDataUrisInValue } from '@/lib/data-uri-strip';
 
 export const dynamic = 'force-dynamic';
+// Large full-page rewrites can run several minutes; raised well past the old
+// 300s cutoff (capped by the hosting plan's real limit).
 export const maxDuration = 800;
 
 const SYSTEM_PROMPT = `You are editing an existing landing page. The user will give you an instruction to modify the page.
@@ -532,6 +536,7 @@ async function tryRoutingCall(
   schema: unknown,
   sections: SlSection[],
   imageUrls: string[],
+  usage?: UsageContext,
 ): Promise<RoutingResult | null> {
   try {
     const sectionList = sections.map((s) => `- ${s.name}: "${s.text.slice(0, 150)}"`).join('\n');
@@ -562,6 +567,7 @@ async function tryRoutingCall(
       // every other AI call in this file. Was pinned to Haiku; switched to
       // the default model for better routing accuracy/confidence-calibration.
       label: 'follow-up:routing',
+      usage: usage ? { ...usage, operation: 'route' } : undefined,
     });
     let raw = text.trim();
     if (raw.startsWith('```')) raw = raw.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
@@ -605,6 +611,7 @@ async function runScopedPatch(
   imageUrls: string[] | undefined,
   /** Optional corrective note appended on a retry (outer-tag / JSON shape). */
   correctionNote?: string,
+  usage?: UsageContext,
 ): Promise<string | null> {
   try {
     // The image content blocks below only give the model PIXELS — the
@@ -628,6 +635,7 @@ async function runScopedPatch(
       messages: [{ role: 'user', content: userContent }],
       maxTokens: 128000,
       label: correctionNote ? 'follow-up:scoped-patch-retry' : 'follow-up:scoped-patch',
+      usage: usage ? { ...usage, operation: 'edit' } : undefined,
     });
     let raw = text.trim();
     if (raw.startsWith('```')) raw = raw.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
@@ -706,10 +714,11 @@ async function runScopedPatchWithRetry(
   schemaSlice: unknown,
   prompt: string,
   imageUrls: string[] | undefined,
+  usage?: UsageContext,
 ): Promise<{ html: string | null; failedSanity: boolean; failedParse: boolean }> {
   const requiredTag = outerTag(sectionHtml);
 
-  const first = await runScopedPatch(sectionHtml, schemaSlice, prompt, imageUrls);
+  const first = await runScopedPatch(sectionHtml, schemaSlice, prompt, imageUrls, undefined, usage);
   const firstOk = acceptScopedPatchHtml(sectionHtml, first, 'first-attempt');
   if (firstOk) {
     return { html: firstOk, failedSanity: false, failedParse: false };
@@ -731,7 +740,7 @@ async function runScopedPatchWithRetry(
     gotTag,
   });
 
-  const second = await runScopedPatch(sectionHtml, schemaSlice, prompt, imageUrls, correction);
+  const second = await runScopedPatch(sectionHtml, schemaSlice, prompt, imageUrls, correction, usage);
   const secondOk = acceptScopedPatchHtml(sectionHtml, second, 'retry');
   if (secondOk) {
     return { html: secondOk, failedSanity: false, failedParse: false };
@@ -1059,6 +1068,7 @@ async function tryStructuralDiffSplice(
   slSections: SlSection[],
   prompt: string,
   imageUrls: string[],
+  usage?: UsageContext,
 ): Promise<string | null> {
   if (!oldSchema || typeof oldSchema !== 'object') return null;
   if (promptRequestsRestyle(prompt)) return null;
@@ -1106,7 +1116,7 @@ async function tryStructuralDiffSplice(
     const patchImageUrls = generatedUrlsForSection.length > 0
       ? [...imageUrls, ...generatedUrlsForSection]
       : imageUrls;
-    const result = await runScopedPatchWithRetry(section.html, schemaSlice, prompt, patchImageUrls);
+    const result = await runScopedPatchWithRetry(section.html, schemaSlice, prompt, patchImageUrls, usage);
     if (!result.html) {
       console.error(`[pages/follow-up] structural diff+splice: scoped patch failed for changed section "${key}", falling back to full rebuild`, {
         failedSanity: result.failedSanity,
@@ -1177,6 +1187,35 @@ export async function POST(
 
   if (isRateLimited(session.user.id, 5, 60_000) || isRateLimited(session.user.id, 30, 3_600_000)) {
     return NextResponse.json({ error: 'You\'re sending messages too fast. Please wait a moment before trying again.' }, { status: 429 });
+  }
+
+  // AI usage on this edit is metered against the account owner (credits/overage).
+  const { ownerId: aiOwnerId, plan: aiOwnerPlan } = await resolveWorkspaceOwner(page.workspace_id);
+  const usageCtx: UsageContext = {
+    ownerId: aiOwnerId,
+    workspaceId: page.workspace_id,
+    pageId: params.id,
+    operation: 'edit',
+  };
+
+  // Soft-cap gate (admins bypass). Runs before the SSE stream opens, so a
+  // blocked request returns clean JSON the editor can turn into an upsell.
+  if (session.user.role !== 'admin') {
+    const gate = await checkAiAllowance(aiOwnerId, aiOwnerPlan);
+    if (!gate.allowed) {
+      return NextResponse.json(
+        {
+          error: gate.reason === 'over_cap'
+            ? 'You\'ve reached your AI overage spend cap. Raise it in Billing to continue.'
+            : 'You\'re out of AI credits for this month. Enable overage in Billing to continue.',
+          softCap: true,
+          reason: gate.reason,
+          usage: gate.summary,
+          overage: gate.overage,
+        },
+        { status: 402 },
+      );
+    }
   }
 
   if (!page.html_url && !page.html_content) {
@@ -1324,7 +1363,7 @@ export async function POST(
 
         if (!scopedApplied && !targetSections) {
           sendSSE(controller, { type: 'status', message: 'Locating section...' });
-          const routing = await tryRoutingCall(prompt, schema, slSections, effectiveImageUrls);
+          const routing = await tryRoutingCall(prompt, schema, slSections, effectiveImageUrls, usageCtx);
           const basicShapeOk = !!routing &&
             routing.type === 'patch' &&
             routing.target_sections.length >= 1 &&
@@ -1545,7 +1584,7 @@ export async function POST(
               break;
             }
             const schemaSlice = { [name]: (schema as Record<string, unknown> | null | undefined)?.[name] };
-            const patchResult = await runScopedPatchWithRetry(section.html, schemaSlice, scopedPrompt, scopedImageUrls);
+            const patchResult = await runScopedPatchWithRetry(section.html, schemaSlice, scopedPrompt, scopedImageUrls, usageCtx);
             const updated = patchResult.html;
             if (!updated) {
               console.error(`[pages/follow-up] scoped patch failed for section "${name}" after retry`, {
@@ -1671,6 +1710,7 @@ export async function POST(
             ],
             maxTokens: 128000,
             label: 'follow-up:pass1-classify',
+            usage: { ...usageCtx, operation: 'build' },
           },
           (chunk) => {
             pass1Buffer += chunk;
@@ -1783,7 +1823,7 @@ export async function POST(
         // back to the full rebuild below on any failure.
         sendSSE(controller, { type: 'status', message: 'Applying changes...' });
         const diffSplicedHtml = !hasCompetitorContext
-          ? await tryStructuralDiffSplice(html, schema, enrichedSchema, slSections, prompt, effectiveImageUrls)
+          ? await tryStructuralDiffSplice(html, schema, enrichedSchema, slSections, prompt, effectiveImageUrls, usageCtx)
           : null;
 
         if (diffSplicedHtml) {
@@ -1952,6 +1992,10 @@ export async function POST(
         await db.from('personalization_rules').delete().eq('page_id', params.id);
       }
       await db.from('pages').update(updatePayload).eq('id', params.id);
+
+      // Report any accrued overage to Stripe (no-op unless overage is enabled
+      // and a metered price is configured). Fire-and-forget.
+      void reportAiOverageUsage(aiOwnerId);
 
       const doneEvent: SSEEvent = {
         type: 'done',

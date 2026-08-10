@@ -26,6 +26,29 @@ export const PLAN_LIMITS: Record<string, { domains: number; tests: number; varia
   scale:  { domains: Infinity, tests: Infinity, variants: Infinity,  clients: Infinity,  teamSeats: Infinity, aiPages: true,  utm: true  },
 };
 
+// ─── AI credits (metered "build & edit with AI" usage) ───────────────────────
+// 1 credit = 1,000 tokens (input + output). Monthly allowance per plan; usage
+// beyond it is soft-capped and, if the user opts in, billed as metered overage
+// at our cost + 10% up to a user-set spend cap.
+//
+// Tier-agnostic: to add a tier (e.g. the $99 "growth" plan when it merges),
+// add one key here — nothing else in the metering engine changes. Target when
+// Growth lands: growth 2000, agency 5000, scale 15000. Values below are
+// provisional for the current 4-tier structure (AI on agency + scale).
+export const TOKENS_PER_CREDIT = 1000;
+
+export const AI_CREDITS: Record<string, number> = {
+  free:   0,
+  pro:    0,
+  agency: 2000,   // 2,000 credits = 2,000,000 tokens/mo
+  scale:  6000,   // 6,000 credits = 6,000,000 tokens/mo
+};
+
+/** Monthly AI credit allowance for a plan (0 = no AI access). */
+export function aiCreditsForPlan(planId: string): number {
+  return AI_CREDITS[planId] ?? 0;
+}
+
 export interface Plan {
   id: 'free' | 'pro' | 'growth' | 'agency' | 'scale';
   label: string;

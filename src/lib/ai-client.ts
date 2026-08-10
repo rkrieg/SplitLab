@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import { uploadImage } from '@/lib/storage';
 import { logEvent } from '@/lib/log';
+import { recordAiUsage, type UsageContext } from '@/lib/ai-usage';
 
 /**
  * Provider-agnostic content shape used by every AI page-builder route.
@@ -34,6 +35,12 @@ export interface AskAIOptions {
    * in a flow that makes several of them per request.
    */
   label: string;
+  /**
+   * When set, this call's token usage is metered against the account owner for
+   * AI credits / overage billing. Recorded centrally here so every AI route is
+   * counted in one place — even when a call truncates. Best-effort; never throws.
+   */
+  usage?: UsageContext;
 }
 
 /**
@@ -61,7 +68,11 @@ function getAnthropicClient(): Anthropic {
   if (!anthropicClient) {
     const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
     if (!apiKey) throw new Error('ANTHROPIC_API_KEY environment variable is not set');
-    anthropicClient = new Anthropic({ apiKey });
+    // 15-min timeout: large full-page rewrites (32K output on a big page) can
+    // run past the SDK/undici default (~5 min → "HTTP/2 stream timeout after
+    // 300000"), which terminated long edits mid-stream. Streaming keeps the
+    // connection active; this just lifts the hard ceiling.
+    anthropicClient = new Anthropic({ apiKey, timeout: 15 * 60 * 1000, maxRetries: 1 });
   }
   return anthropicClient;
 }
@@ -207,6 +218,9 @@ async function askAnthropic(options: AskAIOptions): Promise<string> {
       const response = await stream.finalMessage();
 
       const { input_tokens, output_tokens } = response.usage;
+      // Meter usage centrally (before any truncation throw, so truncated calls
+      // still count — we paid for those tokens). Fire-and-forget; never blocks.
+      if (options.usage) void recordAiUsage(options.usage, model, input_tokens, output_tokens);
       console.log(`[AI tokens] callId=${callId} label=${options.label} elapsedMs=${Date.now() - startedAt} input=${input_tokens} output=${output_tokens} total=${input_tokens + output_tokens} model=${model} maxTokens=${options.maxTokens} stop_reason=${response.stop_reason} attempt=${attempt}`);
 
       if (response.stop_reason === 'max_tokens') {
@@ -295,6 +309,9 @@ async function askAnthropicStream(options: AskAIOptions, onChunk: (text: string)
 
       const response = await stream.finalMessage();
       const { input_tokens, output_tokens } = response.usage;
+      // Meter usage centrally (before any truncation throw, so truncated calls
+      // still count — we paid for those tokens). Fire-and-forget; never blocks.
+      if (options.usage) void recordAiUsage(options.usage, model, input_tokens, output_tokens);
       console.log(`[AI tokens stream] callId=${callId} label=${options.label} elapsedMs=${Date.now() - startedAt} chunks=${chunkCount} input=${input_tokens} output=${output_tokens} total=${input_tokens + output_tokens} model=${model} maxTokens=${options.maxTokens} stop_reason=${response.stop_reason} attempt=${attempt}`);
 
       if (response.stop_reason === 'max_tokens') {

@@ -89,6 +89,7 @@ interface Variant {
   pages?: { id: string; name: string; draft_html_content?: string | null } | null;
   tracking_verified?: boolean | null;
   duplicated_from_id?: string | null;
+  archived_at?: string | null;
 }
 
 interface Goal {
@@ -215,6 +216,10 @@ export default function AnalyticsClient({
   const [test, setTest] = useState(initialTest);
   const [tab, setTab] = useState<Tab>("overview");
   const [variantPreview, setVariantPreview] = useState<{ name: string; url: string } | null>(null);
+  // Per-row "..." actions menu. Positioned fixed (computed from the button rect)
+  // so it isn't clipped by the table's overflow-x-auto wrapper.
+  const [actionMenu, setActionMenu] = useState<{ id: string; top: number; right: number } | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
   const [previewViewMode, setPreviewViewMode] = useState<"desktop" | "mobile">("desktop");
   const [previewIframeLoaded, setPreviewIframeLoaded] = useState(false);
   const previewWrapRef = useRef<HTMLDivElement>(null);
@@ -2726,49 +2731,52 @@ export default function AnalyticsClient({
             </div>
 
             <div className="card overflow-x-auto">
-              <table className="w-full min-w-[1150px] text-sm">
+              <table className="w-full min-w-[900px] text-sm">
+                {/* min-w keeps columns legible; sits inside overflow-x-auto so
+                    it only scrolls on very narrow screens, not normal ones */}
                 <thead>
                   <tr className="border-b border-slate-200 dark:border-slate-700">
-                    <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">
+                    <th className="text-left px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">
                       Variant
                     </th>
-                    <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium w-24">
+                    <th className="text-left px-3 py-3 text-slate-500 dark:text-slate-400 font-medium w-20">
                       Weight
                     </th>
-                    <th className="text-right px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">
+                    <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">
                       Views
                     </th>
-                    <th className="text-right px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">
-                      Unique Visitors
+                    <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">
+                      Unique
                     </th>
-                    <th className="text-right px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">
-                      Conversions
+                    <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">
+                      Conv.
                     </th>
-                    <th className="text-right px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">
-                      Goal Hits
+                    <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">
+                      Goals
                     </th>
-                    <th className="text-right px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">
+                    <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">
                       CVR
                     </th>
-                    <th className="text-right px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">
-                      Desktop CVR
+                    <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">
+                      Desktop
                     </th>
-                    <th className="text-right px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">
-                      Mobile CVR
+                    <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">
+                      Mobile
                     </th>
-                    <th className="text-right px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">
-                      Confidence
+                    <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">
+                      Conf.
                     </th>
-                    <th className="text-center px-5 py-3 text-slate-400 font-medium w-20"></th>
-                    <th className="text-center px-5 py-3 text-slate-400 font-medium w-36"></th>
-                    <th className="text-center px-5 py-3 text-slate-400 font-medium w-10"></th>
+                    <th className="text-center px-3 py-3 text-slate-400 font-medium w-16"></th>
+                    <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">
+                      Actions
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
                   {loading ? (
                     <tr>
                       <td
-                        colSpan={11}
+                        colSpan={12}
                         className="px-5 py-10 text-center text-slate-400"
                       >
                         <RefreshCw
@@ -2781,7 +2789,7 @@ export default function AnalyticsClient({
                   ) : stats.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={13}
+                        colSpan={12}
                         className="px-5 py-10 text-center text-slate-400"
                       >
                         No data yet. Publish this page to start collecting
@@ -2814,7 +2822,7 @@ export default function AnalyticsClient({
                       return (
                         <Fragment key={stat.variant.id}>
                           <tr className={`group ${rowBg}`}>
-                            <td className="px-5 py-3.5">
+                            <td className="px-3 py-3.5">
                               <div className="flex items-center gap-2">
                                 <span className="font-medium text-slate-800 dark:text-slate-200">
                                   {stat.variant.name}
@@ -2899,7 +2907,7 @@ export default function AnalyticsClient({
                                 </div>
                               )}
                             </td>
-                            <td className={`px-5 py-3.5 ${rowBg}`}>
+                            <td className={`px-3 py-3.5 ${rowBg}`}>
                               {savingWeightId === stat.variant.id ? (
                                 <Loader2
                                   size={14}
@@ -2939,43 +2947,43 @@ export default function AnalyticsClient({
                               )}
                             </td>
                             <td
-                              className={`px-5 py-3.5 text-right text-slate-700 dark:text-slate-300 ${rowBg}`}
+                              className={`px-3 py-3.5 text-right text-slate-700 dark:text-slate-300 ${rowBg}`}
                             >
                               {stat.views.toLocaleString()}
                             </td>
                             <td
-                              className={`px-5 py-3.5 text-right text-slate-700 dark:text-slate-300 ${rowBg}`}
+                              className={`px-3 py-3.5 text-right text-slate-700 dark:text-slate-300 ${rowBg}`}
                             >
                               {stat.uniqueVisitors.toLocaleString()}
                             </td>
                             <td
-                              className={`px-5 py-3.5 text-right text-slate-700 dark:text-slate-300 ${rowBg}`}
+                              className={`px-3 py-3.5 text-right text-slate-700 dark:text-slate-300 ${rowBg}`}
                             >
                               {stat.conversions.toLocaleString()}
                             </td>
                             <td
-                              className={`px-5 py-3.5 text-right text-slate-500 dark:text-slate-400 ${rowBg}`}
+                              className={`px-3 py-3.5 text-right text-slate-500 dark:text-slate-400 ${rowBg}`}
                             >
                               {stat.goalHits.toLocaleString()}
                             </td>
                             <td
-                              className={`px-5 py-3.5 text-right font-semibold text-slate-900 dark:text-slate-100 ${rowBg}`}
+                              className={`px-3 py-3.5 text-right font-semibold text-slate-900 dark:text-slate-100 ${rowBg}`}
                             >
                               {formatPercent(cvr)}
                             </td>
                             <td
-                              className={`px-5 py-3.5 text-right text-slate-700 dark:text-slate-300 ${rowBg}`}
+                              className={`px-3 py-3.5 text-right text-slate-700 dark:text-slate-300 ${rowBg}`}
                               title={`${stat.desktopConversions.toLocaleString()} / ${stat.desktopUniqueVisitors.toLocaleString()} unique visitors`}
                             >
                               {stat.desktopUniqueVisitors > 0 ? formatPercent(stat.desktopCvr * 100) : <span className="text-slate-400">—</span>}
                             </td>
                             <td
-                              className={`px-5 py-3.5 text-right text-slate-700 dark:text-slate-300 ${rowBg}`}
+                              className={`px-3 py-3.5 text-right text-slate-700 dark:text-slate-300 ${rowBg}`}
                               title={`${stat.mobileConversions.toLocaleString()} / ${stat.mobileUniqueVisitors.toLocaleString()} unique visitors`}
                             >
                               {stat.mobileUniqueVisitors > 0 ? formatPercent(stat.mobileCvr * 100) : <span className="text-slate-400">—</span>}
                             </td>
-                            <td className={`px-5 py-3.5 text-right ${rowBg}`}>
+                            <td className={`px-3 py-3.5 text-right ${rowBg}`}>
                               {stat.variant.is_control ? (
                                 <span className="text-slate-500">—</span>
                               ) : stat.confidence !== null ? (
@@ -2995,7 +3003,7 @@ export default function AnalyticsClient({
                               )}
                             </td>
                             {/* Uplift % */}
-                            <td className={`px-5 py-3.5 text-center ${rowBg}`}>
+                            <td className={`px-3 py-3.5 text-center ${rowBg}`}>
                               {uplift !== null ? (
                                 <span className={`flex items-center justify-center gap-0.5 text-xs font-medium ${uplift > 0 ? "text-green-400" : "text-red-400"}`}>
                                   <TrendingUp size={11} className={uplift < 0 ? "rotate-180" : ""} />
@@ -3005,63 +3013,42 @@ export default function AnalyticsClient({
                                 <span className="text-slate-500">—</span>
                               )}
                             </td>
-                            {/* Set Up UTM + Setup Goal Tracking */}
-                            <td className={`px-3 py-3.5 text-center ${rowBg}`}>
-                              <div className="flex flex-col items-center gap-1">
-                                {stat.variant.pages?.id && (
+                            {/* Actions: primary "Edit with AI" + "..." menu */}
+                            <td className={`px-3 py-3.5 ${rowBg}`}>
+                              <div className="flex items-center justify-end gap-1.5">
+                                {stat.variant.pages?.id ? (
                                   <Link
-                                    href={`/clients/${clientId}/pages/${stat.variant.pages.id}/utm`}
-                                    className="flex items-center justify-center gap-1 w-full px-2 py-1 rounded-lg text-xs font-medium bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 hover:bg-indigo-500/20 transition-colors whitespace-nowrap"
-                                    title="Set up UTM parameters"
+                                    href={`/clients/${clientId}/ai-pages/new?page_id=${stat.variant.pages.id}`}
+                                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-500 transition-colors whitespace-nowrap"
+                                    title="Edit this variant's page with AI"
                                   >
-                                    <SlidersHorizontal size={11} />
-                                    UTM personalization
+                                    <Sparkles size={12} /> Edit with AI
                                   </Link>
-                                )}
-                                {!variantHasGoals && (
+                                ) : (
                                   <button
-                                    onClick={() => {
-                                      if (getVerifiedStatus(stat.variant) === false) {
-                                        toast.error('Install the tracker.js snippet on your landing page first, then set up goal or event tracking.');
-                                        return;
-                                      }
-                                      scanPage(stat.variant.id);
-                                    }}
-                                    disabled={scanningVariantIds.includes(stat.variant.id)}
-                                    className={`flex items-center justify-center gap-1 w-full px-2 py-1 rounded-lg text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap ${
-                                      variantScanned
-                                        ? "bg-amber-500 border border-amber-600 text-white hover:bg-amber-600 shadow-md shadow-amber-500/50 animate-pulse"
-                                        : "bg-red-600 border border-red-500 text-white hover:bg-red-700 shadow-md shadow-red-500/50 animate-pulse"
-                                    }`}
-                                    title={
-                                      variantScanned
-                                        ? "Page scanned but no goal is enabled yet — conversions are NOT being recorded. Click to choose a goal."
-                                        : "No goal tracking set up — conversions are NOT being recorded for this variant. Click to set it up now."
-                                    }
+                                    onClick={() => startEditVariant(stat.variant)}
+                                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-500 transition-colors whitespace-nowrap"
+                                    title="Edit variant"
                                   >
-                                    <ScanLine size={11} />
-                                    Setup Goal Tracking
+                                    <Pencil size={12} /> Edit
                                   </button>
                                 )}
-                              </div>
-                            </td>
-                            {/* Open + Edit icons */}
-                            <td className={`px-3 py-3.5 text-center ${rowBg}`}>
-                              <div className="flex items-center justify-center gap-2">
                                 <button
-                                  onClick={() => openVariantPreview(stat.variant)}
-                                  disabled={visitorOverCap}
-                                  className="p-1 rounded transition-colors text-slate-400 dark:text-slate-600 hover:text-slate-700 dark:hover:text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed"
-                                  title={visitorOverCap ? "Visitor limit reached — upgrade your plan to resume testing" : `Preview ${stat.variant.name}`}
+                                  onClick={(e) => {
+                                    const r = e.currentTarget.getBoundingClientRect();
+                                    setActionMenu(
+                                      actionMenu?.id === stat.variant.id
+                                        ? null
+                                        : { id: stat.variant.id, top: r.bottom + 4, right: window.innerWidth - r.right }
+                                    );
+                                  }}
+                                  className="relative p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                                  title="More actions"
                                 >
-                                  <ExternalLink size={13} />
-                                </button>
-                                <button
-                                  onClick={() => startEditVariant(stat.variant)}
-                                  className={`p-1 rounded transition-colors ${isEditing ? "bg-indigo-500/20 text-indigo-400" : "text-slate-400 dark:text-slate-600 hover:text-slate-700 dark:hover:text-slate-300"}`}
-                                  title="Edit variant"
-                                >
-                                  <Pencil size={13} />
+                                  <MoreHorizontal size={16} />
+                                  {!variantHasGoals && (
+                                    <span className="absolute top-0.5 right-0.5 w-2 h-2 rounded-full bg-red-500 ring-2 ring-white dark:ring-slate-900" />
+                                  )}
                                 </button>
                                 <div className="relative" data-variant-menu>
                                   <button
@@ -3116,6 +3103,64 @@ export default function AnalyticsClient({
                                   )}
                                 </div>
                               </div>
+
+                              {actionMenu?.id === stat.variant.id && (
+                                <>
+                                  <div className="fixed inset-0 z-40" onClick={() => setActionMenu(null)} />
+                                  <div
+                                    className="fixed z-50 w-52 py-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl text-sm"
+                                    style={{ top: actionMenu.top, right: actionMenu.right }}
+                                  >
+                                    <button
+                                      onClick={() => { setActionMenu(null); openVariantPreview(stat.variant); }}
+                                      disabled={visitorOverCap}
+                                      className="w-full flex items-center gap-2 px-3 py-2 text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                                      title={visitorOverCap ? "Visitor limit reached — upgrade your plan to resume testing" : `Preview ${stat.variant.name}`}
+                                    >
+                                      <ExternalLink size={13} /> Preview page
+                                    </button>
+                                    {stat.variant.pages?.id && (
+                                      <Link
+                                        href={`/clients/${clientId}/pages/${stat.variant.pages.id}/utm`}
+                                        onClick={() => setActionMenu(null)}
+                                        className="w-full flex items-center gap-2 px-3 py-2 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                                        title="Set up UTM parameters"
+                                      >
+                                        <SlidersHorizontal size={13} /> UTM personalization
+                                      </Link>
+                                    )}
+                                    {stat.variant.pages?.id && (
+                                      <button
+                                        onClick={() => { setActionMenu(null); startEditVariant(stat.variant); }}
+                                        className="w-full flex items-center gap-2 px-3 py-2 text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                                      >
+                                        <Pencil size={13} /> Edit details
+                                      </button>
+                                    )}
+                                    {!variantHasGoals && (
+                                      <button
+                                        onClick={() => {
+                                          setActionMenu(null);
+                                          if (getVerifiedStatus(stat.variant) === false) {
+                                            toast.error('Install the tracker.js snippet on your landing page first, then set up goal or event tracking.');
+                                            return;
+                                          }
+                                          scanPage(stat.variant.id);
+                                        }}
+                                        disabled={scanningVariantIds.includes(stat.variant.id)}
+                                        className="w-full flex items-center gap-2 px-3 py-2 text-left text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors border-t border-slate-100 dark:border-slate-700"
+                                        title={
+                                          variantScanned
+                                            ? "Page scanned but no goal is enabled yet — conversions are NOT being recorded. Click to choose a goal."
+                                            : "No goal tracking set up — conversions are NOT being recorded for this variant. Click to set it up now."
+                                        }
+                                      >
+                                        <ScanLine size={13} /> Setup Goal Tracking
+                                      </button>
+                                    )}
+                                  </div>
+                                </>
+                              )}
                             </td>
                           </tr>
 
@@ -3141,7 +3186,7 @@ export default function AnalyticsClient({
                           {isEditing && (
                             <tr>
                               <td
-                                colSpan={11}
+                                colSpan={12}
                                 className="border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 px-6 py-4"
                               >
                                 <div className="grid grid-cols-2 gap-4 max-w-2xl">

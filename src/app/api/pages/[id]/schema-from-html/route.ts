@@ -5,11 +5,13 @@ import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { askAIStream, isRateLimited, AIResponseTruncatedError } from '@/lib/ai-client';
 import { uploadHtml, downloadHtmlByPath, fileNameFromUrl } from '@/lib/storage';
-import { resolveWorkspaceRole, resolveOwnerPlan } from '@/lib/workspace-auth';
+import { resolveWorkspaceRole, resolveOwnerPlan, resolveWorkspaceOwner } from '@/lib/workspace-auth';
 import { PLAN_LIMITS } from '@/lib/plans';
 import { isTestVariantPage } from '@/lib/page-drafts';
 import { extractDataUris, restoreDataUris, restoreDataUrisInValue } from '@/lib/data-uri-strip';
 import { createSSEStream, sendSSE, sendSSEPing, closeSSE, SSE_HEADERS } from '@/lib/sse';
+import { checkAiAllowance, type UsageContext } from '@/lib/ai-usage';
+import { reportAiOverageUsage } from '@/lib/ai-overage-billing';
 
 export const dynamic = 'force-dynamic';
 // The AI call returns a compact field/section list (not the full page), but
@@ -356,6 +358,157 @@ function annotateHtml(
   };
 }
 
+// ── Field-list generation (single pass) ─────────────────────────────────────
+// Extracted so both the primary single-pass path and the chunked fallback can
+// reuse it. Throws AIResponseTruncatedError when the model's JSON output hits
+// the token cap (that's the signal to fall back to chunking).
+async function generateFieldList(htmlForModel: string, isFragment: boolean, usage?: UsageContext): Promise<FieldListResponse> {
+  const fragmentNote = isFragment
+    ? '\n\nNOTE: This is ONE FRAGMENT of a larger page, not the whole page. List only the sections and fields present in THIS fragment. Do not invent content from other parts of the page.'
+    : '';
+  const text = await askAIStream(
+    {
+      system: SYSTEM_PROMPT + fragmentNote,
+      messages: [{ role: 'user', content: `Existing page HTML:\n${htmlForModel}` }],
+      usage,
+      label: isFragment ? 'schema-from-html:chunk' : 'schema-from-html',
+      // Each chunk is a fraction of the page, so 32K output is ample and keeps
+      // per-chunk calls fast. max_tokens is a cap not a charge — we only pay for
+      // tokens generated.
+      maxTokens: 32000,
+    },
+    () => {},
+  );
+  let jsonText = text.trim();
+  if (jsonText.startsWith('```')) {
+    jsonText = jsonText.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
+  }
+  try {
+    return JSON.parse(jsonText);
+  } catch {
+    return JSON.parse(jsonrepair(jsonText));
+  }
+}
+
+// ── Chunked field-list generation (fallback for very large pages) ────────────
+// When a page's field-list would exceed the single-pass output cap, split the
+// page into top-level sections, generate a field-list per chunk (in parallel,
+// each well under the cap), and merge. annotateHtml() matches fields/sections
+// against the FULL html by content, so a merged list annotates the whole page
+// unchanged — the only fix-up needed is recomputing each field's `occurrence`
+// globally, since a chunk's model only sees (and counts) its own slice.
+
+const VOID_TAGS = new Set(['img', 'br', 'hr', 'input', 'meta', 'link', 'source', 'area', 'base', 'col', 'embed', 'param', 'track', 'wbr']);
+
+/** Depth-aware spans of each top-level element in an HTML fragment. */
+function topLevelElementSpans(html: string): [number, number][] {
+  const spans: [number, number][] = [];
+  const openRe = /<([a-zA-Z][a-zA-Z0-9]*)\b[^>]*?(\/?)>/g;
+  let i = 0;
+  while (i < html.length) {
+    openRe.lastIndex = i;
+    const m = openRe.exec(html);
+    if (!m) break;
+    const tag = m[1].toLowerCase();
+    const openStart = m.index;
+    const openEnd = m.index + m[0].length;
+    if (m[2] === '/' || VOID_TAGS.has(tag)) {
+      spans.push([openStart, openEnd]);
+      i = openEnd;
+      continue;
+    }
+    const scanRe = new RegExp(`<${tag}\\b[^>]*>|</${tag}\\s*>`, 'gi');
+    scanRe.lastIndex = openEnd;
+    let depth = 1;
+    let closeEnd = html.length;
+    let cm: RegExpExecArray | null;
+    while ((cm = scanRe.exec(html))) {
+      if (cm[0].startsWith('</')) {
+        depth--;
+        if (depth === 0) { closeEnd = cm.index + cm[0].length; break; }
+      } else {
+        depth++;
+      }
+    }
+    spans.push([openStart, closeEnd]);
+    i = closeEnd;
+  }
+  return spans;
+}
+
+/**
+ * Split minified page HTML into chunks: the <head>/<style> block as its own
+ * chunk, then the body's top-level elements grouped up to ~targetChars each so
+ * we make as few AI calls as possible while keeping every element whole.
+ */
+function splitMinifiedIntoChunks(minified: string, targetChars = 12000): string[] {
+  const chunks: string[] = [];
+
+  const headMatch =
+    /<head\b[^>]*>[\s\S]*?<\/head>/i.exec(minified) ||
+    /<style\b[^>]*>[\s\S]*?<\/style>/i.exec(minified);
+  if (headMatch) chunks.push(headMatch[0]);
+
+  const bodyOpen = /<body\b[^>]*>/i.exec(minified);
+  const bodyStart = bodyOpen ? bodyOpen.index + bodyOpen[0].length : 0;
+  const bodyCloseIdx = minified.toLowerCase().lastIndexOf('</body>');
+  const bodyEnd = bodyCloseIdx !== -1 ? bodyCloseIdx : minified.length;
+  const body = minified.slice(bodyStart, bodyEnd);
+
+  let buf = '';
+  for (const [s, e] of topLevelElementSpans(body)) {
+    const el = body.slice(s, e);
+    if (buf && buf.length + el.length > targetChars) {
+      chunks.push(buf);
+      buf = '';
+    }
+    buf += el;
+  }
+  if (buf.trim()) chunks.push(buf);
+
+  return chunks.length ? chunks : [minified];
+}
+
+/** Merge per-chunk field lists and recompute global (document-order) occurrence. */
+function mergeFieldLists(lists: FieldListResponse[]): FieldListResponse {
+  const sections: SectionEntry[] = [];
+  const fields: FieldEntry[] = [];
+  for (const list of lists) {
+    for (const s of list?.sections ?? []) sections.push(s);
+    for (const f of list?.fields ?? []) fields.push(f);
+  }
+  // Recompute occurrence globally: chunks are concatenated in document order,
+  // so counting each (tag, normalized text) as we go yields the same indices
+  // annotateHtml() will when it scans the full page top-to-bottom.
+  const counts = new Map<string, number>();
+  for (const f of fields) {
+    if (!f?.tag || typeof f.match_text !== 'string') continue;
+    const key = `${f.tag.toLowerCase()} ${normalizeText(f.match_text)}`;
+    const n = counts.get(key) ?? 0;
+    f.occurrence = n;
+    counts.set(key, n + 1);
+  }
+  return { sections, fields };
+}
+
+async function generateFieldListChunked(minified: string, usage?: UsageContext): Promise<FieldListResponse> {
+  const chunks = splitMinifiedIntoChunks(minified);
+  console.log(`[schema-from-html] chunked fallback: ${chunks.length} chunks`);
+  const results = await Promise.all(
+    chunks.map(async (chunk, idx) => {
+      try {
+        return await generateFieldList(chunk, true, usage);
+      } catch (err) {
+        // One chunk failing (truncation on a single huge section, or a parse
+        // error) drops that chunk's fields rather than failing the whole page.
+        console.error(`[schema-from-html] chunk ${idx}/${chunks.length} failed`, err);
+        return { sections: [], fields: [] } as FieldListResponse;
+      }
+    }),
+  );
+  return mergeFieldLists(results);
+}
+
 export async function POST(
   _request: NextRequest,
   { params }: { params: { id: string } }
@@ -413,6 +566,34 @@ export async function POST(
     return NextResponse.json({ error: 'Too many requests. Please wait a moment before trying again.' }, { status: 429 });
   }
 
+  // Meter this prepare against the account owner (AI credits / overage), and
+  // soft-cap before opening the SSE stream so a blocked request returns clean
+  // JSON the editor turns into an upsell (admins bypass).
+  const { ownerId, plan: ownerPlanForUsage } = await resolveWorkspaceOwner(page.workspace_id);
+  const usageCtx: UsageContext = {
+    ownerId,
+    workspaceId: page.workspace_id,
+    pageId: params.id,
+    operation: 'prepare',
+  };
+  if (session.user.role !== 'admin') {
+    const gate = await checkAiAllowance(ownerId, ownerPlanForUsage);
+    if (!gate.allowed) {
+      return NextResponse.json(
+        {
+          error: gate.reason === 'over_cap'
+            ? 'You\'ve reached your AI overage spend cap. Raise it in Billing to continue.'
+            : 'You\'re out of AI credits for this month. Enable overage in Billing to continue.',
+          softCap: true,
+          reason: gate.reason,
+          usage: gate.summary,
+          overage: gate.overage,
+        },
+        { status: 402 },
+      );
+    }
+  }
+
   // ── Open SSE stream — no NextResponse.json after this point ───────────────
   // Everything above this line is a fast guard (auth/plan/rate-limit/already-
   // prepared) and stays a plain JSON response; only the actual multi-minute
@@ -459,6 +640,7 @@ export async function POST(
             messages: [{ role: 'user', content: `Existing page HTML:\n${htmlForModel}` }],
             maxTokens: 128000,
             label: 'schema-from-html',
+            usage: usageCtx,
           },
           () => {},
         );
@@ -476,16 +658,28 @@ export async function POST(
           parsed = JSON.parse(jsonrepair(jsonText));
         }
       } catch (err) {
-        clearInterval(heartbeat);
         if (err instanceof AIResponseTruncatedError) {
-          sendSSE(controller, { type: 'error', message: 'This page is too large to prepare for AI editing in one pass.' });
+          // Field-list overflowed even the 128K single pass — split the page
+          // into top-level sections and generate a field-list per chunk, then
+          // merge. Keeps arbitrarily large pages working.
+          console.warn('[schema-from-html] single pass truncated, falling back to chunked generation');
+          sendSSE(controller, { type: 'status', message: 'Large page — analyzing in sections…' });
+          try {
+            parsed = await generateFieldListChunked(htmlForModel, usageCtx);
+          } catch (chunkErr) {
+            clearInterval(heartbeat);
+            console.error('[schema-from-html] chunked generation failed', chunkErr);
+            sendSSE(controller, { type: 'error', message: 'This page is too large to prepare for AI editing.' });
+            closeSSE(controller);
+            return;
+          }
+        } else {
+          clearInterval(heartbeat);
+          console.error('[schema-from-html] field-list generation failed', err);
+          sendSSE(controller, { type: 'error', message: 'Could not prepare this page for AI editing' });
           closeSSE(controller);
           return;
         }
-        console.error('[schema-from-html] field-list generation failed', err);
-        sendSSE(controller, { type: 'error', message: 'Could not prepare this page for AI editing' });
-        closeSSE(controller);
-        return;
       }
       clearInterval(heartbeat);
 
@@ -588,6 +782,9 @@ export async function POST(
       if (!isVariant) {
         await db.from('personalization_rules').delete().eq('page_id', params.id);
       }
+
+      // Report accrued overage to Stripe (no-op unless configured). Fire-and-forget.
+      void reportAiOverageUsage(ownerId);
 
       sendSSE(controller, {
         type: 'done',
