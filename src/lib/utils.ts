@@ -34,8 +34,8 @@ export function generateId(): string {
  * Coarse mobile/desktop classification from a request's User-Agent header.
  * Used server-side (real UA, not client-supplied) for the device CVR split.
  */
-export function getDeviceType(userAgent: string | null): 'mobile' | 'desktop' {
-  if (!userAgent) return 'desktop';
+export function getDeviceType(userAgent: string | null): 'mobile' | 'desktop' | 'unknown' {
+  if (!userAgent) return 'unknown';
   return /Mobi|Android|iPhone|iPod|IEMobile|BlackBerry|Opera Mini/i.test(userAgent)
     ? 'mobile'
     : 'desktop';

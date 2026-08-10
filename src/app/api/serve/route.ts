@@ -75,6 +75,8 @@ export async function GET(request: NextRequest) {
   // which fetches us server-side so we can't see it ourselves. Used as sl_purl
   // in proxy mode when there's no custom domain.
   const publicUrl = searchParams.get('public_url') || '';
+  const userAgent = request.headers.get('user-agent');
+  const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || null;
 
   try {
     const previewTestId = searchParams.get('preview_test_id') || null;
@@ -338,8 +340,8 @@ ${proxyTrackingSnippet}
             variant_id: selectedVariant.id,
             visitor_hash: visitorId,
             type: 'pageview',
-            device_type: getDeviceType(request.headers.get('user-agent')),
-            metadata: { redirect_url: selectedVariant.redirect_url, proxy: true },
+            device_type: getDeviceType(userAgent),
+            metadata: { redirect_url: selectedVariant.redirect_url, proxy: true, user_agent: userAgent, ip: clientIp },
           });
         }
 
@@ -388,8 +390,8 @@ ${proxyTrackingSnippet}
           variant_id: selectedVariant.id,
           visitor_hash: visitorId,
           type: 'pageview',
-          device_type: getDeviceType(request.headers.get('user-agent')),
-          metadata: { redirect_url: selectedVariant.redirect_url },
+          device_type: getDeviceType(userAgent),
+          metadata: { redirect_url: selectedVariant.redirect_url, user_agent: userAgent, ip: clientIp },
         });
       }
 
@@ -510,8 +512,8 @@ ${proxyTrackingSnippet}
         variant_id: selectedVariant.id,
         visitor_hash: visitorId,
         type: 'pageview',
-        device_type: getDeviceType(request.headers.get('user-agent')),
-        metadata: {},
+        device_type: getDeviceType(userAgent),
+        metadata: { user_agent: userAgent, ip: clientIp },
       });
     }
 
