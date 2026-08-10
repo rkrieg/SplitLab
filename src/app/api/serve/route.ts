@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/supabase-server';
 import { downloadHtml } from '@/lib/storage';
 import { buildTrackingSnippet, buildScanScript, injectIntoHtml, buildScriptTag, buildFaviconTag, stripFaviconTags, stripSplitLabTrackerTags } from '@/lib/tracking';
-import { assignVariant, getDeviceType } from '@/lib/utils';
+import { assignVariant, getDeviceType, isBotRequest } from '@/lib/utils';
 import { getPlanDetails } from '@/lib/plans';
 import { buildUtmSwapScript } from '@/lib/utm-swap-script';
 
@@ -77,6 +77,10 @@ export async function GET(request: NextRequest) {
   const publicUrl = searchParams.get('public_url') || '';
   const userAgent = request.headers.get('user-agent');
   const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || null;
+  // Non-browser traffic (crawlers/scanners/scripts) still gets served normally —
+  // we just don't let it inflate the pageview count. See isBotRequest() for why
+  // the pattern list stays conservative (avoid false-positiving real visitors).
+  const isBot = isBotRequest(userAgent);
 
   try {
     const previewTestId = searchParams.get('preview_test_id') || null;
@@ -334,7 +338,7 @@ ${proxyTrackingSnippet}
 </html>`;
 
         // Record server-side pageview (skip for cap, scan, and Open-button previews)
-        if (!overVisitorCap && !isScan && !forcedVh) {
+        if (!overVisitorCap && !isScan && !forcedVh && !isBot) {
           await db.from('events').insert({
             test_id: test.id,
             variant_id: selectedVariant.id,
@@ -384,7 +388,7 @@ ${proxyTrackingSnippet}
         redirectResponse.cookies.set(stickyCookieName, selectedVariant.id, cookieOptions);
       }
 
-      if (!overVisitorCap && !isScan && !forcedVh) {
+      if (!overVisitorCap && !isScan && !forcedVh && !isBot) {
         await db.from('events').insert({
           test_id: test.id,
           variant_id: selectedVariant.id,
@@ -506,7 +510,7 @@ ${proxyTrackingSnippet}
     const finalHtml = injectIntoHtml(htmlWithUtm, headScripts, bodyEndScripts, trackingSnippet);
 
     // 10c. Record pageview (skip for cap, scan, and Open-button previews)
-    if (!overVisitorCap && !isScan && !forcedVh) {
+    if (!overVisitorCap && !isScan && !forcedVh && !isBot) {
       await db.from('events').insert({
         test_id: test.id,
         variant_id: selectedVariant.id,

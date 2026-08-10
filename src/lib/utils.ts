@@ -42,6 +42,18 @@ export function getDeviceType(userAgent: string | null): 'mobile' | 'desktop' | 
 }
 
 /**
+ * Conservative non-browser traffic check from the User-Agent header — missing
+ * UA (no real browser omits it) or an explicit, well-known bot/script/crawler
+ * signature. Deliberately narrow: false positives here silently drop a real
+ * visitor's pageview, so this only matches names no real browser UA contains,
+ * never generic words that could appear in a legitimate UA string.
+ */
+export function isBotRequest(userAgent: string | null): boolean {
+  if (!userAgent) return true;
+  return /bot|crawler|spider|facebookexternalhit|meta-externalagent|python-requests|python-urllib|go-http-client|okhttp|libwww-perl|scrapy|headlesschrome|phantomjs|slurp|bingpreview|ahrefsbot|semrushbot|mj12bot|petalbot|dataforseo|curl\/|wget\/|node-fetch|axios\/|postmanruntime/i.test(userAgent);
+}
+
+/**
  * Deterministically assign a variant for a visitor using SHA-256
  * hashing so the same visitor always gets the same variant.
  */
