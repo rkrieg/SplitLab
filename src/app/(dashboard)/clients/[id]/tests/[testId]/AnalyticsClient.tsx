@@ -3088,6 +3088,19 @@ export default function AnalyticsClient({
                                       >
                                         <Copy size={13} /> Duplicate
                                       </button>
+                                      {stat.variant.pages?.id && (
+                                        <button
+                                          onClick={() => {
+                                            setVariantMenuOpenId(null);
+                                            setNavigatingToAI(true);
+                                            router.push(`/clients/${clientId}/ai-pages/new?page_id=${stat.variant.pages!.id}`);
+                                          }}
+                                          disabled={navigatingToAI}
+                                          className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-40"
+                                        >
+                                          {navigatingToAI ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />} Edit with AI
+                                        </button>
+                                      )}
                                       {variants.length > 1 && (
                                         <button
                                           onClick={() => {

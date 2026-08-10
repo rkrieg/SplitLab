@@ -338,6 +338,23 @@ function isSimpleTextRewritePrompt(prompt: string): boolean {
   );
 }
 
+/**
+ * True when the instruction explicitly asks for a visual/design change
+ * (fonts, colors, "premium," "redesign," etc.) — as opposed to a purely
+ * content/structure edit ("remove these sections," "make it shorter").
+ * Used to keep structural content-only edits from being diverted onto the
+ * expensive full-page rebuild path when the user never asked for a new
+ * look — see tryStructuralDiffSplice(). Deliberately broad: a false
+ * positive here only costs a slower (but correct, unchanged) full rebuild;
+ * a false negative would silently skip a redesign the user actually asked
+ * for, which is the worse failure mode.
+ */
+function promptRequestsRestyle(prompt: string): boolean {
+  return /\b(premium|luxury|luxurious|modern|sleek|elegant|minimal(?:ist)?|bold|playful|funky|polished|refined|classy|upscale|redesign|restyle|re-?style|rebrand|re-?brand|revamp|refresh(?:ed)?|overhaul|look and feel|visual style|aesthetic|vibe|mood|color scheme|colour scheme|palette|typography|font|fonts|theme)\b/i.test(
+    prompt,
+  );
+}
+
 function replaceUniqueTextInHtml(html: string, oldText: string, newText: string): string | null {
   if (!oldText || !newText || oldText === newText) return null;
   const exactCount = html.split(oldText).length - 1;
@@ -993,6 +1010,122 @@ async function runScopedInsert(
   }
 }
 
+// ── Structural diff+splice — content-only structural edits without a full rebuild ──
+//
+// The full-page pass1 classify call already decides the CORRECT new schema
+// for a "structural" edit (which sections to remove, how remaining sections'
+// copy should change) — that decision-making is not the problem. The
+// problem is what happens next: today, ANY structural result gets handed to
+// buildHtmlFromSchema(), which regenerates the ENTIRE document — a brand new
+// <style> block, fonts, and markup for every section, including ones the
+// instruction never asked to touch. For a pure content-trim request ("remove
+// these sections, shorten the rest"), that's a correctness bug: the page's
+// visual design drifts and untouched sections' copy gets subtly reworded,
+// neither of which the user asked for.
+//
+// This diffs the AI's already-decided old-schema vs new-schema and applies
+// ONLY the actual delta directly against the existing HTML, reusing the same
+// mechanisms already proven safe elsewhere in this file: removeSlSection()
+// for removed sections (pure string splice, no AI call) and
+// runScopedPatchWithRetry() for changed sections (same call ordinary `patch`
+// edits use, with its outer-tag/minimum-edit guardrails). Sections that
+// aren't in either list are never sent to the model, so they can't drift.
+//
+// All-or-nothing: any failure at any step returns null and the caller falls
+// straight back to today's unchanged full buildHtmlFromSchema() path — this
+// can only ever match or improve on today's behavior, never regress it.
+
+// generatePageImages() writes generated_image_url onto any schema node that
+// had an image_prompt (see ai-client.ts) — including on a CHANGED (not just
+// added) section, per this file's own SYSTEM_PROMPT rule allowing
+// image_prompts on sections being "structurally changing". The scoped-patch
+// call only reliably embeds an image URL it's told about explicitly via its
+// imageUrls param (same as the image_generate op does) — a URL sitting
+// unlabeled inside the schema-slice JSON isn't a strong enough signal.
+function collectGeneratedImageUrls(node: unknown): string[] {
+  if (!node || typeof node !== 'object') return [];
+  if (Array.isArray(node)) return (node as unknown[]).flatMap(collectGeneratedImageUrls);
+  const obj = node as Record<string, unknown>;
+  const urls: string[] = [];
+  if (typeof obj.generated_image_url === 'string' && obj.generated_image_url) urls.push(obj.generated_image_url);
+  for (const val of Object.values(obj)) urls.push(...collectGeneratedImageUrls(val));
+  return urls;
+}
+
+async function tryStructuralDiffSplice(
+  originalHtml: string,
+  oldSchema: unknown,
+  newSchema: Record<string, unknown>,
+  slSections: SlSection[],
+  prompt: string,
+  imageUrls: string[],
+): Promise<string | null> {
+  if (!oldSchema || typeof oldSchema !== 'object') return null;
+  if (promptRequestsRestyle(prompt)) return null;
+
+  const oldObj = oldSchema as Record<string, unknown>;
+  const oldKeys = Object.keys(oldObj);
+  const newKeys = Object.keys(newSchema);
+
+  const removedKeys = oldKeys.filter((k) => !newKeys.includes(k));
+  const addedKeys = newKeys.filter((k) => !oldKeys.includes(k));
+  const changedKeys = newKeys.filter(
+    (k) => oldKeys.includes(k) && JSON.stringify(oldObj[k]) !== JSON.stringify(newSchema[k]),
+  );
+
+  // New sections need real generation (design, layout, images) — not a
+  // content diff. Let those keep using the full rebuild path.
+  if (addedKeys.length > 0) return null;
+  // Nothing to apply via this path (shouldn't normally happen for a
+  // genuine structural result, but don't silently no-op if it does).
+  if (removedKeys.length === 0 && changedKeys.length === 0) return null;
+  // Sanity ceiling, not a real constraint for normal pages — a genuine
+  // "trim the whole page" request (the motivating case for this function)
+  // can legitimately shorten most of a page's sections at once; each one is
+  // still an independently-scoped, safe patch. This only guards against a
+  // pathological page with an unreasonable number of sections.
+  if (changedKeys.length > 20) return null;
+  if (!removedKeys.every((k) => slSections.some((s) => s.name === k))) return null;
+  if (!changedKeys.every((k) => slSections.some((s) => s.name === k))) return null;
+
+  let current = originalHtml;
+  for (const key of removedKeys) {
+    const removed = removeSlSection(current, key);
+    if (!removed) {
+      console.error(`[pages/follow-up] structural diff+splice: could not find marker for removed section "${key}", falling back to full rebuild`);
+      return null;
+    }
+    current = removed;
+  }
+
+  const patchedSections: Array<{ name: string; html: string }> = [];
+  for (const key of changedKeys) {
+    const section = slSections.find((s) => s.name === key)!;
+    const schemaSlice = { [key]: newSchema[key] };
+    const generatedUrlsForSection = collectGeneratedImageUrls(newSchema[key]);
+    const patchImageUrls = generatedUrlsForSection.length > 0
+      ? [...imageUrls, ...generatedUrlsForSection]
+      : imageUrls;
+    const result = await runScopedPatchWithRetry(section.html, schemaSlice, prompt, patchImageUrls);
+    if (!result.html) {
+      console.error(`[pages/follow-up] structural diff+splice: scoped patch failed for changed section "${key}", falling back to full rebuild`, {
+        failedSanity: result.failedSanity,
+        failedParse: result.failedParse,
+      });
+      return null;
+    }
+    patchedSections.push({ name: key, html: result.html });
+  }
+
+  const spliced = patchedSections.length > 0 ? applyPatch(current, patchedSections) : current;
+  console.log('[pages/follow-up] structural edit applied via diff+splice (style preserved)', {
+    promptPreview: prompt.slice(0, 300),
+    removedKeys,
+    changedKeys,
+  });
+  return spliced;
+}
+
 function countImagePrompts(node: unknown): number {
   if (!node || typeof node !== 'object') return 0;
   if (Array.isArray(node)) {
@@ -1097,8 +1230,18 @@ export async function POST(
   schema = JSON.parse(schemaStrNoDataUris);
 
   // Prepare synchronous data
-  const history: { role: 'user' | 'assistant'; content: string; image_urls?: string[] }[] =
+  const history: { role: 'user' | 'assistant'; content: string; image_urls?: string[]; clarify?: boolean }[] =
     Array.isArray(page.conversation_json) ? page.conversation_json : [];
+  // If our own last turn was a clarifying question, this message is the
+  // user's ANSWER to it — never ask another clarifying question back to
+  // back. Whatever they say next (even "you decide" / "that's what I want
+  // you to analyze") is authoritative: proceed with the routing's own best
+  // guess, or fall through to the full-page path, which has this entire
+  // exchange in its conversation history to reason from.
+  const lastAssistantWasClarify =
+    history.length > 0 &&
+    history[history.length - 1]?.role === 'assistant' &&
+    history[history.length - 1]?.clarify === true;
   const htmlForModel = minifyHtmlForModel(
     html.replace(/<script src="[^"]+\/tracker\.js"><\/script>/, '<!-- TRACKER_PLACEHOLDER -->')
   );
@@ -1244,10 +1387,25 @@ export async function POST(
           const forceFaqVsFormClarify =
             !!routing && shouldForceClarifyFaqVsForm(prompt, routing, hasUserImages, slSections);
 
+          // Clarifying "which section?" only makes sense for ops that target
+          // a specific, namable section — "structural"/"style" are broad,
+          // often-analytical requests (e.g. "remove the lower-value
+          // sections") where the ambiguity isn't a fact only the user has,
+          // it's a judgment call the full-page path (with complete page
+          // content) is meant to make itself. Never ask about those — let
+          // them fall straight through to the full-page path below.
+          const narrowScopedType =
+            !!routing && ['patch', 'remove_section', 'insert_section', 'reorder_sections', 'image_generate'].includes(routing.type);
+
           // Unsure which section → ask the user instead of guessing or
-          // falling into an expensive/oversized full-page rebuild.
+          // falling into an expensive/oversized full-page rebuild. Never ask
+          // twice in a row — if we already asked last turn, the user's reply
+          // is the answer (even a non-specific one), not a new prompt to
+          // re-evaluate.
           const routingUnsure =
             !!routing &&
+            !lastAssistantWasClarify &&
+            narrowScopedType &&
             ((routing.confidence === 'low' && !namesItsSingleSection && !anyScopedPath) ||
               forceFaqVsFormClarify);
 
@@ -1275,7 +1433,7 @@ export async function POST(
             const updatedConversation = [
               ...history,
               userEntry,
-              { role: 'assistant', content: question },
+              { role: 'assistant', content: question, clarify: true },
             ];
             await db
               .from('pages')
@@ -1618,6 +1776,19 @@ export async function POST(
 
         if (request.signal.aborted) { closeSSE(controller); return; }
 
+        // Content-only structural edits (remove/shorten sections, no
+        // redesign intent) — apply the AI's already-decided schema diff
+        // directly against the existing HTML instead of a full rebuild, so
+        // untouched sections and the page's visual style can't drift. Falls
+        // back to the full rebuild below on any failure.
+        sendSSE(controller, { type: 'status', message: 'Applying changes...' });
+        const diffSplicedHtml = !hasCompetitorContext
+          ? await tryStructuralDiffSplice(html, schema, enrichedSchema, slSections, prompt, effectiveImageUrls)
+          : null;
+
+        if (diffSplicedHtml) {
+          finalHtml = diffSplicedHtml;
+        } else {
         const styleReferenceNote = hasCompetitorContext
           ? undefined
           : `Maintain the exact visual style — colors, fonts, spacing — of this existing page:\n${htmlForModel}`;
@@ -1665,6 +1836,7 @@ export async function POST(
           closeSSE(controller);
           return;
         }
+        } // end full-rebuild fallback (diff+splice not eligible/failed)
 
         finalSchemaJson = enrichedSchema;
       } else if (parsed.type === 'patch') {
