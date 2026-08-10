@@ -197,6 +197,9 @@ export async function POST(request: NextRequest) {
       if (visitorPageview?.device_type) deviceType = visitorPageview.device_type;
     }
 
+    const userAgent = request.headers.get('user-agent');
+    const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || null;
+
     const { error } = await db.from('events').insert({
       test_id: data.testId,
       variant_id: data.variantId,
@@ -204,7 +207,7 @@ export async function POST(request: NextRequest) {
       visitor_hash: data.visitorHash,
       type: data.type,
       device_type: deviceType,
-      metadata: data.metadata || {},
+      metadata: { ...(data.metadata || {}), user_agent: userAgent, ip: clientIp },
     });
 
     if (error) {
