@@ -1,7 +1,6 @@
 -- Structured app logs (AI calls, event-pipeline skips/rejections, Stripe
--- webhooks, domain verification) with 7-day retention. Rows are deleted by
--- the daily /api/cron/cleanup-logs job — nothing here reads old rows back,
--- so no need for pg_cron/partitioning at this volume.
+-- webhooks, domain verification). No retention/cleanup job yet — rows are
+-- kept indefinitely for now, by design (see pg_cron cleanup discussion).
 create table if not exists logs (
   id uuid primary key default gen_random_uuid(),
   created_at timestamptz not null default now(),
