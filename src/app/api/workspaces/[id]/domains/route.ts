@@ -5,6 +5,7 @@ import { db } from '@/lib/supabase-server';
 import { addDomainToVercel, removeDomainFromVercel, getDomainStatus, getDomainDnsHealth } from '@/lib/vercel';
 import { resolveWorkspaceRole } from '@/lib/workspace-auth';
 import { PLAN_LIMITS } from '@/lib/plans';
+import { logEvent } from '@/lib/log';
 import { z } from 'zod';
 
 const addSchema = z.object({
@@ -60,6 +61,10 @@ export async function GET(
       .from('domains')
       .update({ verified: false })
       .eq('id', row.id);
+
+    await logEvent('domain_verification', 'warn', 'DNS misconfigured, marked unverified', {
+      domain: row.domain, domainId: row.id, workspaceId: params.id, message: health.message,
+    });
 
     const idx = result.findIndex((d) => d.id === row.id);
     if (idx >= 0) {
@@ -119,6 +124,9 @@ export async function POST(
       }
       await db.from('domains').update(update).eq('id', domain_id);
     }
+    await logEvent('domain_verification', status.verified ? 'info' : 'warn', 'verify attempted', {
+      domain: domain.domain, domainId: domain_id, workspaceId: params.id, verified: status.verified,
+    });
     return NextResponse.json({ verified: status.verified, status });
   }
 

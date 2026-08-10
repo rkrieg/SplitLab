@@ -3,6 +3,7 @@ import { db } from '@/lib/supabase-server';
 import { downloadHtml } from '@/lib/storage';
 import { buildTrackingSnippet, buildScanScript, injectIntoHtml, buildScriptTag, buildFaviconTag, stripFaviconTags, stripSplitLabTrackerTags } from '@/lib/tracking';
 import { assignVariant, getDeviceType, isBotRequest } from '@/lib/utils';
+import { logEvent } from '@/lib/log';
 import { getPlanDetails } from '@/lib/plans';
 import { buildUtmSwapScript } from '@/lib/utm-swap-script';
 
@@ -347,6 +348,10 @@ ${proxyTrackingSnippet}
             device_type: getDeviceType(userAgent),
             metadata: { redirect_url: selectedVariant.redirect_url, proxy: true, user_agent: userAgent, ip: clientIp },
           });
+        } else if (isBot && !overVisitorCap && !isScan && !forcedVh) {
+          await logEvent('event_skip', 'info', 'bot-filtered pageview (proxy)', {
+            testId: test.id, variantId: selectedVariant.id, userAgent, ip: clientIp,
+          });
         }
 
         const proxyResponse = new NextResponse(iframeHtml, {
@@ -396,6 +401,10 @@ ${proxyTrackingSnippet}
           type: 'pageview',
           device_type: getDeviceType(userAgent),
           metadata: { redirect_url: selectedVariant.redirect_url, user_agent: userAgent, ip: clientIp },
+        });
+      } else if (isBot && !overVisitorCap && !isScan && !forcedVh) {
+        await logEvent('event_skip', 'info', 'bot-filtered pageview (redirect)', {
+          testId: test.id, variantId: selectedVariant.id, userAgent, ip: clientIp,
         });
       }
 
@@ -518,6 +527,10 @@ ${proxyTrackingSnippet}
         type: 'pageview',
         device_type: getDeviceType(userAgent),
         metadata: { user_agent: userAgent, ip: clientIp },
+      });
+    } else if (isBot && !overVisitorCap && !isScan && !forcedVh) {
+      await logEvent('event_skip', 'info', 'bot-filtered pageview (html)', {
+        testId: test.id, variantId: selectedVariant.id, userAgent, ip: clientIp,
       });
     }
 

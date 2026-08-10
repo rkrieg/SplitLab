@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/supabase-server';
 import { getPlanDetails } from '@/lib/plans';
 import { getDeviceType } from '@/lib/utils';
+import { logEvent } from '@/lib/log';
 import { z } from 'zod';
 
 function corsHeaders(request: NextRequest) {
@@ -44,6 +45,9 @@ export async function POST(request: NextRequest) {
         .single();
 
       if (existing) {
+        await logEvent('event_skip', 'info', 'duplicate pageview', {
+          testId: data.testId, variantId: data.variantId, visitorHash: data.visitorHash,
+        });
         return NextResponse.json({ ok: true, duplicate: true }, { headers });
       }
 
@@ -92,6 +96,9 @@ export async function POST(request: NextRequest) {
                 .gte('created_at', monthStart.toISOString());
               const uniqueCount = new Set((visitorRows ?? []).map((r: { visitor_hash: string }) => r.visitor_hash)).size;
               if (uniqueCount >= planDetails.monthlyVisitors) {
+                await logEvent('event_skip', 'info', 'visitor cap reached', {
+                  testId: data.testId, ownerId, plan: ownerRow?.plan ?? 'free', monthlyLimit: planDetails.monthlyVisitors,
+                });
                 return NextResponse.json({ ok: true, capped: true }, { headers });
               }
             }
@@ -160,6 +167,12 @@ export async function POST(request: NextRequest) {
 
         if (matched) goalId = matched.id;
       }
+
+      if (!goalId) {
+        await logEvent('event_skip', 'warn', 'conversion trigger did not match any goal', {
+          testId: data.testId, variantId: data.variantId, trigger: data.metadata.trigger,
+        });
+      }
     }
 
     // Device type must match the visitor's pageview, not be re-derived from
@@ -200,6 +213,9 @@ export async function POST(request: NextRequest) {
       // map, so checkStoredUrlGoals() posted a conversion for it. The row is gone —
       // silently drop it instead of 500ing. Any other DB error still surfaces.
       if ((error as { code?: string }).code === '23503') {
+        await logEvent('event_skip', 'warn', 'stale reference — test/variant/goal deleted', {
+          testId: data.testId, variantId: data.variantId, goalId, type: data.type,
+        });
         return NextResponse.json({ ok: true, stale: true }, { headers });
       }
       throw error;
@@ -208,9 +224,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true }, { headers });
   } catch (err) {
     if (err instanceof z.ZodError) {
+      await logEvent('event_skip', 'warn', 'invalid event payload', { errors: err.errors });
       return NextResponse.json({ error: err.errors }, { status: 400, headers });
     }
     console.error('[event]', err);
+    await logEvent('event_skip', 'error', 'unhandled error', {
+      errorMessage: err instanceof Error ? err.message : String(err),
+    });
     return NextResponse.json({ error: 'Internal error' }, { status: 500, headers });
   }
 }
