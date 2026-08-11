@@ -453,20 +453,8 @@ export default function AnalyticsClient({
   const [addingVariant, setAddingVariant] = useState(false);
   const [addVariantError, setAddVariantError] = useState<{ message: string; isLimit: boolean } | null>(null);
 
-  // Duplicate variant (per-row "⋯" menu)
-  const [variantMenuOpenId, setVariantMenuOpenId] = useState<string | null>(null);
+  // Duplicate variant (folded into the per-row "..." actions menu)
   const [duplicatingVariantId, setDuplicatingVariantId] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!variantMenuOpenId) return;
-    function handleClick(e: MouseEvent) {
-      if (!(e.target as HTMLElement).closest('[data-variant-menu]')) {
-        setVariantMenuOpenId(null);
-      }
-    }
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, [variantMenuOpenId]);
 
   // Tracking verification
   const [checkingTracking, setCheckingTracking] = useState<string | null>(null);
@@ -1284,7 +1272,7 @@ export default function AnalyticsClient({
   // ─── Duplicate variant ──────────────────────────────────────────────
 
   async function handleDuplicateVariant(variantId: string) {
-    setVariantMenuOpenId(null);
+    setActionMenu(null);
     setDuplicatingVariantId(variantId);
     try {
       const res = await fetch(`/api/tests/${test.id}/variants/${variantId}/duplicate`, {
@@ -3156,58 +3144,6 @@ export default function AnalyticsClient({
                                     <span className="absolute top-0.5 right-0.5 w-2 h-2 rounded-full bg-red-500 ring-2 ring-white dark:ring-slate-900" />
                                   )}
                                 </button>
-                                <div className="relative" data-variant-menu>
-                                  <button
-                                    onClick={() =>
-                                      setVariantMenuOpenId(
-                                        variantMenuOpenId === stat.variant.id ? null : stat.variant.id,
-                                      )
-                                    }
-                                    disabled={duplicatingVariantId === stat.variant.id}
-                                    className="p-1 rounded transition-colors text-slate-400 dark:text-slate-600 hover:text-slate-700 dark:hover:text-slate-300 disabled:opacity-40"
-                                    title="More actions"
-                                  >
-                                    {duplicatingVariantId === stat.variant.id ? (
-                                      <Loader2 size={13} className="animate-spin" />
-                                    ) : (
-                                      <MoreHorizontal size={13} />
-                                    )}
-                                  </button>
-                                  {variantMenuOpenId === stat.variant.id && (
-                                    <div className="absolute right-0 top-full mt-1 w-40 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl z-10 overflow-hidden">
-                                      <button
-                                        onClick={() => handleDuplicateVariant(stat.variant.id)}
-                                        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
-                                      >
-                                        <Copy size={13} /> Duplicate
-                                      </button>
-                                      {stat.variant.pages?.id && (
-                                        <button
-                                          onClick={() => {
-                                            setVariantMenuOpenId(null);
-                                            setNavigatingToAI(true);
-                                            router.push(`/clients/${clientId}/ai-pages/new?page_id=${stat.variant.pages!.id}`);
-                                          }}
-                                          disabled={navigatingToAI}
-                                          className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-40"
-                                        >
-                                          {navigatingToAI ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />} Edit with AI
-                                        </button>
-                                      )}
-                                      {variants.length > 1 && (
-                                        <button
-                                          onClick={() => {
-                                            setVariantMenuOpenId(null);
-                                            setDeleteVariantId(stat.variant.id);
-                                          }}
-                                          className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10"
-                                        >
-                                          <Trash2 size={13} /> Delete
-                                        </button>
-                                      )}
-                                    </div>
-                                  )}
-                                </div>
                               </div>
 
                               {actionMenu?.id === stat.variant.id && (
@@ -3241,6 +3177,26 @@ export default function AnalyticsClient({
                                         className="w-full flex items-center gap-2 px-3 py-2 text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
                                       >
                                         <Pencil size={13} /> Edit details
+                                      </button>
+                                    )}
+                                    <button
+                                      onClick={() => handleDuplicateVariant(stat.variant.id)}
+                                      disabled={duplicatingVariantId === stat.variant.id}
+                                      className="w-full flex items-center gap-2 px-3 py-2 text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                                    >
+                                      {duplicatingVariantId === stat.variant.id ? (
+                                        <Loader2 size={13} className="animate-spin" />
+                                      ) : (
+                                        <Copy size={13} />
+                                      )}{" "}
+                                      Duplicate
+                                    </button>
+                                    {variants.length > 1 && (
+                                      <button
+                                        onClick={() => { setActionMenu(null); setDeleteVariantId(stat.variant.id); }}
+                                        className="w-full flex items-center gap-2 px-3 py-2 text-left text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors"
+                                      >
+                                        <Trash2 size={13} /> Delete
                                       </button>
                                     )}
                                     {!variantHasGoals && (
