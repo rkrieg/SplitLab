@@ -9,7 +9,7 @@ import { resolveWorkspaceRole, resolveOwnerPlan, resolveWorkspaceOwner } from '@
 import { PLAN_LIMITS } from '@/lib/plans';
 import { checkAiAllowance, type UsageContext } from '@/lib/ai-usage';
 import { reportAiOverageUsage } from '@/lib/ai-overage-billing';
-import { extractUrls, scrapeCompetitorUrl } from '@/lib/ai-competitor-scrape';
+import { extractUrls, scrapeCompetitorUrl, fetchLogoUrl } from '@/lib/ai-competitor-scrape';
 import { buildHtmlFromSchema } from '@/lib/ai-page-builder';
 import { createSSEStream, sendSSE, closeSSE, SSE_HEADERS, type SSEEvent } from '@/lib/sse';
 import { isTestVariantPage } from '@/lib/page-drafts';
@@ -1298,12 +1298,24 @@ export async function POST(
   const effectiveImageUrls = [...(image_urls ?? []), ...promptImageUrls].slice(0, 3);
   const hasUserImages = effectiveImageUrls.length > 0;
 
+  // "Use the real/actual logo [from this URL]" — narrow intent, deliberately
+  // requiring the word "logo" paired with real/actual/exact/same/correct so
+  // it doesn't misfire on an ordinary "make it look like <url>, and shrink
+  // the logo" competitor-rebuild request. Handled below as a scoped asset
+  // swap instead of the usual full-page competitor rebuild, which has no way
+  // to obtain the real logo file — it only ever sees a lossy screenshot or
+  // generates a brand-new (fake) one, which was the actual client complaint
+  // this exists to fix.
+  const REAL_LOGO_INTENT_RE = /\b(real|actual|exact|same|correct)\s+logo\b/i;
+  const isLogoSwapAttempt = competitorUrls.length > 0 && REAL_LOGO_INTENT_RE.test(prompt);
+
   // Scoped-patch candidates — cheap, synchronous, no AI call. A genuine
   // competitor URL always means full-page rebuild (see
   // follow-up-input-scoping.md), so scoping is never attempted when one is
-  // mentioned — but a plain image-asset URL no longer counts as one.
-  const slSections = competitorUrls.length === 0 ? extractSlSections(html) : [];
-  const quoteMatchSection = competitorUrls.length === 0 ? tryDirectQuoteMatch(prompt, slSections) : null;
+  // mentioned — except the real-logo-swap case above, which is itself a
+  // scoped op and needs the section list to splice into.
+  const slSections = (competitorUrls.length === 0 || isLogoSwapAttempt) ? extractSlSections(html) : [];
+  const quoteMatchSection = (competitorUrls.length === 0 || isLogoSwapAttempt) ? tryDirectQuoteMatch(prompt, slSections) : null;
 
   // ── Open SSE stream — no NextResponse.json after this point ───────────────
 
@@ -1346,9 +1358,83 @@ export async function POST(
         // untouched for this path (see follow-up-input-scoping.md).
         let generatedImageUrl: string | null = null;
 
+        // ── Real-logo swap ────────────────────────────────────────────────
+        // See isLogoSwapAttempt comment above for the intent match. This must
+        // run before anything else in this block (and short-circuit on its
+        // own failure via scopedFailureReason) — otherwise a failed fetch
+        // would fall through to the generic routing call below, which has no
+        // idea a real logo was supposed to be used and could silently head
+        // down the image_generate path, reproducing the exact fake-logo bug
+        // this exists to fix.
+        if (!scopedApplied && !targetSections && isLogoSwapAttempt) {
+          if (request.signal.aborted) { closeSSE(controller); return; }
+          sendSSE(controller, { type: 'status', message: 'Fetching logo...' });
+          const fetchedLogoUrl = await fetchLogoUrl(competitorUrls[0]);
+          // Confirm it's actually an image before trusting it — extraction is
+          // regex-based against arbitrary third-party HTML and could in
+          // theory pick up a non-image src.
+          const realLogoUrl = fetchedLogoUrl && (await isImageUrl(fetchedLogoUrl)) ? fetchedLogoUrl : null;
+
+          if (!realLogoUrl) {
+            console.error('[pages/follow-up] real logo swap: could not find/verify a logo on the referenced page', {
+              url: competitorUrls[0],
+            });
+            sendSSE(controller, {
+              type: 'error',
+              message: "We couldn't find a usable logo image on that page. Try attaching the logo file directly instead.",
+            });
+            closeSSE(controller);
+            return;
+          }
+
+          const navSection = slSections.find((s) => s.name === 'nav') ?? slSections.find((s) => /nav|header/i.test(s.name));
+          let logoTargetName: string | null = navSection?.name ?? null;
+          if (!logoTargetName) {
+            const routing = await tryRoutingCall(prompt, schema, slSections, [], usageCtx);
+            if (
+              routing &&
+              routing.target_sections.length === 1 &&
+              slSections.some((s) => s.name === routing.target_sections[0])
+            ) {
+              logoTargetName = routing.target_sections[0];
+            }
+          }
+
+          if (!logoTargetName) {
+            console.error('[pages/follow-up] real logo swap: could not identify a target section', {
+              knownSectionNames: slSections.map((s) => s.name),
+            });
+            scopedFailureReason = 'logo_swap_no_target_section';
+          } else {
+            const logoSection = slSections.find((s) => s.name === logoTargetName)!;
+            const logoPrompt =
+              `${prompt}\n\n(The real logo image has just been fetched directly from the referenced site — it is attached below and is the FINAL, intended logo. Replace whatever currently represents the logo (an <img> tag, or inline <svg>/icon markup) with a single <img src="${realLogoUrl}" alt="logo" style="height:<match the current logo's rendered height>; width:auto;"> in its place. Do not invent or generate a different image. Do not leave the old logo markup in place alongside the new one. Do not add any background color/box behind the image — it must sit directly on the section's existing background so it blends in.)`;
+            sendSSE(controller, { type: 'status', message: 'Applying real logo...' });
+            const patchResult = await runScopedPatchWithRetry(
+              logoSection.html,
+              { [logoTargetName]: (schema as Record<string, unknown> | null | undefined)?.[logoTargetName] },
+              logoPrompt,
+              [realLogoUrl],
+              usageCtx,
+            );
+            if (patchResult.html && patchResult.html.includes(realLogoUrl)) {
+              finalHtml = applyPatch(html, [{ name: logoTargetName, html: patchResult.html }]);
+              scopedApplied = true;
+              console.log('[pages/follow-up] real logo swap applied', { section: logoTargetName, realLogoUrl });
+            } else {
+              console.error('[pages/follow-up] real logo swap: scoped patch failed to embed the fetched logo', {
+                section: logoTargetName,
+                failedSanity: patchResult.failedSanity,
+                failedParse: patchResult.failedParse,
+              });
+              scopedFailureReason = 'logo_swap_patch_failed';
+            }
+          }
+        }
+
         // Surgical copy rewrite first — avoids full-section HTML regeneration
         // for "paste headline + change this text" prompts (no images / competitor).
-        if (!hasUserImages && !scopedApplied && isSimpleTextRewritePrompt(prompt)) {
+        if (!hasUserImages && !scopedApplied && !scopedFailureReason && isSimpleTextRewritePrompt(prompt)) {
           sendSSE(controller, { type: 'status', message: 'Updating text...' });
           const surgical = await trySurgicalTextEdit(prompt, slSections);
           if (surgical) {
@@ -1361,7 +1447,13 @@ export async function POST(
           }
         }
 
-        if (!scopedApplied && !targetSections) {
+        // A logo-swap attempt above already qualified as a scoped op and
+        // either succeeded (scopedApplied) or hard-failed (scopedFailureReason)
+        // — never let the generic routing call below re-evaluate the same
+        // instruction from scratch, since it doesn't know a real logo was
+        // fetched and could route it into image_generate (an AI-fabricated
+        // logo), silently reproducing the bug this branch exists to prevent.
+        if (!scopedApplied && !targetSections && !scopedFailureReason) {
           sendSSE(controller, { type: 'status', message: 'Locating section...' });
           const routing = await tryRoutingCall(prompt, schema, slSections, effectiveImageUrls, usageCtx);
           const basicShapeOk = !!routing &&
