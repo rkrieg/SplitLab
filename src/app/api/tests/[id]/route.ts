@@ -3,8 +3,6 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { resolveWorkspaceRole } from '@/lib/workspace-auth';
-import { uploadHtml } from '@/lib/storage';
-import crypto from 'crypto';
 import { z } from 'zod';
 
 /** Redistribute weights equally across a test's non-archived variants (sums to 100). */
@@ -55,7 +53,6 @@ const updateSchema = z.object({
   weights: z.array(weightSchema).optional(),
   variant_updates: z.array(variantUpdateSchema).optional(),
   delete_variant_id: z.string().uuid().optional(),
-  duplicate_variant_id: z.string().uuid().optional(),
   archive_variant_id: z.string().uuid().optional(),
   unarchive_variant_id: z.string().uuid().optional(),
 });
@@ -100,7 +97,7 @@ export async function PATCH(
 
   try {
     const body = await request.json();
-    const { goals, weights, variant_updates, delete_variant_id, duplicate_variant_id, archive_variant_id, unarchive_variant_id, ...testFields } = updateSchema.parse(body);
+    const { goals, weights, variant_updates, delete_variant_id, archive_variant_id, unarchive_variant_id, ...testFields } = updateSchema.parse(body);
 
     // Block duplicate active url_path within the same workspace when this update
     // would result in an active test (activation or path change while active)
@@ -310,54 +307,9 @@ export async function PATCH(
       await redistributeActiveWeights(params.id);
     }
 
-    // Duplicate a variant. HTML/page-backed variants get a fresh page + stored
-    // HTML copy; redirect variants just copy the URL. New copy starts at weight
-    // 0 so it doesn't disturb the current split until the user weights it.
-    if (duplicate_variant_id) {
-      const { data: src } = await db
-        .from('test_variants')
-        .select('name, redirect_url, page_id, proxy_mode')
-        .eq('id', duplicate_variant_id)
-        .eq('test_id', params.id)
-        .single();
-
-      if (src) {
-        let newPageId: string | null = null;
-        if (src.page_id) {
-          const { data: srcPage } = await db
-            .from('pages')
-            .select('workspace_id, html_content')
-            .eq('id', src.page_id)
-            .single();
-          if (srcPage?.html_content) {
-            const fileName = `${srcPage.workspace_id}/${crypto.randomUUID()}.html`;
-            const htmlUrl = await uploadHtml(fileName, srcPage.html_content);
-            const { data: newPage } = await db
-              .from('pages')
-              .insert({
-                workspace_id: srcPage.workspace_id,
-                name: `${src.name} (copy)`,
-                html_url: htmlUrl,
-                html_content: srcPage.html_content,
-              })
-              .select('id')
-              .single();
-            newPageId = newPage?.id ?? null;
-          }
-        }
-
-        const { error: dupErr } = await db.from('test_variants').insert({
-          test_id: params.id,
-          name: `${src.name} (copy)`,
-          redirect_url: newPageId ? null : src.redirect_url,
-          page_id: newPageId,
-          proxy_mode: newPageId ? false : src.proxy_mode,
-          traffic_weight: 0,
-          is_control: false,
-        });
-        if (dupErr) return NextResponse.json({ error: dupErr.message }, { status: 500 });
-      }
-    }
+    // Note: variant duplication is handled by the dedicated
+    // POST /api/tests/[id]/variants/[variantId]/duplicate route (sets
+    // duplicated_from_id) — not by this PATCH endpoint.
 
     // Upsert goals — preserve existing UUIDs so historical events stay linked
     if (goals) {

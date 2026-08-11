@@ -3193,12 +3193,25 @@ export default function AnalyticsClient({
                                         : { id: stat.variant.id, top: r.bottom + 4, right: window.innerWidth - r.right }
                                     );
                                   }}
-                                  className="relative p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                                  title="More actions"
+                                  disabled={duplicatingVariantId === stat.variant.id || archivingVariantId === stat.variant.id}
+                                  className="relative p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-60 disabled:cursor-wait transition-colors"
+                                  title={
+                                    duplicatingVariantId === stat.variant.id
+                                      ? "Duplicating…"
+                                      : archivingVariantId === stat.variant.id
+                                        ? "Updating…"
+                                        : "More actions"
+                                  }
                                 >
-                                  <MoreHorizontal size={16} />
-                                  {!variantHasGoals && (
-                                    <span className="absolute top-0.5 right-0.5 w-2 h-2 rounded-full bg-red-500 ring-2 ring-white dark:ring-slate-900" />
+                                  {duplicatingVariantId === stat.variant.id || archivingVariantId === stat.variant.id ? (
+                                    <Loader2 size={16} className="animate-spin text-indigo-500 dark:text-indigo-400" />
+                                  ) : (
+                                    <>
+                                      <MoreHorizontal size={16} />
+                                      {!variantHasGoals && (
+                                        <span className="absolute top-0.5 right-0.5 w-2 h-2 rounded-full bg-red-500 ring-2 ring-white dark:ring-slate-900" />
+                                      )}
+                                    </>
                                   )}
                                 </button>
                               </div>
