@@ -46,6 +46,160 @@ function MeterBar({ pct, limit }: { pct: number; limit: number | null }) {
 const PAID_PLANS: PlanId[] = ["pro", "growth", "agency", "scale"];
 const PLAN_ORDER: PlanId[] = ["free", "pro", "growth", "agency", "scale"];
 
+interface AiUsageResponse {
+  creditsIncluded: number;
+  creditsUsed: number;
+  percentUsed: number;
+  overageCostCents: number;
+  periodStart: string;
+  overage: { enabled: boolean; capCents: number };
+}
+
+/**
+ * AI credit meter + overage controls, powered by /api/ai-usage.
+ *
+ * TEMPORARILY DISABLED FOR PRODUCTION DEPLOY — the credits/overage-buying
+ * flow is still being finished on a separate branch. Only the UI render
+ * below is commented out (see `<AiCreditsCard />` usage further down); this
+ * function body is left intact so it's a one-line uncomment once that work
+ * lands, rather than a re-write.
+ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function AiCreditsCard() {
+  const [data, setData] = useState<AiUsageResponse | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [capDollars, setCapDollars] = useState("50");
+
+  async function load() {
+    try {
+      const res = await fetch("/api/ai-usage");
+      if (!res.ok) return;
+      const d: AiUsageResponse = await res.json();
+      setData(d);
+      setCapDollars(String(Math.round((d.overage?.capCents ?? 5000) / 100)));
+    } catch { /* ignore */ }
+  }
+  useEffect(() => { load(); }, []);
+
+  async function saveOverage(patch: Record<string, unknown>) {
+    setSaving(true);
+    try {
+      await fetch("/api/ai-usage", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      await load();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!data) return null;
+
+  // No AI on this plan — show an upsell instead of a meter.
+  if (data.creditsIncluded <= 0) {
+    return (
+      <div className="card p-6">
+        <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100 mb-1">AI Credits</h3>
+        <p className="text-sm text-slate-500 dark:text-slate-400">
+          Build &amp; edit pages with AI is available on the Agency and Scale plans. Upgrade to unlock it.
+        </p>
+      </div>
+    );
+  }
+
+  const pct = Math.min(100, Math.round(data.percentUsed));
+  const overExhausted = data.creditsUsed >= data.creditsIncluded;
+  const nextReset = new Date(data.periodStart);
+  nextReset.setUTCMonth(nextReset.getUTCMonth() + 1);
+  const barColor = pct >= 100 ? "bg-red-500" : pct >= 80 ? "bg-amber-500" : "bg-indigo-500";
+
+  return (
+    <div className="card p-6">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">AI Credits</h3>
+        <span className="text-xs text-slate-500 dark:text-slate-400">
+          Resets {nextReset.toLocaleDateString("en-US", { month: "short", day: "numeric" })} · 1 credit = 1,000 tokens
+        </span>
+      </div>
+
+      <div className="flex items-baseline justify-between mb-1.5">
+        <span className="text-sm text-slate-600 dark:text-slate-300">
+          <span className="font-semibold text-slate-900 dark:text-slate-100 tabular-nums">{data.creditsUsed.toLocaleString()}</span>
+          {" / "}{data.creditsIncluded.toLocaleString()} credits
+        </span>
+        <span className={`text-xs font-medium ${pct >= 100 ? "text-red-500" : "text-slate-500 dark:text-slate-400"}`}>{pct}%</span>
+      </div>
+      <div className="h-2 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
+        <div className={`h-full ${barColor} rounded-full transition-all`} style={{ width: `${pct}%` }} />
+      </div>
+
+      {overExhausted && !data.overage.enabled && (
+        <div className="mt-4 rounded-lg bg-amber-500/10 border border-amber-500/25 px-3 py-2.5">
+          <p className="text-sm text-amber-700 dark:text-amber-300">
+            You&apos;re out of AI credits this month. Enable overage to keep building — usage beyond your plan is billed at cost&nbsp;+&nbsp;10%, up to the spend cap you set.
+          </p>
+        </div>
+      )}
+
+      {/* Overage controls */}
+      <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800">
+        <label className="flex items-center justify-between gap-3 cursor-pointer">
+          <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
+            Overage billing
+            <span className="block text-xs font-normal text-slate-500 dark:text-slate-400">
+              Keep working past your credits at cost + 10%, capped at your limit.
+            </span>
+          </span>
+          <input
+            type="checkbox"
+            checked={data.overage.enabled}
+            disabled={saving}
+            onChange={(e) => saveOverage({ enabled: e.target.checked })}
+            className="h-5 w-5 rounded accent-indigo-600 flex-shrink-0"
+          />
+        </label>
+
+        {data.overage.enabled && (
+          <div className="mt-3 flex items-end gap-2">
+            <div className="flex-1">
+              <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">
+                Monthly spend cap
+              </label>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">$</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={5000}
+                  value={capDollars}
+                  onChange={(e) => setCapDollars(e.target.value)}
+                  className="input-base pl-6 py-1.5 text-sm"
+                />
+              </div>
+            </div>
+            <button
+              onClick={() => saveOverage({ capCents: Math.max(0, Math.round(Number(capDollars) || 0) * 100) })}
+              disabled={saving}
+              className="btn-secondary text-sm py-1.5"
+            >
+              Save cap
+            </button>
+          </div>
+        )}
+
+        {data.overageCostCents > 0 && (
+          <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
+            Overage this month: <span className="font-semibold text-slate-700 dark:text-slate-300">${(data.overageCostCents / 100).toFixed(2)}</span>
+            {" of "}${(data.overage.capCents / 100).toFixed(0)} cap
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function BillingClient({
   initialPlan,
   initialStatus,
@@ -296,6 +450,12 @@ export default function BillingClient({
           </div>
         )}
       </div>
+
+      {/* ── AI credits ──
+          Hidden for production deploy — credits/overage-buying feature is
+          incomplete, being finished on a separate branch. Uncomment when ready.
+      <AiCreditsCard />
+      */}
 
       {/* ── Usage meters ── */}
       {usage && (

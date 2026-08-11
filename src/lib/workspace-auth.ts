@@ -109,6 +109,35 @@ export async function resolveOwnerPlan(workspaceId: string): Promise<string> {
 }
 
 /**
+ * Resolves the account owner (id + plan) for a workspace, tracing
+ * workspace → client → owner. AI usage/billing attaches to the owner, not the
+ * invited member making the call. Returns null owner on any lookup failure.
+ */
+export async function resolveWorkspaceOwner(workspaceId: string): Promise<{ ownerId: string | null; plan: string }> {
+  const { data: ws } = await db
+    .from('workspaces')
+    .select('client_id')
+    .eq('id', workspaceId)
+    .single();
+  if (!ws) return { ownerId: null, plan: 'free' };
+
+  const { data: client } = await db
+    .from('clients')
+    .select('owner_id')
+    .eq('id', ws.client_id)
+    .single();
+  if (!client?.owner_id) return { ownerId: null, plan: 'free' };
+
+  const { data: owner } = await db
+    .from('users')
+    .select('plan')
+    .eq('id', client.owner_id)
+    .single();
+
+  return { ownerId: client.owner_id, plan: owner?.plan ?? 'free' };
+}
+
+/**
  * Convenience wrapper for routes keyed off a test ID.
  * Returns null if the test doesn't exist; otherwise returns the workspace_id
  * and the caller's effective role for that workspace.

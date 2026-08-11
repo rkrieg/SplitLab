@@ -64,6 +64,8 @@ import {
   Smartphone,
   Sparkles,
   MoreHorizontal,
+  Archive,
+  ArchiveRestore,
 } from "lucide-react";
 import Spinner from "@/components/ui/Spinner";
 import Button from "@/components/ui/Button";
@@ -71,6 +73,7 @@ import Modal from "@/components/ui/Modal";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import { TestStatusBadge } from "@/components/ui/Badge";
 import { formatPercent } from "@/lib/utils";
+import { HUBSPOT_SYSTEM_FIELDS } from "@/lib/system-fields";
 
 const GOAL_TYPES = [
   { value: "form_submit", label: "Form Submit" },
@@ -89,6 +92,7 @@ interface Variant {
   pages?: { id: string; name: string; draft_html_content?: string | null } | null;
   tracking_verified?: boolean | null;
   duplicated_from_id?: string | null;
+  archived_at?: string | null;
 }
 
 interface Goal {
@@ -215,6 +219,10 @@ export default function AnalyticsClient({
   const [test, setTest] = useState(initialTest);
   const [tab, setTab] = useState<Tab>("overview");
   const [variantPreview, setVariantPreview] = useState<{ name: string; url: string } | null>(null);
+  // Per-row "..." actions menu. Positioned fixed (computed from the button rect)
+  // so it isn't clipped by the table's overflow-x-auto wrapper.
+  const [actionMenu, setActionMenu] = useState<{ id: string; top: number; right: number } | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
   const [previewViewMode, setPreviewViewMode] = useState<"desktop" | "mobile">("desktop");
   const [previewIframeLoaded, setPreviewIframeLoaded] = useState(false);
   const previewWrapRef = useRef<HTMLDivElement>(null);
@@ -447,20 +455,9 @@ export default function AnalyticsClient({
   const [addingVariant, setAddingVariant] = useState(false);
   const [addVariantError, setAddVariantError] = useState<{ message: string; isLimit: boolean } | null>(null);
 
-  // Duplicate variant (per-row "⋯" menu)
-  const [variantMenuOpenId, setVariantMenuOpenId] = useState<string | null>(null);
+  // Duplicate variant (folded into the per-row "..." actions menu)
   const [duplicatingVariantId, setDuplicatingVariantId] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!variantMenuOpenId) return;
-    function handleClick(e: MouseEvent) {
-      if (!(e.target as HTMLElement).closest('[data-variant-menu]')) {
-        setVariantMenuOpenId(null);
-      }
-    }
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, [variantMenuOpenId]);
+  const [archivingVariantId, setArchivingVariantId] = useState<string | null>(null);
 
   // Tracking verification
   const [checkingTracking, setCheckingTracking] = useState<string | null>(null);
@@ -501,6 +498,9 @@ export default function AnalyticsClient({
   // Separate from formLeadsFieldKeys — ad params must never be offered as
   // mappable "form fields" in the HubSpot/webhook dropdown.
   const [formLeadsExtraParamKeys, setFormLeadsExtraParamKeys] = useState<string[]>([]);
+  // Which of the 7 dedicated system UTM/click-ID columns actually have a
+  // value in the current leads batch — table only shows columns in use.
+  const [formLeadsSystemParamKeys, setFormLeadsSystemParamKeys] = useState<string[]>([]);
   const [formLeadsTotal, setFormLeadsTotal] = useState(0);
   const [formLeadsPage, setFormLeadsPage] = useState(1);
   const [formLeadsLoading, setFormLeadsLoading] = useState(false);
@@ -526,6 +526,17 @@ export default function AnalyticsClient({
   const [testFormKeys, setTestFormKeys] = useState<string[]>([]);
   const [savingMapping, setSavingMapping] = useState(false);
   const [newFieldKey, setNewFieldKey] = useState("");
+
+  // Auto-detected ad-tracking params (utm_*, click IDs, custom registered
+  // params) discovered from actual leads — kept separate from testFormKeys
+  // (visitor-typed fields), same reasoning as formLeadsExtraParamKeys above.
+  const [testExtraParamKeys, setTestExtraParamKeys] = useState<string[]>([]);
+  const [dismissedParamKeys, setDismissedParamKeys] = useState<string[]>([]);
+  interface CustomUtmParam { id: string; name: string; enabled: boolean; test_id: string | null; }
+  const [customUtmParams, setCustomUtmParams] = useState<CustomUtmParam[]>([]);
+  const [newCustomParamName, setNewCustomParamName] = useState("");
+  const [newCustomParamScope, setNewCustomParamScope] = useState<'workspace' | 'test'>('workspace');
+  const [addingCustomParam, setAddingCustomParam] = useState(false);
 
   // Integrations sub-tab
   const [integrationsSubTab, setIntegrationsSubTab] = useState<'native' | 'webhooks'>('native');
@@ -682,6 +693,9 @@ export default function AnalyticsClient({
 
   // Computed
   const variants = test.test_variants || [];
+  const activeVariants = variants.filter((v) => !v.archived_at);
+  const activeStats = stats.filter((s) => !s.variant.archived_at);
+  const archivedStats = stats.filter((s) => s.variant.archived_at);
   const snippet = `<script src="${appUrl}/tracker.js"></script>`;
   const fullUrl = domain ? `${domain}${test.url_path}` : null;
 
@@ -1264,7 +1278,7 @@ export default function AnalyticsClient({
   // ─── Duplicate variant ──────────────────────────────────────────────
 
   async function handleDuplicateVariant(variantId: string) {
-    setVariantMenuOpenId(null);
+    setActionMenu(null);
     setDuplicatingVariantId(variantId);
     try {
       const res = await fetch(`/api/tests/${test.id}/variants/${variantId}/duplicate`, {
@@ -1295,6 +1309,57 @@ export default function AnalyticsClient({
       toast.error("Failed to duplicate variant");
     } finally {
       setDuplicatingVariantId(null);
+    }
+  }
+
+  // ─── Archive / unarchive variant ────────────────────────────────────
+
+  async function handleArchiveVariant(variantId: string) {
+    setActionMenu(null);
+    setArchivingVariantId(variantId);
+    try {
+      const res = await fetch(`/api/tests/${test.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ archive_variant_id: variantId }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.error || "Failed to archive variant");
+        return;
+      }
+      const updated = await res.json();
+      setTest(updated);
+      toast.success("Variant archived");
+      fetchAnalytics();
+    } catch {
+      toast.error("Failed to archive variant");
+    } finally {
+      setArchivingVariantId(null);
+    }
+  }
+
+  async function handleUnarchiveVariant(variantId: string) {
+    setArchivingVariantId(variantId);
+    try {
+      const res = await fetch(`/api/tests/${test.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ unarchive_variant_id: variantId }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.error || "Failed to unarchive variant");
+        return;
+      }
+      const updated = await res.json();
+      setTest(updated);
+      toast.success("Variant unarchived");
+      fetchAnalytics();
+    } catch {
+      toast.error("Failed to unarchive variant");
+    } finally {
+      setArchivingVariantId(null);
     }
   }
 
@@ -1480,6 +1545,7 @@ export default function AnalyticsClient({
       setFormLeads(data.leads || []);
       setFormLeadsFieldKeys(data.fieldKeys || []);
       setFormLeadsExtraParamKeys(data.extraParamKeys || []);
+      setFormLeadsSystemParamKeys(data.systemParamKeys || []);
       setFormLeadsTotal(data.total || 0);
       setFormLeadsPage(page);
     } catch {
@@ -1511,9 +1577,11 @@ export default function AnalyticsClient({
       setWebhooks(whs);
 
       // Fetch all test mappings once (covers hubspot + email + webhooks)
-      const [mRes, kRes] = await Promise.all([
+      const [mRes, kRes, epRes, cpRes] = await Promise.all([
         fetch(`/api/tests/${test.id}/integrations`),
         fetch(`/api/tests/${test.id}/form-field-keys`),
+        fetch(`/api/tests/${test.id}/extra-param-keys`),
+        fetch(`/api/tests/${test.id}/custom-params`),
       ]);
       const mData = await mRes.json() as { mappings?: { id?: string; enabled: boolean; field_mappings: unknown; last_synced_at?: string; total_synced?: number; total_failed?: number; workspace_integrations?: { id: string } }[] };
 
@@ -1584,6 +1652,13 @@ export default function AnalyticsClient({
 
       const kData = await kRes.json() as { keys?: string[] };
       setTestFormKeys(kData.keys ?? []);
+
+      const epData = await epRes.json() as { keys?: string[]; dismissed?: string[] };
+      setTestExtraParamKeys(epData.keys ?? []);
+      setDismissedParamKeys(epData.dismissed ?? []);
+
+      const cpData = await cpRes.json() as { params?: CustomUtmParam[] };
+      setCustomUtmParams(cpData.params ?? []);
     } catch (err) {
       console.error('[integrations] load error', err);
       toast.error('Failed to load integrations');
@@ -1879,6 +1954,87 @@ export default function AnalyticsClient({
       delete fm[ourField];
       return { ...prev, field_mappings: fm };
     });
+  }
+
+  // Dismissing a field also clears any mapping it had — otherwise a mapped
+  // field would keep silently syncing to HubSpot after being hidden from
+  // the mapping screen, which is not what the X button implies. Like every
+  // other mapping change, this only takes effect once "Save" is clicked.
+  async function dismissExtraParamKey(key: string) {
+    const prevMapping = testMapping.field_mappings[key];
+    setTestExtraParamKeys(prev => prev.filter(k => k !== key));
+    setDismissedParamKeys(prev => Array.from(new Set([...prev, key])));
+    if (prevMapping) removeMapping(key);
+    try {
+      const res = await fetch(`/api/tests/${test.id}/extra-param-keys`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key }),
+      });
+      if (!res.ok) throw new Error();
+    } catch {
+      toast.error('Failed to dismiss field');
+      setTestExtraParamKeys(prev => Array.from(new Set([...prev, key])));
+      setDismissedParamKeys(prev => prev.filter(k => k !== key));
+      if (prevMapping) updateMapping(key, prevMapping);
+    }
+  }
+
+  // Un-dismiss — brings a previously-hidden suggestion back into the New
+  // Fields list. Capture was never affected either way; this only changes
+  // what the mapping screen offers to map.
+  async function restoreDismissedKey(key: string) {
+    setDismissedParamKeys(prev => prev.filter(k => k !== key));
+    setTestExtraParamKeys(prev => Array.from(new Set([...prev, key])));
+    try {
+      const res = await fetch(`/api/tests/${test.id}/extra-param-keys?key=${encodeURIComponent(key)}`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) throw new Error();
+    } catch {
+      toast.error('Failed to restore field');
+      setDismissedParamKeys(prev => Array.from(new Set([...prev, key])));
+      setTestExtraParamKeys(prev => prev.filter(k => k !== key));
+    }
+  }
+
+  async function addCustomParam() {
+    const name = newCustomParamName.trim().toLowerCase();
+    if (!name) return;
+    setAddingCustomParam(true);
+    try {
+      const res = await fetch(`/api/tests/${test.id}/custom-params`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, scope: newCustomParamScope }),
+      });
+      const data = await res.json() as { param?: CustomUtmParam; error?: string };
+      if (!res.ok) {
+        toast.error(data.error ?? 'Failed to add parameter');
+        return;
+      }
+      if (data.param) {
+        setCustomUtmParams(prev => [data.param!, ...prev]);
+        setTestExtraParamKeys(prev => Array.from(new Set([...prev, name])));
+      }
+      setNewCustomParamName('');
+    } catch {
+      toast.error('Failed to add parameter');
+    } finally {
+      setAddingCustomParam(false);
+    }
+  }
+
+  async function deleteCustomParam(id: string) {
+    const prev = customUtmParams;
+    setCustomUtmParams(p => p.filter(cp => cp.id !== id));
+    try {
+      const res = await fetch(`/api/tests/${test.id}/custom-params?id=${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error();
+    } catch {
+      toast.error('Failed to remove parameter');
+      setCustomUtmParams(prev);
+    }
   }
 
   function addCustomFormField() {
@@ -2726,49 +2882,52 @@ export default function AnalyticsClient({
             </div>
 
             <div className="card overflow-x-auto">
-              <table className="w-full min-w-[1150px] text-sm">
+              <table className="w-full min-w-[900px] text-sm">
+                {/* min-w keeps columns legible; sits inside overflow-x-auto so
+                    it only scrolls on very narrow screens, not normal ones */}
                 <thead>
                   <tr className="border-b border-slate-200 dark:border-slate-700">
-                    <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">
+                    <th className="text-left px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">
                       Variant
                     </th>
-                    <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium w-24">
+                    <th className="text-left px-3 py-3 text-slate-500 dark:text-slate-400 font-medium w-20">
                       Weight
                     </th>
-                    <th className="text-right px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">
+                    <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">
                       Views
                     </th>
-                    <th className="text-right px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">
-                      Unique Visitors
+                    <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">
+                      Unique
                     </th>
-                    <th className="text-right px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">
-                      Conversions
+                    <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">
+                      Conv.
                     </th>
-                    <th className="text-right px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">
-                      Goal Hits
+                    <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">
+                      Goals
                     </th>
-                    <th className="text-right px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">
+                    <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">
                       CVR
                     </th>
-                    <th className="text-right px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">
-                      Desktop CVR
+                    <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">
+                      Desktop
                     </th>
-                    <th className="text-right px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">
-                      Mobile CVR
+                    <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">
+                      Mobile
                     </th>
-                    <th className="text-right px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">
-                      Confidence
+                    <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">
+                      Conf.
                     </th>
-                    <th className="text-center px-5 py-3 text-slate-400 font-medium w-20"></th>
-                    <th className="text-center px-5 py-3 text-slate-400 font-medium w-36"></th>
-                    <th className="text-center px-5 py-3 text-slate-400 font-medium w-10"></th>
+                    <th className="text-center px-3 py-3 text-slate-400 font-medium w-16"></th>
+                    <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">
+                      Actions
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
                   {loading ? (
                     <tr>
                       <td
-                        colSpan={11}
+                        colSpan={12}
                         className="px-5 py-10 text-center text-slate-400"
                       >
                         <RefreshCw
@@ -2778,10 +2937,10 @@ export default function AnalyticsClient({
                         Loading...
                       </td>
                     </tr>
-                  ) : stats.length === 0 ? (
+                  ) : activeStats.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={13}
+                        colSpan={12}
                         className="px-5 py-10 text-center text-slate-400"
                       >
                         No data yet. Publish this page to start collecting
@@ -2789,7 +2948,7 @@ export default function AnalyticsClient({
                       </td>
                     </tr>
                   ) : (
-                    stats.map((stat) => {
+                    activeStats.map((stat) => {
                       const cvr = stat.cvr * 100;
                       const control = stats.find((s) => s.variant.is_control);
                       const controlCvr = (control?.cvr ?? 0) * 100;
@@ -2814,7 +2973,7 @@ export default function AnalyticsClient({
                       return (
                         <Fragment key={stat.variant.id}>
                           <tr className={`group ${rowBg}`}>
-                            <td className="px-5 py-3.5">
+                            <td className="px-3 py-3.5">
                               <div className="flex items-center gap-2">
                                 <span className="font-medium text-slate-800 dark:text-slate-200">
                                   {stat.variant.name}
@@ -2899,7 +3058,7 @@ export default function AnalyticsClient({
                                 </div>
                               )}
                             </td>
-                            <td className={`px-5 py-3.5 ${rowBg}`}>
+                            <td className={`px-3 py-3.5 ${rowBg}`}>
                               {savingWeightId === stat.variant.id ? (
                                 <Loader2
                                   size={14}
@@ -2939,43 +3098,43 @@ export default function AnalyticsClient({
                               )}
                             </td>
                             <td
-                              className={`px-5 py-3.5 text-right text-slate-700 dark:text-slate-300 ${rowBg}`}
+                              className={`px-3 py-3.5 text-right text-slate-700 dark:text-slate-300 ${rowBg}`}
                             >
                               {stat.views.toLocaleString()}
                             </td>
                             <td
-                              className={`px-5 py-3.5 text-right text-slate-700 dark:text-slate-300 ${rowBg}`}
+                              className={`px-3 py-3.5 text-right text-slate-700 dark:text-slate-300 ${rowBg}`}
                             >
                               {stat.uniqueVisitors.toLocaleString()}
                             </td>
                             <td
-                              className={`px-5 py-3.5 text-right text-slate-700 dark:text-slate-300 ${rowBg}`}
+                              className={`px-3 py-3.5 text-right text-slate-700 dark:text-slate-300 ${rowBg}`}
                             >
                               {stat.conversions.toLocaleString()}
                             </td>
                             <td
-                              className={`px-5 py-3.5 text-right text-slate-500 dark:text-slate-400 ${rowBg}`}
+                              className={`px-3 py-3.5 text-right text-slate-500 dark:text-slate-400 ${rowBg}`}
                             >
                               {stat.goalHits.toLocaleString()}
                             </td>
                             <td
-                              className={`px-5 py-3.5 text-right font-semibold text-slate-900 dark:text-slate-100 ${rowBg}`}
+                              className={`px-3 py-3.5 text-right font-semibold text-slate-900 dark:text-slate-100 ${rowBg}`}
                             >
                               {formatPercent(cvr)}
                             </td>
                             <td
-                              className={`px-5 py-3.5 text-right text-slate-700 dark:text-slate-300 ${rowBg}`}
+                              className={`px-3 py-3.5 text-right text-slate-700 dark:text-slate-300 ${rowBg}`}
                               title={`${stat.desktopConversions.toLocaleString()} / ${stat.desktopUniqueVisitors.toLocaleString()} unique visitors`}
                             >
                               {stat.desktopUniqueVisitors > 0 ? formatPercent(stat.desktopCvr * 100) : <span className="text-slate-400">—</span>}
                             </td>
                             <td
-                              className={`px-5 py-3.5 text-right text-slate-700 dark:text-slate-300 ${rowBg}`}
+                              className={`px-3 py-3.5 text-right text-slate-700 dark:text-slate-300 ${rowBg}`}
                               title={`${stat.mobileConversions.toLocaleString()} / ${stat.mobileUniqueVisitors.toLocaleString()} unique visitors`}
                             >
                               {stat.mobileUniqueVisitors > 0 ? formatPercent(stat.mobileCvr * 100) : <span className="text-slate-400">—</span>}
                             </td>
-                            <td className={`px-5 py-3.5 text-right ${rowBg}`}>
+                            <td className={`px-3 py-3.5 text-right ${rowBg}`}>
                               {stat.variant.is_control ? (
                                 <span className="text-slate-500">—</span>
                               ) : stat.confidence !== null ? (
@@ -2995,7 +3154,7 @@ export default function AnalyticsClient({
                               )}
                             </td>
                             {/* Uplift % */}
-                            <td className={`px-5 py-3.5 text-center ${rowBg}`}>
+                            <td className={`px-3 py-3.5 text-center ${rowBg}`}>
                               {uplift !== null ? (
                                 <span className={`flex items-center justify-center gap-0.5 text-xs font-medium ${uplift > 0 ? "text-green-400" : "text-red-400"}`}>
                                   <TrendingUp size={11} className={uplift < 0 ? "rotate-180" : ""} />
@@ -3005,104 +3164,150 @@ export default function AnalyticsClient({
                                 <span className="text-slate-500">—</span>
                               )}
                             </td>
-                            {/* Set Up UTM + Setup Goal Tracking */}
-                            <td className={`px-3 py-3.5 text-center ${rowBg}`}>
-                              <div className="flex flex-col items-center gap-1">
-                                {stat.variant.pages?.id && (
+                            {/* Actions: primary "Edit with AI" + "..." menu */}
+                            <td className={`px-3 py-3.5 ${rowBg}`}>
+                              <div className="flex items-center justify-end gap-1.5">
+                                {stat.variant.pages?.id ? (
                                   <Link
-                                    href={`/clients/${clientId}/pages/${stat.variant.pages.id}/utm`}
-                                    className="flex items-center justify-center gap-1 w-full px-2 py-1 rounded-lg text-xs font-medium bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 hover:bg-indigo-500/20 transition-colors whitespace-nowrap"
-                                    title="Set up UTM parameters"
+                                    href={`/clients/${clientId}/ai-pages/new?page_id=${stat.variant.pages.id}`}
+                                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-500 transition-colors whitespace-nowrap"
+                                    title="Edit this variant's page with AI"
                                   >
-                                    <SlidersHorizontal size={11} />
-                                    UTM personalization
+                                    <Sparkles size={12} /> Edit with AI
                                   </Link>
-                                )}
-                                {!variantHasGoals && (
+                                ) : (
                                   <button
-                                    onClick={() => {
-                                      if (getVerifiedStatus(stat.variant) === false) {
-                                        toast.error('Install the tracker.js snippet on your landing page first, then set up goal or event tracking.');
-                                        return;
-                                      }
-                                      scanPage(stat.variant.id);
-                                    }}
-                                    disabled={scanningVariantIds.includes(stat.variant.id)}
-                                    className={`flex items-center justify-center gap-1 w-full px-2 py-1 rounded-lg text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap ${
-                                      variantScanned
-                                        ? "bg-amber-500 border border-amber-600 text-white hover:bg-amber-600 shadow-md shadow-amber-500/50 animate-pulse"
-                                        : "bg-red-600 border border-red-500 text-white hover:bg-red-700 shadow-md shadow-red-500/50 animate-pulse"
-                                    }`}
-                                    title={
-                                      variantScanned
-                                        ? "Page scanned but no goal is enabled yet — conversions are NOT being recorded. Click to choose a goal."
-                                        : "No goal tracking set up — conversions are NOT being recorded for this variant. Click to set it up now."
-                                    }
+                                    onClick={() => startEditVariant(stat.variant)}
+                                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-500 transition-colors whitespace-nowrap"
+                                    title="Edit variant"
                                   >
-                                    <ScanLine size={11} />
-                                    Setup Goal Tracking
+                                    <Pencil size={12} /> Edit
                                   </button>
                                 )}
-                              </div>
-                            </td>
-                            {/* Open + Edit icons */}
-                            <td className={`px-3 py-3.5 text-center ${rowBg}`}>
-                              <div className="flex items-center justify-center gap-2">
                                 <button
-                                  onClick={() => openVariantPreview(stat.variant)}
-                                  disabled={visitorOverCap}
-                                  className="p-1 rounded transition-colors text-slate-400 dark:text-slate-600 hover:text-slate-700 dark:hover:text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed"
-                                  title={visitorOverCap ? "Visitor limit reached — upgrade your plan to resume testing" : `Preview ${stat.variant.name}`}
+                                  onClick={(e) => {
+                                    const r = e.currentTarget.getBoundingClientRect();
+                                    setActionMenu(
+                                      actionMenu?.id === stat.variant.id
+                                        ? null
+                                        : { id: stat.variant.id, top: r.bottom + 4, right: window.innerWidth - r.right }
+                                    );
+                                  }}
+                                  disabled={duplicatingVariantId === stat.variant.id || archivingVariantId === stat.variant.id}
+                                  className="relative p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-60 disabled:cursor-wait transition-colors"
+                                  title={
+                                    duplicatingVariantId === stat.variant.id
+                                      ? "Duplicating…"
+                                      : archivingVariantId === stat.variant.id
+                                        ? "Updating…"
+                                        : "More actions"
+                                  }
                                 >
-                                  <ExternalLink size={13} />
-                                </button>
-                                <button
-                                  onClick={() => startEditVariant(stat.variant)}
-                                  className={`p-1 rounded transition-colors ${isEditing ? "bg-indigo-500/20 text-indigo-400" : "text-slate-400 dark:text-slate-600 hover:text-slate-700 dark:hover:text-slate-300"}`}
-                                  title="Edit variant"
-                                >
-                                  <Pencil size={13} />
-                                </button>
-                                <div className="relative" data-variant-menu>
-                                  <button
-                                    onClick={() =>
-                                      setVariantMenuOpenId(
-                                        variantMenuOpenId === stat.variant.id ? null : stat.variant.id,
-                                      )
-                                    }
-                                    disabled={duplicatingVariantId === stat.variant.id}
-                                    className="p-1 rounded transition-colors text-slate-400 dark:text-slate-600 hover:text-slate-700 dark:hover:text-slate-300 disabled:opacity-40"
-                                    title="More actions"
-                                  >
-                                    {duplicatingVariantId === stat.variant.id ? (
-                                      <Loader2 size={13} className="animate-spin" />
-                                    ) : (
-                                      <MoreHorizontal size={13} />
-                                    )}
-                                  </button>
-                                  {variantMenuOpenId === stat.variant.id && (
-                                    <div className="absolute right-0 top-full mt-1 w-40 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl z-10 overflow-hidden">
-                                      <button
-                                        onClick={() => handleDuplicateVariant(stat.variant.id)}
-                                        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
-                                      >
-                                        <Copy size={13} /> Duplicate
-                                      </button>
-                                      {variants.length > 1 && (
-                                        <button
-                                          onClick={() => {
-                                            setVariantMenuOpenId(null);
-                                            setDeleteVariantId(stat.variant.id);
-                                          }}
-                                          className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10"
-                                        >
-                                          <Trash2 size={13} /> Delete
-                                        </button>
+                                  {duplicatingVariantId === stat.variant.id || archivingVariantId === stat.variant.id ? (
+                                    <Loader2 size={16} className="animate-spin text-indigo-500 dark:text-indigo-400" />
+                                  ) : (
+                                    <>
+                                      <MoreHorizontal size={16} />
+                                      {!variantHasGoals && (
+                                        <span className="absolute top-0.5 right-0.5 w-2 h-2 rounded-full bg-red-500 ring-2 ring-white dark:ring-slate-900" />
                                       )}
-                                    </div>
+                                    </>
                                   )}
-                                </div>
+                                </button>
                               </div>
+
+                              {actionMenu?.id === stat.variant.id && (
+                                <>
+                                  <div className="fixed inset-0 z-40" onClick={() => setActionMenu(null)} />
+                                  <div
+                                    className="fixed z-50 w-52 py-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl text-sm"
+                                    style={{ top: actionMenu.top, right: actionMenu.right }}
+                                  >
+                                    <button
+                                      onClick={() => { setActionMenu(null); openVariantPreview(stat.variant); }}
+                                      disabled={visitorOverCap}
+                                      className="w-full flex items-center gap-2 px-3 py-2 text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                                      title={visitorOverCap ? "Visitor limit reached — upgrade your plan to resume testing" : `Preview ${stat.variant.name}`}
+                                    >
+                                      <ExternalLink size={13} /> Preview page
+                                    </button>
+                                    {stat.variant.pages?.id && (
+                                      <Link
+                                        href={`/clients/${clientId}/pages/${stat.variant.pages.id}/utm`}
+                                        onClick={() => setActionMenu(null)}
+                                        className="w-full flex items-center gap-2 px-3 py-2 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                                        title="Set up UTM parameters"
+                                      >
+                                        <SlidersHorizontal size={13} /> UTM personalization
+                                      </Link>
+                                    )}
+                                    {stat.variant.pages?.id && (
+                                      <button
+                                        onClick={() => { setActionMenu(null); startEditVariant(stat.variant); }}
+                                        className="w-full flex items-center gap-2 px-3 py-2 text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                                      >
+                                        <Pencil size={13} /> Edit details
+                                      </button>
+                                    )}
+                                    <button
+                                      onClick={() => handleDuplicateVariant(stat.variant.id)}
+                                      disabled={duplicatingVariantId === stat.variant.id}
+                                      className="w-full flex items-center gap-2 px-3 py-2 text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                                    >
+                                      {duplicatingVariantId === stat.variant.id ? (
+                                        <Loader2 size={13} className="animate-spin" />
+                                      ) : (
+                                        <Copy size={13} />
+                                      )}{" "}
+                                      Duplicate
+                                    </button>
+                                    {activeVariants.length > 1 && (
+                                      <button
+                                        onClick={() => handleArchiveVariant(stat.variant.id)}
+                                        disabled={archivingVariantId === stat.variant.id}
+                                        title="Remove from the live traffic split, keep its history — reversible from the Archived section below"
+                                        className="w-full flex items-center gap-2 px-3 py-2 text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                                      >
+                                        {archivingVariantId === stat.variant.id ? (
+                                          <Loader2 size={13} className="animate-spin" />
+                                        ) : (
+                                          <Archive size={13} />
+                                        )}{" "}
+                                        Archive
+                                      </button>
+                                    )}
+                                    {variants.length > 1 && (
+                                      <button
+                                        onClick={() => { setActionMenu(null); setDeleteVariantId(stat.variant.id); }}
+                                        className="w-full flex items-center gap-2 px-3 py-2 text-left text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors"
+                                      >
+                                        <Trash2 size={13} /> Delete
+                                      </button>
+                                    )}
+                                    {!variantHasGoals && (
+                                      <button
+                                        onClick={() => {
+                                          setActionMenu(null);
+                                          if (getVerifiedStatus(stat.variant) === false) {
+                                            toast.error('Install the tracker.js snippet on your landing page first, then set up goal or event tracking.');
+                                            return;
+                                          }
+                                          scanPage(stat.variant.id);
+                                        }}
+                                        disabled={scanningVariantIds.includes(stat.variant.id)}
+                                        className="w-full flex items-center gap-2 px-3 py-2 text-left text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors border-t border-slate-100 dark:border-slate-700"
+                                        title={
+                                          variantScanned
+                                            ? "Page scanned but no goal is enabled yet — conversions are NOT being recorded. Click to choose a goal."
+                                            : "No goal tracking set up — conversions are NOT being recorded for this variant. Click to set it up now."
+                                        }
+                                      >
+                                        <ScanLine size={13} /> Setup Goal Tracking
+                                      </button>
+                                    )}
+                                  </div>
+                                </>
+                              )}
                             </td>
                           </tr>
 
@@ -3128,7 +3333,7 @@ export default function AnalyticsClient({
                           {isEditing && (
                             <tr>
                               <td
-                                colSpan={11}
+                                colSpan={12}
                                 className="border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 px-6 py-4"
                               >
                                 <div className="grid grid-cols-2 gap-4 max-w-2xl">
@@ -3301,6 +3506,48 @@ export default function AnalyticsClient({
                   <Plus size={14} /> Add Variant
                 </button>
               </div>
+
+              {archivedStats.length > 0 && (
+                <div className="border-t border-slate-200 dark:border-slate-700">
+                  <button
+                    onClick={() => setShowArchived((o) => !o)}
+                    className="w-full flex items-center justify-between px-5 py-3 text-sm text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
+                  >
+                    <span className="flex items-center gap-2">
+                      <Archive size={14} />
+                      {archivedStats.length} archived variant{archivedStats.length === 1 ? "" : "s"}
+                    </span>
+                    <ChevronDown
+                      size={14}
+                      className={`transition-transform duration-200 ${showArchived ? "rotate-180" : ""}`}
+                    />
+                  </button>
+                  {showArchived && (
+                    <div className="px-5 pb-3 space-y-1.5">
+                      {archivedStats.map((stat) => (
+                        <div
+                          key={stat.variant.id}
+                          className="flex items-center justify-between px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800/50 text-sm"
+                        >
+                          <span className="text-slate-600 dark:text-slate-300">{stat.variant.name}</span>
+                          <button
+                            onClick={() => handleUnarchiveVariant(stat.variant.id)}
+                            disabled={archivingVariantId === stat.variant.id}
+                            className="flex items-center gap-1.5 text-xs font-medium text-indigo-500 hover:text-indigo-400 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                          >
+                            {archivingVariantId === stat.variant.id ? (
+                              <Loader2 size={12} className="animate-spin" />
+                            ) : (
+                              <ArchiveRestore size={12} />
+                            )}
+                            Unarchive
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* ── PAGE REPORTING ── */}
@@ -3835,8 +4082,11 @@ export default function AnalyticsClient({
                             {key.replace(/_/g, ' ')}
                           </th>
                         ))}
-                        <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap">UTM Source</th>
-                        <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap">UTM Campaign</th>
+                        {formLeadsSystemParamKeys.map((key) => (
+                          <th key={key} className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap">
+                            {key === 'gclid' || key === 'fbclid' ? key : key.replace(/_/g, ' ').replace(/^utm /, 'UTM ')}
+                          </th>
+                        ))}
                         {formLeadsExtraParamKeys.map((key) => (
                           <th key={key} className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap font-mono text-xs">
                             {key}
@@ -3862,8 +4112,11 @@ export default function AnalyticsClient({
                               {lead.form_fields?.[key] ?? <span className="text-slate-400">—</span>}
                             </td>
                           ))}
-                          <td className="px-4 py-2.5 text-slate-500 text-xs">{lead.utm_source ?? "—"}</td>
-                          <td className="px-4 py-2.5 text-slate-500 text-xs">{lead.utm_campaign ?? "—"}</td>
+                          {formLeadsSystemParamKeys.map((key) => (
+                            <td key={key} className="px-4 py-2.5 text-slate-500 text-xs">
+                              {lead[key as keyof FormLead] as string ?? "—"}
+                            </td>
+                          ))}
                           {formLeadsExtraParamKeys.map((key) => (
                             <td key={key} className="px-4 py-2.5 text-slate-500 text-xs font-mono max-w-[160px] truncate" title={lead.extra_params?.[key] ?? ''}>
                               {lead.extra_params?.[key] ?? <span className="text-slate-400">—</span>}
@@ -4090,18 +4343,7 @@ export default function AnalyticsClient({
                             {/* System fields */}
                             <div className="border-t border-slate-200 dark:border-slate-700 pt-3 mt-1">
                               <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">System Fields</p>
-                              {[
-                                { key: 'ip_address', label: 'IP Address' },
-                                { key: 'variant', label: 'Page Variant' },
-                                { key: 'submitted_at', label: 'Submission Date' },
-                                { key: 'utm_source', label: 'UTM Source' },
-                                { key: 'utm_medium', label: 'UTM Medium' },
-                                { key: 'utm_campaign', label: 'UTM Campaign' },
-                                { key: 'utm_content', label: 'UTM Content' },
-                                { key: 'utm_term', label: 'UTM Term' },
-                                { key: 'gclid', label: 'GCLID' },
-                                { key: 'fbclid', label: 'FBCLID' },
-                              ].map(sf => (
+                              {HUBSPOT_SYSTEM_FIELDS.map(sf => (
                                 <div key={sf.key} className="grid grid-cols-[1fr_32px_1fr_32px] gap-2 items-center mb-2">
                                   <div className="flex items-center gap-2">
                                     <span className="text-xs px-2 py-1 rounded bg-slate-100 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400 font-mono">{sf.label}</span>
@@ -4119,6 +4361,116 @@ export default function AnalyticsClient({
                                   <span />
                                 </div>
                               ))}
+                            </div>
+
+                            {/* New Fields — auto-detected ad params (utm passthrough, click IDs,
+                                custom registered params) not covered by System Fields above.
+                                Mapping still writes into field_mappings via updateMapping, same
+                                as every other row — dismiss/delete never touch that storage. */}
+                            {testExtraParamKeys.length > 0 && (
+                              <div className="border-t border-slate-200 dark:border-slate-700 pt-3 mt-1">
+                                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">New Fields</p>
+                                {testExtraParamKeys.map(key => (
+                                  <div key={key} className="grid grid-cols-[1fr_32px_1fr_32px] gap-2 items-center mb-2">
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-xs px-2 py-1 rounded bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 font-mono">{key}</span>
+                                      <span className="text-xs text-slate-400 bg-slate-50 dark:bg-slate-800/50 px-1.5 py-0.5 rounded">new</span>
+                                    </div>
+                                    <ArrowRight size={13} className="text-orange-400 mx-auto" />
+                                    <select
+                                      value={testMapping.field_mappings[key] ?? ''}
+                                      onChange={e => updateMapping(key, e.target.value)}
+                                      className="input text-xs py-1.5"
+                                    >
+                                      <option value="">(-) Not mapped</option>
+                                      {destinationOptions}
+                                    </select>
+                                    <button
+                                      type="button"
+                                      title="Dismiss — stop suggesting this field"
+                                      onClick={() => dismissExtraParamKey(key)}
+                                      className="text-red-400 hover:text-red-500 transition-colors flex items-center justify-center"
+                                    >
+                                      <XCircle size={14} />
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
+                            {/* Dismissed suggestions — data is still captured/stored exactly as
+                                before, just hidden from the New Fields list above. Dismissing
+                                also cleared any mapping (see dismissExtraParamKey), so these are
+                                always "not mapped" going forward; Restore brings them back. */}
+                            {dismissedParamKeys.length > 0 && (
+                              <div className="border-t border-slate-200 dark:border-slate-700 pt-3 mt-1">
+                                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Dismissed</p>
+                                <div className="space-y-1.5">
+                                  {dismissedParamKeys.map(key => {
+                                    const currentMapping = testMapping.field_mappings[key];
+                                    return (
+                                      <div key={key} className="flex items-center gap-2 text-xs">
+                                        <span className="px-2 py-1 rounded bg-slate-100 dark:bg-slate-800/60 text-slate-400 font-mono">{key}</span>
+                                        <span className="text-slate-400 bg-slate-50 dark:bg-slate-800/50 px-1.5 py-0.5 rounded">
+                                          {currentMapping ? `mapped → ${currentMapping}` : 'not mapped'}
+                                        </span>
+                                        <button
+                                          type="button"
+                                          title="Restore — show this field in New Fields again"
+                                          onClick={() => restoreDismissedKey(key)}
+                                          className="ml-auto inline-flex items-center gap-1 text-indigo-500 hover:text-indigo-400 font-medium transition-colors flex-shrink-0"
+                                        >
+                                          <RefreshCw size={12} /> Restore
+                                        </button>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Manually register a param that hasn't shown up in a lead yet */}
+                            <div className="border-t border-slate-200 dark:border-slate-700 pt-3 mt-1 space-y-2">
+                              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Custom Parameters</p>
+                              {customUtmParams.map(cp => (
+                                <div key={cp.id} className="flex items-center gap-2 text-xs">
+                                  <span className="px-2 py-1 rounded bg-slate-100 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400 font-mono">{cp.name}</span>
+                                  <span className="text-slate-400 bg-slate-50 dark:bg-slate-800/50 px-1.5 py-0.5 rounded">{cp.test_id ? 'this test' : 'workspace-wide'}</span>
+                                  <button
+                                    type="button"
+                                    title="Remove this custom parameter"
+                                    onClick={() => deleteCustomParam(cp.id)}
+                                    className="ml-auto text-slate-300 hover:text-red-400 transition-colors flex items-center justify-center"
+                                  >
+                                    <XCircle size={14} />
+                                  </button>
+                                </div>
+                              ))}
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="text"
+                                  placeholder="e.g. affiliate_id"
+                                  value={newCustomParamName}
+                                  onChange={e => setNewCustomParamName(e.target.value)}
+                                  className="input-base text-xs py-1.5 font-mono placeholder:font-sans flex-1"
+                                />
+                                <select
+                                  value={newCustomParamScope}
+                                  onChange={e => setNewCustomParamScope(e.target.value as 'workspace' | 'test')}
+                                  className="input-base text-xs py-1.5 w-auto"
+                                >
+                                  <option value="workspace">Workspace-wide</option>
+                                  <option value="test">This test only</option>
+                                </select>
+                                <button
+                                  type="button"
+                                  disabled={addingCustomParam || !newCustomParamName.trim()}
+                                  onClick={addCustomParam}
+                                  className="text-xs text-indigo-500 hover:text-indigo-400 font-medium flex items-center gap-1 flex-shrink-0 transition-colors disabled:opacity-50"
+                                >
+                                  <Plus size={12} /> Add
+                                </button>
+                              </div>
                             </div>
                           </div>
                         );

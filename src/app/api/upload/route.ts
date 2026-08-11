@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
-import { uploadHtml } from '@/lib/storage';
+import { uploadHtml, inlineDataUrisToStorage } from '@/lib/storage';
 import { resolveWorkspaceRole } from '@/lib/workspace-auth';
 import { z } from 'zod';
 
@@ -60,6 +60,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'HTML content is empty' }, { status: 400 });
     }
 
+    // Embedded base64 images (data: URIs) routinely dwarf the actual markup —
+    // swap each one for a real hosted file before this HTML is ever stored,
+    // rather than carrying multi-hundred-KB inline strings forever. Needs the
+    // page id up front since images upload to a path keyed by it.
+    const pageId = crypto.randomUUID();
+    htmlContent = await inlineDataUrisToStorage(htmlContent, pageId);
+
     // Upload to storage
     const fileName = `${workspaceId}/${crypto.randomUUID()}.html`;
     const htmlUrl = await uploadHtml(fileName, htmlContent);
@@ -68,6 +75,7 @@ export async function POST(request: NextRequest) {
     const { data: page, error } = await db
       .from('pages')
       .insert({
+        id: pageId,
         workspace_id: workspaceId,
         name,
         html_url: htmlUrl,

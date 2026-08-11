@@ -213,3 +213,83 @@ export async function scrapeCompetitorUrl(url: string): Promise<CompetitorContex
     pageContent,
   };
 }
+
+function resolveUrl(src: string, baseUrl: string): string | null {
+  try {
+    return new URL(src, baseUrl).href;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Best-effort extraction of the site's own logo <img> src from raw page
+ * HTML — used when a follow-up explicitly asks to use the "real"/"actual"
+ * logo from a referenced URL, so the model gets a literal asset to embed
+ * instead of hallucinating one from a screenshot or generating a fake one.
+ * Deliberately conservative: returns null rather than guessing when nothing
+ * scores as a plausible logo, since embedding the wrong image is worse than
+ * falling back to the existing behavior.
+ */
+export function extractLogoUrl(rawHtml: string, pageUrl: string): string | null {
+  const headerMatch = /<header\b[\s\S]*?<\/header>/i.exec(rawHtml);
+  const navMatch = /<nav\b[\s\S]*?<\/nav>/i.exec(rawHtml);
+  const headerEnd = headerMatch ? headerMatch.index + headerMatch[0].length : -1;
+  const navEnd = navMatch ? navMatch.index + navMatch[0].length : -1;
+
+  const imgRe = /<img\b([^>]*)>/gi;
+  const candidates: { src: string; score: number; index: number }[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = imgRe.exec(rawHtml))) {
+    const attrs = m[1];
+    const srcMatch = /\bsrc\s*=\s*["']([^"']+)["']/i.exec(attrs);
+    // Fall back to the first URL in srcset for responsive <img>s with no
+    // plain src attribute — common on modern marketing sites.
+    const srcsetMatch = !srcMatch ? /\bsrcset\s*=\s*["']([^"']+)["']/i.exec(attrs) : null;
+    const rawSrc = srcMatch?.[1] ?? srcsetMatch?.[1]?.split(',')[0]?.trim().split(/\s+/)[0];
+    if (!rawSrc || rawSrc.startsWith('data:')) continue; // must be a real fetchable URL, not inline base64
+
+    const altMatch = /\balt\s*=\s*["']([^"']*)["']/i.exec(attrs);
+    const classMatch = /\bclass\s*=\s*["']([^"']*)["']/i.exec(attrs);
+    const looksLikeLogo =
+      /logo/i.test(altMatch?.[1] ?? '') || /logo/i.test(classMatch?.[1] ?? '') || /logo/i.test(rawSrc);
+    const inHeader = !!headerMatch && m.index >= headerMatch.index && m.index <= headerEnd;
+    const inNav = !!navMatch && m.index >= navMatch.index && m.index <= navEnd;
+
+    let score = 0;
+    if (looksLikeLogo) score += 2;
+    if (inHeader || inNav) score += 2;
+    if (score === 0) continue; // not a plausible logo — skip rather than guess wrong
+    candidates.push({ src: rawSrc, score, index: m.index });
+  }
+
+  if (candidates.length === 0) return null;
+  // Highest score wins; ties broken by earliest occurrence — the logo is
+  // almost always the first element inside the header/nav.
+  candidates.sort((a, b) => b.score - a.score || a.index - b.index);
+  return resolveUrl(candidates[0].src, pageUrl);
+}
+
+/**
+ * Lightweight fetch for just the site's logo asset — used for "use the real
+ * logo" follow-ups. Deliberately skips the screenshot capture and CSS-token
+ * extraction that scrapeCompetitorUrl() pays for (an extra ApiFlash call and
+ * a Sonnet call), since a logo swap only needs the raw HTML to locate one
+ * <img> src. Returns null (never throws) on any failure — callers must treat
+ * that as "couldn't find a logo," not as a reason to fall back to guessing.
+ */
+export async function fetchLogoUrl(url: string): Promise<string | null> {
+  const firecrawlKey = process.env.FIRECRAWL_API_KEY?.trim();
+  if (!firecrawlKey) return null;
+  try {
+    const { rawHtml } = await Promise.race([
+      fetchFirecrawlData(url, firecrawlKey),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('20s timeout')), 20_000)),
+    ]);
+    if (!rawHtml) return null;
+    return extractLogoUrl(rawHtml, url);
+  } catch (err) {
+    console.error('[fetchLogoUrl] failed:', err);
+    return null;
+  }
+}

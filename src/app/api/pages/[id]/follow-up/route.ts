@@ -5,15 +5,19 @@ import { db } from '@/lib/supabase-server';
 import { jsonrepair } from 'jsonrepair';
 import { askAI, askAIStream, isRateLimited, generatePageImages, generateAndUploadImage, AIResponseTruncatedError, isPromptTooLongError, userFacingAIErrorMessage, type AIContent, type AIContentBlock } from '@/lib/ai-client';
 import { uploadHtml, downloadHtmlByPath, fileNameFromUrl } from '@/lib/storage';
-import { resolveWorkspaceRole, resolveOwnerPlan } from '@/lib/workspace-auth';
+import { resolveWorkspaceRole, resolveOwnerPlan, resolveWorkspaceOwner } from '@/lib/workspace-auth';
 import { PLAN_LIMITS } from '@/lib/plans';
-import { extractUrls, scrapeCompetitorUrl } from '@/lib/ai-competitor-scrape';
+import { checkAiAllowance, type UsageContext } from '@/lib/ai-usage';
+import { reportAiOverageUsage } from '@/lib/ai-overage-billing';
+import { extractUrls, scrapeCompetitorUrl, fetchLogoUrl } from '@/lib/ai-competitor-scrape';
 import { buildHtmlFromSchema } from '@/lib/ai-page-builder';
 import { createSSEStream, sendSSE, closeSSE, SSE_HEADERS, type SSEEvent } from '@/lib/sse';
 import { isTestVariantPage } from '@/lib/page-drafts';
 import { extractDataUris, restoreDataUris, restoreDataUrisInValue } from '@/lib/data-uri-strip';
 
 export const dynamic = 'force-dynamic';
+// Large full-page rewrites can run several minutes; raised well past the old
+// 300s cutoff (capped by the hosting plan's real limit).
 export const maxDuration = 800;
 
 const SYSTEM_PROMPT = `You are editing an existing landing page. The user will give you an instruction to modify the page.
@@ -338,6 +342,23 @@ function isSimpleTextRewritePrompt(prompt: string): boolean {
   );
 }
 
+/**
+ * True when the instruction explicitly asks for a visual/design change
+ * (fonts, colors, "premium," "redesign," etc.) — as opposed to a purely
+ * content/structure edit ("remove these sections," "make it shorter").
+ * Used to keep structural content-only edits from being diverted onto the
+ * expensive full-page rebuild path when the user never asked for a new
+ * look — see tryStructuralDiffSplice(). Deliberately broad: a false
+ * positive here only costs a slower (but correct, unchanged) full rebuild;
+ * a false negative would silently skip a redesign the user actually asked
+ * for, which is the worse failure mode.
+ */
+function promptRequestsRestyle(prompt: string): boolean {
+  return /\b(premium|luxury|luxurious|modern|sleek|elegant|minimal(?:ist)?|bold|playful|funky|polished|refined|classy|upscale|redesign|restyle|re-?style|rebrand|re-?brand|revamp|refresh(?:ed)?|overhaul|look and feel|visual style|aesthetic|vibe|mood|color scheme|colour scheme|palette|typography|font|fonts|theme)\b/i.test(
+    prompt,
+  );
+}
+
 function replaceUniqueTextInHtml(html: string, oldText: string, newText: string): string | null {
   if (!oldText || !newText || oldText === newText) return null;
   const exactCount = html.split(oldText).length - 1;
@@ -515,6 +536,7 @@ async function tryRoutingCall(
   schema: unknown,
   sections: SlSection[],
   imageUrls: string[],
+  usage?: UsageContext,
 ): Promise<RoutingResult | null> {
   try {
     const sectionList = sections.map((s) => `- ${s.name}: "${s.text.slice(0, 150)}"`).join('\n');
@@ -545,6 +567,7 @@ async function tryRoutingCall(
       // every other AI call in this file. Was pinned to Haiku; switched to
       // the default model for better routing accuracy/confidence-calibration.
       label: 'follow-up:routing',
+      usage: usage ? { ...usage, operation: 'route' } : undefined,
     });
     let raw = text.trim();
     if (raw.startsWith('```')) raw = raw.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
@@ -588,6 +611,7 @@ async function runScopedPatch(
   imageUrls: string[] | undefined,
   /** Optional corrective note appended on a retry (outer-tag / JSON shape). */
   correctionNote?: string,
+  usage?: UsageContext,
 ): Promise<string | null> {
   try {
     // The image content blocks below only give the model PIXELS — the
@@ -611,6 +635,7 @@ async function runScopedPatch(
       messages: [{ role: 'user', content: userContent }],
       maxTokens: 128000,
       label: correctionNote ? 'follow-up:scoped-patch-retry' : 'follow-up:scoped-patch',
+      usage: usage ? { ...usage, operation: 'edit' } : undefined,
     });
     let raw = text.trim();
     if (raw.startsWith('```')) raw = raw.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
@@ -689,10 +714,11 @@ async function runScopedPatchWithRetry(
   schemaSlice: unknown,
   prompt: string,
   imageUrls: string[] | undefined,
+  usage?: UsageContext,
 ): Promise<{ html: string | null; failedSanity: boolean; failedParse: boolean }> {
   const requiredTag = outerTag(sectionHtml);
 
-  const first = await runScopedPatch(sectionHtml, schemaSlice, prompt, imageUrls);
+  const first = await runScopedPatch(sectionHtml, schemaSlice, prompt, imageUrls, undefined, usage);
   const firstOk = acceptScopedPatchHtml(sectionHtml, first, 'first-attempt');
   if (firstOk) {
     return { html: firstOk, failedSanity: false, failedParse: false };
@@ -714,7 +740,7 @@ async function runScopedPatchWithRetry(
     gotTag,
   });
 
-  const second = await runScopedPatch(sectionHtml, schemaSlice, prompt, imageUrls, correction);
+  const second = await runScopedPatch(sectionHtml, schemaSlice, prompt, imageUrls, correction, usage);
   const secondOk = acceptScopedPatchHtml(sectionHtml, second, 'retry');
   if (secondOk) {
     return { html: secondOk, failedSanity: false, failedParse: false };
@@ -993,6 +1019,123 @@ async function runScopedInsert(
   }
 }
 
+// ── Structural diff+splice — content-only structural edits without a full rebuild ──
+//
+// The full-page pass1 classify call already decides the CORRECT new schema
+// for a "structural" edit (which sections to remove, how remaining sections'
+// copy should change) — that decision-making is not the problem. The
+// problem is what happens next: today, ANY structural result gets handed to
+// buildHtmlFromSchema(), which regenerates the ENTIRE document — a brand new
+// <style> block, fonts, and markup for every section, including ones the
+// instruction never asked to touch. For a pure content-trim request ("remove
+// these sections, shorten the rest"), that's a correctness bug: the page's
+// visual design drifts and untouched sections' copy gets subtly reworded,
+// neither of which the user asked for.
+//
+// This diffs the AI's already-decided old-schema vs new-schema and applies
+// ONLY the actual delta directly against the existing HTML, reusing the same
+// mechanisms already proven safe elsewhere in this file: removeSlSection()
+// for removed sections (pure string splice, no AI call) and
+// runScopedPatchWithRetry() for changed sections (same call ordinary `patch`
+// edits use, with its outer-tag/minimum-edit guardrails). Sections that
+// aren't in either list are never sent to the model, so they can't drift.
+//
+// All-or-nothing: any failure at any step returns null and the caller falls
+// straight back to today's unchanged full buildHtmlFromSchema() path — this
+// can only ever match or improve on today's behavior, never regress it.
+
+// generatePageImages() writes generated_image_url onto any schema node that
+// had an image_prompt (see ai-client.ts) — including on a CHANGED (not just
+// added) section, per this file's own SYSTEM_PROMPT rule allowing
+// image_prompts on sections being "structurally changing". The scoped-patch
+// call only reliably embeds an image URL it's told about explicitly via its
+// imageUrls param (same as the image_generate op does) — a URL sitting
+// unlabeled inside the schema-slice JSON isn't a strong enough signal.
+function collectGeneratedImageUrls(node: unknown): string[] {
+  if (!node || typeof node !== 'object') return [];
+  if (Array.isArray(node)) return (node as unknown[]).flatMap(collectGeneratedImageUrls);
+  const obj = node as Record<string, unknown>;
+  const urls: string[] = [];
+  if (typeof obj.generated_image_url === 'string' && obj.generated_image_url) urls.push(obj.generated_image_url);
+  for (const val of Object.values(obj)) urls.push(...collectGeneratedImageUrls(val));
+  return urls;
+}
+
+async function tryStructuralDiffSplice(
+  originalHtml: string,
+  oldSchema: unknown,
+  newSchema: Record<string, unknown>,
+  slSections: SlSection[],
+  prompt: string,
+  imageUrls: string[],
+  usage?: UsageContext,
+): Promise<string | null> {
+  if (!oldSchema || typeof oldSchema !== 'object') return null;
+  if (promptRequestsRestyle(prompt)) return null;
+
+  const oldObj = oldSchema as Record<string, unknown>;
+  const oldKeys = Object.keys(oldObj);
+  const newKeys = Object.keys(newSchema);
+
+  const removedKeys = oldKeys.filter((k) => !newKeys.includes(k));
+  const addedKeys = newKeys.filter((k) => !oldKeys.includes(k));
+  const changedKeys = newKeys.filter(
+    (k) => oldKeys.includes(k) && JSON.stringify(oldObj[k]) !== JSON.stringify(newSchema[k]),
+  );
+
+  // New sections need real generation (design, layout, images) — not a
+  // content diff. Let those keep using the full rebuild path.
+  if (addedKeys.length > 0) return null;
+  // Nothing to apply via this path (shouldn't normally happen for a
+  // genuine structural result, but don't silently no-op if it does).
+  if (removedKeys.length === 0 && changedKeys.length === 0) return null;
+  // Sanity ceiling, not a real constraint for normal pages — a genuine
+  // "trim the whole page" request (the motivating case for this function)
+  // can legitimately shorten most of a page's sections at once; each one is
+  // still an independently-scoped, safe patch. This only guards against a
+  // pathological page with an unreasonable number of sections.
+  if (changedKeys.length > 20) return null;
+  if (!removedKeys.every((k) => slSections.some((s) => s.name === k))) return null;
+  if (!changedKeys.every((k) => slSections.some((s) => s.name === k))) return null;
+
+  let current = originalHtml;
+  for (const key of removedKeys) {
+    const removed = removeSlSection(current, key);
+    if (!removed) {
+      console.error(`[pages/follow-up] structural diff+splice: could not find marker for removed section "${key}", falling back to full rebuild`);
+      return null;
+    }
+    current = removed;
+  }
+
+  const patchedSections: Array<{ name: string; html: string }> = [];
+  for (const key of changedKeys) {
+    const section = slSections.find((s) => s.name === key)!;
+    const schemaSlice = { [key]: newSchema[key] };
+    const generatedUrlsForSection = collectGeneratedImageUrls(newSchema[key]);
+    const patchImageUrls = generatedUrlsForSection.length > 0
+      ? [...imageUrls, ...generatedUrlsForSection]
+      : imageUrls;
+    const result = await runScopedPatchWithRetry(section.html, schemaSlice, prompt, patchImageUrls, usage);
+    if (!result.html) {
+      console.error(`[pages/follow-up] structural diff+splice: scoped patch failed for changed section "${key}", falling back to full rebuild`, {
+        failedSanity: result.failedSanity,
+        failedParse: result.failedParse,
+      });
+      return null;
+    }
+    patchedSections.push({ name: key, html: result.html });
+  }
+
+  const spliced = patchedSections.length > 0 ? applyPatch(current, patchedSections) : current;
+  console.log('[pages/follow-up] structural edit applied via diff+splice (style preserved)', {
+    promptPreview: prompt.slice(0, 300),
+    removedKeys,
+    changedKeys,
+  });
+  return spliced;
+}
+
 function countImagePrompts(node: unknown): number {
   if (!node || typeof node !== 'object') return 0;
   if (Array.isArray(node)) {
@@ -1046,6 +1189,35 @@ export async function POST(
     return NextResponse.json({ error: 'You\'re sending messages too fast. Please wait a moment before trying again.' }, { status: 429 });
   }
 
+  // AI usage on this edit is metered against the account owner (credits/overage).
+  const { ownerId: aiOwnerId, plan: aiOwnerPlan } = await resolveWorkspaceOwner(page.workspace_id);
+  const usageCtx: UsageContext = {
+    ownerId: aiOwnerId,
+    workspaceId: page.workspace_id,
+    pageId: params.id,
+    operation: 'edit',
+  };
+
+  // Soft-cap gate (admins bypass). Runs before the SSE stream opens, so a
+  // blocked request returns clean JSON the editor can turn into an upsell.
+  if (session.user.role !== 'admin') {
+    const gate = await checkAiAllowance(aiOwnerId, aiOwnerPlan);
+    if (!gate.allowed) {
+      return NextResponse.json(
+        {
+          error: gate.reason === 'over_cap'
+            ? 'You\'ve reached your AI overage spend cap. Raise it in Billing to continue.'
+            : 'You\'re out of AI credits for this month. Enable overage in Billing to continue.',
+          softCap: true,
+          reason: gate.reason,
+          usage: gate.summary,
+          overage: gate.overage,
+        },
+        { status: 402 },
+      );
+    }
+  }
+
   if (!page.html_url && !page.html_content) {
     return NextResponse.json({ error: 'Page has not been built yet' }, { status: 400 });
   }
@@ -1097,8 +1269,18 @@ export async function POST(
   schema = JSON.parse(schemaStrNoDataUris);
 
   // Prepare synchronous data
-  const history: { role: 'user' | 'assistant'; content: string; image_urls?: string[] }[] =
+  const history: { role: 'user' | 'assistant'; content: string; image_urls?: string[]; clarify?: boolean }[] =
     Array.isArray(page.conversation_json) ? page.conversation_json : [];
+  // If our own last turn was a clarifying question, this message is the
+  // user's ANSWER to it — never ask another clarifying question back to
+  // back. Whatever they say next (even "you decide" / "that's what I want
+  // you to analyze") is authoritative: proceed with the routing's own best
+  // guess, or fall through to the full-page path, which has this entire
+  // exchange in its conversation history to reason from.
+  const lastAssistantWasClarify =
+    history.length > 0 &&
+    history[history.length - 1]?.role === 'assistant' &&
+    history[history.length - 1]?.clarify === true;
   const htmlForModel = minifyHtmlForModel(
     html.replace(/<script src="[^"]+\/tracker\.js"><\/script>/, '<!-- TRACKER_PLACEHOLDER -->')
   );
@@ -1116,12 +1298,24 @@ export async function POST(
   const effectiveImageUrls = [...(image_urls ?? []), ...promptImageUrls].slice(0, 3);
   const hasUserImages = effectiveImageUrls.length > 0;
 
+  // "Use the real/actual logo [from this URL]" — narrow intent, deliberately
+  // requiring the word "logo" paired with real/actual/exact/same/correct so
+  // it doesn't misfire on an ordinary "make it look like <url>, and shrink
+  // the logo" competitor-rebuild request. Handled below as a scoped asset
+  // swap instead of the usual full-page competitor rebuild, which has no way
+  // to obtain the real logo file — it only ever sees a lossy screenshot or
+  // generates a brand-new (fake) one, which was the actual client complaint
+  // this exists to fix.
+  const REAL_LOGO_INTENT_RE = /\b(real|actual|exact|same|correct)\s+logo\b/i;
+  const isLogoSwapAttempt = competitorUrls.length > 0 && REAL_LOGO_INTENT_RE.test(prompt);
+
   // Scoped-patch candidates — cheap, synchronous, no AI call. A genuine
   // competitor URL always means full-page rebuild (see
   // follow-up-input-scoping.md), so scoping is never attempted when one is
-  // mentioned — but a plain image-asset URL no longer counts as one.
-  const slSections = competitorUrls.length === 0 ? extractSlSections(html) : [];
-  const quoteMatchSection = competitorUrls.length === 0 ? tryDirectQuoteMatch(prompt, slSections) : null;
+  // mentioned — except the real-logo-swap case above, which is itself a
+  // scoped op and needs the section list to splice into.
+  const slSections = (competitorUrls.length === 0 || isLogoSwapAttempt) ? extractSlSections(html) : [];
+  const quoteMatchSection = (competitorUrls.length === 0 || isLogoSwapAttempt) ? tryDirectQuoteMatch(prompt, slSections) : null;
 
   // ── Open SSE stream — no NextResponse.json after this point ───────────────
 
@@ -1164,9 +1358,83 @@ export async function POST(
         // untouched for this path (see follow-up-input-scoping.md).
         let generatedImageUrl: string | null = null;
 
+        // ── Real-logo swap ────────────────────────────────────────────────
+        // See isLogoSwapAttempt comment above for the intent match. This must
+        // run before anything else in this block (and short-circuit on its
+        // own failure via scopedFailureReason) — otherwise a failed fetch
+        // would fall through to the generic routing call below, which has no
+        // idea a real logo was supposed to be used and could silently head
+        // down the image_generate path, reproducing the exact fake-logo bug
+        // this exists to fix.
+        if (!scopedApplied && !targetSections && isLogoSwapAttempt) {
+          if (request.signal.aborted) { closeSSE(controller); return; }
+          sendSSE(controller, { type: 'status', message: 'Fetching logo...' });
+          const fetchedLogoUrl = await fetchLogoUrl(competitorUrls[0]);
+          // Confirm it's actually an image before trusting it — extraction is
+          // regex-based against arbitrary third-party HTML and could in
+          // theory pick up a non-image src.
+          const realLogoUrl = fetchedLogoUrl && (await isImageUrl(fetchedLogoUrl)) ? fetchedLogoUrl : null;
+
+          if (!realLogoUrl) {
+            console.error('[pages/follow-up] real logo swap: could not find/verify a logo on the referenced page', {
+              url: competitorUrls[0],
+            });
+            sendSSE(controller, {
+              type: 'error',
+              message: "We couldn't find a usable logo image on that page. Try attaching the logo file directly instead.",
+            });
+            closeSSE(controller);
+            return;
+          }
+
+          const navSection = slSections.find((s) => s.name === 'nav') ?? slSections.find((s) => /nav|header/i.test(s.name));
+          let logoTargetName: string | null = navSection?.name ?? null;
+          if (!logoTargetName) {
+            const routing = await tryRoutingCall(prompt, schema, slSections, [], usageCtx);
+            if (
+              routing &&
+              routing.target_sections.length === 1 &&
+              slSections.some((s) => s.name === routing.target_sections[0])
+            ) {
+              logoTargetName = routing.target_sections[0];
+            }
+          }
+
+          if (!logoTargetName) {
+            console.error('[pages/follow-up] real logo swap: could not identify a target section', {
+              knownSectionNames: slSections.map((s) => s.name),
+            });
+            scopedFailureReason = 'logo_swap_no_target_section';
+          } else {
+            const logoSection = slSections.find((s) => s.name === logoTargetName)!;
+            const logoPrompt =
+              `${prompt}\n\n(The real logo image has just been fetched directly from the referenced site — it is attached below and is the FINAL, intended logo. Replace whatever currently represents the logo (an <img> tag, or inline <svg>/icon markup) with a single <img src="${realLogoUrl}" alt="logo" style="height:<match the current logo's rendered height>; width:auto;"> in its place. Do not invent or generate a different image. Do not leave the old logo markup in place alongside the new one. Do not add any background color/box behind the image — it must sit directly on the section's existing background so it blends in.)`;
+            sendSSE(controller, { type: 'status', message: 'Applying real logo...' });
+            const patchResult = await runScopedPatchWithRetry(
+              logoSection.html,
+              { [logoTargetName]: (schema as Record<string, unknown> | null | undefined)?.[logoTargetName] },
+              logoPrompt,
+              [realLogoUrl],
+              usageCtx,
+            );
+            if (patchResult.html && patchResult.html.includes(realLogoUrl)) {
+              finalHtml = applyPatch(html, [{ name: logoTargetName, html: patchResult.html }]);
+              scopedApplied = true;
+              console.log('[pages/follow-up] real logo swap applied', { section: logoTargetName, realLogoUrl });
+            } else {
+              console.error('[pages/follow-up] real logo swap: scoped patch failed to embed the fetched logo', {
+                section: logoTargetName,
+                failedSanity: patchResult.failedSanity,
+                failedParse: patchResult.failedParse,
+              });
+              scopedFailureReason = 'logo_swap_patch_failed';
+            }
+          }
+        }
+
         // Surgical copy rewrite first — avoids full-section HTML regeneration
         // for "paste headline + change this text" prompts (no images / competitor).
-        if (!hasUserImages && !scopedApplied && isSimpleTextRewritePrompt(prompt)) {
+        if (!hasUserImages && !scopedApplied && !scopedFailureReason && isSimpleTextRewritePrompt(prompt)) {
           sendSSE(controller, { type: 'status', message: 'Updating text...' });
           const surgical = await trySurgicalTextEdit(prompt, slSections);
           if (surgical) {
@@ -1179,9 +1447,15 @@ export async function POST(
           }
         }
 
-        if (!scopedApplied && !targetSections) {
+        // A logo-swap attempt above already qualified as a scoped op and
+        // either succeeded (scopedApplied) or hard-failed (scopedFailureReason)
+        // — never let the generic routing call below re-evaluate the same
+        // instruction from scratch, since it doesn't know a real logo was
+        // fetched and could route it into image_generate (an AI-fabricated
+        // logo), silently reproducing the bug this branch exists to prevent.
+        if (!scopedApplied && !targetSections && !scopedFailureReason) {
           sendSSE(controller, { type: 'status', message: 'Locating section...' });
-          const routing = await tryRoutingCall(prompt, schema, slSections, effectiveImageUrls);
+          const routing = await tryRoutingCall(prompt, schema, slSections, effectiveImageUrls, usageCtx);
           const basicShapeOk = !!routing &&
             routing.type === 'patch' &&
             routing.target_sections.length >= 1 &&
@@ -1244,10 +1518,25 @@ export async function POST(
           const forceFaqVsFormClarify =
             !!routing && shouldForceClarifyFaqVsForm(prompt, routing, hasUserImages, slSections);
 
+          // Clarifying "which section?" only makes sense for ops that target
+          // a specific, namable section — "structural"/"style" are broad,
+          // often-analytical requests (e.g. "remove the lower-value
+          // sections") where the ambiguity isn't a fact only the user has,
+          // it's a judgment call the full-page path (with complete page
+          // content) is meant to make itself. Never ask about those — let
+          // them fall straight through to the full-page path below.
+          const narrowScopedType =
+            !!routing && ['patch', 'remove_section', 'insert_section', 'reorder_sections', 'image_generate'].includes(routing.type);
+
           // Unsure which section → ask the user instead of guessing or
-          // falling into an expensive/oversized full-page rebuild.
+          // falling into an expensive/oversized full-page rebuild. Never ask
+          // twice in a row — if we already asked last turn, the user's reply
+          // is the answer (even a non-specific one), not a new prompt to
+          // re-evaluate.
           const routingUnsure =
             !!routing &&
+            !lastAssistantWasClarify &&
+            narrowScopedType &&
             ((routing.confidence === 'low' && !namesItsSingleSection && !anyScopedPath) ||
               forceFaqVsFormClarify);
 
@@ -1275,7 +1564,7 @@ export async function POST(
             const updatedConversation = [
               ...history,
               userEntry,
-              { role: 'assistant', content: question },
+              { role: 'assistant', content: question, clarify: true },
             ];
             await db
               .from('pages')
@@ -1387,7 +1676,7 @@ export async function POST(
               break;
             }
             const schemaSlice = { [name]: (schema as Record<string, unknown> | null | undefined)?.[name] };
-            const patchResult = await runScopedPatchWithRetry(section.html, schemaSlice, scopedPrompt, scopedImageUrls);
+            const patchResult = await runScopedPatchWithRetry(section.html, schemaSlice, scopedPrompt, scopedImageUrls, usageCtx);
             const updated = patchResult.html;
             if (!updated) {
               console.error(`[pages/follow-up] scoped patch failed for section "${name}" after retry`, {
@@ -1513,6 +1802,7 @@ export async function POST(
             ],
             maxTokens: 128000,
             label: 'follow-up:pass1-classify',
+            usage: { ...usageCtx, operation: 'build' },
           },
           (chunk) => {
             pass1Buffer += chunk;
@@ -1618,6 +1908,19 @@ export async function POST(
 
         if (request.signal.aborted) { closeSSE(controller); return; }
 
+        // Content-only structural edits (remove/shorten sections, no
+        // redesign intent) — apply the AI's already-decided schema diff
+        // directly against the existing HTML instead of a full rebuild, so
+        // untouched sections and the page's visual style can't drift. Falls
+        // back to the full rebuild below on any failure.
+        sendSSE(controller, { type: 'status', message: 'Applying changes...' });
+        const diffSplicedHtml = !hasCompetitorContext
+          ? await tryStructuralDiffSplice(html, schema, enrichedSchema, slSections, prompt, effectiveImageUrls, usageCtx)
+          : null;
+
+        if (diffSplicedHtml) {
+          finalHtml = diffSplicedHtml;
+        } else {
         const styleReferenceNote = hasCompetitorContext
           ? undefined
           : `Maintain the exact visual style — colors, fonts, spacing — of this existing page:\n${htmlForModel}`;
@@ -1665,6 +1968,7 @@ export async function POST(
           closeSSE(controller);
           return;
         }
+        } // end full-rebuild fallback (diff+splice not eligible/failed)
 
         finalSchemaJson = enrichedSchema;
       } else if (parsed.type === 'patch') {
@@ -1780,6 +2084,10 @@ export async function POST(
         await db.from('personalization_rules').delete().eq('page_id', params.id);
       }
       await db.from('pages').update(updatePayload).eq('id', params.id);
+
+      // Report any accrued overage to Stripe (no-op unless overage is enabled
+      // and a metered price is configured). Fire-and-forget.
+      void reportAiOverageUsage(aiOwnerId);
 
       const doneEvent: SSEEvent = {
         type: 'done',

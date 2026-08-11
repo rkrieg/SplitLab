@@ -5,6 +5,23 @@ import { db } from '@/lib/supabase-server';
 import { resolveWorkspaceRole } from '@/lib/workspace-auth';
 import { z } from 'zod';
 
+/** Redistribute weights equally across a test's non-archived variants (sums to 100). */
+async function redistributeActiveWeights(testId: string) {
+  const { data: active } = await db
+    .from('test_variants')
+    .select('id')
+    .eq('test_id', testId)
+    .is('archived_at', null)
+    .order('created_at', { ascending: true });
+  if (!active || active.length === 0) return;
+  const equalWeight = Math.floor(100 / active.length);
+  let remainder = 100 - equalWeight * active.length;
+  for (const v of active) {
+    const w = equalWeight + (remainder-- > 0 ? 1 : 0);
+    await db.from('test_variants').update({ traffic_weight: w }).eq('id', v.id);
+  }
+}
+
 const goalSchema = z.object({
   id: z.string().uuid().optional(),
   name: z.string().min(1).max(255),
@@ -36,6 +53,8 @@ const updateSchema = z.object({
   weights: z.array(weightSchema).optional(),
   variant_updates: z.array(variantUpdateSchema).optional(),
   delete_variant_id: z.string().uuid().optional(),
+  archive_variant_id: z.string().uuid().optional(),
+  unarchive_variant_id: z.string().uuid().optional(),
 });
 
 // TODO (post-trial): Add ownership check — verify the test's workspace belongs to the
@@ -78,7 +97,7 @@ export async function PATCH(
 
   try {
     const body = await request.json();
-    const { goals, weights, variant_updates, delete_variant_id, ...testFields } = updateSchema.parse(body);
+    const { goals, weights, variant_updates, delete_variant_id, archive_variant_id, unarchive_variant_id, ...testFields } = updateSchema.parse(body);
 
     // Block duplicate active url_path within the same workspace when this update
     // would result in an active test (activation or path change while active)
@@ -249,6 +268,48 @@ export async function PATCH(
         }
       }
     }
+
+    // Archive a variant: pull it out of the live split (weight 0) but keep its
+    // history. Remaining active variants absorb its traffic. A test must
+    // always keep at least one active variant — same invariant as delete.
+    if (archive_variant_id) {
+      const { data: activeVariants } = await db
+        .from('test_variants')
+        .select('id')
+        .eq('test_id', params.id)
+        .is('archived_at', null);
+
+      const remainingActive = (activeVariants ?? []).filter((v) => v.id !== archive_variant_id).length;
+      if (remainingActive === 0) {
+        return NextResponse.json(
+          { error: 'Cannot archive the last active variant — a test must always have at least one live.' },
+          { status: 400 },
+        );
+      }
+
+      const { error } = await db
+        .from('test_variants')
+        .update({ archived_at: new Date().toISOString(), traffic_weight: 0 })
+        .eq('id', archive_variant_id)
+        .eq('test_id', params.id);
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+      await redistributeActiveWeights(params.id);
+    }
+
+    // Restore an archived variant back into the active split.
+    if (unarchive_variant_id) {
+      const { error } = await db
+        .from('test_variants')
+        .update({ archived_at: null })
+        .eq('id', unarchive_variant_id)
+        .eq('test_id', params.id);
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+      await redistributeActiveWeights(params.id);
+    }
+
+    // Note: variant duplication is handled by the dedicated
+    // POST /api/tests/[id]/variants/[variantId]/duplicate route (sets
+    // duplicated_from_id) — not by this PATCH endpoint.
 
     // Upsert goals — preserve existing UUIDs so historical events stay linked
     if (goals) {

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getStripeClient } from '@/lib/stripeClient';
 import { db } from '@/lib/supabase-server';
 import { accrueCommissionForInvoice, markReferralChurned } from '@/lib/affiliate';
+import { logEvent } from '@/lib/log';
 
 export const dynamic = 'force-dynamic';
 
@@ -51,6 +52,7 @@ export async function POST(request: NextRequest) {
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Unknown error';
     console.error('[stripe-webhook] signature verification failed:', msg);
+    await logEvent('stripe_webhook', 'warn', 'signature verification failed', { errorMessage: msg });
     return NextResponse.json({ error: 'Invalid signature' }, { status: 400 });
   }
 
@@ -186,9 +188,14 @@ export async function POST(request: NextRequest) {
       default:
         break;
     }
+    await logEvent('stripe_webhook', 'info', 'processed', { eventType: event.type, eventId: event.id });
   } catch (err) {
     console.error('[stripe-webhook] processing error for', event.type, err);
     // Return 200 anyway so Stripe doesn't retry — we log and fix bugs separately
+    await logEvent('stripe_webhook', 'error', 'processing error', {
+      eventType: event.type, eventId: event.id,
+      errorMessage: err instanceof Error ? err.message : String(err),
+    });
   }
 
   return NextResponse.json({ received: true });

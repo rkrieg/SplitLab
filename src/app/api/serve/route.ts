@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/supabase-server';
 import { downloadHtml } from '@/lib/storage';
 import { buildTrackingSnippet, buildScanScript, injectIntoHtml, buildScriptTag, buildFaviconTag, stripFaviconTags, stripSplitLabTrackerTags } from '@/lib/tracking';
-import { assignVariant, getDeviceType } from '@/lib/utils';
+import { assignVariant, getDeviceType, isBotRequest } from '@/lib/utils';
+import { logEvent } from '@/lib/log';
 import { getPlanDetails } from '@/lib/plans';
 import { buildUtmSwapScript } from '@/lib/utm-swap-script';
 
@@ -75,6 +76,12 @@ export async function GET(request: NextRequest) {
   // which fetches us server-side so we can't see it ourselves. Used as sl_purl
   // in proxy mode when there's no custom domain.
   const publicUrl = searchParams.get('public_url') || '';
+  const userAgent = request.headers.get('user-agent');
+  const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || null;
+  // Non-browser traffic (crawlers/scanners/scripts) still gets served normally —
+  // we just don't let it inflate the pageview count. See isBotRequest() for why
+  // the pattern list stays conservative (avoid false-positiving real visitors).
+  const isBot = isBotRequest(userAgent);
 
   try {
     const previewTestId = searchParams.get('preview_test_id') || null;
@@ -154,10 +161,21 @@ export async function GET(request: NextRequest) {
       test = testRow;
     }
 
+    // Custom UTM/click-ID param names staff registered (workspace-wide or
+    // scoped to this test) — extends what the tracking snippet auto-detects
+    // and hidden-field-injects beyond the built-in utm_*/click-id/hsa_* rules.
+    const { data: customParamRows } = await db
+      .from('custom_utm_params')
+      .select('name')
+      .eq('workspace_id', workspaceId)
+      .eq('enabled', true)
+      .or(`test_id.is.null,test_id.eq.${test.id}`);
+    const customParamNames = (customParamRows || []).map((r: { name: string }) => r.name);
+
     // 3. Fetch variants
     const { data: variants, error: variantsError } = await db
       .from('test_variants')
-      .select('id, name, page_id, redirect_url, proxy_mode, traffic_weight, is_control, pages(html_url, html_content)')
+      .select('id, name, page_id, redirect_url, proxy_mode, traffic_weight, is_control, archived_at, pages(html_url, html_content)')
       .eq('test_id', test.id)
       .order('is_control', { ascending: false });
 
@@ -249,7 +267,19 @@ export async function GET(request: NextRequest) {
       : variants.find((v) => v.id === stickyVariantId);
 
     if (!selectedVariant) {
-      selectedVariant = await assignVariant(visitorId, test.id, variants as { id: string; traffic_weight: number }[]) as typeof variants[0];
+      // Random/weighted assignment must never land on an archived variant —
+      // only forcedVid/sticky (explicit) above can. If archiving ever left a
+      // test with zero active variants (shouldn't happen, archive is guarded
+      // against it server-side), fail loudly with 404 instead of silently
+      // falling back to whatever assignVariant() picks with a 0 total weight.
+      const activeVariants = variants.filter((v) => !v.archived_at);
+      if (activeVariants.length === 0) {
+        return new NextResponse(notFoundHtml(domain), {
+          status: 404,
+          headers: { 'Content-Type': 'text/html' },
+        });
+      }
+      selectedVariant = await assignVariant(visitorId, test.id, activeVariants as { id: string; traffic_weight: number }[]) as typeof variants[0];
     }
 
     // 6a. If variant has a redirect URL
@@ -292,7 +322,7 @@ export async function GET(request: NextRequest) {
           .or(`variant_id.is.null,variant_id.eq.${selectedVariant.id}`);
 
         const proxyTrackingSnippet = (overVisitorCap || forcedVh) ? '' : buildTrackingSnippet(
-          test.id, selectedVariant.id, visitorId, proxyGoals || [], APP_URL
+          test.id, selectedVariant.id, visitorId, proxyGoals || [], APP_URL, customParamNames
         );
 
         const iframeUrlObj = new URL(selectedVariant.redirect_url);
@@ -332,14 +362,18 @@ ${proxyTrackingSnippet}
 </html>`;
 
         // Record server-side pageview (skip for cap, scan, and Open-button previews)
-        if (!overVisitorCap && !isScan && !forcedVh) {
+        if (!overVisitorCap && !isScan && !forcedVh && !isBot) {
           await db.from('events').insert({
             test_id: test.id,
             variant_id: selectedVariant.id,
             visitor_hash: visitorId,
             type: 'pageview',
-            device_type: getDeviceType(request.headers.get('user-agent')),
-            metadata: { redirect_url: selectedVariant.redirect_url, proxy: true },
+            device_type: getDeviceType(userAgent),
+            metadata: { redirect_url: selectedVariant.redirect_url, proxy: true, user_agent: userAgent, ip: clientIp },
+          });
+        } else if (isBot && !overVisitorCap && !isScan && !forcedVh) {
+          await logEvent('event_skip', 'info', 'bot-filtered pageview (proxy)', {
+            testId: test.id, variantId: selectedVariant.id, userAgent, ip: clientIp,
           });
         }
 
@@ -382,14 +416,18 @@ ${proxyTrackingSnippet}
         redirectResponse.cookies.set(stickyCookieName, selectedVariant.id, cookieOptions);
       }
 
-      if (!overVisitorCap && !isScan && !forcedVh) {
+      if (!overVisitorCap && !isScan && !forcedVh && !isBot) {
         await db.from('events').insert({
           test_id: test.id,
           variant_id: selectedVariant.id,
           visitor_hash: visitorId,
           type: 'pageview',
-          device_type: getDeviceType(request.headers.get('user-agent')),
-          metadata: { redirect_url: selectedVariant.redirect_url },
+          device_type: getDeviceType(userAgent),
+          metadata: { redirect_url: selectedVariant.redirect_url, user_agent: userAgent, ip: clientIp },
+        });
+      } else if (isBot && !overVisitorCap && !isScan && !forcedVh) {
+        await logEvent('event_skip', 'info', 'bot-filtered pageview (redirect)', {
+          testId: test.id, variantId: selectedVariant.id, userAgent, ip: clientIp,
         });
       }
 
@@ -475,7 +513,8 @@ ${proxyTrackingSnippet}
       selectedVariant.id,
       visitorHash,
       goals || [],
-      APP_URL
+      APP_URL,
+      customParamNames
     );
 
     // 10. Inject UTM swap script (client-side, reads window.location.search)
@@ -504,14 +543,18 @@ ${proxyTrackingSnippet}
     const finalHtml = injectIntoHtml(htmlWithUtm, headScripts, bodyEndScripts, trackingSnippet);
 
     // 10c. Record pageview (skip for cap, scan, and Open-button previews)
-    if (!overVisitorCap && !isScan && !forcedVh) {
+    if (!overVisitorCap && !isScan && !forcedVh && !isBot) {
       await db.from('events').insert({
         test_id: test.id,
         variant_id: selectedVariant.id,
         visitor_hash: visitorId,
         type: 'pageview',
-        device_type: getDeviceType(request.headers.get('user-agent')),
-        metadata: {},
+        device_type: getDeviceType(userAgent),
+        metadata: { user_agent: userAgent, ip: clientIp },
+      });
+    } else if (isBot && !overVisitorCap && !isScan && !forcedVh) {
+      await logEvent('event_skip', 'info', 'bot-filtered pageview (html)', {
+        testId: test.id, variantId: selectedVariant.id, userAgent, ip: clientIp,
       });
     }
 

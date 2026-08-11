@@ -980,6 +980,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       const err = await res.json().catch(() => ({ error: 'Edit failed' }));
       const message = err.error || 'Edit failed';
       if (err.limitError) {
+        // Plan doesn't include AI editing — upsell to a higher tier.
         toast.error((t) => (
           <span>
             {message}{' '}
@@ -992,6 +993,9 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
             </a>
           </span>
         ), { duration: 8000 });
+      } else if (err.softCap) {
+        // Out of AI credits / over the overage spend cap — message points to Billing.
+        toast.error(message, { duration: 8000 });
       } else {
         toast.error(message);
       }

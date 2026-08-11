@@ -1,6 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import { uploadImage } from '@/lib/storage';
+import { logEvent } from '@/lib/log';
+import { recordAiUsage, type UsageContext } from '@/lib/ai-usage';
 
 /**
  * Provider-agnostic content shape used by every AI page-builder route.
@@ -33,6 +35,12 @@ export interface AskAIOptions {
    * in a flow that makes several of them per request.
    */
   label: string;
+  /**
+   * When set, this call's token usage is metered against the account owner for
+   * AI credits / overage billing. Recorded centrally here so every AI route is
+   * counted in one place — even when a call truncates. Best-effort; never throws.
+   */
+  usage?: UsageContext;
 }
 
 /**
@@ -60,7 +68,11 @@ function getAnthropicClient(): Anthropic {
   if (!anthropicClient) {
     const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
     if (!apiKey) throw new Error('ANTHROPIC_API_KEY environment variable is not set');
-    anthropicClient = new Anthropic({ apiKey });
+    // 15-min timeout: large full-page rewrites (32K output on a big page) can
+    // run past the SDK/undici default (~5 min → "HTTP/2 stream timeout after
+    // 300000"), which terminated long edits mid-stream. Streaming keeps the
+    // connection active; this just lifts the hard ceiling.
+    anthropicClient = new Anthropic({ apiKey, timeout: 15 * 60 * 1000, maxRetries: 1 });
   }
   return anthropicClient;
 }
@@ -206,9 +218,16 @@ async function askAnthropic(options: AskAIOptions): Promise<string> {
       const response = await stream.finalMessage();
 
       const { input_tokens, output_tokens } = response.usage;
+      // Meter usage centrally (before any truncation throw, so truncated calls
+      // still count — we paid for those tokens). Fire-and-forget; never blocks.
+      if (options.usage) void recordAiUsage(options.usage, model, input_tokens, output_tokens);
       console.log(`[AI tokens] callId=${callId} label=${options.label} elapsedMs=${Date.now() - startedAt} input=${input_tokens} output=${output_tokens} total=${input_tokens + output_tokens} model=${model} maxTokens=${options.maxTokens} stop_reason=${response.stop_reason} attempt=${attempt}`);
 
       if (response.stop_reason === 'max_tokens') {
+        await logEvent('ai_call', 'warn', 'response truncated at maxTokens', {
+          callId, label: options.label, model, elapsedMs: Date.now() - startedAt,
+          inputTokens: input_tokens, outputTokens: output_tokens, maxTokens: options.maxTokens, attempt,
+        });
         throw new AIResponseTruncatedError(output_tokens, options.maxTokens);
       }
 
@@ -219,12 +238,21 @@ async function askAnthropic(options: AskAIOptions): Promise<string> {
       if (!block) {
         throw new Error(`No text block in Anthropic response (block types: ${response.content.map((b) => b.type).join(', ')})`);
       }
+      await logEvent('ai_call', 'info', 'success', {
+        callId, label: options.label, model, elapsedMs: Date.now() - startedAt,
+        inputTokens: input_tokens, outputTokens: output_tokens, maxTokens: options.maxTokens,
+        stopReason: response.stop_reason, attempt,
+      });
       return block.text;
     } catch (err) {
       lastErr = err;
       if (err instanceof AIResponseTruncatedError) throw err;
       const retryable = isTransientAIConnectionError(err) && attempt < AI_TRANSIENT_MAX_ATTEMPTS;
       console.error(`[ai-client error] callId=${callId} label=${options.label} model=${model} elapsedMs=${Date.now() - startedAt} attempt=${attempt} retryable=${retryable}`, err);
+      await logEvent('ai_call', retryable ? 'warn' : 'error', retryable ? 'transient error, retrying' : 'call failed', {
+        callId, label: options.label, model, elapsedMs: Date.now() - startedAt, attempt, retryable,
+        errorMessage: err instanceof Error ? err.message : String(err),
+      });
       if (!retryable) throw err;
       const backoffMs = 1000 * attempt;
       console.warn(`[ai-client retry] callId=${callId} label=${options.label} attempt=${attempt}/${AI_TRANSIENT_MAX_ATTEMPTS} backoffMs=${backoffMs} reason=transient-connection`);
@@ -281,12 +309,24 @@ async function askAnthropicStream(options: AskAIOptions, onChunk: (text: string)
 
       const response = await stream.finalMessage();
       const { input_tokens, output_tokens } = response.usage;
+      // Meter usage centrally (before any truncation throw, so truncated calls
+      // still count — we paid for those tokens). Fire-and-forget; never blocks.
+      if (options.usage) void recordAiUsage(options.usage, model, input_tokens, output_tokens);
       console.log(`[AI tokens stream] callId=${callId} label=${options.label} elapsedMs=${Date.now() - startedAt} chunks=${chunkCount} input=${input_tokens} output=${output_tokens} total=${input_tokens + output_tokens} model=${model} maxTokens=${options.maxTokens} stop_reason=${response.stop_reason} attempt=${attempt}`);
 
       if (response.stop_reason === 'max_tokens') {
+        await logEvent('ai_call', 'warn', 'response truncated at maxTokens', {
+          callId, label: options.label, model, elapsedMs: Date.now() - startedAt, chunks: chunkCount,
+          inputTokens: input_tokens, outputTokens: output_tokens, maxTokens: options.maxTokens, attempt,
+        });
         throw new AIResponseTruncatedError(output_tokens, options.maxTokens);
       }
 
+      await logEvent('ai_call', 'info', 'success', {
+        callId, label: options.label, model, elapsedMs: Date.now() - startedAt, chunks: chunkCount,
+        inputTokens: input_tokens, outputTokens: output_tokens, maxTokens: options.maxTokens,
+        stopReason: response.stop_reason, attempt,
+      });
       return fullText;
     } catch (err) {
       lastErr = err;
@@ -300,6 +340,11 @@ async function askAnthropicStream(options: AskAIOptions, onChunk: (text: string)
         `[ai-client error] callId=${callId} label=${options.label} model=${model} elapsedMs=${Date.now() - startedAt} chunksReceived=${chunkCount} gotFirstChunk=${firstChunkAt !== null} attempt=${attempt} retryable=${retryable}`,
         err,
       );
+      await logEvent('ai_call', retryable ? 'warn' : 'error', retryable ? 'transient error, retrying' : 'call failed', {
+        callId, label: options.label, model, elapsedMs: Date.now() - startedAt, chunksReceived: chunkCount,
+        gotFirstChunk: firstChunkAt !== null, attempt, retryable,
+        errorMessage: err instanceof Error ? err.message : String(err),
+      });
       if (!retryable) throw err;
       const backoffMs = 1000 * attempt;
       console.warn(`[ai-client retry] callId=${callId} label=${options.label} attempt=${attempt}/${AI_TRANSIENT_MAX_ATTEMPTS} backoffMs=${backoffMs} reason=transient-connection-before-first-chunk`);
@@ -357,6 +402,9 @@ export async function generateAndUploadImage(
 
     const publicUrl = await uploadImage(pageSlug, buffer, mimeType, ext);
     console.log(`[generateAndUploadImage] uploaded image for prompt: "${prompt.slice(0, 60)}…" elapsedMs=${Date.now() - startedAt}`);
+    await logEvent('ai_call', 'info', 'image generated', {
+      label: 'generateAndUploadImage', pageSlug, quality, elapsedMs: Date.now() - startedAt,
+    });
     return publicUrl;
   } catch (err) {
     const e = err as Record<string, unknown>;
@@ -366,6 +414,10 @@ export async function generateAndUploadImage(
       type: e.type,
       code: e.code,
       elapsedMs: Date.now() - startedAt,
+    });
+    await logEvent('ai_call', 'error', 'image generation failed', {
+      label: 'generateAndUploadImage', pageSlug, quality, elapsedMs: Date.now() - startedAt,
+      errorMessage: (err as Error).message, status: e.status, type: e.type, code: e.code,
     });
     return null;
   }

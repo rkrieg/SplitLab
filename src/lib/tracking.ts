@@ -10,7 +10,8 @@ export function buildTrackingSnippet(
   variantId: string,
   visitorHash: string,
   goals: ConversionGoal[],
-  appUrl: string
+  appUrl: string,
+  customParamNames: string[] = []
 ): string {
   const goalsJson = JSON.stringify(
     goals.map((g) => ({
@@ -34,6 +35,11 @@ export function buildTrackingSnippet(
     visitorHash: ${JSON.stringify(visitorHash)},
     apiUrl: ${JSON.stringify(appUrl)},
     goals: ${goalsJson},
+    // Staff-registered param names (workspace- or test-scoped) that aren't
+    // covered by the built-in utm_*/click-id/hsa_* detection — e.g. a custom
+    // affiliate ID. Extends isTrackingParam() below so these get captured
+    // AND hidden-field-injected the same as any auto-detected param.
+    customParams: ${JSON.stringify(customParamNames)},
     _sent: {},
     send: function(payload) {
       if (navigator.sendBeacon) {
@@ -163,6 +169,9 @@ export function buildTrackingSnippet(
 
   var MAX_PARAMS = 40, MAX_PARAM_KEY = 100, MAX_PARAM_VALUE = 500, MAX_PARAMS_SERIALIZED = 8192;
 
+  var CUSTOM_PARAMS = {};
+  (_SL.customParams || []).forEach(function(n) { CUSTOM_PARAMS[n] = 1; });
+
   function isTrackingParam(name) {
     if (!name) return false;
     var n = String(name).toLowerCase();
@@ -172,6 +181,7 @@ export function buildTrackingSnippet(
     if (n.indexOf('hsa_') === 0) return true;
     if (CLICK_ID_PARAMS[n] === 1) return true;
     if (EXTRA_ID_PARAMS[n] === 1) return true;
+    if (CUSTOM_PARAMS[n] === 1) return true;
     return false;
   }
 
@@ -320,6 +330,52 @@ export function buildTrackingSnippet(
     } else {
       form.setAttribute('action', dec);
     }
+  }
+
+  // ─── UTM hidden-field injection ─────────────────────────────────────────────
+  //
+  // Unbounce et al. default every form to carrying utm_source/gclid/etc as
+  // hidden inputs so ad-attribution survives a native form POST — including
+  // one that bypasses this script entirely (a native HubSpot embedded form
+  // widget, a third-party script that reads its own form's field values to
+  // build its own request). URL values alone don't help there: only what's
+  // physically an <input> inside the form travels with that submission.
+  //
+  // Separate marker (data-sl-utm) from decorateFormForSubmit's data-sl above —
+  // different purpose (real ad-tracking values vs cross-domain link params)
+  // and this one doubles as the idempotency check below (ours vs the page's
+  // own pre-existing field of the same name).
+  function injectUtmFieldsIntoForm(form) {
+    try {
+      if (!form || !form.querySelector) return;
+      var p = trackingParams();
+      var names = LEGACY_PARAM_KEYS.concat(Object.keys(CLICK_ID_PARAMS), Object.keys(EXTRA_ID_PARAMS), _SL.customParams || []);
+      for (var i = 0; i < names.length; i++) {
+        var key = names[i];
+        var val = p[key];
+        if (!val) continue;
+        var existing = form.querySelector("input[name='" + key + "']");
+        if (existing) {
+          // Never duplicate. Only fill a blank — a page's own already-working
+          // hidden field (or a real value some other script set) wins.
+          if (!existing.value) existing.value = val;
+          continue;
+        }
+        var hidden = document.createElement('input');
+        hidden.type = 'hidden';
+        hidden.name = key;
+        hidden.value = val;
+        hidden.setAttribute('data-sl-utm', '1');
+        form.appendChild(hidden);
+      }
+    } catch(e) {}
+  }
+
+  function injectUtmFieldsIntoForms() {
+    try {
+      var forms = document.querySelectorAll('form');
+      for (var i = 0; i < forms.length; i++) injectUtmFieldsIntoForm(forms[i]);
+    } catch(e) {}
   }
 
   function patchWindowOpen() {
@@ -525,9 +581,9 @@ export function buildTrackingSnippet(
           // rules — hidden inputs also carry CSRF tokens and session IDs — and
           // route them to extra_params, never to form_fields.
           try {
-            // Ours, appended by decorateFormForSubmit. Skipping these is what
-            // stops the inject-then-recapture loop.
-            if (el.getAttribute && el.getAttribute('data-sl') === '1') continue;
+            // Ours, appended by decorateFormForSubmit / injectUtmFieldsIntoForm.
+            // Skipping these is what stops the inject-then-recapture loop.
+            if (el.getAttribute && (el.getAttribute('data-sl') === '1' || el.getAttribute('data-sl-utm') === '1')) continue;
             var hn = el.name || '';
             if (isTrackingParam(hn) && el.value) hiddenParams[hn] = el.value;
           } catch(e) {}
@@ -756,7 +812,12 @@ export function buildTrackingSnippet(
 
     // Global form submit — captures all forms (not just goal-targeted ones)
     document.addEventListener('submit', function(e) {
-      if (!_isScan) decorateFormForSubmit(e.target);
+      if (!_isScan) {
+        // Order matters: decorateFormForSubmit first, so injectUtmFieldsIntoForm's
+        // duplicate-check sees whatever it already added to a GET form's action.
+        decorateFormForSubmit(e.target);
+        injectUtmFieldsIntoForm(e.target);
+      }
       captureFormLead(e.target);
     }, true);
 
@@ -807,11 +868,18 @@ export function buildTrackingSnippet(
     } catch(e) {}
   }
 
+  function eagerInjectUtmFields() {
+    // Scan mode renders this snippet to detect trackable elements — real
+    // captured values don't belong in that DOM pass.
+    if (!_isScan) injectUtmFieldsIntoForms();
+  }
+
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', function() { initGoals(); registerFormFields(); });
+    document.addEventListener('DOMContentLoaded', function() { initGoals(); registerFormFields(); eagerInjectUtmFields(); });
   } else {
     initGoals();
     registerFormFields();
+    eagerInjectUtmFields();
   }
 
   window.SplitLab = _SL;

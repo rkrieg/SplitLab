@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
-import { uploadHtml, fileNameFromUrl } from '@/lib/storage';
+import { uploadHtml, fileNameFromUrl, inlineDataUrisToStorage } from '@/lib/storage';
 import { resolveWorkspaceRole } from '@/lib/workspace-auth';
 import { getLinkedVariant } from '@/lib/page-drafts';
 
@@ -37,12 +37,18 @@ export async function POST(
     return NextResponse.json({ error: 'No unsaved changes to replace the variant with' }, { status: 400 });
   }
 
+  // Swap embedded base64 images for real hosted files before this HTML goes
+  // live — see storage.ts's inlineDataUrisToStorage for why. Also cleans up
+  // any legacy inline images left over from before this fix existed, since
+  // this is the point a draft becomes the page's live content.
+  const convertedDraftHtml = await inlineDataUrisToStorage(page.draft_html_content, params.id);
+
   const storagePath = fileNameFromUrl(page.html_url);
-  const htmlUrl = await uploadHtml(storagePath, page.draft_html_content);
+  const htmlUrl = await uploadHtml(storagePath, convertedDraftHtml);
 
   const updatePayload: Record<string, unknown> = {
     html_url: htmlUrl,
-    html_content: page.draft_html_content.length < 500_000 ? page.draft_html_content : null,
+    html_content: convertedDraftHtml.length < 500_000 ? convertedDraftHtml : null,
     draft_html_content: null,
     draft_schema_json: null,
     // Live markup changed — old UTM selectors/rules can't be trusted, same

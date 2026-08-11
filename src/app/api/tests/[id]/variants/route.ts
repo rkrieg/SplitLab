@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
-import { uploadHtml } from '@/lib/storage';
+import { uploadHtml, inlineDataUrisToStorage } from '@/lib/storage';
 import { resolveWorkspaceRole } from '@/lib/workspace-auth';
 import { PLAN_LIMITS } from '@/lib/plans';
 import { z } from 'zod';
@@ -93,16 +93,22 @@ export async function POST(
 
     // If HTML content provided, create a page
     if (data.html_content) {
+      // Swap embedded base64 images for real hosted files before this HTML
+      // is ever stored — see storage.ts's inlineDataUrisToStorage for why.
+      const newPageId = crypto.randomUUID();
+      const convertedHtml = await inlineDataUrisToStorage(data.html_content, newPageId);
+
       const fileName = `${test.workspace_id}/${crypto.randomUUID()}.html`;
-      const htmlUrl = await uploadHtml(fileName, data.html_content);
+      const htmlUrl = await uploadHtml(fileName, convertedHtml);
 
       const { data: page, error: pageErr } = await db
         .from('pages')
         .insert({
+          id: newPageId,
           workspace_id: test.workspace_id,
           name: data.name,
           html_url: htmlUrl,
-          html_content: data.html_content,
+          html_content: convertedHtml,
         })
         .select('id')
         .single();
