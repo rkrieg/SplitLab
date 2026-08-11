@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
 import {
   Plus, FileCode2, MoreHorizontal, Play, Pause, Check, Trash2,
-  Globe, Link2, ShieldCheck, ShieldX, Edit2, Info,
+  Globe, Link2, ShieldCheck, ShieldX, Edit2, Info, Copy,
 } from 'lucide-react';
 import Spinner from '@/components/ui/Spinner';
 import Modal from '@/components/ui/Modal';
@@ -81,6 +81,12 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
   const [addingVariant, setAddingVariant] = useState(false);
   const [variantMode, setVariantMode] = useState<'url' | 'html'>('url');
   const [variantHtml, setVariantHtml] = useState('');
+
+  // Duplicate state
+  const [duplicateTest, setDuplicateTest] = useState<Test | null>(null);
+  const [dupName, setDupName] = useState('');
+  const [dupPath, setDupPath] = useState('');
+  const [duplicating, setDuplicating] = useState(false);
 
   // Modal errors
   const [createPageError, setCreatePageError] = useState<{ message: string; isLimit: boolean } | null>(null);
@@ -193,6 +199,42 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
       router.refresh();
       toast.success('Page deleted');
     } finally { setDeleting(false); setDeleteId(null); }
+  }
+
+  // ─── Duplicate ────────────────────────────────────────────────────────────
+  function openDuplicate(test: Test) {
+    setDuplicateTest(test);
+    setDupName(`${test.name} (copy)`);
+    // Default a distinct suffix so the copy is immediately servable without a clash.
+    setDupPath(test.url_path === '/' ? '/copy' : `${test.url_path}-copy`);
+    setActiveMenu(null);
+  }
+
+  async function handleDuplicate(e: React.FormEvent) {
+    e.preventDefault();
+    if (!duplicateTest) return;
+    setDuplicating(true);
+    try {
+      const res = await fetch(`/api/tests/${duplicateTest.id}/duplicate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: dupName.trim(), url_path: dupPath.trim() }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.error || 'Failed to duplicate page');
+        return;
+      }
+      const created = await res.json();
+      setTests((prev) => [created, ...prev]);
+      router.refresh();
+      toast.success('Page duplicated');
+      setDuplicateTest(null);
+    } catch {
+      toast.error('An unexpected error occurred');
+    } finally {
+      setDuplicating(false);
+    }
   }
 
   // ─── Edit ───────────────────────────────────────────────────────────────
@@ -413,6 +455,9 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
                             <button onClick={(e) => { e.stopPropagation(); openAddVariant(test); }} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700">
                               <Plus size={14} className="text-indigo-400" /> Add Variant
                             </button>
+                            <button onClick={(e) => { e.stopPropagation(); openDuplicate(test); }} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700">
+                              <Copy size={14} className="text-indigo-400" /> Duplicate
+                            </button>
                             <button onClick={(e) => { e.stopPropagation(); setDeleteId(test.id); setActiveMenu(null); }} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-400 hover:bg-slate-100 dark:hover:bg-slate-700 border-t border-slate-200 dark:border-slate-700">
                               <Trash2 size={14} /> Delete
                             </button>
@@ -505,10 +550,28 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
 
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Path on your domain</label>
-            <input type="text" value={urlPath} onChange={(e) => setUrlPath(e.target.value)} className="input-base font-mono" placeholder="/" required />
+            {domain ? (
+              // Base domain is fixed — show it as a static prefix and only ask
+              // for the path suffix, so it's obvious the URL is inherited.
+              <div className="flex items-stretch rounded-lg border border-slate-300 dark:border-slate-700 overflow-hidden focus-within:ring-2 focus-within:ring-indigo-500/40 focus-within:border-indigo-500">
+                <span className="flex items-center px-3 bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 text-sm font-mono border-r border-slate-300 dark:border-slate-700 whitespace-nowrap">
+                  {domain}
+                </span>
+                <input
+                  type="text"
+                  value={urlPath}
+                  onChange={(e) => setUrlPath(e.target.value)}
+                  className="flex-1 min-w-0 bg-transparent px-3 py-2 text-sm font-mono outline-none text-slate-900 dark:text-slate-100"
+                  placeholder="/landing"
+                  required
+                />
+              </div>
+            ) : (
+              <input type="text" value={urlPath} onChange={(e) => setUrlPath(e.target.value)} className="input-base font-mono" placeholder="/" required />
+            )}
             <p className="text-slate-400 dark:text-slate-500 text-xs mt-1">
-              {domain && urlPath
-                ? <span className="font-mono">{domain}{urlPath}</span>
+              {domain
+                ? 'The base domain is fixed — just set the path (e.g. / or /landing).'
                 : 'Where on your domain this page will be served (e.g. / or /landing).'}
             </p>
           </div>
@@ -542,6 +605,44 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
           <div className="flex justify-end gap-3 pt-2">
             <Button variant="secondary" type="button" onClick={() => setEditTestId(null)}>Cancel</Button>
             <Button type="submit" loading={editSaving}>Save Changes</Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Duplicate Page Modal */}
+      <Modal open={!!duplicateTest} onClose={() => setDuplicateTest(null)} title="Duplicate Page" size="sm">
+        <form onSubmit={handleDuplicate} className="space-y-4">
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            Copies <span className="font-medium text-slate-700 dark:text-slate-300">{duplicateTest?.name}</span> and all its variants. Give it a new name and path, then tweak the variants.
+          </p>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Page Name</label>
+            <input type="text" value={dupName} onChange={(e) => setDupName(e.target.value)} className="input-base" required autoFocus />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Path on your domain</label>
+            {domain ? (
+              <div className="flex items-stretch rounded-lg border border-slate-300 dark:border-slate-700 overflow-hidden focus-within:ring-2 focus-within:ring-indigo-500/40 focus-within:border-indigo-500">
+                <span className="flex items-center px-3 bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 text-sm font-mono border-r border-slate-300 dark:border-slate-700 whitespace-nowrap">
+                  {domain}
+                </span>
+                <input
+                  type="text"
+                  value={dupPath}
+                  onChange={(e) => setDupPath(e.target.value)}
+                  className="flex-1 min-w-0 bg-transparent px-3 py-2 text-sm font-mono outline-none text-slate-900 dark:text-slate-100"
+                  placeholder="/landing-copy"
+                  required
+                />
+              </div>
+            ) : (
+              <input type="text" value={dupPath} onChange={(e) => setDupPath(e.target.value)} className="input-base font-mono" required />
+            )}
+            <p className="text-slate-400 dark:text-slate-500 text-xs mt-1">Must differ from the original so both pages can serve.</p>
+          </div>
+          <div className="flex justify-end gap-3 pt-2">
+            <Button variant="secondary" type="button" onClick={() => setDuplicateTest(null)}>Cancel</Button>
+            <Button type="submit" loading={duplicating}>Duplicate</Button>
           </div>
         </form>
       </Modal>
