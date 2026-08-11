@@ -1,4 +1,5 @@
 import { db } from '@/lib/supabase-server';
+import { HUBSPOT_SYSTEM_FIELDS } from '@/lib/system-fields';
 
 const HUBSPOT_API_BASE = 'https://api.hubapi.com';
 const HUBSPOT_FORMS_SUBMIT_BASE = 'https://api.hsforms.com';
@@ -31,19 +32,11 @@ export interface HubSpotForm {
   fields: HubSpotFormField[];
 }
 
-// System fields we always expose for mapping (from form_leads columns)
-export const SYSTEM_FIELDS = [
-  { key: 'ip_address',    label: 'IP Address' },
-  { key: 'variant',       label: 'Page Variant' },
-  { key: 'submitted_at',  label: 'Submission Date' },
-  { key: 'utm_source',    label: 'UTM Source' },
-  { key: 'utm_medium',    label: 'UTM Medium' },
-  { key: 'utm_campaign',  label: 'UTM Campaign' },
-  { key: 'utm_content',   label: 'UTM Content' },
-  { key: 'utm_term',      label: 'UTM Term' },
-  { key: 'gclid',         label: 'GCLID' },
-  { key: 'fbclid',        label: 'FBCLID' },
-];
+// System fields we always expose for mapping (from form_leads columns).
+// Re-exported for callers that still import SYSTEM_FIELDS from here —
+// the canonical definition now lives in src/lib/system-fields.ts so the
+// server (this file) and the 'use client' mapping UI read the same list.
+export const SYSTEM_FIELDS = HUBSPOT_SYSTEM_FIELDS;
 
 function authHeaders(accessToken: string) {
   return {
@@ -258,6 +251,11 @@ export async function syncLeadToHubSpot(params: {
     page_url?: string | null;
     page_title?: string | null;
     hutk?: string | null;
+    // Ad-tracking params with no dedicated column (LinkedIn's li_fat_id, custom
+    // params staff registered, etc). Not enumerated in SYSTEM_FIELDS — those
+    // are the 10 fixed fields with dedicated form_leads columns — so a mapped
+    // field that isn't one of those falls back to formFields, then here.
+    extraParams?: Record<string, string> | null;
   };
 }): Promise<SyncResult> {
   const { accessToken, fieldMappings, formFields, systemData, portalId, formGuid } = params;
@@ -269,7 +267,7 @@ export async function syncLeadToHubSpot(params: {
     const isSystemField = SYSTEM_FIELDS.some(f => f.key === ourField);
     const value = isSystemField
       ? resolveSystemField(ourField, systemData)
-      : (formFields[ourField] ?? null);
+      : (formFields[ourField] ?? systemData.extraParams?.[ourField] ?? null);
     if (value !== null && value !== '') {
       resolved[hubspotField] = value;
     }

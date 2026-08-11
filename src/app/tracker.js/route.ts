@@ -387,6 +387,55 @@ function buildTrackerScript(appUrl: string): string {
     } catch(e) {}
   }
 
+  // ─── UTM hidden-field injection ─────────────────────────────────────────────
+  //
+  // Unbounce et al. default every form to carrying utm_source/gclid/etc as
+  // hidden inputs so ad-attribution survives a native form POST — including
+  // one that bypasses this script entirely (a native HubSpot embedded form
+  // widget, a third-party script reading its own form's field values to build
+  // its own request). URL values alone don't help there: only what's
+  // physically an <input> inside the form travels with that submission.
+  //
+  // Separate marker (data-sl-utm) from decorateFormForSubmit's data-sl above —
+  // different purpose (real ad-tracking values vs cross-domain link params) —
+  // and this one doubles as the idempotency check below (ours vs the page's
+  // own pre-existing field of the same name).
+  //
+  // No per-workspace custom-param list here (unlike the inline snippet in
+  // src/lib/tracking.ts) — this script is a single cached static file, not
+  // generated per request, so it only knows the built-in utm_*/click-id/hsa_*
+  // detection. Custom params on tracker.js-only pages are a known gap.
+  function injectUtmFieldsIntoForm(form) {
+    try {
+      if (!form || !form.querySelector) return;
+      var p = trackingParams();
+      var names = LEGACY_PARAM_KEYS.concat(Object.keys(CLICK_ID_PARAMS), Object.keys(EXTRA_ID_PARAMS));
+      for (var i = 0; i < names.length; i++) {
+        var key = names[i];
+        var val = p[key];
+        if (!val) continue;
+        var existing = form.querySelector("input[name='" + key + "']");
+        if (existing) {
+          if (!existing.value) existing.value = val;
+          continue;
+        }
+        var hidden = document.createElement("input");
+        hidden.type = "hidden";
+        hidden.name = key;
+        hidden.value = val;
+        hidden.setAttribute("data-sl-utm", "1");
+        form.appendChild(hidden);
+      }
+    } catch(e) {}
+  }
+
+  function injectUtmFieldsIntoForms() {
+    try {
+      var forms = document.querySelectorAll("form");
+      for (var i = 0; i < forms.length; i++) injectUtmFieldsIntoForm(forms[i]);
+    } catch(e) {}
+  }
+
   function patchWindowOpen() {
     try {
       var origOpen = window.open;
@@ -960,9 +1009,9 @@ function buildTrackerScript(appUrl: string): string {
           // session IDs and internal state. Only names matching the tracking
           // rules, and only into extra_params, never into form_fields.
           try {
-            // Ours, appended by decorateFormForSubmit. Skipping these is what
-            // stops the inject-then-recapture loop.
-            if (el.getAttribute && el.getAttribute("data-sl") === "1") continue;
+            // Ours, appended by decorateFormForSubmit / injectUtmFieldsIntoForm.
+            // Skipping these is what stops the inject-then-recapture loop.
+            if (el.getAttribute && (el.getAttribute("data-sl") === "1" || el.getAttribute("data-sl-utm") === "1")) continue;
             var hn = el.name || "";
             if (isTrackingParam(hn) && el.value) hiddenParams[hn] = el.value;
           } catch(e) {}
@@ -1150,8 +1199,13 @@ function buildTrackerScript(appUrl: string): string {
 
     document.addEventListener("submit", function(e) {
       var form = e.target;
-      // Capture phase, so this runs before the browser serializes the form
-      if (!_scanMode) decorateFormForSubmit(form);
+      // Capture phase, so this runs before the browser serializes the form.
+      // Order matters: decorate first, so injectUtmFieldsIntoForm's duplicate
+      // check sees whatever it already added to a GET form's action.
+      if (!_scanMode) {
+        decorateFormForSubmit(form);
+        injectUtmFieldsIntoForm(form);
+      }
       _leadSent = true; // prevent JS-submit patch from double-sending
       captureFormLead(form);
       var formNth = form ? formDocumentIndex(form) : -1;
@@ -1438,6 +1492,7 @@ function buildTrackerScript(appUrl: string): string {
       patchNetworkForJsSubmit();
       if (!_scanMode) patchWindowOpen();
       if (!_scanMode) watchNavigations();
+      if (!_scanMode) injectUtmFieldsIntoForms();
     }
     if (document.readyState === "loading") {
       document.addEventListener("DOMContentLoaded", start);

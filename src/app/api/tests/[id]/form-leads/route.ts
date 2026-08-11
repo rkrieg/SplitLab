@@ -77,10 +77,19 @@ export async function GET(
     )
   ).sort();
 
+  // Which of the 7 dedicated system UTM/click-ID columns actually have a
+  // value in this result set — table only renders columns leads actually
+  // use instead of always showing all 7 (most tests only use 1-2).
+  const SYSTEM_UTM_COLS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'gclid', 'fbclid'] as const;
+  const systemParamKeys = SYSTEM_UTM_COLS.filter((col) =>
+    (leads ?? []).some((l) => l[col as keyof typeof l])
+  );
+
   return NextResponse.json({
     leads: leads ?? [],
     fieldKeys,
     extraParamKeys,
+    systemParamKeys,
     total: count ?? 0,
     page,
     limit,

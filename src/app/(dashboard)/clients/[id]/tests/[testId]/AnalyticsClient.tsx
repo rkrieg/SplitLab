@@ -71,6 +71,7 @@ import Modal from "@/components/ui/Modal";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import { TestStatusBadge } from "@/components/ui/Badge";
 import { formatPercent } from "@/lib/utils";
+import { HUBSPOT_SYSTEM_FIELDS } from "@/lib/system-fields";
 
 const GOAL_TYPES = [
   { value: "form_submit", label: "Form Submit" },
@@ -506,6 +507,9 @@ export default function AnalyticsClient({
   // Separate from formLeadsFieldKeys — ad params must never be offered as
   // mappable "form fields" in the HubSpot/webhook dropdown.
   const [formLeadsExtraParamKeys, setFormLeadsExtraParamKeys] = useState<string[]>([]);
+  // Which of the 7 dedicated system UTM/click-ID columns actually have a
+  // value in the current leads batch — table only shows columns in use.
+  const [formLeadsSystemParamKeys, setFormLeadsSystemParamKeys] = useState<string[]>([]);
   const [formLeadsTotal, setFormLeadsTotal] = useState(0);
   const [formLeadsPage, setFormLeadsPage] = useState(1);
   const [formLeadsLoading, setFormLeadsLoading] = useState(false);
@@ -531,6 +535,17 @@ export default function AnalyticsClient({
   const [testFormKeys, setTestFormKeys] = useState<string[]>([]);
   const [savingMapping, setSavingMapping] = useState(false);
   const [newFieldKey, setNewFieldKey] = useState("");
+
+  // Auto-detected ad-tracking params (utm_*, click IDs, custom registered
+  // params) discovered from actual leads — kept separate from testFormKeys
+  // (visitor-typed fields), same reasoning as formLeadsExtraParamKeys above.
+  const [testExtraParamKeys, setTestExtraParamKeys] = useState<string[]>([]);
+  const [dismissedParamKeys, setDismissedParamKeys] = useState<string[]>([]);
+  interface CustomUtmParam { id: string; name: string; enabled: boolean; test_id: string | null; }
+  const [customUtmParams, setCustomUtmParams] = useState<CustomUtmParam[]>([]);
+  const [newCustomParamName, setNewCustomParamName] = useState("");
+  const [newCustomParamScope, setNewCustomParamScope] = useState<'workspace' | 'test'>('workspace');
+  const [addingCustomParam, setAddingCustomParam] = useState(false);
 
   // Integrations sub-tab
   const [integrationsSubTab, setIntegrationsSubTab] = useState<'native' | 'webhooks'>('native');
@@ -1485,6 +1500,7 @@ export default function AnalyticsClient({
       setFormLeads(data.leads || []);
       setFormLeadsFieldKeys(data.fieldKeys || []);
       setFormLeadsExtraParamKeys(data.extraParamKeys || []);
+      setFormLeadsSystemParamKeys(data.systemParamKeys || []);
       setFormLeadsTotal(data.total || 0);
       setFormLeadsPage(page);
     } catch {
@@ -1516,9 +1532,11 @@ export default function AnalyticsClient({
       setWebhooks(whs);
 
       // Fetch all test mappings once (covers hubspot + email + webhooks)
-      const [mRes, kRes] = await Promise.all([
+      const [mRes, kRes, epRes, cpRes] = await Promise.all([
         fetch(`/api/tests/${test.id}/integrations`),
         fetch(`/api/tests/${test.id}/form-field-keys`),
+        fetch(`/api/tests/${test.id}/extra-param-keys`),
+        fetch(`/api/tests/${test.id}/custom-params`),
       ]);
       const mData = await mRes.json() as { mappings?: { id?: string; enabled: boolean; field_mappings: unknown; last_synced_at?: string; total_synced?: number; total_failed?: number; workspace_integrations?: { id: string } }[] };
 
@@ -1589,6 +1607,13 @@ export default function AnalyticsClient({
 
       const kData = await kRes.json() as { keys?: string[] };
       setTestFormKeys(kData.keys ?? []);
+
+      const epData = await epRes.json() as { keys?: string[]; dismissed?: string[] };
+      setTestExtraParamKeys(epData.keys ?? []);
+      setDismissedParamKeys(epData.dismissed ?? []);
+
+      const cpData = await cpRes.json() as { params?: CustomUtmParam[] };
+      setCustomUtmParams(cpData.params ?? []);
     } catch (err) {
       console.error('[integrations] load error', err);
       toast.error('Failed to load integrations');
@@ -1884,6 +1909,87 @@ export default function AnalyticsClient({
       delete fm[ourField];
       return { ...prev, field_mappings: fm };
     });
+  }
+
+  // Dismissing a field also clears any mapping it had — otherwise a mapped
+  // field would keep silently syncing to HubSpot after being hidden from
+  // the mapping screen, which is not what the X button implies. Like every
+  // other mapping change, this only takes effect once "Save" is clicked.
+  async function dismissExtraParamKey(key: string) {
+    const prevMapping = testMapping.field_mappings[key];
+    setTestExtraParamKeys(prev => prev.filter(k => k !== key));
+    setDismissedParamKeys(prev => Array.from(new Set([...prev, key])));
+    if (prevMapping) removeMapping(key);
+    try {
+      const res = await fetch(`/api/tests/${test.id}/extra-param-keys`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key }),
+      });
+      if (!res.ok) throw new Error();
+    } catch {
+      toast.error('Failed to dismiss field');
+      setTestExtraParamKeys(prev => Array.from(new Set([...prev, key])));
+      setDismissedParamKeys(prev => prev.filter(k => k !== key));
+      if (prevMapping) updateMapping(key, prevMapping);
+    }
+  }
+
+  // Un-dismiss — brings a previously-hidden suggestion back into the New
+  // Fields list. Capture was never affected either way; this only changes
+  // what the mapping screen offers to map.
+  async function restoreDismissedKey(key: string) {
+    setDismissedParamKeys(prev => prev.filter(k => k !== key));
+    setTestExtraParamKeys(prev => Array.from(new Set([...prev, key])));
+    try {
+      const res = await fetch(`/api/tests/${test.id}/extra-param-keys?key=${encodeURIComponent(key)}`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) throw new Error();
+    } catch {
+      toast.error('Failed to restore field');
+      setDismissedParamKeys(prev => Array.from(new Set([...prev, key])));
+      setTestExtraParamKeys(prev => prev.filter(k => k !== key));
+    }
+  }
+
+  async function addCustomParam() {
+    const name = newCustomParamName.trim().toLowerCase();
+    if (!name) return;
+    setAddingCustomParam(true);
+    try {
+      const res = await fetch(`/api/tests/${test.id}/custom-params`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, scope: newCustomParamScope }),
+      });
+      const data = await res.json() as { param?: CustomUtmParam; error?: string };
+      if (!res.ok) {
+        toast.error(data.error ?? 'Failed to add parameter');
+        return;
+      }
+      if (data.param) {
+        setCustomUtmParams(prev => [data.param!, ...prev]);
+        setTestExtraParamKeys(prev => Array.from(new Set([...prev, name])));
+      }
+      setNewCustomParamName('');
+    } catch {
+      toast.error('Failed to add parameter');
+    } finally {
+      setAddingCustomParam(false);
+    }
+  }
+
+  async function deleteCustomParam(id: string) {
+    const prev = customUtmParams;
+    setCustomUtmParams(p => p.filter(cp => cp.id !== id));
+    try {
+      const res = await fetch(`/api/tests/${test.id}/custom-params?id=${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error();
+    } catch {
+      toast.error('Failed to remove parameter');
+      setCustomUtmParams(prev);
+    }
   }
 
   function addCustomFormField() {
@@ -3893,8 +3999,11 @@ export default function AnalyticsClient({
                             {key.replace(/_/g, ' ')}
                           </th>
                         ))}
-                        <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap">UTM Source</th>
-                        <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap">UTM Campaign</th>
+                        {formLeadsSystemParamKeys.map((key) => (
+                          <th key={key} className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap">
+                            {key === 'gclid' || key === 'fbclid' ? key : key.replace(/_/g, ' ').replace(/^utm /, 'UTM ')}
+                          </th>
+                        ))}
                         {formLeadsExtraParamKeys.map((key) => (
                           <th key={key} className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap font-mono text-xs">
                             {key}
@@ -3920,8 +4029,11 @@ export default function AnalyticsClient({
                               {lead.form_fields?.[key] ?? <span className="text-slate-400">—</span>}
                             </td>
                           ))}
-                          <td className="px-4 py-2.5 text-slate-500 text-xs">{lead.utm_source ?? "—"}</td>
-                          <td className="px-4 py-2.5 text-slate-500 text-xs">{lead.utm_campaign ?? "—"}</td>
+                          {formLeadsSystemParamKeys.map((key) => (
+                            <td key={key} className="px-4 py-2.5 text-slate-500 text-xs">
+                              {lead[key as keyof FormLead] as string ?? "—"}
+                            </td>
+                          ))}
                           {formLeadsExtraParamKeys.map((key) => (
                             <td key={key} className="px-4 py-2.5 text-slate-500 text-xs font-mono max-w-[160px] truncate" title={lead.extra_params?.[key] ?? ''}>
                               {lead.extra_params?.[key] ?? <span className="text-slate-400">—</span>}
@@ -4148,18 +4260,7 @@ export default function AnalyticsClient({
                             {/* System fields */}
                             <div className="border-t border-slate-200 dark:border-slate-700 pt-3 mt-1">
                               <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">System Fields</p>
-                              {[
-                                { key: 'ip_address', label: 'IP Address' },
-                                { key: 'variant', label: 'Page Variant' },
-                                { key: 'submitted_at', label: 'Submission Date' },
-                                { key: 'utm_source', label: 'UTM Source' },
-                                { key: 'utm_medium', label: 'UTM Medium' },
-                                { key: 'utm_campaign', label: 'UTM Campaign' },
-                                { key: 'utm_content', label: 'UTM Content' },
-                                { key: 'utm_term', label: 'UTM Term' },
-                                { key: 'gclid', label: 'GCLID' },
-                                { key: 'fbclid', label: 'FBCLID' },
-                              ].map(sf => (
+                              {HUBSPOT_SYSTEM_FIELDS.map(sf => (
                                 <div key={sf.key} className="grid grid-cols-[1fr_32px_1fr_32px] gap-2 items-center mb-2">
                                   <div className="flex items-center gap-2">
                                     <span className="text-xs px-2 py-1 rounded bg-slate-100 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400 font-mono">{sf.label}</span>
@@ -4177,6 +4278,116 @@ export default function AnalyticsClient({
                                   <span />
                                 </div>
                               ))}
+                            </div>
+
+                            {/* New Fields — auto-detected ad params (utm passthrough, click IDs,
+                                custom registered params) not covered by System Fields above.
+                                Mapping still writes into field_mappings via updateMapping, same
+                                as every other row — dismiss/delete never touch that storage. */}
+                            {testExtraParamKeys.length > 0 && (
+                              <div className="border-t border-slate-200 dark:border-slate-700 pt-3 mt-1">
+                                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">New Fields</p>
+                                {testExtraParamKeys.map(key => (
+                                  <div key={key} className="grid grid-cols-[1fr_32px_1fr_32px] gap-2 items-center mb-2">
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-xs px-2 py-1 rounded bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 font-mono">{key}</span>
+                                      <span className="text-xs text-slate-400 bg-slate-50 dark:bg-slate-800/50 px-1.5 py-0.5 rounded">new</span>
+                                    </div>
+                                    <ArrowRight size={13} className="text-orange-400 mx-auto" />
+                                    <select
+                                      value={testMapping.field_mappings[key] ?? ''}
+                                      onChange={e => updateMapping(key, e.target.value)}
+                                      className="input text-xs py-1.5"
+                                    >
+                                      <option value="">(-) Not mapped</option>
+                                      {destinationOptions}
+                                    </select>
+                                    <button
+                                      type="button"
+                                      title="Dismiss — stop suggesting this field"
+                                      onClick={() => dismissExtraParamKey(key)}
+                                      className="text-red-400 hover:text-red-500 transition-colors flex items-center justify-center"
+                                    >
+                                      <XCircle size={14} />
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
+                            {/* Dismissed suggestions — data is still captured/stored exactly as
+                                before, just hidden from the New Fields list above. Dismissing
+                                also cleared any mapping (see dismissExtraParamKey), so these are
+                                always "not mapped" going forward; Restore brings them back. */}
+                            {dismissedParamKeys.length > 0 && (
+                              <div className="border-t border-slate-200 dark:border-slate-700 pt-3 mt-1">
+                                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Dismissed</p>
+                                <div className="space-y-1.5">
+                                  {dismissedParamKeys.map(key => {
+                                    const currentMapping = testMapping.field_mappings[key];
+                                    return (
+                                      <div key={key} className="flex items-center gap-2 text-xs">
+                                        <span className="px-2 py-1 rounded bg-slate-100 dark:bg-slate-800/60 text-slate-400 font-mono">{key}</span>
+                                        <span className="text-slate-400 bg-slate-50 dark:bg-slate-800/50 px-1.5 py-0.5 rounded">
+                                          {currentMapping ? `mapped → ${currentMapping}` : 'not mapped'}
+                                        </span>
+                                        <button
+                                          type="button"
+                                          title="Restore — show this field in New Fields again"
+                                          onClick={() => restoreDismissedKey(key)}
+                                          className="ml-auto inline-flex items-center gap-1 text-indigo-500 hover:text-indigo-400 font-medium transition-colors flex-shrink-0"
+                                        >
+                                          <RefreshCw size={12} /> Restore
+                                        </button>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Manually register a param that hasn't shown up in a lead yet */}
+                            <div className="border-t border-slate-200 dark:border-slate-700 pt-3 mt-1 space-y-2">
+                              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Custom Parameters</p>
+                              {customUtmParams.map(cp => (
+                                <div key={cp.id} className="flex items-center gap-2 text-xs">
+                                  <span className="px-2 py-1 rounded bg-slate-100 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400 font-mono">{cp.name}</span>
+                                  <span className="text-slate-400 bg-slate-50 dark:bg-slate-800/50 px-1.5 py-0.5 rounded">{cp.test_id ? 'this test' : 'workspace-wide'}</span>
+                                  <button
+                                    type="button"
+                                    title="Remove this custom parameter"
+                                    onClick={() => deleteCustomParam(cp.id)}
+                                    className="ml-auto text-slate-300 hover:text-red-400 transition-colors flex items-center justify-center"
+                                  >
+                                    <XCircle size={14} />
+                                  </button>
+                                </div>
+                              ))}
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="text"
+                                  placeholder="e.g. affiliate_id"
+                                  value={newCustomParamName}
+                                  onChange={e => setNewCustomParamName(e.target.value)}
+                                  className="input-base text-xs py-1.5 font-mono placeholder:font-sans flex-1"
+                                />
+                                <select
+                                  value={newCustomParamScope}
+                                  onChange={e => setNewCustomParamScope(e.target.value as 'workspace' | 'test')}
+                                  className="input-base text-xs py-1.5 w-auto"
+                                >
+                                  <option value="workspace">Workspace-wide</option>
+                                  <option value="test">This test only</option>
+                                </select>
+                                <button
+                                  type="button"
+                                  disabled={addingCustomParam || !newCustomParamName.trim()}
+                                  onClick={addCustomParam}
+                                  className="text-xs text-indigo-500 hover:text-indigo-400 font-medium flex items-center gap-1 flex-shrink-0 transition-colors disabled:opacity-50"
+                                >
+                                  <Plus size={12} /> Add
+                                </button>
+                              </div>
                             </div>
                           </div>
                         );

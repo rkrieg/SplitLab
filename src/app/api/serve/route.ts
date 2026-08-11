@@ -161,6 +161,17 @@ export async function GET(request: NextRequest) {
       test = testRow;
     }
 
+    // Custom UTM/click-ID param names staff registered (workspace-wide or
+    // scoped to this test) — extends what the tracking snippet auto-detects
+    // and hidden-field-injects beyond the built-in utm_*/click-id/hsa_* rules.
+    const { data: customParamRows } = await db
+      .from('custom_utm_params')
+      .select('name')
+      .eq('workspace_id', workspaceId)
+      .eq('enabled', true)
+      .or(`test_id.is.null,test_id.eq.${test.id}`);
+    const customParamNames = (customParamRows || []).map((r: { name: string }) => r.name);
+
     // 3. Fetch variants
     const { data: variants, error: variantsError } = await db
       .from('test_variants')
@@ -299,7 +310,7 @@ export async function GET(request: NextRequest) {
           .or(`variant_id.is.null,variant_id.eq.${selectedVariant.id}`);
 
         const proxyTrackingSnippet = (overVisitorCap || forcedVh) ? '' : buildTrackingSnippet(
-          test.id, selectedVariant.id, visitorId, proxyGoals || [], APP_URL
+          test.id, selectedVariant.id, visitorId, proxyGoals || [], APP_URL, customParamNames
         );
 
         const iframeUrlObj = new URL(selectedVariant.redirect_url);
@@ -490,7 +501,8 @@ ${proxyTrackingSnippet}
       selectedVariant.id,
       visitorHash,
       goals || [],
-      APP_URL
+      APP_URL,
+      customParamNames
     );
 
     // 10. Inject UTM swap script (client-side, reads window.location.search)
