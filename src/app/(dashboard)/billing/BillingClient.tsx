@@ -55,7 +55,16 @@ interface AiUsageResponse {
   overage: { enabled: boolean; capCents: number };
 }
 
-/** AI credit meter + overage controls, powered by /api/ai-usage. */
+/**
+ * AI credit meter + overage controls, powered by /api/ai-usage.
+ *
+ * TEMPORARILY DISABLED FOR PRODUCTION DEPLOY — the credits/overage-buying
+ * flow is still being finished on a separate branch. Only the UI render
+ * below is commented out (see `<AiCreditsCard />` usage further down); this
+ * function body is left intact so it's a one-line uncomment once that work
+ * lands, rather than a re-write.
+ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function AiCreditsCard() {
   const [data, setData] = useState<AiUsageResponse | null>(null);
   const [saving, setSaving] = useState(false);
@@ -442,8 +451,11 @@ export default function BillingClient({
         )}
       </div>
 
-      {/* ── AI credits ── */}
+      {/* ── AI credits ──
+          Hidden for production deploy — credits/overage-buying feature is
+          incomplete, being finished on a separate branch. Uncomment when ready.
       <AiCreditsCard />
+      */}
 
       {/* ── Usage meters ── */}
       {usage && (
