@@ -175,7 +175,7 @@ export async function GET(request: NextRequest) {
     // 3. Fetch variants
     const { data: variants, error: variantsError } = await db
       .from('test_variants')
-      .select('id, name, page_id, redirect_url, proxy_mode, traffic_weight, is_control, pages(html_url, html_content)')
+      .select('id, name, page_id, redirect_url, proxy_mode, traffic_weight, is_control, archived_at, pages(html_url, html_content)')
       .eq('test_id', test.id)
       .order('is_control', { ascending: false });
 
@@ -267,7 +267,19 @@ export async function GET(request: NextRequest) {
       : variants.find((v) => v.id === stickyVariantId);
 
     if (!selectedVariant) {
-      selectedVariant = await assignVariant(visitorId, test.id, variants as { id: string; traffic_weight: number }[]) as typeof variants[0];
+      // Random/weighted assignment must never land on an archived variant —
+      // only forcedVid/sticky (explicit) above can. If archiving ever left a
+      // test with zero active variants (shouldn't happen, archive is guarded
+      // against it server-side), fail loudly with 404 instead of silently
+      // falling back to whatever assignVariant() picks with a 0 total weight.
+      const activeVariants = variants.filter((v) => !v.archived_at);
+      if (activeVariants.length === 0) {
+        return new NextResponse(notFoundHtml(domain), {
+          status: 404,
+          headers: { 'Content-Type': 'text/html' },
+        });
+      }
+      selectedVariant = await assignVariant(visitorId, test.id, activeVariants as { id: string; traffic_weight: number }[]) as typeof variants[0];
     }
 
     // 6a. If variant has a redirect URL

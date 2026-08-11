@@ -273,8 +273,23 @@ export async function PATCH(
     }
 
     // Archive a variant: pull it out of the live split (weight 0) but keep its
-    // history. Remaining active variants absorb its traffic.
+    // history. Remaining active variants absorb its traffic. A test must
+    // always keep at least one active variant — same invariant as delete.
     if (archive_variant_id) {
+      const { data: activeVariants } = await db
+        .from('test_variants')
+        .select('id')
+        .eq('test_id', params.id)
+        .is('archived_at', null);
+
+      const remainingActive = (activeVariants ?? []).filter((v) => v.id !== archive_variant_id).length;
+      if (remainingActive === 0) {
+        return NextResponse.json(
+          { error: 'Cannot archive the last active variant — a test must always have at least one live.' },
+          { status: 400 },
+        );
+      }
+
       const { error } = await db
         .from('test_variants')
         .update({ archived_at: new Date().toISOString(), traffic_weight: 0 })

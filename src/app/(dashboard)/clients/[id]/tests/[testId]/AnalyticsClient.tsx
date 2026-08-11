@@ -64,6 +64,8 @@ import {
   Smartphone,
   Sparkles,
   MoreHorizontal,
+  Archive,
+  ArchiveRestore,
 } from "lucide-react";
 import Spinner from "@/components/ui/Spinner";
 import Button from "@/components/ui/Button";
@@ -455,6 +457,7 @@ export default function AnalyticsClient({
 
   // Duplicate variant (folded into the per-row "..." actions menu)
   const [duplicatingVariantId, setDuplicatingVariantId] = useState<string | null>(null);
+  const [archivingVariantId, setArchivingVariantId] = useState<string | null>(null);
 
   // Tracking verification
   const [checkingTracking, setCheckingTracking] = useState<string | null>(null);
@@ -690,6 +693,9 @@ export default function AnalyticsClient({
 
   // Computed
   const variants = test.test_variants || [];
+  const activeVariants = variants.filter((v) => !v.archived_at);
+  const activeStats = stats.filter((s) => !s.variant.archived_at);
+  const archivedStats = stats.filter((s) => s.variant.archived_at);
   const snippet = `<script src="${appUrl}/tracker.js"></script>`;
   const fullUrl = domain ? `${domain}${test.url_path}` : null;
 
@@ -1303,6 +1309,57 @@ export default function AnalyticsClient({
       toast.error("Failed to duplicate variant");
     } finally {
       setDuplicatingVariantId(null);
+    }
+  }
+
+  // ─── Archive / unarchive variant ────────────────────────────────────
+
+  async function handleArchiveVariant(variantId: string) {
+    setActionMenu(null);
+    setArchivingVariantId(variantId);
+    try {
+      const res = await fetch(`/api/tests/${test.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ archive_variant_id: variantId }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.error || "Failed to archive variant");
+        return;
+      }
+      const updated = await res.json();
+      setTest(updated);
+      toast.success("Variant archived");
+      fetchAnalytics();
+    } catch {
+      toast.error("Failed to archive variant");
+    } finally {
+      setArchivingVariantId(null);
+    }
+  }
+
+  async function handleUnarchiveVariant(variantId: string) {
+    setArchivingVariantId(variantId);
+    try {
+      const res = await fetch(`/api/tests/${test.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ unarchive_variant_id: variantId }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.error || "Failed to unarchive variant");
+        return;
+      }
+      const updated = await res.json();
+      setTest(updated);
+      toast.success("Variant unarchived");
+      fetchAnalytics();
+    } catch {
+      toast.error("Failed to unarchive variant");
+    } finally {
+      setArchivingVariantId(null);
     }
   }
 
@@ -2880,7 +2937,7 @@ export default function AnalyticsClient({
                         Loading...
                       </td>
                     </tr>
-                  ) : stats.length === 0 ? (
+                  ) : activeStats.length === 0 ? (
                     <tr>
                       <td
                         colSpan={12}
@@ -2891,7 +2948,7 @@ export default function AnalyticsClient({
                       </td>
                     </tr>
                   ) : (
-                    stats.map((stat) => {
+                    activeStats.map((stat) => {
                       const cvr = stat.cvr * 100;
                       const control = stats.find((s) => s.variant.is_control);
                       const controlCvr = (control?.cvr ?? 0) * 100;
@@ -3191,6 +3248,21 @@ export default function AnalyticsClient({
                                       )}{" "}
                                       Duplicate
                                     </button>
+                                    {activeVariants.length > 1 && (
+                                      <button
+                                        onClick={() => handleArchiveVariant(stat.variant.id)}
+                                        disabled={archivingVariantId === stat.variant.id}
+                                        title="Remove from the live traffic split, keep its history — reversible from the Archived section below"
+                                        className="w-full flex items-center gap-2 px-3 py-2 text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                                      >
+                                        {archivingVariantId === stat.variant.id ? (
+                                          <Loader2 size={13} className="animate-spin" />
+                                        ) : (
+                                          <Archive size={13} />
+                                        )}{" "}
+                                        Archive
+                                      </button>
+                                    )}
                                     {variants.length > 1 && (
                                       <button
                                         onClick={() => { setActionMenu(null); setDeleteVariantId(stat.variant.id); }}
@@ -3421,6 +3493,48 @@ export default function AnalyticsClient({
                   <Plus size={14} /> Add Variant
                 </button>
               </div>
+
+              {archivedStats.length > 0 && (
+                <div className="border-t border-slate-200 dark:border-slate-700">
+                  <button
+                    onClick={() => setShowArchived((o) => !o)}
+                    className="w-full flex items-center justify-between px-5 py-3 text-sm text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
+                  >
+                    <span className="flex items-center gap-2">
+                      <Archive size={14} />
+                      {archivedStats.length} archived variant{archivedStats.length === 1 ? "" : "s"}
+                    </span>
+                    <ChevronDown
+                      size={14}
+                      className={`transition-transform duration-200 ${showArchived ? "rotate-180" : ""}`}
+                    />
+                  </button>
+                  {showArchived && (
+                    <div className="px-5 pb-3 space-y-1.5">
+                      {archivedStats.map((stat) => (
+                        <div
+                          key={stat.variant.id}
+                          className="flex items-center justify-between px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800/50 text-sm"
+                        >
+                          <span className="text-slate-600 dark:text-slate-300">{stat.variant.name}</span>
+                          <button
+                            onClick={() => handleUnarchiveVariant(stat.variant.id)}
+                            disabled={archivingVariantId === stat.variant.id}
+                            className="flex items-center gap-1.5 text-xs font-medium text-indigo-500 hover:text-indigo-400 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                          >
+                            {archivingVariantId === stat.variant.id ? (
+                              <Loader2 size={12} className="animate-spin" />
+                            ) : (
+                              <ArchiveRestore size={12} />
+                            )}
+                            Unarchive
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* ── PAGE REPORTING ── */}
