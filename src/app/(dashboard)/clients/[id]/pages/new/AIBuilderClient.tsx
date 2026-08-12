@@ -277,7 +277,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   const [iframeSrc, setIframeSrc] = useState<string | null>(null);
   const [iframeLoaded, setIframeLoaded] = useState(false);
   const [schemaJson, setSchemaJson] = useState<unknown>(null);
-  const [conversationJson, setConversationJson] = useState<{ role: string; content: string; image_urls?: string[] }[]>([]);
+  const [conversationJson, setConversationJson] = useState<{ role: string; content: string; image_urls?: string[]; clarify?: boolean }[]>([]);
   const [publishedUrl, setPublishedUrl] = useState<string | null>(null);
   const [urlCopied, setUrlCopied] = useState(false);
   const [publishConfirmOpen, setPublishConfirmOpen] = useState(false);
@@ -1135,7 +1135,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       return;
     }
 
-    type FollowUpDone = { html_url: string; schema_json?: unknown; competitor_fetch_failed?: boolean; elapsed_ms?: number };
+    type FollowUpDone = { html_url: string; schema_json?: unknown; competitor_fetch_failed?: boolean; elapsed_ms?: number; partial_message?: string };
     let doneData: FollowUpDone | null = null;
     let followUpError = false;
     let clarifyMessage: string | null = null;
@@ -1148,6 +1148,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
           schema_json: event.schema_json,
           competitor_fetch_failed: event.competitor_fetch_failed,
           elapsed_ms: event.elapsed_ms,
+          partial_message: event.partial_message,
         };
       } else if (event.type === 'clarify') {
         clarifyMessage = event.message || 'Which part of the page should I edit?';
@@ -1171,7 +1172,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       setConversationJson(prev => [
         ...prev,
         { role: 'user', content: instruction },
-        { role: 'assistant', content: clarifyText },
+        { role: 'assistant', content: clarifyText, clarify: true },
       ]);
       setPhase('editing');
       return;
@@ -1191,7 +1192,13 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     if (isTestVariantPage) setHasDraft(true);
     // Server only emits `done` when HTML actually changed — never claim success otherwise.
     if (!silent) {
-      addMessage({ role: 'assistant', content: 'Done! The page has been updated.', elapsedMs: done.elapsed_ms });
+      addMessage({
+        role: 'assistant',
+        content: done.partial_message
+          ? `Partly done. ${done.partial_message}`
+          : 'Done! The page has been updated.',
+        elapsedMs: done.elapsed_ms,
+      });
     }
     setConversationJson(prev => [
       ...prev,

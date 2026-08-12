@@ -5,7 +5,7 @@ export type SSEEvent =
   | { type: 'image_ready'; url: string }
   | { type: 'clarify'; message: string }
   | { type: 'error'; message: string }
-  | { type: 'done'; html_url: string; slug?: string; schema_json?: unknown; competitor_fetch_failed?: boolean; elapsed_ms?: number; already?: boolean };
+  | { type: 'done'; html_url: string; slug?: string; schema_json?: unknown; competitor_fetch_failed?: boolean; elapsed_ms?: number; already?: boolean; partial_message?: string };
 
 export const SSE_HEADERS = {
   'Content-Type': 'text/event-stream',

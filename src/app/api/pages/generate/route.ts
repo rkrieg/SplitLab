@@ -27,8 +27,9 @@ Shape 2 — page schema (when you have enough to build):
 
 ## When to ask questions vs build immediately
 Ask questions ONLY if the prompt is missing ALL of: a goal, specific sections, or business details.
-If the user says "surprise me" or "just build it" — generate the best default schema for the vertical. Never ask again.
-Maximum 1 round of questions, maximum 3 questions per round.
+If the user says "surprise me", "just build it", "you decide", or "feel free" — generate immediately. Never ask again on those.
+If you already asked clarifying questions in a prior turn and the user answered (even vaguely or with "you decide"), BUILD — do not ask another round.
+You may ask more than one round only when still genuinely blocked (e.g. no business at all AND no goal). Prefer building with reasonable defaults over interrogation. Maximum 3 questions per round.
 
 ## Schema structure
 {
@@ -52,11 +53,15 @@ ${SECTION_TYPES_BLOCK}
 ## Content rules
 - Write real, compelling copy based on the business. No placeholders, no lorem ipsum.
 - The user has pre-selected a vertical — treat it as a bias toward certain section types (see the per-vertical hint appended below), not a fixed template. Refine based on the specific prompt.
-- Pick 4-7 sections beyond hero/footer. More variety across pages is better than defaulting to the same shape every time.
+- **Page shape follows the user — never a fixed section count.** Infer size from the prompt:
+  - Minimal / thank-you / confirmation / "dead-end" / "just a hero" / "hero + footer only" → hero (+ optional tiny footer/nav). Zero or almost no mid-page sections. Do NOT pad with fake features/FAQ/testimonials.
+  - Focused landing (a few named sections) → only those sections (+ hero/footer as needed).
+  - Full offer / marketing LP with no size constraint → typically 3–7 mid-page sections; vary the mix.
+- Do NOT invent fake statistics, awards, client logos, or "as seen in" proof unless the user provided them or explicitly asked for social proof.
 - JSON validity is non-negotiable. If any copy you write — including phrases quoted or reused from the user's prompt — contains a double-quote character, you MUST escape it as \" inside the JSON string. Never emit a literal unescaped " inside a string value.
 
 ## Visual-first bias — nobody reads landing pages, they skim
-Real users skim H1s, glance at images/icons, and scroll. A wall of paragraphs loses them. Do NOT default to text-only sections. When choosing sections beyond hero/footer, prefer types that pair copy with a real photo (image+text split, card grid with photos) or an icon over plain paragraph/list blocks — vary the mix, but visuals should dominate, not text.
+Real users skim H1s, glance at images/icons, and scroll. A wall of paragraphs loses them. Do NOT default to text-only sections. When the page has mid-page sections, prefer types that pair copy with a real photo (image+text split, card grid with photos) or an icon over plain paragraph/list blocks — visuals should dominate, not text. Minimal/confirmation pages may be mostly typography on a flat background — that is fine when the user asked for simple.
 
 ## Image prompts — add image_prompt + image_placement to sections that need real photos
 

@@ -14,6 +14,13 @@ import { buildHtmlFromSchema } from '@/lib/ai-page-builder';
 import { createSSEStream, sendSSE, closeSSE, SSE_HEADERS, type SSEEvent } from '@/lib/sse';
 import { isTestVariantPage } from '@/lib/page-drafts';
 import { extractDataUris, restoreDataUris, restoreDataUrisInValue } from '@/lib/data-uri-strip';
+import {
+  looksLikeMultiIntent,
+  planMultiIntentEdit,
+  userWantsUsToDecide,
+  isScreenshotComplaint,
+  verifyScopedPatchIntent,
+} from '@/lib/ai-follow-up-helpers';
 
 export const dynamic = 'force-dynamic';
 // Large full-page rewrites can run several minutes; raised well past the old
@@ -480,7 +487,8 @@ Rules:
   Always include "transparent background" and "high resolution" so it composites cleanly into the section.
 - Confidence is about WHICH SECTION, not about literal wording match. The instruction will often describe UI in generic terms ("button", "form", "banner") that don't literally match the underlying HTML tag — a labeled pill, badge, link, or div styled as a button all count as a match for "button." If exactly one section's preview clearly contains the referenced text/element, that is high confidence — do not lower it just because the HTML tag isn't literally a <button>/<form>/etc. The same applies to "insert_section"'s anchor, "remove_section"'s target, and "reorder_sections"' new_order — if you can confidently name the section(s) from the list, that is high confidence, even for a simple, plainly-worded request like "add a pricing section after X" or "remove the calculator."
 - Set confidence "low" when the referenced element/text/section could plausibly belong to two or more different sections, or doesn't appear in any preview at all — including truly ambiguous image references ("use this image" when multiple sections have images) or vague whole-page requests ("make it feel more premium"). When confidence is "low", still fill in your best guess for type/target_sections, AND you MUST also return "clarifying_question": a short plain-English question for the user that names the plausible section options using EXACT section names from the list (e.g. "Did you mean the form in cta-form, or the FAQ in faq?"). The product will ask the user instead of guessing.
-- **Attached screenshots (vision):** When image(s) are included with the instruction, LOOK at them. Screenshots of a lead form / dropdown questions / "investment range" style fields almost always mean a form section (names like cta-form, form, popup, contact — whatever matches the list), NOT faq. FAQ is for Q&A accordion copy. Prefer the section whose preview/schema looks like a form when the screenshot shows form fields.
+- **Never set confidence "low" / clarifying_question when:** (1) the user says "you decide", "feel free", "just do it", "up to you", or similar — pick the best section and use confidence "high"; (2) they attached a screenshot and are complaining that something looks wrong/sloppy/broken/fake — LOOK at the screenshot, decide the fix, confidence "high" on the section that matches the problem (often nav/logo). Do NOT ask "did you mean the logo?" when the rant + screenshot already make that obvious.
+- **Attached screenshots (vision):** When image(s) are included with the instruction, LOOK at them. Screenshots of a lead form / dropdown questions / "investment range" style fields almost always mean a form section (names like cta-form, form, popup, contact — whatever matches the list), NOT faq. FAQ is for Q&A accordion copy. Prefer the section whose preview/schema looks like a form when the screenshot shows form fields. Screenshots of a visual defect (logo box, broken line, bad spacing) are diagnostic — route to the broken section and fix it; do not clarify.
 - Only ever use section names EXACTLY as given in the list — never invent one.`;
 
 interface RoutingResult {
@@ -1329,6 +1337,7 @@ export async function POST(
       let finalHtml = '';
       let finalSchemaJson: unknown | undefined;
       let scopedApplied = false;
+      let partialMessage: string | null = null;
       // Set only when routing already qualified a request for a scoped op
       // (patch/insert/remove/reorder/image_generate) and OUR OWN code then
       // failed to execute it (parse failure, deterministic splice failure,
@@ -1449,6 +1458,193 @@ export async function POST(
           }
         }
 
+        // Multi-intent planner — only when the prompt looks like several
+        // distinct asks. Single clear edits skip this (stay fast).
+        if (!scopedApplied && !scopedFailureReason && looksLikeMultiIntent(prompt)) {
+          const forceDecidePlan =
+            lastAssistantWasClarify ||
+            userWantsUsToDecide(prompt) ||
+            isScreenshotComplaint(prompt, hasUserImages);
+          sendSSE(controller, { type: 'status', message: 'Planning edits...' });
+          const plan = await planMultiIntentEdit({
+            prompt,
+            sectionNames: slSections.map((s) => s.name),
+            sectionPreviews: slSections.map((s) => ({ name: s.name, text: s.text })),
+            imageUrls: effectiveImageUrls,
+            forceDecide: forceDecidePlan,
+            usage: usageCtx,
+          });
+          console.log('[pages/follow-up] multi-intent plan', {
+            promptPreview: prompt.slice(0, 300),
+            plan:
+              plan.mode === 'execute'
+                ? { mode: plan.mode, steps: plan.steps.map((s) => ({ op: s.op, targets: s.target_sections, preview: s.instruction.slice(0, 80) })) }
+                : plan,
+          });
+
+          if (plan.mode === 'clarify' && !forceDecidePlan) {
+            const question = plan.question;
+            const userEntry: Record<string, unknown> = { role: 'user', content: prompt };
+            if (Array.isArray(image_urls) && image_urls.length > 0) userEntry.image_urls = image_urls;
+            const updatedConversation = [
+              ...history,
+              userEntry,
+              { role: 'assistant', content: question, clarify: true },
+            ];
+            await db
+              .from('pages')
+              .update({
+                conversation_json: updatedConversation,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', params.id);
+            sendSSE(controller, { type: 'clarify', message: question });
+            closeSSE(controller);
+            return;
+          }
+
+          if (plan.mode === 'execute') {
+            let workingHtml = html;
+            const stepFailures: string[] = [];
+            const stepOks: string[] = [];
+
+            for (let i = 0; i < plan.steps.length; i++) {
+              const step = plan.steps[i];
+              if (request.signal.aborted) { closeSSE(controller); return; }
+              sendSSE(controller, {
+                type: 'status',
+                message: `Step ${i + 1}/${plan.steps.length}: ${step.instruction.slice(0, 60)}${step.instruction.length > 60 ? '…' : ''}`,
+              });
+
+              const liveSections = extractSlSections(workingHtml);
+              let stepTargets = step.target_sections.filter((n) => liveSections.some((s) => s.name === n));
+
+              if (step.op === 'remove_section' && stepTargets.length === 1) {
+                const removed = removeSlSection(workingHtml, stepTargets[0]);
+                if (removed) {
+                  workingHtml = removed;
+                  stepOks.push(stepTargets[0]);
+                  if (schema && typeof schema === 'object' && stepTargets[0] in (schema as Record<string, unknown>)) {
+                    const schemaCopy = (finalSchemaJson && typeof finalSchemaJson === 'object'
+                      ? JSON.parse(JSON.stringify(finalSchemaJson))
+                      : JSON.parse(JSON.stringify(schema))) as Record<string, unknown>;
+                    delete schemaCopy[stepTargets[0]];
+                    finalSchemaJson = schemaCopy;
+                  }
+                } else {
+                  stepFailures.push(`remove ${stepTargets[0]}`);
+                }
+                continue;
+              }
+
+              if (stepTargets.length === 0) {
+                const stepRouting = await tryRoutingCall(
+                  step.instruction,
+                  schema,
+                  liveSections,
+                  effectiveImageUrls,
+                  usageCtx,
+                );
+                if (
+                  stepRouting &&
+                  stepRouting.type === 'patch' &&
+                  stepRouting.target_sections?.length >= 1 &&
+                  stepRouting.target_sections.every((n) => liveSections.some((s) => s.name === n))
+                ) {
+                  stepTargets = stepRouting.target_sections.slice(0, 3);
+                } else if (
+                  stepRouting?.type === 'remove_section' &&
+                  stepRouting.target_sections?.length === 1 &&
+                  liveSections.some((s) => s.name === stepRouting.target_sections[0])
+                ) {
+                  const removed = removeSlSection(workingHtml, stepRouting.target_sections[0]);
+                  if (removed) {
+                    workingHtml = removed;
+                    stepOks.push(stepRouting.target_sections[0]);
+                  } else {
+                    stepFailures.push(`remove ${stepRouting.target_sections[0]}`);
+                  }
+                  continue;
+                } else if (step.op === 'structural') {
+                  // Leave structural steps to the full-page path by aborting
+                  // the multi-step plan so we don't half-apply then rebuild.
+                  stepFailures.push('structural_needs_full_page');
+                  break;
+                }
+              }
+
+              if (stepTargets.length === 0) {
+                stepFailures.push(`unrouted:${step.instruction.slice(0, 40)}`);
+                continue;
+              }
+
+              const patched: Array<{ name: string; html: string }> = [];
+              let stepOk = true;
+              for (const name of stepTargets) {
+                const section = liveSections.find((s) => s.name === name);
+                if (!section) {
+                  stepOk = false;
+                  stepFailures.push(`missing:${name}`);
+                  break;
+                }
+                const schemaSlice = { [name]: (schema as Record<string, unknown> | null | undefined)?.[name] };
+                const patchResult = await runScopedPatchWithRetry(
+                  section.html,
+                  schemaSlice,
+                  step.instruction,
+                  effectiveImageUrls,
+                  usageCtx,
+                );
+                if (!patchResult.html) {
+                  stepOk = false;
+                  stepFailures.push(`patch_fail:${name}`);
+                  break;
+                }
+                const verify = verifyScopedPatchIntent({
+                  prompt: step.instruction,
+                  sectionName: name,
+                  beforeHtml: section.html,
+                  afterHtml: patchResult.html,
+                });
+                if (!verify.ok) {
+                  console.error('[pages/follow-up] multi-intent step failed verify', { name, reason: verify.reason });
+                  stepOk = false;
+                  stepFailures.push(verify.reason);
+                  break;
+                }
+                patched.push({ name, html: patchResult.html });
+              }
+
+              if (stepOk && patched.length > 0) {
+                workingHtml = applyPatch(workingHtml, patched);
+                stepOks.push(...patched.map((p) => p.name));
+              }
+            }
+
+            if (stepOks.length > 0 && stepFailures.length === 0) {
+              finalHtml = workingHtml;
+              scopedApplied = true;
+              console.log('[pages/follow-up] multi-intent plan applied', { stepOks });
+            } else if (stepOks.length > 0 && stepFailures.length > 0) {
+              // Partial success — save what worked and report clearly (no fake full Done).
+              finalHtml = workingHtml;
+              scopedApplied = true;
+              partialMessage = `Updated ${stepOks.length} part(s); couldn't finish: ${stepFailures.slice(0, 3).join(', ')}. You can retry the failed parts.`;
+              console.warn('[pages/follow-up] multi-intent partial', { stepOks, stepFailures });
+              sendSSE(controller, {
+                type: 'status',
+                message: `Partial: updated ${stepOks.length} part(s); failed: ${stepFailures.slice(0, 3).join(', ')}`,
+              });
+            } else if (stepFailures.includes('structural_needs_full_page')) {
+              console.log('[pages/follow-up] multi-intent deferred to full-page (structural step)');
+              // fall through — don't set scopedApplied
+            } else {
+              scopedFailureReason = 'multi_intent_all_steps_failed';
+            }
+          }
+          // mode === 'single' → fall through to normal routing
+        }
+
         // A logo-swap attempt above already qualified as a scoped op and
         // either succeeded (scopedApplied) or hard-failed (scopedFailureReason)
         // — never let the generic routing call below re-evaluate the same
@@ -1472,7 +1668,16 @@ export async function POST(
           // independent textual confirmation over Haiku's self-rating.
           const namesItsSingleSection = !!routing && basicShapeOk && routing.target_sections.length === 1 &&
             new RegExp(`\\b${routing.target_sections[0]}\\b`, 'i').test(prompt);
-          const routingQualifies = basicShapeOk && (routing!.confidence === 'high' || namesItsSingleSection);
+          // Declared early so forceDecide can relax confidence for proceed-anyway.
+          const forceDecideEarly =
+            lastAssistantWasClarify ||
+            userWantsUsToDecide(prompt) ||
+            isScreenshotComplaint(prompt, hasUserImages);
+          const routingQualifies = basicShapeOk && (
+            routing!.confidence === 'high' ||
+            namesItsSingleSection ||
+            forceDecideEarly
+          );
 
           const imageGenerateShapeOk = !!routing &&
             routing.type === 'image_generate' &&
@@ -1488,13 +1693,13 @@ export async function POST(
           // even though they're just as scoped as a text patch.
           const removeShapeOk = !!routing &&
             routing.type === 'remove_section' &&
-            routing.confidence === 'high' &&
+            (routing.confidence === 'high' || forceDecideEarly) &&
             routing.target_sections.length === 1 &&
             slSections.some((s) => s.name === routing.target_sections[0]);
 
           const reorderShapeOk = !!routing &&
             routing.type === 'reorder_sections' &&
-            routing.confidence === 'high' &&
+            (routing.confidence === 'high' || forceDecideEarly) &&
             Array.isArray(routing.new_order) &&
             routing.new_order.length >= 2 &&
             new Set(routing.new_order).size === routing.new_order.length &&
@@ -1502,7 +1707,7 @@ export async function POST(
 
           const insertShapeOk = !!routing &&
             routing.type === 'insert_section' &&
-            routing.confidence === 'high' &&
+            (routing.confidence === 'high' || forceDecideEarly) &&
             typeof routing.anchor_section === 'string' &&
             slSections.some((s) => s.name === routing.anchor_section) &&
             (routing.position === 'before' || routing.position === 'after');
@@ -1530,14 +1735,18 @@ export async function POST(
           const narrowScopedType =
             !!routing && ['patch', 'remove_section', 'insert_section', 'reorder_sections', 'image_generate'].includes(routing.type);
 
+          // Decide-and-act: never clarify when the user deferred, or when a
+          // screenshot complaint already shows the defect (production over-ask).
+          const forceDecide = forceDecideEarly;
+
           // Unsure which section → ask the user instead of guessing or
           // falling into an expensive/oversized full-page rebuild. Never ask
           // twice in a row — if we already asked last turn, the user's reply
           // is the answer (even a non-specific one), not a new prompt to
-          // re-evaluate.
+          // re-evaluate. Also never ask when forceDecide.
           const routingUnsure =
             !!routing &&
-            !lastAssistantWasClarify &&
+            !forceDecide &&
             narrowScopedType &&
             ((routing.confidence === 'low' && !namesItsSingleSection && !anyScopedPath) ||
               forceFaqVsFormClarify);
@@ -1582,6 +1791,17 @@ export async function POST(
 
           if (routingQualifies) {
             targetSections = (routing as { target_sections: string[] }).target_sections;
+            // If we skipped FAQ-vs-form clarify because forceDecide, prefer the form.
+            if (forceFaqVsFormClarify && forceDecide) {
+              const formLike = slSections.find((s) => /cta|form|popup|contact|lead/i.test(s.name));
+              if (formLike) {
+                console.log('[pages/follow-up] forceDecide remapped faq→form', {
+                  from: targetSections,
+                  to: formLike.name,
+                });
+                targetSections = [formLike.name];
+              }
+            }
           } else if (removeShapeOk) {
             const removeName = routing!.target_sections[0];
             sendSSE(controller, { type: 'status', message: 'Removing section...' });
@@ -1704,6 +1924,23 @@ export async function POST(
                 updatedPreview: updated.slice(0, 500),
               });
               scopedFailureReason = 'image_generate_patch_did_not_embed';
+              allOk = false;
+              break;
+            }
+            const verify = verifyScopedPatchIntent({
+              prompt,
+              sectionName: name,
+              beforeHtml: section.html,
+              afterHtml: updated,
+              requiredSubstring: generatedImageUrl,
+            });
+            if (!verify.ok) {
+              console.error('[pages/follow-up] scoped patch failed intent verify', {
+                section: name,
+                reason: verify.reason,
+                promptPreview: prompt.slice(0, 300),
+              });
+              scopedFailureReason = verify.reason;
               allOk = false;
               break;
             }
@@ -2100,6 +2337,7 @@ export async function POST(
         ...(finalSchemaJsonReal ? { schema_json: finalSchemaJsonReal } : {}),
         ...(competitorUrls.length > 0 && !competitorContext ? { competitor_fetch_failed: true } : {}),
         elapsed_ms: Date.now() - startedAt,
+        ...(partialMessage ? { partial_message: partialMessage } : {}),
       };
       sendSSE(controller, doneEvent);
       closeSSE(controller);

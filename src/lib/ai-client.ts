@@ -453,7 +453,9 @@ export async function generatePageImages(
 
   await Promise.all(
     capped.map(async ({ obj, prompt }) => {
-      const publicUrl = await generateAndUploadImage(prompt, pageSlug);
+      // Medium quality for create builds — low was a common client complaint
+      // on first-paint pages. Edit-time image_generate still picks its own quality.
+      const publicUrl = await generateAndUploadImage(prompt, pageSlug, 'medium');
       if (!publicUrl) return;
       obj.generated_image_url = publicUrl;
       onImageReady?.(publicUrl);
