@@ -2175,17 +2175,15 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       {outOfCredits && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => !ocSaving && setOutOfCredits(null)}>
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl p-6 w-full max-w-md mx-4 shadow-2xl" onClick={e => e.stopPropagation()}>
-            <div className="flex items-start gap-3 mb-4">
-              <div className="flex-shrink-0 w-10 h-10 rounded-full bg-amber-100 dark:bg-amber-500/15 flex items-center justify-center">
-                <Sparkles size={18} className="text-amber-600 dark:text-amber-400" />
+            <div className="flex items-center gap-2.5 mb-3">
+              <div className="flex-shrink-0 w-8 h-8 rounded-full bg-amber-100 dark:bg-amber-500/15 flex items-center justify-center">
+                <Sparkles size={15} className="text-amber-600 dark:text-amber-400" />
               </div>
-              <div>
-                <h3 className="text-slate-900 dark:text-slate-100 font-semibold text-base">You&apos;re out of AI credits</h3>
-                <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">
-                  You&apos;ve used {outOfCredits.creditsUsed.toLocaleString()} of {outOfCredits.creditsIncluded.toLocaleString()} credits this month. To keep building right now, turn on overage and you&apos;ll just pay for any usage beyond your plan, up to the spend cap you set. If you&apos;d rather not, you can wait until your credits reset when your plan renews next month.
-                </p>
-              </div>
+              <h3 className="text-slate-900 dark:text-slate-100 font-semibold text-base">You&apos;re out of AI credits</h3>
             </div>
+            <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
+              You&apos;ve used {outOfCredits.creditsUsed.toLocaleString()} of {outOfCredits.creditsIncluded.toLocaleString()} credits this month. Keep building now and pay only for what you use beyond your plan, up to a cap you set below. Or wait for your credits to reset when your plan renews next month.
+            </p>
 
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Continue and bill me up to</label>
             <select value={ocCapDollars} onChange={(e) => setOcCapDollars(e.target.value)} className="input-base w-full">
