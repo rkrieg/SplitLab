@@ -285,6 +285,10 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   const createAttachUrlsRef = useRef<string[]>([]);
   const createDesignCopyRef = useRef<string[]>([]);
   const createRequirementsRef = useRef<unknown[]>([]);
+  /** Schema pass's verdict on whether the reference's words belong on the page. */
+  const createReuseRefCopyRef = useRef<boolean | null>(null);
+  /** Schema pass's verdict on whether this is a style reference at all. */
+  const createDesignReferenceRef = useRef<boolean | null>(null);
 
   const [pendingImageField, setPendingImageField] = useState<string | null>(null);
   const [uploadingImage, setUploadingImage] = useState(false);
@@ -373,6 +377,19 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
 
   // Chat image attachments (paste / file-picker / drag-and-drop)
   const [chatImages, setChatImages] = useState<{ file: File; preview: string }[]>([]);
+  // Mirror of chatImages that can be read and cleared synchronously. setChatImages
+  // only affects the NEXT render, so a handler chain that consumes attachments in
+  // two steps (runGenerate → runBuild, both closing over the same stale `chatImages`)
+  // would upload the same file twice and show the screenshot twice in the message.
+  const chatImagesRef = useRef<{ file: File; preview: string }[]>([]);
+  useEffect(() => { chatImagesRef.current = chatImages; }, [chatImages]);
+  /** Read the pending attachments and clear them in the same tick. */
+  function takePendingChatImages() {
+    const pending = chatImagesRef.current;
+    chatImagesRef.current = [];
+    setChatImages([]);
+    return pending;
+  }
   const chatImageInputRef = useRef<HTMLInputElement>(null);
   const [isDraggingChatImage, setIsDraggingChatImage] = useState(false);
   // Full-size preview for chat thumbnails (message history + composer)
@@ -405,6 +422,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   // Guards only the automatic first fire in the effect below — the "Try
   // again" retry calls runSchemaPrep() directly and must not be blocked by it.
   const schemaFromHtmlFiredRef = useRef(false);
+  const ensureEditableFiredRef = useRef(false);
 
   const [questions, setQuestions] = useState<string[]>([]);
   const [answers, setAnswers] = useState<string[]>([]);
@@ -629,6 +647,29 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialPage]);
 
+  // AI-created pages already have schema_json, so schema-from-html is skipped —
+  // but older HTML often has zero [data-field]. Stamp once on open.
+  useEffect(() => {
+    if (!initialPage?.id || !initialPage.html_url) return;
+    if (!(initialPage.draft_schema_json ?? initialPage.schema_json)) return;
+    if (ensureEditableFiredRef.current) return;
+    ensureEditableFiredRef.current = true;
+    (async () => {
+      try {
+        const res = await fetch(`/api/pages/${initialPage.id}/ensure-editable`, { method: 'POST' });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.updated && data.html_url) {
+          setHtmlUrl(`${data.html_url}?t=${Date.now()}`);
+          console.log('[AIBuilder] ensured click-to-edit fields', { fields: data.field_count });
+        }
+      } catch {
+        // Non-fatal — chat edits still work; click-to-edit may stay limited.
+      }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialPage]);
+
   // Stable iframe src — points to preview route, refreshes when htmlUrl is available/changes
   useEffect(() => {
     if (!pageId || !htmlUrl) return;
@@ -723,17 +764,26 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     };
   }, [pageId]);
 
-  // Inject contentEditable after iframe loads
-  useEffect(() => {
-    if (!iframeLoaded || !iframeRef.current || phase !== 'editing') return;
-    const doc = iframeRef.current.contentDocument;
-    if (!doc) return;
+  // Inject contentEditable into the live preview document. Must re-run on every
+  // real document load — a previous dual-iframe (scale remount) path attached
+  // the editor to a document that was then thrown away once layout finished.
+  function injectPreviewEditor(doc: Document | null | undefined) {
+    if (!doc?.body || phase !== 'editing') return;
+    // Same document already wired (effect + onLoad both fire).
+    if (doc.querySelector('[data-sl-editor]')) return;
+    const fields = doc.querySelectorAll('[data-field]');
+    if (fields.length === 0) {
+      console.warn('[AIBuilder] click-to-edit: no [data-field] in preview');
+      return;
+    }
     const script = doc.createElement('script');
     script.setAttribute('data-sl-editor', 'true');
     script.textContent = `
       (function() {
         var saveTimer;
         document.querySelectorAll('[data-field]').forEach(function(el) {
+          if (el.getAttribute('data-sl-bound') === '1') return;
+          el.setAttribute('data-sl-bound', '1');
           if (el.tagName === 'IMG') {
             el.style.cursor = 'pointer';
             el.addEventListener('click', function() {
@@ -769,7 +819,13 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       })();
     `;
     doc.body.appendChild(script);
-  }, [iframeLoaded, phase]);
+    console.log('[AIBuilder] click-to-edit bound', { fields: fields.length });
+  }
+
+  useEffect(() => {
+    if (!iframeLoaded || phase !== 'editing') return;
+    injectPreviewEditor(iframeRef.current?.contentDocument);
+  }, [iframeLoaded, phase, iframeSrc]);
 
   // Auto-scroll chat
   useEffect(() => {
@@ -793,6 +849,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     clone.querySelectorAll('[data-sl-editor]').forEach(el => el.remove());
     clone.querySelectorAll('[data-field]').forEach((el) => {
       el.removeAttribute('contenteditable');
+      el.removeAttribute('data-sl-bound');
       const style = el as HTMLElement;
       style.style.outline = '';
       style.style.cursor = '';
@@ -810,9 +867,8 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     // Upload create-time attachments before schema gen so generate/build both see them
     // (same screenshot reader path as follow-up design refs).
     let createImageUrls: string[] = [...createAttachUrlsRef.current];
-    if (chatImages.length > 0 && pageId) {
-      const attachedImages = chatImages;
-      setChatImages([]);
+    if (chatImagesRef.current.length > 0 && pageId) {
+      const attachedImages = takePendingChatImages();
       try {
         const uploaded = await Promise.all(
           attachedImages.map(async ({ file }) => {
@@ -889,6 +945,21 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       ? (data.requirements as unknown[])
       : createRequirementsRef.current;
     if (freshRequirements.length > 0) createRequirementsRef.current = freshRequirements;
+    // Whether the attached screenshot's WORDS belong on the page was decided by
+    // the model during the schema pass — carry that decision to the build pass
+    // instead of letting it re-guess from the prompt text.
+    const freshReuseReferenceCopy =
+      typeof data.reuse_reference_copy === 'boolean'
+        ? (data.reuse_reference_copy as boolean)
+        : createReuseRefCopyRef.current;
+    createReuseRefCopyRef.current = freshReuseReferenceCopy;
+    // Same for "is this a style reference at all" — decided once by the schema
+    // pass; the build pass must not re-derive a possibly different answer.
+    const freshDesignReference =
+      typeof data.design_reference === 'boolean'
+        ? (data.design_reference as boolean)
+        : createDesignReferenceRef.current;
+    createDesignReferenceRef.current = freshDesignReference;
 
     if (data.type === 'questions') {
       setQuestions(data.questions);
@@ -916,10 +987,14 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       createImageUrls,
       freshDesignCopyLines,
       freshRequirements,
+      freshReuseReferenceCopy,
+      freshDesignReference,
     );
     createAttachUrlsRef.current = [];
     createDesignCopyRef.current = [];
     createRequirementsRef.current = [];
+    createReuseRefCopyRef.current = null;
+    createDesignReferenceRef.current = null;
   }
 
   async function runBuild(
@@ -934,6 +1009,8 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     preUploadedImageUrls?: string[],
     designCopyLines?: string[],
     modelRequirements?: unknown[],
+    reuseReferenceCopy?: boolean | null,
+    designReference?: boolean | null,
   ) {
     if (!pageId) return;
     setPhase('building');
@@ -941,9 +1018,8 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
 
     // Step 1: upload any remaining attached images (generate may already have uploaded)
     let image_urls: string[] = Array.isArray(preUploadedImageUrls) ? [...preUploadedImageUrls] : [];
-    if (chatImages.length > 0) {
-      const attachedImages = chatImages;
-      setChatImages([]);
+    if (chatImagesRef.current.length > 0) {
+      const attachedImages = takePendingChatImages();
       try {
         const uploaded = await Promise.all(
           attachedImages.map(async ({ file }) => {
@@ -984,6 +1060,8 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         workspace_id: workspaceId,
         ...(image_urls.length > 0 ? { image_urls } : {}),
         ...(designCopyLines && designCopyLines.length > 0 ? { design_copy_lines: designCopyLines } : {}),
+        ...(typeof reuseReferenceCopy === 'boolean' ? { reuse_reference_copy: reuseReferenceCopy } : {}),
+        ...(typeof designReference === 'boolean' ? { design_reference: designReference } : {}),
         ...(modelRequirements && modelRequirements.length > 0 ? { requirements: modelRequirements } : {}),
         ...((freshScreenshots ?? competitorScreenshots)?.length ? { competitor_screenshots: freshScreenshots ?? competitorScreenshots } : {}),
         ...(((freshCssTokens ?? competitorCssTokens)) ? { competitor_css_tokens: freshCssTokens ?? competitorCssTokens } : {}),
@@ -1087,7 +1165,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       toast.error('Please fill in the highlighted [placeholder] fields before building.');
       return;
     }
-    const previewUrls = chatImages.map(img => img.preview);
+    const previewUrls = chatImagesRef.current.map(img => img.preview);
     addMessage({ role: 'user', content: prompt, ...(previewUrls.length > 0 ? { image_urls: previewUrls } : {}) });
     await runGenerate(prompt, []);
   }
@@ -1119,23 +1197,54 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     setChatImages(prev => {
       const remaining = 3 - prev.length;
       if (remaining <= 0) { toast.error('Maximum 3 images per message'); return prev; }
-      const toAdd = files.slice(0, remaining);
-      if (files.length > remaining) toast.error(`Only ${remaining} more image${remaining === 1 ? '' : 's'} allowed`);
-      return [
+      // Pasted images often have synthetic names like "image.png" and timestamps
+      // that differ per paste event. Use name+size only (no lastModified) for
+      // pasted images to catch duplicates. For picked files (with real names),
+      // include lastModified to allow re-picking an updated version.
+      const fingerprint = (f: File) => {
+        const isPasted = /^image\.(png|jpg|jpeg|gif|webp)$/i.test(f.name);
+        return isPasted ? `${f.name}:${f.size}` : `${f.name}:${f.size}:${f.lastModified}`;
+      };
+      const already = new Set(prev.map((p) => fingerprint(p.file)));
+      const unique = files.filter((f) => {
+        const key = fingerprint(f);
+        if (already.has(key)) return false;
+        already.add(key);
+        return true;
+      });
+      if (unique.length < files.length) {
+        toast.error('That screenshot is already attached — using it once.');
+      }
+      const toAdd = unique.slice(0, remaining);
+      if (unique.length > remaining) toast.error(`Only ${remaining} more image${remaining === 1 ? '' : 's'} allowed`);
+      if (toAdd.length === 0) return prev;
+      const next = [
         ...prev,
         ...toAdd.map(f => ({ file: f, preview: URL.createObjectURL(f) })),
       ];
+      // Keep the sync mirror current: a submit fired before the next render
+      // must still see these attachments (and only once).
+      chatImagesRef.current = next;
+      return next;
     });
   }
 
   function removeChatImage(index: number) {
     setChatImages(prev => {
       URL.revokeObjectURL(prev[index].preview);
-      return prev.filter((_, i) => i !== index);
+      const next = prev.filter((_, i) => i !== index);
+      chatImagesRef.current = next;
+      return next;
     });
   }
 
+  // Track last paste time to debounce rapid double-pastes (some browsers fire twice)
+  const lastPasteRef = useRef<number>(0);
   function handleChatImagePaste(e: React.ClipboardEvent) {
+    const now = Date.now();
+    if (now - lastPasteRef.current < 300) return; // Debounce 300ms
+    lastPasteRef.current = now;
+
     const imageFiles = Array.from(e.clipboardData.items)
       .filter(item => item.kind === 'file' && item.type.startsWith('image/'))
       .map(item => item.getAsFile())
@@ -1350,9 +1459,8 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     e.preventDefault();
     if ((!followUpInput.trim() && chatImages.length === 0) || !pageId || preparingSchema || schemaPrepFailed) return;
     const instruction = followUpInput.trim() || 'Please incorporate these reference images into the page.';
-    const attachedImages = chatImages;
+    const attachedImages = takePendingChatImages();
     setFollowUpInput('');
-    setChatImages([]);
     if (followUpRef.current) followUpRef.current.style.height = 'auto';
     await sendFollowUp(instruction, attachedImages, pageId);
   }
@@ -2242,34 +2350,39 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
               'relative bg-white rounded-xl overflow-hidden shadow-xl ring-1 ring-black/5 dark:ring-white/5 transition-all duration-300 h-full',
               viewMode === 'mobile' ? 'w-[390px]' : 'w-full'
             )}>
-              {viewMode === 'desktop' && desktopScale < 1 ? (
-                <iframe
-                  ref={iframeRef}
-                  src={iframeSrc}
-                  className="transition-opacity duration-500"
-                  style={{
-                    width: `${DESKTOP_PREVIEW_WIDTH}px`,
-                    height: `${previewSize.height / desktopScale}px`,
-                    transform: `scale(${desktopScale})`,
-                    transformOrigin: 'top left',
-                    border: 0,
-                    opacity: iframeLoaded ? 1 : 0,
-                  }}
-                  title="Page preview"
-                  sandbox="allow-scripts allow-same-origin allow-forms"
-                  onLoad={() => setIframeLoaded(true)}
-                />
-              ) : (
-                <iframe
-                  ref={iframeRef}
-                  src={iframeSrc}
-                  className="w-full h-full border-0 transition-opacity duration-500"
-                  style={{ opacity: iframeLoaded ? 1 : 0 }}
-                  title="Page preview"
-                  sandbox="allow-scripts allow-same-origin allow-forms"
-                  onLoad={() => setIframeLoaded(true)}
-                />
-              )}
+              {/* One iframe only. Swapping scaled vs unscaled iframes remounted
+                  the document after layout and wiped click-to-edit. */}
+              <iframe
+                ref={iframeRef}
+                src={iframeSrc}
+                className={cn(
+                  'border-0 transition-opacity duration-500',
+                  viewMode === 'desktop' && desktopScale < 1 ? '' : 'w-full h-full',
+                )}
+                style={
+                  viewMode === 'desktop' && desktopScale < 1
+                    ? {
+                        width: `${DESKTOP_PREVIEW_WIDTH}px`,
+                        height: `${previewSize.height / desktopScale}px`,
+                        transform: `scale(${desktopScale})`,
+                        transformOrigin: 'top left',
+                        opacity: iframeLoaded ? 1 : 0,
+                      }
+                    : { opacity: iframeLoaded ? 1 : 0 }
+                }
+                title="Page preview"
+                sandbox="allow-scripts allow-same-origin allow-forms"
+                onLoad={() => {
+                  setIframeLoaded(true);
+                  // Bind on this document immediately — don't wait for a stale
+                  // effect that targeted a previous iframe instance.
+                  try {
+                    injectPreviewEditor(iframeRef.current?.contentDocument);
+                  } catch {
+                    /* ignore */
+                  }
+                }}
+              />
               {!iframeLoaded && (
                 <div className="absolute inset-0 bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
                   <Loader2 size={20} className="animate-spin text-slate-400" />

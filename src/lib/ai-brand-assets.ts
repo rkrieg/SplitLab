@@ -263,8 +263,54 @@ export function inferLogoPlacementSectionNames(prompt: string, sectionNames: str
 }
 
 /**
+ * Logo URL inside a named SL section (or matching &lt;footer&gt;/&lt;nav&gt;).
+ * Used when the user says "same logo as the footer" — never assume nav-first.
+ */
+export function extractLogoUrlFromSection(html: string, sectionName: string): string | null {
+  const escaped = sectionName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const sl = new RegExp(
+    `<!--\\s*SL:${escaped}\\s*-->([\\s\\S]*?)<!--\\s*\\/SL:${escaped}\\s*-->`,
+    'i',
+  ).exec(html);
+  let scope = sl?.[1] ?? null;
+  if (!scope) {
+    if (/footer/i.test(sectionName)) {
+      scope = /<footer\b[^>]*>[\s\S]*?<\/footer>/i.exec(html)?.[0] ?? null;
+    } else if (/nav|header/i.test(sectionName)) {
+      scope =
+        /<nav\b[^>]*>[\s\S]*?<\/nav>/i.exec(html)?.[0] ??
+        /<header\b[^>]*>[\s\S]*?<\/header>/i.exec(html)?.[0] ??
+        null;
+    }
+  }
+  if (!scope) return null;
+  return pickLogoUrlFromScope(scope);
+}
+
+function pickLogoUrlFromScope(scope: string): string | null {
+  const imgs = Array.from(scope.matchAll(/<img\b[^>]*>/gi));
+  const ranked: { src: string; score: number }[] = [];
+  for (const m of imgs) {
+    const tag = m[0];
+    const srcM = /\bsrc=["']([^"']+)["']/i.exec(tag);
+    if (!srcM) continue;
+    const src = srcM[1].trim();
+    if (!/^https?:\/\//i.test(src)) continue;
+    if (/placeholder|spacer|pixel|1x1|blank\./i.test(src)) continue;
+    let score = 1;
+    if (/logo|brand|wordmark/i.test(tag) || /logo|brand|wordmark/i.test(src)) score += 5;
+    if (/supabase|storage|trysplitlab|focusedcapital/i.test(src)) score += 1;
+    ranked.push({ src, score });
+  }
+  if (ranked.length === 0) return null;
+  ranked.sort((a, b) => b.score - a.score);
+  return ranked[0].src;
+}
+
+/**
  * Prefer the working nav/header logo <img src> already on the page.
  * Fail-closed: never invents a URL.
+ * For "copy footer logo to nav", use extractLogoUrlFromSection instead.
  */
 export function extractPrimaryLogoUrlFromHtml(html: string): string | null {
   const preferScopes: string[] = [];
@@ -276,28 +322,8 @@ export function extractPrimaryLogoUrlFromHtml(html: string): string | null {
   if (navMatch) preferScopes.push(navMatch[0]);
   preferScopes.push(html.slice(0, 40_000));
 
-  const pickFrom = (scope: string): string | null => {
-    const imgs = Array.from(scope.matchAll(/<img\b[^>]*>/gi));
-    const ranked: { src: string; score: number }[] = [];
-    for (const m of imgs) {
-      const tag = m[0];
-      const srcM = /\bsrc=["']([^"']+)["']/i.exec(tag);
-      if (!srcM) continue;
-      const src = srcM[1].trim();
-      if (!/^https?:\/\//i.test(src)) continue;
-      if (/placeholder|spacer|pixel|1x1|blank\./i.test(src)) continue;
-      let score = 1;
-      if (/logo|brand|wordmark/i.test(tag) || /logo|brand|wordmark/i.test(src)) score += 5;
-      if (/supabase|storage|trysplitlab|focusedcapital/i.test(src)) score += 1;
-      ranked.push({ src, score });
-    }
-    if (ranked.length === 0) return null;
-    ranked.sort((a, b) => b.score - a.score);
-    return ranked[0].src;
-  };
-
   for (const scope of preferScopes) {
-    const found = pickFrom(scope);
+    const found = pickLogoUrlFromScope(scope);
     if (found) return found;
   }
   return null;

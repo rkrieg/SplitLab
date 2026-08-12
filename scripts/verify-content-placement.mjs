@@ -87,6 +87,25 @@ assert('pricing still matches when named',
 const everywhere = infer('use the logo everywhere on the page');
 assert('everywhere resolves to nav + footer',
   everywhere.includes('nav') && everywhere.includes('footer'));
+assert('everywhere also includes hero when the page has one',
+  everywhere.includes('hero'));
+
+assert(
+  'make the logo white everywhere is a style ask, not reuse',
+  C.isLogoColorStyleAsk('make the logo white everywhere') === true &&
+    C.detectContentReuseIntent('make the logo white everywhere', SECTIONS) === null,
+);
+assert(
+  'make the logo colors white everywhere is not reuse',
+  C.detectContentReuseIntent(
+    'make the footer like this also make the logo colors white everywhere',
+    SECTIONS,
+  ) === null,
+);
+assert(
+  '"use the new white logo in the footer" is still placement, not recolor',
+  C.isLogoColorStyleAsk('use the new white logo in the footer as well') === false,
+);
 
 // ── Logo placement into arbitrary sections ──────────────────────────────────
 
@@ -103,6 +122,24 @@ assert('logo → gallery works', galleryLogo?.targets.includes('gallery'));
 const footerLogo = C.detectContentReuseIntent('use the new white logo in the footer as well', SECTIONS);
 assert('the original reported prompt still works',
   footerLogo?.kind === 'logo' && footerLogo.targets.includes('footer'));
+
+const footerToNav = C.detectContentReuseIntent(
+  'make navbar logo same as footer, use the same logo which is used in footer',
+  SECTIONS,
+);
+assert('footer→nav logo reuse is logo kind', footerToNav?.kind === 'logo');
+assert('footer→nav source is footer', footerToNav?.sourceSectionHint === 'footer');
+assert('footer→nav dest is nav not footer',
+  footerToNav?.targets.includes('nav') && !footerToNav?.targets.includes('footer'));
+
+const copyFooterToNav = C.detectContentReuseIntent(
+  'copy the logo from footer to navbar',
+  SECTIONS,
+);
+assert('copy from footer to navbar is logo kind', copyFooterToNav?.kind === 'logo');
+assert('copy from footer → source footer', copyFooterToNav?.sourceSectionHint === 'footer');
+assert('copy from footer → dest nav only',
+  copyFooterToNav?.targets.includes('nav') && !copyFooterToNav?.targets.includes('footer'));
 
 // ── Text reuse into arbitrary sections ──────────────────────────────────────
 
@@ -128,6 +165,57 @@ const placed = C.forcePlaceTextInSection(html, 'team', 'Meet The Crew');
 assert('text lands in an arbitrary section', placed.includes('Meet The Crew'));
 assert('section markers survive placement',
   placed.includes('<!-- SL:team -->') && placed.includes('<!-- /SL:team -->'));
+
+const duped = C.dedupeDesignCopyLines([
+  'Privacy Policy',
+  'Privacy Policy',
+  'privacy policy',
+  '  Privacy Policy  ',
+  'Contact us at 555-0100',
+  'Contact us',
+]);
+assert('duplicate screenshot lines collapse to one',
+  duped.filter((l) => /privacy policy/i.test(l)).length === 1);
+assert('shorter line absorbed into the longer one',
+  duped.some((l) => l === 'Contact us at 555-0100') && !duped.includes('Contact us'));
+
+const footerHtml = `<!-- SL:footer --><footer><p>Privacy Policy</p></footer><!-- /SL:footer -->`;
+const stuffed = C.forceAppendMissingDesignCopy(footerHtml, 'footer', [
+  'Privacy Policy',
+  'Privacy Policy',
+  'Privacy Policy',
+]);
+assert('already-present copy is not stamped again',
+  (stuffed.match(/Privacy Policy/g) || []).length === 1);
+
+// ── Style reference vs content source ───────────────────────────────────────
+// The prompt that shipped the reference's own headline onto the page and then
+// reported it as an unmet ask.
+const STYLE_REF_PROMPT =
+  'The page should pretty much just look like this hero section, except it should say, ' +
+  '“Your call is confirmed. We look forward to speaking to you during your call time.” ' +
+  "That's pretty much it. Use the logo, use the same colors, flat background. " +
+  'You can use the KPIs that are in this screen. There are no buttons, no calls to action, ' +
+  "nothing else that's required.";
+
+assert('replacement copy → screenshot copy is NOT content', C.wantsReferenceCopy(STYLE_REF_PROMPT) === false);
+assert('clone a named part → screenshot copy IS content', C.wantsReferenceCopy('make our footer like this') === true);
+assert('explicit "use the text from it" → content', C.wantsReferenceCopy('use the copy from this screenshot') === true);
+assert('bare style ask → not content', C.wantsReferenceCopy('make it feel more premium') === false);
+assert(
+  '"except it should say" beats clone language',
+  C.wantsReferenceCopy('make the footer like this, except it should say Contact Us') === false,
+);
+
+// ── Quoted payloads: an apostrophe is not a quote ───────────────────────────
+const reuse = C.detectContentReuseIntent(
+  "put the hero headline in the footer. That's what I want, don't overthink it.",
+  SECTIONS,
+);
+assert(
+  'apostrophes do not become a quoted payload',
+  !reuse || !reuse.textPayload || !/^s\b/.test(reuse.textPayload),
+);
 
 rmSync(outDir, { recursive: true, force: true });
 

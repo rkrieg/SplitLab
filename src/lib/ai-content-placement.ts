@@ -3,6 +3,8 @@
  * Deterministic apply + fail-closed checks. Not one-off footer/logo helpers.
  */
 
+import { extractQuotedSpans } from './ai-page-requirements';
+
 export type ContentReuseKind = 'logo' | 'text' | 'image';
 
 export interface ContentReuseIntent {
@@ -55,15 +57,16 @@ export function inferTargetSectionNames(prompt: string, sectionNames: string[]):
   };
 
   const everywhere =
-    /\beverywhere\b|\ball sections\b|\bevery section\b|\bnav and footer\b|\bfooter and nav\b|\bboth (the )?(nav|footer)/i.test(
+    /\beverywhere\b|\ball (the )?(logos?|sections)\b|\bevery (logo|section)\b|\bnav and footer\b|\bfooter and nav\b|\bboth (the )?(nav|footer)/i.test(
       prompt,
     );
 
   if (everywhere) {
     for (const name of sectionNames) {
-      if (/nav|header|footer/i.test(name)) add(name);
+      if (name.toLowerCase() === 'head') continue;
+      if (/nav|header|footer|hero/i.test(name)) add(name);
     }
-    if (found.length > 0) return found.slice(0, 4);
+    if (found.length > 0) return found.slice(0, 6);
   }
 
   // 1. The section's own name, spoken literally (`how_it_works` → "how it works")
@@ -88,20 +91,33 @@ export function inferTargetSectionNames(prompt: string, sectionNames: string[]):
 }
 
 function extractQuotedPayloads(prompt: string): string[] {
-  const out: string[] = [];
-  const re = /"([^"\n]{3,400})"|'([^'\n]{3,400})'|“([^”\n]{3,400})”/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(prompt)) !== null) {
-    const q = (m[1] || m[2] || m[3] || '').replace(/\s+/g, ' ').trim();
-    if (q.length >= 3) out.push(q);
-  }
-  return out;
+  // Shared extractor: apostrophes in words like `That's` must not open a quote,
+  // or the "payload" to place becomes a slice of the user's own instructions.
+  return extractQuotedSpans(prompt, 3, 400);
 }
 
 function placementLanguage(prompt: string): boolean {
   return /\b(in (the )?|on (the )?|into (the )?|to (the )?|also|as well|too|same|everywhere|both|copy|place|put|add|show|keep|use)\b/i.test(
     prompt,
   );
+}
+
+/** Recolor / restyle an existing logo — not "put the (white) logo in section X". */
+export function isLogoColorStyleAsk(prompt: string): boolean {
+  const t = prompt.trim();
+  if (!/\blogos?\b/i.test(t)) return false;
+  const recolor =
+    /\bmake\b[\s\S]{0,50}\blogos?\b[\s\S]{0,40}\b(white|black|colou?rs?)\b/i.test(t) ||
+    /\bmake\b[\s\S]{0,50}\b(the\s+)?(logo\s+)?(colou?rs?|fill|tint)\b[\s\S]{0,30}\b(white|black)\b/i.test(t) ||
+    /\bmake\b[\s\S]{0,40}\b(white|black)\b[\s\S]{0,40}\blogos?\b/i.test(t) ||
+    /\blogos?\s+(colou?rs?|fill|tint)\b/i.test(t) ||
+    /\b(recolou?r|whiten)\b[\s\S]{0,30}\blogos?\b/i.test(t);
+  if (!recolor) return false;
+  // Explicit place/put/add/copy of a logo file into a section is still reuse.
+  if (/\b(put|place|add|copy)\b[\s\S]{0,40}\blogos?\b[\s\S]{0,30}\b(in|into|on)\b/i.test(t)) {
+    return false;
+  }
+  return true;
 }
 
 /**
@@ -119,14 +135,51 @@ export function detectContentReuseIntent(
   const quotes = extractQuotedPayloads(t);
 
   // ── Logo ──────────────────────────────────────────────────────────────
+  // Recolor ("make the logo white everywhere") is a style patch, not embed.
+  if (isLogoColorStyleAsk(t)) {
+    return null;
+  }
   // A resolved target already proves the user named a real destination, so any
   // section the page actually has works here — not just a fixed noun list.
   if (/\blogo\b/i.test(t) && placementLanguage(t) && (targets.length > 0 || /\beverywhere\b/i.test(t))) {
+    let sourceSectionHint: string | null = null;
+    const fromM =
+      /\b(?:same as|same one as|from|used in|in the)\s+(?:the\s+)?(footer|hero|nav|header|navbar)\b/i.exec(t) ||
+      /\b(footer|hero|nav|header|navbar)(?:'s)?\s+logo\b/i.exec(t) ||
+      /\blogo\s+(?:used\s+)?(?:in|on|from)\s+(?:the\s+)?(footer|hero|nav|header|navbar)\b/i.exec(t);
+    if (fromM) {
+      const raw = (fromM[1] || fromM[2] || '').toLowerCase();
+      sourceSectionHint = raw === 'navbar' ? 'nav' : raw;
+    }
+
+    let dests = targets;
+    if (sourceSectionHint) {
+      dests = dests.filter((n) => !n.toLowerCase().includes(sourceSectionHint!));
+    }
+    // "copy logo from footer to navbar" — destination wins over whatever
+    // section nouns also appeared as the source.
+    const toM =
+      /\b(?:to|into|on)\s+(?:the\s+)?(nav(?:bar)?|header|footer|hero|[a-z][a-z0-9_-]{2,30})\b/i.exec(t);
+    if (toM) {
+      const mapped = inferTargetSectionNames(toM[1], sectionNames).filter(
+        (n) => !sourceSectionHint || !n.toLowerCase().includes(sourceSectionHint),
+      );
+      if (mapped.length > 0) dests = mapped;
+    }
+    if (dests.length === 0 && sourceSectionHint) {
+      const fallbackTo =
+        /\b(?:to|into|on)\s+(?:the\s+)?(nav(?:bar)?|header|footer|hero)\b/i.exec(t) ||
+        /\b(nav(?:bar)?|header)\b/i.exec(t);
+      if (fallbackTo) {
+        dests = inferTargetSectionNames(fallbackTo[1], sectionNames);
+      }
+    }
+
     return {
       kind: 'logo',
-      targets,
+      targets: dests.length > 0 ? dests : targets,
       textPayload: null,
-      sourceSectionHint: null,
+      sourceSectionHint,
     };
   }
 
@@ -279,17 +332,84 @@ export function forcePlaceTextIntoSections(
 }
 
 /**
+ * Is the copy visible in a design screenshot content to reproduce, or just part
+ * of a look to imitate?
+ *
+ * "make our footer like this" → reproduce: the footer's words are the point.
+ * "look like this hero, except it should say 'X' … nothing else is required" →
+ * imitate only. Reading the reference's own headline onto the page there puts
+ * words on it the user explicitly replaced, and then reports them as unmet asks.
+ *
+ * Defaults to NO on purpose: force-placing text is destructive and highly
+ * visible, while skipping it just leaves the model's own copy in place.
+ */
+export function wantsReferenceCopy(prompt: string): boolean {
+  const t = prompt.trim();
+  if (!t) return false;
+
+  // The user supplied their own copy / capped the scope → the reference's copy is
+  // explicitly not wanted, whatever else the prompt says.
+  const REPLACEMENT_RE =
+    /\b(except|instead|rather than|but it should say|it should (just )?say|change the (copy|text|headline|wording)|nothing else|no other (copy|text)|don'?t (use|copy|include) the (copy|text|words|wording))\b/i;
+  if (REPLACEMENT_RE.test(t)) return false;
+
+  // Explicit "use the words from it"
+  if (
+    /\b(use|copy|keep|reuse|take|pull|match|same)\b[^.]{0,40}\b(copy|text|words|wording|content|headline|legal|disclaimer)\b/i.test(
+      t,
+    )
+  ) {
+    return true;
+  }
+  if (/\b(verbatim|word[- ]for[- ]word|exactly as (shown|written))\b/i.test(t)) return true;
+
+  // "make our footer like this" — cloning a named part implies its content.
+  const namesPart = new RegExp(`\\b(${SECTION_NOUN})\\b`, 'i').test(t);
+  const clonesIt =
+    /\b(like|just like|same as|identical to|replicate|recreate|clone|copy)\s+(this|that|these|those|the one)\b/i.test(
+      t,
+    );
+  return namesPart && clonesIt;
+}
+
+/**
+ * Collapse OCR/copy lines from design screenshots.
+ * Same screenshot attached twice (or two near-identical crops) must not become
+ * two copies of the footer legal block. Exact dups and "this line is already
+ * inside a longer kept line" are dropped; the longer phrasing wins.
+ */
+export function dedupeDesignCopyLines(lines: string[]): string[] {
+  const cleaned = lines
+    .map((l) => l.replace(/\s+/g, ' ').trim())
+    .filter((l) => l.length >= 6);
+  const kept: string[] = [];
+  for (const line of cleaned) {
+    const key = line.toLowerCase();
+    const idx = kept.findIndex((u) => {
+      const uk = u.toLowerCase();
+      return uk === key || uk.includes(key) || key.includes(uk);
+    });
+    if (idx < 0) {
+      kept.push(line);
+      continue;
+    }
+    if (line.length > kept[idx].length) kept[idx] = line;
+  }
+  return kept.slice(0, 12);
+}
+
+/**
  * Append missing design-OCR lines as paragraphs inside a section (create path).
  * Does not overwrite existing headlines — only adds lines still absent from HTML.
+ * Duplicate / near-duplicate OCR lines (same screenshot attached twice) are
+ * collapsed first so we never stamp the same sentence twice.
  */
 export function forceAppendMissingDesignCopy(
   html: string,
   sectionName: string,
   lines: string[],
 ): string {
-  const missing = lines
-    .map((l) => l.replace(/\s+/g, ' ').trim())
-    .filter((l) => l.length >= 6 && !html.includes(l));
+  const missing = dedupeDesignCopyLines(lines).filter((l) => !html.includes(l));
   if (missing.length === 0) return html;
   const sl = getSlSectionInner(html, sectionName);
   if (!sl) return html;

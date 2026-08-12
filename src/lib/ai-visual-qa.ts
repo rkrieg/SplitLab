@@ -13,8 +13,21 @@ import {
   capturePageScrollScreenshots,
 } from '@/lib/ai-competitor-scrape';
 
-const MAX_SECTION_FIXES = 4;
+const MAX_SECTION_FIXES = 2;
 const MAX_SECTION_HTML_CHARS = 10_000;
+
+/**
+ * Kill switch for live visual QA (ApiFlash of OUR page → vision → section rewrite).
+ *
+ * Off because a capture of an S3 NoSuchBucket error page was treated as the
+ * built page: QA rewrote nav/hero, stripped data-field (click-to-edit died),
+ * and hung on "Checking full page look…". Intent/routing is now model-
+ * classified; this pixel pass is optional polish and currently harmful.
+ * Call sites in build + follow-up are also commented out. Flip this AND
+ * restore those call sites only after captures are proven to be our HTML
+ * and rewrites keep data-field + SL markers.
+ */
+const LIVE_VISUAL_QA_ENABLED = false;
 
 export interface VisualQaResult {
   ok: boolean;
@@ -94,6 +107,7 @@ export function shouldRunNavLogoVisualQa(opts: {
   logoIntent?: boolean;
   expectedLogoUrl?: string | null;
 }): boolean {
+  if (!LIVE_VISUAL_QA_ENABLED) return false;
   const hasExternalRef =
     (opts.imageUrls?.length ?? 0) > 0 || (opts.competitorScreenshots?.length ?? 0) > 0;
   const hasResult =
@@ -269,6 +283,9 @@ function sectionPreviewBlock(html: string, names: string[]): string {
  * One vision diagnose. Fail-closed → ok=true on failure.
  */
 export async function runNavLogoVisualQa(input: VisualQaInput): Promise<VisualQaResult> {
+  if (!LIVE_VISUAL_QA_ENABLED) {
+    return { ok: true, issues: [], fix_instruction: null, fixes: [] };
+  }
   if (
     !shouldRunNavLogoVisualQa({
       prompt: input.prompt,
@@ -372,6 +389,7 @@ export async function applySectionVisualFix(opts: {
   usage?: UsageContext;
   label?: string;
 }): Promise<{ html: string; applied: boolean }> {
+  if (!LIVE_VISUAL_QA_ENABLED) return { html: opts.html, applied: false };
   const extracted = resolveSectionExtractor(opts.html, opts.section);
   if (!extracted) return { html: opts.html, applied: false };
 
@@ -465,6 +483,9 @@ export async function runNavLogoVisualQaOnce(input: VisualQaInput): Promise<{
   issues: string[];
   usedLiveResult: boolean;
 }> {
+  if (!LIVE_VISUAL_QA_ENABLED) {
+    return { html: input.html, ran: false, appliedFix: false, issues: [], usedLiveResult: false };
+  }
   const resultShots = [
     ...(input.resultScreenshots ?? []),
     ...(input.resultScreenshot ? [input.resultScreenshot] : []),
@@ -544,6 +565,9 @@ export async function runPostUploadNavLogoQa(opts: {
   issues: string[];
   mode: 'live' | 'html_fallback' | 'skipped';
 }> {
+  if (!LIVE_VISUAL_QA_ENABLED) {
+    return { html: opts.html, appliedFix: false, issues: [], mode: 'skipped' };
+  }
   const hasExternalRef =
     (opts.imageUrls?.length ?? 0) > 0 || (opts.competitorScreenshots?.length ?? 0) > 0;
   const canAttemptLive =

@@ -25,6 +25,8 @@ import {
   REQUIREMENT_EXTRACTION_INSTRUCTION,
   parseModelRequirements,
 } from '@/lib/ai-page-requirements';
+import { wantsReferenceCopy } from '@/lib/ai-content-placement';
+import { classifyEditIntent } from '@/lib/ai-edit-intent';
 
 const SECTION_TYPES_BLOCK = SECTION_VOCABULARY
   .map(s => `- ${s.schemaExample}\n  Use when: ${s.whenToUse}`)
@@ -240,13 +242,42 @@ export async function POST(request: NextRequest) {
     const attachedImageUrls = Array.isArray(image_urls)
       ? (image_urls as unknown[]).filter((u): u is string => typeof u === 'string' && u.trim().length > 0).slice(0, 3)
       : [];
+    // What is this person asking for? One model call, same as the edit path —
+    // keyword matching decides nothing it can get wrong on its own here either.
+    // Runs for every prompt, not just ones with attachments: "cover every ask"
+    // (multiNote below) needs this on plain text prompts too.
+    const createIntent = prompt.trim()
+      ? await classifyEditIntent({
+          prompt,
+          sectionNames: [],
+          imageUrls: attachedImageUrls,
+          requirementInstruction: REQUIREMENT_EXTRACTION_INSTRUCTION,
+          label: 'generate:edit-intent',
+        })
+      : null;
+    console.log('[pages/generate] intent', createIntent
+      ? {
+          designReference: createIntent.designReference,
+          reuseReferenceCopy: createIntent.reuseReferenceCopy,
+          asks: createIntent.asks.length,
+        }
+      : 'none (no attachments) or unavailable');
+
     const designAsk =
       attachedImageUrls.length > 0 &&
-      (isDesignReferenceAsk(prompt) ||
-        /\b(screenshot|design|mockup|reference|like this|match this|footer|nav|hero)\b/i.test(prompt));
+      (createIntent
+        ? createIntent.designReference
+        : isDesignReferenceAsk(prompt, true) ||
+          /\b(screenshot|design|mockup|reference|like this|match this|footer|nav|hero)\b/i.test(prompt));
+    const reuseReferenceWords = createIntent
+      ? createIntent.reuseReferenceCopy
+      : wantsReferenceCopy(prompt);
 
+    // A style reference is not a content source. Only read copy off the
+    // screenshot when the user actually asked for its words — otherwise the
+    // reference's headline gets stamped onto a page whose copy they replaced.
     let designCopyLines: string[] = [];
-    if (designAsk) {
+    if (designAsk && reuseReferenceWords) {
       designCopyLines = await extractDesignReferenceCopy({
         imageUrls: attachedImageUrls,
         prompt,
@@ -254,13 +285,14 @@ export async function POST(request: NextRequest) {
       console.log('[pages/generate] design-ref OCR', { lines: designCopyLines.length, designAsk });
     }
 
-    const multiNote = looksLikeMultiIntent(prompt)
+    const hasMultipleAsks = createIntent ? createIntent.asks.length > 1 : looksLikeMultiIntent(prompt);
+    const multiNote = hasMultipleAsks
       ? `\n\nMULTI-PART REQUEST: Cover EVERY distinct ask in this prompt in one schema (all listed sections, copy, and constraints). Do not ask clarifying questions just to defer secondary asks — build now.\n`
       : '';
 
     const designNote =
       designCopyLines.length > 0
-        ? `\n\n## REQUIRED copy from attached design screenshot (use verbatim in matching sections)\n${designCopyLines.map((l, i) => `${i + 1}. ${l}`).join('\n')}\nPut these into footer/nav/hero (or the section the user named). Do not invent substitute legal/contact lines when these are present.\n`
+        ? `\n\n## REQUIRED copy from attached design screenshot (use verbatim in matching sections)\n${designCopyLines.map((l, i) => `${i + 1}. ${l}`).join('\n')}\nPut these into footer/nav/hero (or the section the user named). Each line once — if several attachments are the same screenshot, do not repeat blocks. Do not invent substitute legal/contact lines when these are present.\n`
         : attachedImageUrls.length > 0
           ? `\n\nThe user attached ${attachedImageUrls.length} image(s) as design/content reference — read them and reflect visible layout/copy in the schema.\n`
           : '';
@@ -366,6 +398,11 @@ export async function POST(request: NextRequest) {
         : {}),
       ...(minimalOrCustom ? { user_shape_intent: 'minimal_or_custom' } : {}),
       ...(designCopyLines.length > 0 ? { design_copy_lines: designCopyLines } : {}),
+      // Decided once, here, by the model that read the request — the build pass
+      // must not re-derive it from keywords and reach a different answer.
+      ...(attachedImageUrls.length > 0
+        ? { design_reference: designAsk, reuse_reference_copy: reuseReferenceWords }
+        : {}),
       ...(modelRequirements.length > 0 ? { requirements: modelRequirements } : {}),
     });
   } catch (err) {

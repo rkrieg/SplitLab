@@ -85,6 +85,29 @@ const reqs = R.extractRequirements({
 });
 const kinds = reqs.map((r) => r.kind);
 
+// ── Quote parsing: an apostrophe inside a word is not a delimiter ───────────
+// This prompt produced the requirement “s pretty much it. Use the logo, use the
+// same co…” and showed it to the user as copy that failed to land.
+const APOSTROPHE_PROMPT =
+  'The page should look like this hero, except it should say, ' +
+  '“Your call is confirmed. We look forward to speaking to you during your call time.” ' +
+  "That's pretty much it. Use the logo, use the same colors, flat background. " +
+  "There are no buttons, nothing else that's required.";
+const phrases = R.extractQuotedPhrases(APOSTROPHE_PROMPT);
+assert('the intended headline is extracted', phrases.some((p) => p.startsWith('Your call is confirmed')));
+assert('no apostrophe-spliced garbage phrase', !phrases.some((p) => /^s pretty much it/i.test(p)));
+assert('exactly one quoted phrase found', phrases.length === 1);
+assert(
+  'straight quotes still work',
+  R.extractQuotedPhrases('the hero must say "Book your call today" at the top').includes(
+    'Book your call today',
+  ),
+);
+assert(
+  "single-quoted copy still works when it's really quoted",
+  R.extractQuotedPhrases("headline: 'Book your call today' please").includes('Book your call today'),
+);
+
 assert('extracts no_cta from "no buttons"', kinds.includes('no_cta'));
 assert('extracts asset_present for logo', kinds.includes('asset_present'));
 assert('extracts text_present from quoted copy', kinds.includes('text_present'));
@@ -244,6 +267,22 @@ assert('drops a hallucinated section name',
   parse([{ kind: 'section_changed', label: 'x', sections: ['pricing'] }]).length === 0);
 assert('drops asset_present without a real URL',
   parse([{ kind: 'asset_present', label: 'logo', value: 'the company logo' }]).length === 0);
+
+// The model names the SOURCE url; we embed a re-hosted copy. Checking the source
+// reported "Focused Capital logo used in nav/footer" as unmet on a page that
+// visibly had the logo.
+const HOSTED = 'https://x.supabase.co/storage/v1/object/public/pages/abc/logo.svg';
+const SOURCE = 'https://investor.focusedcapital.com/assets/logo.svg';
+const withEmbeddable = (reqs, urls) =>
+  R.parseModelRequirements({ requirements: reqs }, { knownSections: SECTIONS, embeddableAssetUrls: urls });
+assert('drops an asset check for a URL we never embed',
+  withEmbeddable([{ kind: 'asset_present', label: 'logo used in nav/footer', value: SOURCE }], [HOSTED]).length === 0);
+assert('keeps an asset check for a URL we do embed',
+  withEmbeddable([{ kind: 'asset_present', label: 'logo used in nav/footer', value: HOSTED }], [HOSTED]).length === 1);
+assert('ignores a cache-busting query string',
+  withEmbeddable([{ kind: 'asset_present', label: 'logo', value: `${HOSTED}?t=123` }], [HOSTED]).length === 1);
+assert('no embeddable list given → old behavior (URL kept)',
+  parse([{ kind: 'asset_present', label: 'logo', value: SOURCE }]).length === 1);
 assert('drops text_present that is too short to mean anything',
   parse([{ kind: 'text_present', label: 'x', value: 'hi' }]).length === 0);
 assert('drops color_applied with no color named',

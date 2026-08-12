@@ -68,14 +68,53 @@ const NAMED_COLORS: Record<
   gray: { hex: '#4b5563', lightness: [0.22, 0.9], minSaturation: 0 },
 };
 
+/**
+ * Quote-delimited spans in a prompt, by quote family.
+ *
+ * A straight apostrophe only counts as a delimiter when both ends sit on a word
+ * boundary. Treating every `'` as a quote pairs the apostrophe in `That's` with
+ * one in a later word: the prompt
+ *   …during your call time.” That's pretty much it. Use the logo, use the same…
+ * yielded the span “s pretty much it. Use the logo, use the same co…”, which was
+ * then shown to the user as a required copy line that never landed.
+ */
+export function extractQuotedSpans(prompt: string, min = 3, max = 400): string[] {
+  const out: string[] = [];
+  const len = `{${min},${max}}`;
+  const patterns = [
+    new RegExp(`"([^"\\n]${len})"`, 'g'),
+    new RegExp(`“([^”\\n]${len})”`, 'g'),
+    new RegExp(`‘([^’\\n]${len})’`, 'g'),
+    new RegExp(`(?:^|[\\s(\\[])'([^'\\n]${len})'(?=$|[\\s.,;:!?)\\]])`, 'g'),
+  ];
+  for (const re of patterns) {
+    for (const m of Array.from(prompt.matchAll(re))) {
+      const t = m[1].replace(/\s+/g, ' ').trim();
+      if (t.length >= min) out.push(t);
+    }
+  }
+  return Array.from(new Set(out));
+}
+
 /** Quoted copy the user expects to see verbatim on the page. */
 export function extractQuotedPhrases(prompt: string): string[] {
-  const out: string[] = [];
-  for (const m of Array.from(prompt.matchAll(/["“”']([^"“”']{8,220})["“”']/g))) {
-    const t = m[1].replace(/\s+/g, ' ').trim();
-    if (t.length >= 8) out.push(t);
-  }
-  return Array.from(new Set(out)).slice(0, 6);
+  return extractQuotedSpans(prompt, 8, 220).slice(0, 6);
+}
+
+/**
+ * The floor: assets WE decided to embed must actually be in the HTML.
+ *
+ * This is the only requirement code should invent on its own, because it is the
+ * only one that doesn't involve guessing what the user meant — we put the URL
+ * there, so it had better be there. Everything else comes from the model that
+ * read the request (see REQUIREMENT_EXTRACTION_INSTRUCTION).
+ */
+export function assetRequirements(assetUrls: string[]): PageRequirement[] {
+  return Array.from(new Set(assetUrls.filter((u) => !!u))).map((url) => ({
+    kind: 'asset_present' as const,
+    label: 'the real logo/image is on the page',
+    value: url,
+  }));
 }
 
 /**
@@ -83,6 +122,12 @@ export function extractQuotedPhrases(prompt: string): string[] {
  *
  * `knownSections` lets removal asks bind to real SL section names instead of
  * guessing; `assetUrls` are assets we intend to embed (already verified).
+ *
+ * Prefer the model's checklist plus `assetRequirements` for new call sites: the
+ * prompt-derived checks here guess intent from wording, which is how a design
+ * screenshot's own headline became "required copy" on a page whose text the user
+ * had explicitly replaced. Kept for the create path's CTA ban and for callers
+ * that have no model checklist to fall back on.
  */
 export function extractRequirements(opts: {
   prompt: string;
@@ -502,6 +547,18 @@ function asRecord(v: unknown): Record<string, unknown> | null {
   return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
 }
 
+/**
+ * Same asset, ignoring cache-busting query strings.
+ *
+ * Deliberately exact on the path: matching by filename would let a source URL
+ * pass as its re-hosted copy (and vice versa), which is the ambiguity this
+ * check exists to remove.
+ */
+function sameAssetUrl(a: string, b: string): boolean {
+  const strip = (u: string) => u.split(/[?#]/)[0];
+  return strip(a) === strip(b);
+}
+
 function asCleanString(v: unknown, max: number): string | null {
   if (typeof v !== 'string') return null;
   const t = v.replace(/\s+/g, ' ').trim();
@@ -518,7 +575,7 @@ function asCleanString(v: unknown, max: number): string | null {
  */
 export function parseModelRequirements(
   raw: unknown,
-  opts?: { knownSections?: string[]; max?: number },
+  opts?: { knownSections?: string[]; max?: number; embeddableAssetUrls?: string[] },
 ): PageRequirement[] {
   let input = raw;
   if (typeof input === 'string') {
@@ -566,9 +623,17 @@ export function parseModelRequirements(
         // Too short to be a meaningful check and it matches by accident.
         if (!value || value.length < 4) continue;
         break;
-      case 'asset_present':
+      case 'asset_present': {
         if (!value || !/^(https?:\/\/|\/)/i.test(value)) continue;
+        // The model sees the SOURCE url (the brand's own site, a scraped logo),
+        // but we never hotlink — assets are fetched and re-hosted, so the URL
+        // that ends up in the HTML is ours. Checking the model's URL therefore
+        // fails forever and reports a logo that is plainly on the page as a
+        // dropped ask. Only keep it when it names a URL we actually embed.
+        const embeddable = opts?.embeddableAssetUrls;
+        if (embeddable && !embeddable.some((u) => sameAssetUrl(u, value))) continue;
         break;
+      }
       case 'element_absent':
       case 'section_absent':
         if (!value) continue;

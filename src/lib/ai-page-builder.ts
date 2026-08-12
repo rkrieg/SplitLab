@@ -519,6 +519,11 @@ export interface BuildHtmlOptions {
   /** OCR lines from a design-reference screenshot — must appear in matching sections. */
   designReferenceCopy?: string[];
   /**
+   * When true, imageUrls are design-reference screenshots (for vision/layout matching)
+   * and must NOT be embedded as <img src>. Prevents "screenshot became the logo" bug.
+   */
+  imagesAreDesignRefs?: boolean;
+  /**
    * Pre-formatted style context string. When provided, skips the design brief
    * step entirely. Callers are responsible for formatting this.
    *
@@ -532,6 +537,11 @@ export interface BuildHtmlOptions {
    * events to the frontend. When absent, falls back to non-streaming askAI().
    */
   onChunk?: (chunk: string) => void;
+  /**
+   * Called when a dropped connection forces the stream to restart — every chunk
+   * delivered so far is void, so reset whatever they were accumulated into.
+   */
+  onStreamRestart?: () => void;
   /** Identifies the calling route for ai-client logs, e.g. "build" or "follow-up:structural". */
   callerLabel?: string;
 }
@@ -563,6 +573,10 @@ export async function buildHtmlFromSchema(
     competitorScreenshots.length > 0 ||
     (typeof competitorCssTokens === 'string' && competitorCssTokens.length > 0);
   const hasImages = imageUrls.length > 0;
+  // Design-reference screenshots are for VISION (model sees the layout to match)
+  // but must NOT be embedded as <img src>. Caller can set imagesAreDesignRefs,
+  // or we infer from designReferenceCopy being populated.
+  const imagesAreRefs = options.imagesAreDesignRefs === true || designReferenceCopy.length > 0;
   const minimalShape =
     typeof userPrompt === 'string' && userWantsCustomOrMinimalPage(userPrompt);
 
@@ -590,9 +604,15 @@ export async function buildHtmlFromSchema(
     }
   }
 
-  const imageList = hasImages
+  // Only instruct the model to embed images that are content assets (photos to place).
+  // Design-reference screenshots are shown to the model via vision so it can SEE
+  // the layout, but we never embed a screenshot URL as an <img src> — that's the
+  // "my design screenshot became the logo" bug.
+  const imageList = hasImages && !imagesAreRefs
     ? `\n\nThe user has provided ${imageUrls.length} image(s). Embed them directly in the HTML using EXACTLY these URLs (do not use any other URLs):\n${imageUrls.map((u, i) => `Image ${i + 1}: ${u}`).join('\n')}`
-    : '';
+    : hasImages && imagesAreRefs
+      ? `\n\nAttached image(s) are DESIGN REFERENCES showing how the page should LOOK. Use them for layout/style matching only — do NOT embed these screenshot URLs as <img src> anywhere.`
+      : '';
   const promptNote =
     typeof userPrompt === 'string' && userPrompt.trim()
       ? `\n\nOriginal user request: ${userPrompt}`
@@ -640,7 +660,12 @@ export async function buildHtmlFromSchema(
   console.log(`[buildHtmlFromSchema] label=${label} hasCompetitorContext=${hasCompetitorContext} hasImages=${hasImages} schemaBytes=${JSON.stringify(schema).length} streaming=${Boolean(options.onChunk)}`);
 
   const text = options.onChunk
-    ? await askAIStream(aiOptions, options.onChunk)
+    ? await askAIStream(
+        // A dropped stream restarts from scratch; tell the caller its progress
+        // buffer is stale so a half-written STATUS marker can't be mis-parsed.
+        { ...aiOptions, onStreamRestart: options.onStreamRestart },
+        options.onChunk,
+      )
     : await askAI(aiOptions);
 
   let html = text.trim();

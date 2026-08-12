@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { isRateLimited, generatePageImages } from '@/lib/ai-client';
+import { isRateLimited, generatePageImages, userFacingAIErrorMessage } from '@/lib/ai-client';
 import { uploadHtml } from '@/lib/storage';
 import { resolveWorkspaceRole, resolveOwnerPlan } from '@/lib/workspace-auth';
 import { PLAN_LIMITS } from '@/lib/plans';
@@ -15,14 +15,15 @@ import {
   materializeLogoUrl,
   type FooterContact,
 } from '@/lib/ai-brand-assets';
-import { runPostUploadNavLogoQa, listSlSectionNames } from '@/lib/ai-visual-qa';
+import { listSlSectionNames } from '@/lib/ai-visual-qa';
 import {
   extractDesignReferenceCopy,
   isDesignReferenceAsk,
   inferDesignMatchSectionNames,
 } from '@/lib/ai-follow-up-helpers';
-import { forceAppendMissingDesignCopy } from '@/lib/ai-content-placement';
+import { forceAppendMissingDesignCopy, wantsReferenceCopy } from '@/lib/ai-content-placement';
 import { verifyAndRehostHtmlImages } from '@/lib/ai-asset-integrity';
+import { ensureClickToEditFields } from '@/lib/ai-data-field-stamp';
 import {
   extractRequirements,
   enforceRequirements,
@@ -69,6 +70,8 @@ export async function POST(request: NextRequest) {
     competitor_logo_svg: unknown,
     competitor_footer_contact: unknown,
     design_copy_lines: unknown,
+    reuse_reference_copy: unknown,
+    design_reference: unknown,
     model_requirements: unknown;
 
   try {
@@ -85,6 +88,8 @@ export async function POST(request: NextRequest) {
       competitor_logo_svg,
       competitor_footer_contact,
       design_copy_lines,
+      reuse_reference_copy,
+      design_reference,
       requirements: model_requirements,
     } = await request.json());
   } catch {
@@ -170,19 +175,33 @@ export async function POST(request: NextRequest) {
 
       const hasImages = Array.isArray(image_urls) && (image_urls as string[]).length > 0;
       const promptText = typeof user_prompt === 'string' ? user_prompt : '';
-      let designCopyLines = Array.isArray(design_copy_lines)
+      // Copy read off a design screenshot is only content when the user asked for
+      // its words. For a pure style reference it must never be required, hinted,
+      // or force-placed — the user's own copy is the copy. The schema pass already
+      // asked the model; only fall back to keywords when it didn't say.
+      const reuseReferenceCopy =
+        typeof reuse_reference_copy === 'boolean'
+          ? reuse_reference_copy
+          : wantsReferenceCopy(promptText);
+      let designCopyLines = !reuseReferenceCopy ? [] : Array.isArray(design_copy_lines)
         ? (design_copy_lines as unknown[])
             .filter((l): l is string => typeof l === 'string' && l.trim().length >= 6)
             .map((l) => l.replace(/\s+/g, ' ').trim())
             .slice(0, 12)
         : [];
 
-      if (
-        designCopyLines.length === 0 &&
-        hasImages &&
-        (isDesignReferenceAsk(promptText) ||
-          /\b(screenshot|design|mockup|reference|like this|match this|footer|nav|hero)\b/i.test(promptText))
-      ) {
+      // Detect if images are design-references (screenshots to MATCH, not content
+      // to embed). The schema pass already asked the model this exact question —
+      // use its answer instead of re-deriving a possibly different one from
+      // keywords here, which is how the two passes could disagree.
+      const promptLooksLikeDesignRef =
+        typeof design_reference === 'boolean'
+          ? design_reference
+          : isDesignReferenceAsk(promptText, hasImages) ||
+            /\b(screenshot|design|mockup|reference|like this|match this|footer|nav|hero)\b/i.test(promptText);
+      const imagesAreDesignRefs = hasImages && promptLooksLikeDesignRef;
+
+      if (designCopyLines.length === 0 && imagesAreDesignRefs && reuseReferenceCopy) {
         sendSSE(controller, { type: 'status', message: 'Reading design screenshot…' });
         designCopyLines = await extractDesignReferenceCopy({
           imageUrls: (image_urls as string[]).slice(0, 3),
@@ -204,7 +223,12 @@ export async function POST(request: NextRequest) {
           userPrompt: promptText || undefined,
           imageUrls: hasImages ? (image_urls as string[]) : [],
           designReferenceCopy: designCopyLines,
+          imagesAreDesignRefs,
           callerLabel: 'build',
+          onStreamRestart: () => {
+            statusBuffer = '';
+            sendSSE(controller, { type: 'status', message: 'Connection dropped — restarting the build…' });
+          },
           onChunk: (chunk) => {
             statusBuffer += chunk;
             statusBuffer = statusBuffer.replace(
@@ -217,8 +241,11 @@ export async function POST(request: NextRequest) {
             if (statusBuffer.length > 200) statusBuffer = statusBuffer.slice(-100);
           },
         });
-      } catch {
-        sendSSE(controller, { type: 'error', message: 'AI provider returned invalid HTML' });
+      } catch (err) {
+        // Don't blame the model's output for a dead socket — this catch used to
+        // report "invalid HTML" for a connection that never finished sending any.
+        console.error('[pages/build] build HTML failed', err);
+        sendSSE(controller, { type: 'error', message: userFacingAIErrorMessage(err) });
         closeSSE(controller);
         return;
       }
@@ -301,7 +328,15 @@ export async function POST(request: NextRequest) {
       const requirements = mergeRequirements(
         // Written by the model during the schema pass, so asks that no regex
         // here would recognise still get verified.
-        parseModelRequirements(model_requirements, { knownSections: listSlSectionNames(html) }),
+        parseModelRequirements(model_requirements, {
+          knownSections: listSlSectionNames(html),
+          // Only asset checks naming a URL this build actually embeds; the
+          // model's source URLs are re-hosted, so checking those never passes.
+          embeddableAssetUrls: [
+            ...(logoUrl ? [logoUrl] : []),
+            ...(hasImages ? (image_urls as string[]) : []),
+          ],
+        }),
         extractRequirements({
           prompt: promptText,
           assetUrls: logoUrl ? [logoUrl] : [],
@@ -324,41 +359,21 @@ export async function POST(request: NextRequest) {
         });
       }
 
+      html = ensureClickToEditFields(html, enrichedSchema);
+
       const storagePath = `pages/${pageSlug}.html`;
       let htmlUrl = await uploadHtml(storagePath, html);
 
-      // Live above-the-fold QA: ApiFlash of OUR result vs reference.
-      // Fail-closed — screenshot failure → HTML fallback or skip; never blocks Done.
-      const qaScreenshots = Array.isArray(competitor_screenshots)
-        ? (competitor_screenshots as string[]).slice(0, 2)
-        : [];
-      const qaImageUrls = hasImages ? (image_urls as string[]).slice(0, 2) : [];
-      if (qaScreenshots.length > 0 || qaImageUrls.length > 0 || logoUrl || logoSvg) {
-        sendSSE(controller, { type: 'status', message: 'Checking full page look…' });
-        const qa = await runPostUploadNavLogoQa({
-          html,
-          publicHtmlUrl: htmlUrl,
-          prompt: typeof user_prompt === 'string' ? user_prompt : null,
-          expectedLogoUrl: logoUrl,
-          imageUrls: qaImageUrls,
-          competitorScreenshots: qaScreenshots,
-          logoIntent: !!(logoUrl || logoSvg),
-          label: 'build:visual-qa',
-        });
-        console.log('[pages/build] visual-qa', {
-          mode: qa.mode,
-          appliedFix: qa.appliedFix,
-          issues: qa.issues,
-        });
-        if (qa.appliedFix) {
-          html = qa.html;
-          // QA rewrites sections, so re-apply and re-check requirements against
-          // what we actually ship rather than the pre-QA draft.
-          const reEnforced = enforceRequirements(html, requirements);
-          html = reEnforced.html;
-          htmlUrl = await uploadHtml(storagePath, html);
-        }
-      }
+      // DISABLED runPostUploadNavLogoQa (build:visual-qa).
+      // Live visual QA screenshots the uploaded HTML via ApiFlash, then rewrites
+      // whole sections. A capture of an S3 NoSuchBucket error page was treated as
+      // "the page is broken", so QA rewrote nav/hero, stripped data-field (killing
+      // click-to-edit), and still reported Done. Routing/intent is now model-
+      // classified; this pixel pass is optional polish and currently net-negative
+      // (minutes of hang + destructive rewrites). Leave ai-visual-qa.ts in place
+      // and turn the call site back on only after captures are proven to be our
+      // actual page (skip error pages / tiny files) and rewrites keep data-field
+      // + SL markers.
 
       const finalUnmet = requirements.length > 0
         ? describeUnmet(checkRequirements(html, requirements))

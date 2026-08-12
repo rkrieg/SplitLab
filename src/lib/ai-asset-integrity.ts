@@ -191,18 +191,32 @@ export async function verifyAndRehostHtmlImages(opts: {
   const { pageSlug, html, maxAssets = 12 } = opts;
 
   const srcs = new Set<string>();
+  const ownSrcs = new Set<string>();
   for (const m of Array.from(html.matchAll(/<img\b[^>]*\bsrc=["']([^"']+)["'][^>]*>/gi))) {
     const src = m[1].trim();
     if (!/^https?:\/\//i.test(src)) continue;
-    if (isOwnStorageUrl(src)) continue;
+    if (isOwnStorageUrl(src)) {
+      ownSrcs.add(src);
+      continue;
+    }
     srcs.add(src);
   }
 
   const targets = Array.from(srcs).slice(0, maxAssets);
-  if (targets.length === 0) return { html, rehosted: [], broken: [] };
+  const ownTargets = Array.from(ownSrcs).slice(0, maxAssets);
+  if (targets.length === 0 && ownTargets.length === 0) {
+    return { html, rehosted: [], broken: [] };
+  }
 
   const results = await Promise.all(
     targets.map(async (url) => ({ url, result: await materializeAsset({ pageSlug, url }) })),
+  );
+  // Our own storage URLs are never re-hosted, but they still have to be probed:
+  // a logo we uploaded ourselves can be missing or not-an-image, and skipping
+  // these outright is how a broken image box in the nav shipped while the
+  // pipeline reported success.
+  const ownResults = await Promise.all(
+    ownTargets.map(async (url) => ({ url, probe: await fetchAssetBytes(url) })),
   );
 
   let out = html;
@@ -216,6 +230,9 @@ export async function verifyAndRehostHtmlImages(opts: {
     if (result.url === url) continue;
     out = out.split(url).join(result.url);
     rehosted.push(url);
+  }
+  for (const { url, probe } of ownResults) {
+    if (!probe.ok) broken.push(url);
   }
 
   return { html: out, rehosted, broken };

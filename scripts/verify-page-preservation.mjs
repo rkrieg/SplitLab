@@ -78,6 +78,14 @@ assert('requested removal is not a loss', P.hasLosses(requested) === false);
 assert('removal intent detected: remove', P.promptHasRemovalIntent('remove that section') === true);
 assert('removal intent detected: get rid of', P.promptHasRemovalIntent('get rid of the FAQ') === true);
 assert('removal intent detected: take that out', P.promptHasRemovalIntent('see screenshot... take that out') === true);
+assert(
+  'intentional logo replace detected',
+  P.promptHasIntentionalLogoReplace('make navbar logo same as footer') === true,
+);
+assert(
+  'color ask is not intentional logo replace',
+  P.promptHasIntentionalLogoReplace('why is navigation bar and footer white keep them blue') === false,
+);
 assert('no removal intent in a color ask',
   P.promptHasRemovalIntent('keep the nav and footer blue') === false);
 
@@ -128,6 +136,36 @@ const facts = P.snapshotPageFacts(pageWithLogo);
 assert('snapshot collects sections', facts.sectionNames.join(',') === 'nav,hero,footer');
 assert('snapshot dedupes image URLs', facts.imageUrls.length === 1);
 assert('snapshot collects headings', facts.headings[0] === 'your call is confirmed.');
+
+// ── Click-to-edit handles ────────────────────────────────────────────────
+// A rewrite that keeps the text but drops data-field takes away the user's
+// ability to click that text and edit it — invisible in a screenshot, and now
+// that soft verification misses are kept instead of discarded, nothing else
+// would catch this.
+const editablePage = `<!-- SL:hero --><h1 data-field="headline">Your call is confirmed.</h1><p data-field="subhead">See you soon.</p><!-- /SL:hero -->`;
+const strippedFields = `<!-- SL:hero --><h1>Your call is confirmed.</h1><p>See you soon.</p><!-- /SL:hero -->`;
+assert('snapshot collects data-field names',
+  P.snapshotPageFacts(editablePage).editableFields.join(',') === 'headline,subhead');
+assert('losing data-field is reported as a loss',
+  P.hasLosses(P.findUnrequestedLosses({
+    beforeHtml: editablePage,
+    afterHtml: strippedFields,
+    prompt: 'make the headline bigger',
+  })) === true);
+assert('describeLosses names the editable-field loss',
+  /click-to-edit/.test(
+    P.describeLosses(P.findUnrequestedLosses({
+      beforeHtml: editablePage,
+      afterHtml: strippedFields,
+      prompt: 'make the headline bigger',
+    })) ?? '',
+  ));
+assert('keeping data-field reports no loss',
+  P.hasLosses(P.findUnrequestedLosses({
+    beforeHtml: editablePage,
+    afterHtml: editablePage.replace('bigger', 'bigger').replace('font-size', 'font-size'),
+    prompt: 'make the headline bigger',
+  })) === false);
 
 rmSync(outDir, { recursive: true, force: true });
 

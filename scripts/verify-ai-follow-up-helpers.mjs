@@ -15,9 +15,23 @@ function userWantsUsToDecide(prompt) {
   );
 }
 
-function isDesignReferenceAsk(prompt) {
+function isDesignReferenceAsk(prompt, hasAttachments = false) {
   const t = prompt.trim();
   if (!t) return false;
+  if (hasAttachments) {
+    const MATCH_VERB =
+      /\b(match|matching|copy|copied|replicate|recreate|mirror|mimic|follow|same|like|similar|as shown|according to)\b/i;
+    const REFERENT =
+      /\b(screenshot|screen\s?shot|image|photo|picture|design|mockup|reference|attachment|this|that|it)\b/i;
+    if (MATCH_VERB.test(t) && REFERENT.test(t)) return true;
+    if (/\bsimilar\s+to\s+(the\s+)?(screenshot|image|photo|this|that)\b/i.test(t)) return true;
+    if (
+      /\b(footer|nav(?:bar)?|header|hero|logo|section|form|cta|colou?rs?|font|spacing|layout)\b/i.test(t) &&
+      /\b(not|isn'?t|aren'?t|wrong|off|incorrect|proper(?:ly)?|fix|adjust|correct)\b/i.test(t)
+    ) {
+      return true;
+    }
+  }
   if (
     /\b((keep|make|update|change|redo|rebuild|redesign|restyle|replace)\b.{0,80}\b(like this|like that|like the (image|screenshot|photo|reference)|to (match|look like) this)|(look|looks|looking) like this|match this|match that|same as this|exactly like this|copy this|based on this|use this as (a )?(reference|template|style|design)|style (it |this )?after this|from this (image|screenshot|photo|reference))\b/i.test(
       t,
@@ -123,15 +137,30 @@ function escapeRegExp(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function dataFieldNames(html) {
+  const out = [];
+  for (const m of Array.from(html.matchAll(/\bdata-field=["']([^"']+)["']/gi))) {
+    const f = m[1].trim();
+    if (f && !out.includes(f)) out.push(f);
+  }
+  return out;
+}
+
 function verifyScopedPatchIntent(opts) {
   const { prompt, sectionName, beforeHtml, afterHtml, requiredSubstring } = opts;
   if (requiredSubstring && !afterHtml.includes(requiredSubstring)) {
-    return { ok: false, reason: `patched_${sectionName}_missing_required_asset` };
+    return { ok: false, reason: `patched_${sectionName}_missing_required_asset`, severity: 'hard' };
   }
   if (beforeHtml === afterHtml) {
     const quotes = extractVerifyQuotes(prompt);
     if (quotes.length > 0 || requiredSubstring) {
-      return { ok: false, reason: `patched_${sectionName}_unchanged` };
+      return { ok: false, reason: `patched_${sectionName}_unchanged`, severity: 'hard' };
+    }
+  }
+  if (!/\b(remove|delete|get rid of|take (it|that|this|them) (out|off)|drop|strip|hide|without the)\b/i.test(prompt)) {
+    const lost = dataFieldNames(beforeHtml).filter((f) => !dataFieldNames(afterHtml).includes(f));
+    if (lost.length > 0) {
+      return { ok: false, reason: `patched_${sectionName}_lost_editable_fields:${lost.join(',')}`, severity: 'hard' };
     }
   }
   const quotes = extractVerifyQuotes(prompt);
@@ -341,6 +370,27 @@ assert(
   'make nav match this → design reference ask',
   isDesignReferenceAsk('make the nav match this screenshot'),
 );
+// With an attachment, the exact phrase "like this" is not required. These two
+// real prompts previously took the generic path and ended in "no changes were
+// applied" because neither matched a phrase in the lists below.
+assert(
+  'attachment + "match the footer with screenshot" → design reference',
+  isDesignReferenceAsk('also match the footer with screenshot.', true),
+);
+assert(
+  'attachment + "logo colors are not properly copied" → design reference',
+  isDesignReferenceAsk('the logo colors are not properly copied.', true),
+);
+assert(
+  'no attachment → those same prompts are not design references',
+  !isDesignReferenceAsk('the logo colors are not properly copied.', false) &&
+    !isDesignReferenceAsk('also match the footer with screenshot.', false),
+);
+assert(
+  'attachment alone does not make every edit a design reference',
+  !isDesignReferenceAsk('change the headline to Book Your Call', true) &&
+    !isDesignReferenceAsk('delete the pricing section', true),
+);
 assert(
   'design ask is NOT screenshot complaint',
   !isScreenshotComplaint('keep the footer like this', true),
@@ -416,6 +466,34 @@ assert(
     sectionName: 'footer',
     beforeHtml: '<footer style="text-align:left">x</footer>',
     afterHtml: '<footer style="text-align:center">x</footer>',
+  }).ok,
+);
+
+assert(
+  'verify: rewrite that drops data-field is rejected',
+  !verifyScopedPatchIntent({
+    prompt: 'make the headline bigger',
+    sectionName: 'hero',
+    beforeHtml: '<section><h1 data-field="headline">Hi</h1></section>',
+    afterHtml: '<section><h1 style="font-size:48px">Hi</h1></section>',
+  }).ok,
+);
+assert(
+  'verify: rewrite that keeps data-field is ok',
+  verifyScopedPatchIntent({
+    prompt: 'make the headline bigger',
+    sectionName: 'hero',
+    beforeHtml: '<section><h1 data-field="headline">Hi</h1></section>',
+    afterHtml: '<section><h1 data-field="headline" style="font-size:48px">Hi</h1></section>',
+  }).ok,
+);
+assert(
+  'verify: deliberate removal is not blocked by the data-field guard',
+  verifyScopedPatchIntent({
+    prompt: 'remove the subheadline',
+    sectionName: 'hero',
+    beforeHtml: '<section><h1 data-field="headline">Hi</h1><p data-field="sub">Bye</p></section>',
+    afterHtml: '<section><h1 data-field="headline">Hi</h1></section>',
   }).ok,
 );
 
@@ -672,6 +750,9 @@ assert('brand forceEmbedLogoInFooterHtml', !brand.includes('export function forc
 assert('brand forceEmbedLogoIntoSections', brand.includes('export function forceEmbedLogoIntoSections'));
 assert('brand no userWantsLogoInFooter export', !brand.includes('export function userWantsLogoInFooter'));
 assert('brand extractPrimaryLogoUrlFromHtml', brand.includes('export function extractPrimaryLogoUrlFromHtml'));
+assert('brand extractLogoUrlFromSection', brand.includes('export function extractLogoUrlFromSection'));
+assert('follow-up logo from section', follow.includes('content reuse: logo from section'));
+assert('follow-up skip intentional logo restore', follow.includes('skip logo restore (intentional replace)'));
 assert('brand userWantsLogoPlacedInSection', brand.includes('export function userWantsLogoPlacedInSection'));
 assert('brand inferLogoPlacementSectionNames', brand.includes('export function inferLogoPlacementSectionNames'));
 assert('follow-up logo placement path', follow.includes('content reuse: logo placed'));
@@ -686,6 +767,8 @@ assert('placement detectContentReuseIntent', placement.includes('export function
 assert('placement forcePlaceTextInSection', placement.includes('export function forcePlaceTextInSection'));
 assert('placement inferTargetSectionNames', placement.includes('export function inferTargetSectionNames'));
 assert('placement forceAppendMissingDesignCopy', placement.includes('export function forceAppendMissingDesignCopy'));
+assert('placement dedupes duplicate screenshot copy', placement.includes('export function dedupeDesignCopyLines'));
+assert('OCR extracts unique lines from duplicate shots', helpers.includes('SAME screenshot'));
 
 // Create-path parity: screenshot OCR + multi-ask (must stay wired)
 assert('generate accepts image_urls', gen.includes('image_urls'));
@@ -713,6 +796,7 @@ assert('client partial toast path', client.includes('Partly done (not fully fini
 assert('client uploads before generate', client.includes('upload-chat-image') && client.includes('createAttachUrlsRef'));
 assert('client passes design_copy_lines to build', client.includes('design_copy_lines'));
 assert('client passes image_urls to generate', client.includes('image_urls: createImageUrls'));
+assert('client skips attaching the same file twice', client.includes('That screenshot is already attached'));
 
 const pageBuilder = readFileSync(join(__dirname, '../src/lib/ai-page-builder.ts'), 'utf8');
 assert('builder minimal addendum', pageBuilder.includes('COMPETITOR_MINIMAL_ADDENDUM'));
@@ -760,9 +844,146 @@ assert('follow-up restores a deleted logo', follow.includes('restored logo remov
 assert('follow-up reports unrepaired losses', follow.includes('describeLosses'));
 assert('build wires requirements', build.includes('extractRequirements') && build.includes('checkRequirements'));
 assert('build reports unmet', build.includes('unmet_requirements'));
-assert('follow-up wires requirements', follow.includes('extractRequirements') && follow.includes('describeUnmet'));
+// The checklist is the model's (seeded by the intent pass, refined by routing);
+// the only check code invents is "an asset we embedded is present".
+assert('follow-up wires requirements', follow.includes('assetRequirements(') && follow.includes('describeUnmet'));
+assert('follow-up seeds the checklist from the intent pass',
+  follow.includes('intent?.requirements ?? []'));
+assert('follow-up no longer derives requirements from prompt keywords',
+  !follow.includes('extractRequirements('));
 assert('follow-up unmet downgrades toast', follow.includes('Still not applied'));
 assert('client surfaces unmet on create', client.includes('unmet_requirements') && client.includes('not everything landed'));
+
+// ── Routing is decided by the model, keywords are only the fallback ─────────
+const intentSrc = readFileSync(join(__dirname, '../src/lib/ai-edit-intent.ts'), 'utf8');
+assert('intent module exists', intentSrc.includes('export async function classifyEditIntent'));
+assert('intent validates against live sections', intentSrc.includes('export function normalizeIntent'));
+assert('intent fails open', intentSrc.includes('caller should clarify or decide') || intentSrc.includes('falling back to keyword gates'));
+assert('intent never invents a source URL', intentSrc.includes('allowedUrls.includes(claimedUrl)'));
+assert('intent asks the model for the checklist too', intentSrc.includes('requirementInstruction'));
+assert('follow-up classifies intent first', follow.includes('await classifyEditIntent('));
+assert('intent failure asks the user instead of silent regex',
+  follow.includes('intent unavailable — asking user (no regex fallback)'));
+assert('intent keyword fallback only after decide/prior clarify',
+  follow.includes('allowIntentKeywordFallback'));
+assert('edit-intent budget allows the checklist', intentSrc.includes('maxTokens: 8000'));
+assert('follow-up routes design match off the intent', follow.includes('const wantsDesignMatch = intent'));
+assert('follow-up routes multi-ask off the intent', follow.includes('const hasMultipleAsks = intent'));
+assert('follow-up takes target sections from the intent', follow.includes('intentSections.length > 0'));
+assert('follow-up keeps keyword gates only as fallback',
+  follow.includes(': isDesignReferenceAsk(prompt, hasUserImages)') &&
+    follow.includes(': looksLikeMultiIntent(prompt)'));
+assert('create path classifies intent too', gen.includes('await classifyEditIntent('));
+assert('create decision is forwarded, not re-guessed',
+  gen.includes('reuse_reference_copy: reuseReferenceWords') &&
+    build.includes("typeof reuse_reference_copy === 'boolean'") &&
+    client.includes('reuse_reference_copy: reuseReferenceCopy'));
+
+// A soft quality miss must never delete a real edit
+assert('verify reports severity', helpers.includes("severity: 'hard' | 'soft'"));
+assert('design-copy shortfall is soft', helpers.includes("severity: 'soft'"));
+assert('follow-up keeps soft-shortfall edits',
+  follow.includes("verify.severity === 'hard'") && follow.includes('softShortfalls'));
+assert('phrase match is text-level, not raw HTML',
+  helpers.includes('normalizeForPhraseMatch'));
+
+// Full sweep: every routing decision reads the classifier first, keyword
+// regex is fallback-only everywhere — not just the gates fixed first.
+assert('verify no-op check uses the classifier\'s resolved sections, not fresh keyword inference',
+  helpers.includes('intentTargetSections') &&
+    helpers.includes('intentTargetSections && intentTargetSections.length > 0'));
+assert('content-reuse (logo/text/image placement) comes from the classifier',
+  intentSrc.includes('contentReuse: ContentReuseIntent | null') &&
+    follow.includes('const resolveContentReuse ='));
+assert('follow-up no longer calls detectContentReuseIntent directly at any routing site',
+  (follow.match(/\bdetectContentReuseIntent\(/g) || []).length === 1); // only inside resolveContentReuse's fallback
+assert('"proceed anyway" / "you decide" comes from the classifier',
+  intentSrc.includes('proceedAnyway: boolean') && follow.includes('const wantsUsToDecide ='));
+assert('follow-up only uses userWantsUsToDecide when intent is missing or as decide-fallback',
+  (follow.match(/userWantsUsToDecide\(prompt\)/g) || []).length <= 4);
+assert('create path forwards its design-reference verdict to build, not just reuse-copy',
+  gen.includes('design_reference: designAsk') &&
+    build.includes("typeof design_reference === 'boolean'") &&
+    client.includes('design_reference: designReference'));
+assert('create path classifies intent for plain text prompts too, not just attachments',
+  gen.includes('const createIntent = prompt.trim()'));
+assert('create path\'s multi-ask note comes from the classifier',
+  gen.includes('const hasMultipleAsks = createIntent ? createIntent.asks.length > 1'));
+
+assert('build stamps data-field from schema', build.includes('ensureClickToEditFields(html, enrichedSchema)'));
+assert('follow-up stamps data-field after a successful edit',
+  follow.includes('ensureClickToEditFields(finalHtmlPersisted'));
+assert('logo recolor is not treated as logo embed',
+  placement.includes('export function isLogoColorStyleAsk') &&
+    follow.includes('isLogoColorStyleAsk(askText)'));
+assert('everywhere / all-logos expands past nav+footer',
+  placement.includes('nav|header|footer|hero'));
+assert('multi-ask seeds the planner from classifier asks',
+  helpers.includes('seedAsks') && follow.includes('seedAsks: intent && intent.asks.length >= 2'));
+assert('partial multi-ask keeps successful steps',
+  follow.includes('multi-intent partial after retry — keeping wins'));
+assert('style+head is a scoped patch, not an automatic full rebuild',
+  follow.includes("routing.type === 'patch' || routing.type === 'style'"));
+assert('verify does not re-run design-match regex when the caller already decided',
+  helpers.includes('designMatch?: boolean') && helpers.includes('treatAsDesignMatch'));
+assert('source URL is inherited only to fetch assets or rebuild',
+  follow.includes('intent.usesEarlierSource && (intent.assetSource || intent.fullRebuild)'));
+assert('competitor_fetch_failed only after a scrape actually ran',
+  follow.includes('scrapeAttempted') &&
+    follow.includes('scrapeAttempted && !competitorContext'));
+assert('merged classifier asks still split when the prompt has several asks',
+  follow.includes('intent.asks.length > 1 || looksLikeMultiIntent(prompt)'));
+assert('multi-ask no-op does not use the design-reference-only toast',
+  follow.includes('Some of those edits did not apply'));
+assert('image roles come from intent when available',
+  intentSrc.includes('export function imageRolesFromIntent') &&
+    follow.includes('imageRolesFromIntent(intent'));
+assert('no single-image logo→bug regex short-circuit',
+  !helpers.includes("if (/\\b(fix|wrong|broken|sloppy|align|spacing|logo)\\b/i.test(prompt))"));
+assert('classifyAttachedImages only when intent is null',
+  follow.includes('attached image roles from intent') &&
+    follow.includes('classified = await classifyAttachedImages'));
+assert('open page can stamp missing data-field',
+  client.includes('ensure-editable') &&
+    readFileSync(join(__dirname, '../src/app/api/pages/[id]/ensure-editable/route.ts'), 'utf8').includes('ensureClickToEditFields'));
+assert('structural stamp exists for screenshot copy',
+  readFileSync(join(__dirname, '../src/lib/ai-data-field-stamp.ts'), 'utf8').includes('stampStructuralDataFields'));
+
+// "the logo on nav is wrong" must not touch the footer's logo
+assert('logo swap targets the section the user named',
+  follow.includes('const namedLogoSection = intentSections.find('));
+assert('logo swap fallback is section-scoped, not whole-page',
+  !/const forced = forceEmbedLogoInHtml\(/.test(follow));
+
+// Live visual QA is disabled at the create/edit call sites (destructive
+// rewrites from error-page captures). The module stays; re-enable later
+// with capture-is-our-page + data-field preservation.
+
+// A dropped connection mid-stream must not lose the whole build
+const aiClientSrc = readFileSync(join(__dirname, '../src/lib/ai-client.ts'), 'utf8');
+assert('stream retries mid-stream', aiClientSrc.includes('transient-connection-mid-stream'));
+assert('callers can reset progress buffers', aiClientSrc.includes('onStreamRestart'));
+assert('build reports the real AI error', build.includes('userFacingAIErrorMessage(err)'));
+
+// A source URL given in an earlier turn is still usable this turn
+assert('helpers export referencesEarlierSource', helpers.includes('export function referencesEarlierSource'));
+assert('follow-up inherits an earlier source URL', follow.includes('referencesEarlierSource(prompt)'));
+
+// Screenshot copy is not content unless the user asked for the words
+assert('placement exports wantsReferenceCopy', placement.includes('export function wantsReferenceCopy'));
+assert('build gates design OCR on wantsReferenceCopy', build.includes('reuseReferenceCopy'));
+assert('generate gates design OCR on wantsReferenceCopy', gen.includes('wantsReferenceCopy(prompt)'));
+
+// One attachment must be uploaded once: two consumers, one synchronous source
+assert('client consumes attachments via a synchronous ref', client.includes('takePendingChatImages'));
+assert('client no longer reads stale chatImages state to upload', !/const attachedImages = chatImages;/.test(client));
+
+// Our own uploads are probed too, or a broken logo ships as "Done"
+const assetIntegritySrc = readFileSync(join(__dirname, '../src/lib/ai-asset-integrity.ts'), 'utf8');
+assert(
+  'asset scan probes own-storage images',
+  assetIntegritySrc.includes('ownResults') && assetIntegritySrc.includes('ownSrcs'),
+);
 
 const visualQa = readFileSync(join(__dirname, '../src/lib/ai-visual-qa.ts'), 'utf8');
 assert('visual-qa module shouldRun', visualQa.includes('export function shouldRunNavLogoVisualQa'));
@@ -772,10 +993,24 @@ assert('visual-qa max section fixes', visualQa.includes('MAX_SECTION_FIXES'));
 assert('visual-qa listSlSectionNames', visualQa.includes('export function listSlSectionNames'));
 assert('visual-qa fail-closed parse', visualQa.includes('treating as ok (fail-closed)'));
 assert('visual-qa live post-upload', visualQa.includes('export async function runPostUploadNavLogoQa'));
+assert('visual-qa kill switch is off', visualQa.includes('const LIVE_VISUAL_QA_ENABLED = false'));
 assert('visual-qa resultScreenshots', visualQa.includes('resultScreenshots'));
 assert('visual-qa extractHero', visualQa.includes('export function extractHeroSectionHtml'));
-assert('build wires visual-qa', build.includes('runPostUploadNavLogoQa'));
-assert('follow-up wires visual-qa', follow.includes('runPostUploadNavLogoQa') || follow.includes('runNavLogoVisualQaOnce'));
+assert('build visual-qa call site is disabled',
+  build.includes('DISABLED runPostUploadNavLogoQa') && !build.includes('await runPostUploadNavLogoQa('));
+assert('follow-up visual-qa call sites are disabled',
+  follow.includes('DISABLED runNavLogoVisualQaOnce') &&
+    follow.includes('DISABLED runPostUploadNavLogoQa') &&
+    !follow.includes('await runNavLogoVisualQaOnce(') &&
+    !follow.includes('await runPostUploadNavLogoQa('));
+assert(
+  'follow-up continues leftover asks after logo swap',
+  follow.includes('logo swap done — continuing remaining asks') && follow.includes('logoSwapCompleted'),
+);
+assert(
+  'follow-up does not competitor-scrape after a logo swap',
+  follow.includes('!logoSwapCompleted'),
+);
 assert('scrape capturePageTopScreenshot', scrape.includes('export async function capturePageTopScreenshot'));
 assert('scrape capturePageScrollScreenshots', scrape.includes('export async function capturePageScrollScreenshots'));
 

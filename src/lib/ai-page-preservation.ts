@@ -19,12 +19,20 @@ export interface PageFacts {
   sectionNames: string[];
   /** h1–h3 text, normalized. */
   headings: string[];
+  /**
+   * data-field names — the page's click-to-edit handles. The preview's inline
+   * editor is driven entirely by [data-field], so a rewrite that drops them
+   * silently takes away the user's ability to edit that text by hand.
+   */
+  editableFields: string[];
 }
 
 export interface PageLosses {
   images: string[];
   sections: string[];
   headings: string[];
+  /** Click-to-edit handles the edit removed. */
+  editableFields: string[];
 }
 
 const REMOVAL_INTENT_RE =
@@ -37,6 +45,22 @@ const REMOVAL_INTENT_RE =
  */
 export function promptHasRemovalIntent(prompt: string): boolean {
   return REMOVAL_INTENT_RE.test(prompt);
+}
+
+/**
+ * True when the user is deliberately replacing a logo/image with another
+ * (e.g. "navbar logo same as footer"). Preservation must not restore the
+ * old nav asset after a successful swap.
+ */
+export function promptHasIntentionalLogoReplace(prompt: string): boolean {
+  const t = prompt.trim();
+  if (!t) return false;
+  if (!/\blogo\b/i.test(t) && !/\b(wordmark|brand mark)\b/i.test(t)) return false;
+  return (
+    /\b(same as|same one as|same one|replace|swap|use the)\b/i.test(t) ||
+    /\b(from|used in|used on)\s+(?:the\s+)?(footer|nav|header|hero)\b/i.test(t) ||
+    /\b(footer|nav|header|hero)(?:'s)?\s+logo\b/i.test(t)
+  );
 }
 
 function normalizeHeading(s: string): string {
@@ -68,7 +92,13 @@ export function snapshotPageFacts(html: string): PageFacts {
     if (t.length >= 4 && !headings.includes(t)) headings.push(t);
   }
 
-  return { imageUrls, sectionNames, headings };
+  const editableFields: string[] = [];
+  for (const m of Array.from(html.matchAll(/\bdata-field=["']([^"']+)["']/gi))) {
+    const f = m[1].trim();
+    if (f && !editableFields.includes(f)) editableFields.push(f);
+  }
+
+  return { imageUrls, sectionNames, headings, editableFields };
 }
 
 /**
@@ -81,7 +111,7 @@ export function findUnrequestedLosses(opts: {
   prompt: string;
 }): PageLosses {
   const { beforeHtml, afterHtml, prompt } = opts;
-  const empty: PageLosses = { images: [], sections: [], headings: [] };
+  const empty: PageLosses = { images: [], sections: [], headings: [], editableFields: [] };
   if (promptHasRemovalIntent(prompt)) return empty;
 
   const before = snapshotPageFacts(beforeHtml);
@@ -96,8 +126,9 @@ export function findUnrequestedLosses(opts: {
 
   const sections = before.sectionNames.filter((n) => !after.sectionNames.includes(n));
   const headings = before.headings.filter((h) => !after.headings.includes(h));
+  const editableFields = before.editableFields.filter((f) => !after.editableFields.includes(f));
 
-  return { images, sections, headings };
+  return { images, sections, headings, editableFields };
 }
 
 function urlTail(url: string): string {
@@ -121,7 +152,12 @@ export function sectionsContainingAsset(html: string, assetUrl: string): string[
 }
 
 export function hasLosses(losses: PageLosses): boolean {
-  return losses.images.length > 0 || losses.sections.length > 0 || losses.headings.length > 0;
+  return (
+    losses.images.length > 0 ||
+    losses.sections.length > 0 ||
+    losses.headings.length > 0 ||
+    losses.editableFields.length > 0
+  );
 }
 
 /** Short human sentence for the "not fully done" message. */
@@ -135,6 +171,12 @@ export function describeLosses(losses: PageLosses): string | null {
   }
   if (losses.headings.length > 0) {
     bits.push(`${losses.headings.length} heading${losses.headings.length === 1 ? '' : 's'} disappeared`);
+  }
+  if (losses.editableFields.length > 0) {
+    bits.push(
+      `${losses.editableFields.length} item${losses.editableFields.length === 1 ? '' : 's'} ` +
+        `stopped being click-to-edit`,
+    );
   }
   if (bits.length === 0) return null;
   return `${bits.join('; ')} without being asked for`;
