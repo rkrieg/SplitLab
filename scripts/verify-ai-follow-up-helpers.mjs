@@ -645,9 +645,10 @@ assert('follow-up multi-intent plan', follow.includes('planMultiIntentEdit'));
 assert('follow-up forceDecide', follow.includes('forceDecideEarly'));
 assert('follow-up verifyScopedPatchIntent', follow.includes('verifyScopedPatchIntent'));
 assert('follow-up screenshot complaint in routing prompt', follow.includes('Never set confidence "low"'));
-assert('follow-up broader logo intent', follow.includes('use|keep|with|from'));
+assert('follow-up logo swap is intent assetSource only', follow.includes("intent.assetSource === 'logo'"));
 assert('follow-up forceEmbed on structural', follow.includes('forceEmbedLogoInHtml'));
-assert('follow-up classifyAttachedImages', follow.includes('classifyAttachedImages'));
+assert('follow-up image roles from intent only', follow.includes('imageRolesFromIntent(intent'));
+assert('follow-up no classifyAttachedImages fallback', !follow.includes('classifyAttachedImages'));
 assert('follow-up embedImageUrls', follow.includes('embedImageUrls'));
 assert('follow-up materializeLogoUrl', follow.includes('materializeLogoUrl'));
 assert('follow-up fetchLogoAssets', follow.includes('fetchLogoAssets'));
@@ -714,7 +715,7 @@ assert(
   !userWantsFullCompetitorRebuild('Change the hero headline to Welcome'),
 );
 
-assert('follow-up allowScopedDespiteCompetitorUrl wiring', follow.includes('allowScopedDespiteCompetitorUrl'));
+assert('follow-up scoped-despite-URL from intent.fullRebuild', follow.includes('!intent.fullRebuild'));
 assert('follow-up shouldScrapeCompetitor', follow.includes('shouldScrapeCompetitor'));
 assert('follow-up content image swap', follow.includes('isContentImageSwapAttempt'));
 assert('follow-up fetchContentImageAssets', follow.includes('fetchContentImageAssets'));
@@ -758,7 +759,7 @@ assert('brand inferLogoPlacementSectionNames', brand.includes('export function i
 assert('follow-up logo placement path', follow.includes('content reuse: logo placed'));
 assert('follow-up text reuse path', follow.includes('content reuse: text placed'));
 assert('follow-up forceEmbedLogoIntoSections', follow.includes('forceEmbedLogoIntoSections'));
-assert('follow-up detectContentReuseIntent', follow.includes('detectContentReuseIntent'));
+assert('follow-up content reuse from intent only', follow.includes('intent.contentReuse'));
 assert('build logo fail-closed', build.includes('logo URL missing from HTML after embed'));
 assert('build forceEmbedLogoIntoSections', build.includes('forceEmbedLogoIntoSections'));
 
@@ -774,7 +775,7 @@ assert('OCR extracts unique lines from duplicate shots', helpers.includes('SAME 
 assert('generate accepts image_urls', gen.includes('image_urls'));
 assert('generate design OCR', gen.includes('extractDesignReferenceCopy'));
 assert('generate multi-part prompts', gen.includes('Multi-part first prompts'));
-assert('generate looksLikeMultiIntent', gen.includes('looksLikeMultiIntent'));
+assert('generate multi-ask from createIntent asks', gen.includes('createIntent?.asks.length'));
 assert('generate returns design_copy_lines', gen.includes('design_copy_lines'));
 assert('generate vision images on schema', gen.includes("type: 'image'") || gen.includes('type: "image"'));
 assert('build accepts design_copy_lines', build.includes('design_copy_lines'));
@@ -848,36 +849,37 @@ assert('build reports unmet', build.includes('unmet_requirements'));
 // the only check code invents is "an asset we embedded is present".
 assert('follow-up wires requirements', follow.includes('assetRequirements(') && follow.includes('describeUnmet'));
 assert('follow-up seeds the checklist from the intent pass',
-  follow.includes('intent?.requirements ?? []'));
+  follow.includes('let modelRequirements: PageRequirement[] = intent.requirements'));
 assert('follow-up no longer derives requirements from prompt keywords',
   !follow.includes('extractRequirements('));
 assert('follow-up unmet downgrades toast', follow.includes('Still not applied'));
 assert('client surfaces unmet on create', client.includes('unmet_requirements') && client.includes('not everything landed'));
 
-// ── Routing is decided by the model, keywords are only the fallback ─────────
+// ── Routing is decided by the model; intent failure clarifies (no regex) ────
 const intentSrc = readFileSync(join(__dirname, '../src/lib/ai-edit-intent.ts'), 'utf8');
 assert('intent module exists', intentSrc.includes('export async function classifyEditIntent'));
 assert('intent validates against live sections', intentSrc.includes('export function normalizeIntent'));
-assert('intent fails open', intentSrc.includes('caller should clarify or decide') || intentSrc.includes('falling back to keyword gates'));
 assert('intent never invents a source URL', intentSrc.includes('allowedUrls.includes(claimedUrl)'));
 assert('intent asks the model for the checklist too', intentSrc.includes('requirementInstruction'));
 assert('follow-up classifies intent first', follow.includes('await classifyEditIntent('));
 assert('intent failure asks the user instead of silent regex',
   follow.includes('intent unavailable — asking user (no regex fallback)'));
-assert('intent keyword fallback only after decide/prior clarify',
-  follow.includes('allowIntentKeywordFallback'));
+assert('no allowIntentKeywordFallback gate', !follow.includes('allowIntentKeywordFallback'));
 assert('edit-intent budget allows the checklist', intentSrc.includes('maxTokens: 8000'));
-assert('follow-up routes design match off the intent', follow.includes('const wantsDesignMatch = intent'));
-assert('follow-up routes multi-ask off the intent', follow.includes('const hasMultipleAsks = intent'));
-assert('follow-up takes target sections from the intent', follow.includes('intentSections.length > 0'));
-assert('follow-up keeps keyword gates only as fallback',
-  follow.includes(': isDesignReferenceAsk(prompt, hasUserImages)') &&
-    follow.includes(': looksLikeMultiIntent(prompt)'));
+assert('follow-up routes design match off the intent', follow.includes('const wantsDesignMatch = intent.designReference'));
+assert('follow-up routes multi-ask off the intent', follow.includes('intent.asks.length > 1'));
+assert('follow-up takes target sections from the intent', follow.includes('intentSections.length > 0') || follow.includes('intent.targetSections'));
+assert('follow-up does not ternary-fallback design match to keywords',
+  !follow.includes(': isDesignReferenceAsk(prompt, hasUserImages)'));
 assert('create path classifies intent too', gen.includes('await classifyEditIntent('));
 assert('create decision is forwarded, not re-guessed',
   gen.includes('reuse_reference_copy: reuseReferenceWords') &&
     build.includes("typeof reuse_reference_copy === 'boolean'") &&
     client.includes('reuse_reference_copy: reuseReferenceCopy'));
+assert('build does not keyword-guess design_reference when missing',
+  build.includes("typeof design_reference === 'boolean' ? design_reference : false"));
+assert('generate does not keyword-guess design ask when intent missing',
+  gen.includes('!!createIntent?.designReference'));
 
 // A soft quality miss must never delete a real edit
 assert('verify reports severity', helpers.includes("severity: 'hard' | 'soft'"));
@@ -895,12 +897,12 @@ assert('verify no-op check uses the classifier\'s resolved sections, not fresh k
 assert('content-reuse (logo/text/image placement) comes from the classifier',
   intentSrc.includes('contentReuse: ContentReuseIntent | null') &&
     follow.includes('const resolveContentReuse ='));
-assert('follow-up no longer calls detectContentReuseIntent directly at any routing site',
-  (follow.match(/\bdetectContentReuseIntent\(/g) || []).length === 1); // only inside resolveContentReuse's fallback
+assert('follow-up never calls detectContentReuseIntent',
+  !follow.includes('detectContentReuseIntent'));
 assert('"proceed anyway" / "you decide" comes from the classifier',
-  intentSrc.includes('proceedAnyway: boolean') && follow.includes('const wantsUsToDecide ='));
-assert('follow-up only uses userWantsUsToDecide when intent is missing or as decide-fallback',
-  (follow.match(/userWantsUsToDecide\(prompt\)/g) || []).length <= 4);
+  intentSrc.includes('proceedAnyway: boolean') && follow.includes('const wantsUsToDecide = intent.proceedAnyway'));
+assert('follow-up only uses userWantsUsToDecide in the intent-fail clarify path',
+  (follow.match(/userWantsUsToDecide\(prompt\)/g) || []).length === 1);
 assert('create path forwards its design-reference verdict to build, not just reuse-copy',
   gen.includes('design_reference: designAsk') &&
     build.includes("typeof design_reference === 'boolean'") &&
@@ -908,14 +910,14 @@ assert('create path forwards its design-reference verdict to build, not just reu
 assert('create path classifies intent for plain text prompts too, not just attachments',
   gen.includes('const createIntent = prompt.trim()'));
 assert('create path\'s multi-ask note comes from the classifier',
-  gen.includes('const hasMultipleAsks = createIntent ? createIntent.asks.length > 1'));
+  gen.includes('(createIntent?.asks.length ?? 0) > 1'));
 
 assert('build stamps data-field from schema', build.includes('ensureClickToEditFields(html, enrichedSchema)'));
 assert('follow-up stamps data-field after a successful edit',
   follow.includes('ensureClickToEditFields(finalHtmlPersisted'));
-assert('logo recolor is not treated as logo embed',
-  placement.includes('export function isLogoColorStyleAsk') &&
-    follow.includes('isLogoColorStyleAsk(askText)'));
+assert('logo style asks are not treated as logo embed in intent normalize',
+  placement.includes('export function isLogoStyleAsk') &&
+    intentSrc.includes('isLogoStyleAsk(opts.prompt)'));
 assert('everywhere / all-logos expands past nav+footer',
   placement.includes('nav|header|footer|hero'));
 assert('multi-ask seeds the planner from classifier asks',
@@ -931,8 +933,9 @@ assert('source URL is inherited only to fetch assets or rebuild',
 assert('competitor_fetch_failed only after a scrape actually ran',
   follow.includes('scrapeAttempted') &&
     follow.includes('scrapeAttempted && !competitorContext'));
-assert('merged classifier asks still split when the prompt has several asks',
-  follow.includes('intent.asks.length > 1 || looksLikeMultiIntent(prompt)'));
+assert('multi-ask count is classifier asks only',
+  follow.includes('const hasMultipleAsks = intent.asks.length > 1') &&
+    !follow.includes('looksLikeMultiIntent(prompt)'));
 assert('multi-ask no-op does not use the design-reference-only toast',
   follow.includes('Some of those edits did not apply'));
 assert('image roles come from intent when available',
@@ -940,9 +943,9 @@ assert('image roles come from intent when available',
     follow.includes('imageRolesFromIntent(intent'));
 assert('no single-image logo→bug regex short-circuit',
   !helpers.includes("if (/\\b(fix|wrong|broken|sloppy|align|spacing|logo)\\b/i.test(prompt))"));
-assert('classifyAttachedImages only when intent is null',
+assert('no classifyAttachedImages on follow-up path',
   follow.includes('attached image roles from intent') &&
-    follow.includes('classified = await classifyAttachedImages'));
+    !follow.includes('classifyAttachedImages'));
 assert('open page can stamp missing data-field',
   client.includes('ensure-editable') &&
     readFileSync(join(__dirname, '../src/app/api/pages/[id]/ensure-editable/route.ts'), 'utf8').includes('ensureClickToEditFields'));
@@ -965,14 +968,17 @@ assert('stream retries mid-stream', aiClientSrc.includes('transient-connection-m
 assert('callers can reset progress buffers', aiClientSrc.includes('onStreamRestart'));
 assert('build reports the real AI error', build.includes('userFacingAIErrorMessage(err)'));
 
-// A source URL given in an earlier turn is still usable this turn
+// A source URL given in an earlier turn is still usable this turn — via intent only
 assert('helpers export referencesEarlierSource', helpers.includes('export function referencesEarlierSource'));
-assert('follow-up inherits an earlier source URL', follow.includes('referencesEarlierSource(prompt)'));
+assert('follow-up inherits earlier source via intent only',
+  follow.includes('intent.usesEarlierSource') &&
+    !follow.includes('referencesEarlierSource(prompt)'));
 
 // Screenshot copy is not content unless the user asked for the words
 assert('placement exports wantsReferenceCopy', placement.includes('export function wantsReferenceCopy'));
-assert('build gates design OCR on wantsReferenceCopy', build.includes('reuseReferenceCopy'));
-assert('generate gates design OCR on wantsReferenceCopy', gen.includes('wantsReferenceCopy(prompt)'));
+assert('build gates design OCR on reuseReferenceCopy boolean', build.includes('reuseReferenceCopy'));
+assert('generate gates design OCR on intent reuseReferenceCopy',
+  gen.includes('createIntent?.reuseReferenceCopy') || gen.includes('reuseReferenceWords'));
 
 // One attachment must be uploaded once: two consumers, one synchronous source
 assert('client consumes attachments via a synchronous ref', client.includes('takePendingChatImages'));

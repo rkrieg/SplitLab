@@ -15,18 +15,10 @@ import { createSSEStream, sendSSE, closeSSE, SSE_HEADERS, type SSEEvent } from '
 import { isTestVariantPage } from '@/lib/page-drafts';
 import { extractDataUris, restoreDataUris, restoreDataUrisInValue } from '@/lib/data-uri-strip';
 import {
-  looksLikeMultiIntent,
   planMultiIntentEdit,
   userWantsUsToDecide,
-  isScreenshotComplaint,
-  isDesignReferenceAsk,
-  referencesEarlierSource,
   inferDesignMatchSectionNames,
   verifyScopedPatchIntent,
-  classifyAttachedImages,
-  allowScopedDespiteCompetitorUrl,
-  userWantsSiteContentImage,
-  userWantsFullCompetitorRebuild,
   extractDesignReferenceCopy,
 } from '@/lib/ai-follow-up-helpers';
 import {
@@ -41,14 +33,12 @@ import {
   sectionHasLogoAsset,
 } from '@/lib/ai-brand-assets';
 import {
-  detectContentReuseIntent,
-  wantsReferenceCopy,
   extractPrimaryHeadlineFromHtml,
   forcePlaceTextIntoSections,
   resolveSourceSectionName,
   sectionHasText,
   inferTargetSectionNames,
-  isLogoColorStyleAsk,
+  isLogoStyleAsk,
 } from '@/lib/ai-content-placement';
 import { classifyEditIntent, imageRolesFromIntent } from '@/lib/ai-edit-intent';
 import { ensureClickToEditFields } from '@/lib/ai-data-field-stamp';
@@ -679,13 +669,9 @@ async function runScopedPatch(
   usage?: UsageContext,
 ): Promise<string | null> {
   try {
-    // The image content blocks below only give the model PIXELS — the
-    // literal URL string is never otherwise visible to it, so without this
-    // it has no way to know what to actually write into an <img src="...">.
-    // Design-reference asks must NOT get a blanket "put these URLs in src"
-    // note — that causes the model to paste the screenshot as an <img>.
-    const isDesignMatchPrompt =
-      /DESIGN REFERENCE/i.test(prompt) || isDesignReferenceAsk(prompt, (imageUrls ?? []).length > 0);
+    // Callers that want design-match inject "DESIGN REFERENCE" into the prompt.
+    // Do not re-guess with keyword isDesignReferenceAsk here.
+    const isDesignMatchPrompt = /DESIGN REFERENCE/i.test(prompt);
     const imageUrlsNote = (imageUrls ?? []).length > 0
       ? isDesignMatchPrompt
         ? `\n\nAttached image(s) are for VISION only (design/bug reference). Do NOT put these URL(s) into src attributes unless the instruction explicitly lists them as content-asset embed URLs:\n${(imageUrls ?? []).map((u, i) => `${i + 1}. ${u}`).join('\n')}`
@@ -1408,18 +1394,17 @@ export async function POST(
       }
     : 'unavailable');
 
-  // Intent failed (timeout / truncate / bad JSON). Regex fallback is worse than
-  // asking once — except when the user already said "you decide", or this turn
-  // is their answer to our last clarify (never clarify-loop).
-  const allowIntentKeywordFallback =
-    !intent && (lastAssistantWasClarify || userWantsUsToDecide(prompt));
-  if (!intent && !allowIntentKeywordFallback) {
+  // Intent failed (timeout / truncate / bad JSON). Do NOT regex-route —
+  // that was the second brain. Ask once; if they already clarified or said
+  // decide, still ask with a decide hint rather than silent keyword routing.
+  if (!intent) {
     const { stream, controller } = createSSEStream();
     const response = new Response(stream, { headers: SSE_HEADERS });
     void (async () => {
       try {
-        const question =
-          'I couldn’t reliably read that request. Tell me which part of the page to change (e.g. footer, nav, hero), or say “you decide” and I’ll pick the best interpretation.';
+        const question = lastAssistantWasClarify || userWantsUsToDecide(prompt)
+          ? 'I still couldn’t read that reliably. Name the section (footer, nav, hero, …) and the change — or send the ask in one short sentence.'
+          : 'I couldn’t reliably read that request. Tell me which part of the page to change (e.g. footer, nav, hero), or say “you decide” and I’ll pick the best interpretation.';
         const userEntry: Record<string, unknown> = { role: 'user', content: prompt };
         if (Array.isArray(image_urls) && image_urls.length > 0) userEntry.image_urls = image_urls;
         const updatedConversation = [
@@ -1445,65 +1430,35 @@ export async function POST(
     })();
     return response;
   }
-  if (!intent && allowIntentKeywordFallback) {
-    console.log('[pages/follow-up] intent unavailable — keyword fallback allowed', {
-      lastAssistantWasClarify,
-      userDecide: userWantsUsToDecide(prompt),
-    });
-  }
 
   /** The page should look like an attachment/reference. */
-  const wantsDesignMatch = intent
-    ? intent.designReference
-    : isDesignReferenceAsk(prompt, hasUserImages);
+  const wantsDesignMatch = intent.designReference;
   /** The reference's visible words are content to reproduce, not just a style. */
-  const wantsReferenceWords = intent ? intent.reuseReferenceCopy : wantsReferenceCopy(prompt);
+  const wantsReferenceWords = intent.reuseReferenceCopy;
   /** Several distinct asks in one message — the case where asks get dropped. */
-  const hasMultipleAsks = intent
-    ? intent.asks.length > 1 || looksLikeMultiIntent(prompt)
-    : looksLikeMultiIntent(prompt);
+  const hasMultipleAsks = intent.asks.length > 1;
   /** An attachment shows something wrong on OUR page, not a design to copy. */
-  const wantsBugFix = intent ? intent.bugReport : isScreenshotComplaint(prompt, hasUserImages);
+  const wantsBugFix = intent.bugReport;
   /** Sections the classifier says this message is about; [] when it can't tell. */
-  const intentSections = intent?.targetSections ?? [];
+  const intentSections = intent.targetSections;
   /**
-   * "put the logo/text/image into section X" — from the classifier, keyword
-   * fallback. Re-filters the classifier's targets against whatever section
-   * list the caller has right now: some call sites run after an earlier step
-   * already changed the page, so a target resolved before that edit could
-   * name a section that no longer exists.
+   * Content reuse: intent.content_reuse only (including null). No keyword fill.
    */
-  const resolveContentReuse = (askText: string, sectionNames: string[]) => {
-    if (isLogoColorStyleAsk(askText)) return null;
-    const keywordReuse = detectContentReuseIntent(askText, sectionNames);
-    if (!intent) return keywordReuse;
-    if (!intent.contentReuse) return keywordReuse;
-    const targets = intent.contentReuse.targets.filter((t) => sectionNames.includes(t));
+  const resolveContentReuse = (_askText: string, sectionNames: string[]) => {
+    if (!intent.contentReuse) return null;
     return {
       ...intent.contentReuse,
-      // Classifier sometimes omits source ("same as footer"); keep keyword hint.
-      sourceSectionHint:
-        intent.contentReuse.sourceSectionHint ?? keywordReuse?.sourceSectionHint ?? null,
-      targets:
-        targets.length > 0
-          ? targets
-          : (keywordReuse?.targets ?? []).filter((t) => sectionNames.includes(t)),
+      targets: intent.contentReuse.targets.filter((t) => sectionNames.includes(t)),
     };
   };
   /** Proceed on the best guess instead of asking a clarifying question. */
-  const wantsUsToDecide = intent ? intent.proceedAnyway : userWantsUsToDecide(prompt);
+  const wantsUsToDecide = intent.proceedAnyway;
 
-  // "get the logo from the website i gave you" — the URL is in an earlier turn.
-  // Serve it instead of bouncing back a clarifying question the user already
-  // answered. The classifier resolves this from context; the keyword check is
-  // the fallback path only.
+  // "get the logo from the website i gave you" — only when intent says so.
   if (competitorUrls.length === 0 && promptImageUrls.length === 0) {
-    const inherited = intent
-      ? intent.usesEarlierSource && (intent.assetSource || intent.fullRebuild)
+    const inherited =
+      intent.usesEarlierSource && (intent.assetSource || intent.fullRebuild)
         ? intent.sourceUrl
-        : null
-      : referencesEarlierSource(prompt)
-        ? (priorUserUrls[priorUserUrls.length - 1] ?? null)
         : null;
     if (inherited && !(await isImageUrl(inherited))) {
       competitorUrls.push(inherited);
@@ -1511,28 +1466,14 @@ export async function POST(
     }
   }
 
-  // "Use the real logo from this site" → fetch the actual logo file, rather than
-  // a full competitor rebuild (which only ever sees a lossy screenshot and
-  // invents a fake logo — the original client complaint). Which of the two the
-  // user wants is decided by the classifier; the keyword patterns below are the
-  // fallback for when that call is unavailable.
-  const isLogoSwapAttempt =
-    competitorUrls.length > 0 &&
-    (intent
-      ? intent.assetSource === 'logo'
-      : /\b(real|actual|exact|same|correct)\s+logo\b/i.test(prompt) ||
-        /\b(use|keep|with|from)\b[\s\S]{0,40}\blogo\b/i.test(prompt) ||
-        /\blogo\b[\s\S]{0,40}\b(from|on)\b/i.test(prompt));
-  // Local edit that happens to include a URL → keep scoped path (avoid huge rebuild).
-  // Redesign/clone language still forces full competitor rebuild.
+  // Logo / content-image / scoped-despite-URL: intent fields only.
+  const isLogoSwapAttempt = competitorUrls.length > 0 && intent.assetSource === 'logo';
   const isScopedDespiteUrl =
-    competitorUrls.length > 0 &&
-    !isLogoSwapAttempt &&
-    (intent ? !intent.fullRebuild : allowScopedDespiteCompetitorUrl(prompt));
+    competitorUrls.length > 0 && !isLogoSwapAttempt && !intent.fullRebuild;
   const isContentImageSwapAttempt =
     competitorUrls.length > 0 &&
     !isLogoSwapAttempt &&
-    (intent ? intent.assetSource === 'content_images' : userWantsSiteContentImage(prompt));
+    intent.assetSource === 'content_images';
 
   // Scoped-patch candidates — cheap, synchronous, no AI call. A genuine
   // competitor redesign URL always means full-page rebuild (see
@@ -1551,7 +1492,7 @@ export async function POST(
   // the router later refines it) — deterministic code still does every check.
   // Seeded from the intent pass so an edit that never reaches routing (scoped
   // paths, multi-ask plans) is still verified against what was asked.
-  let modelRequirements: PageRequirement[] = intent?.requirements ?? [];
+  let modelRequirements: PageRequirement[] = intent.requirements;
   const captureModelRequirements = (routing: RoutingResult | null) => {
     if (!routing?.requirements) return;
     const parsed = parseModelRequirements(routing, {
@@ -1775,8 +1716,11 @@ export async function POST(
             }
 
             if (targets.length === 0) {
-              console.error('[pages/follow-up] content reuse: no target section', { kind: reuse.kind });
-              scopedFailureReason = 'content_reuse_no_target';
+              // Misclassified reuse (e.g. "footer logo size") — fall through to
+              // normal scoped/style patch instead of a hard error toast.
+              console.warn('[pages/follow-up] content reuse: no target section — falling through', {
+                kind: reuse.kind,
+              });
             } else if (reuse.kind === 'logo') {
               // Source section wins when named ("same as footer"). Never default
               // to nav-first primary — that re-pastes the wrong asset onto itself.
@@ -1820,10 +1764,10 @@ export async function POST(
                 if (!existingLogoUrl) existingSvg = assets.logoSvgMarkup;
               }
               if (targets.length === 0) {
-                console.error('[pages/follow-up] content reuse: logo has source but no dest', {
+                // "footer logo" misread as source-only — fall through to style/size patch.
+                console.warn('[pages/follow-up] content reuse: logo has source but no dest — falling through', {
                   sourceHint,
                 });
-                scopedFailureReason = 'content_reuse_no_target';
               } else if (!existingLogoUrl && !existingSvg) {
                 // Named source with nothing to copy — don't fall back to nav primary.
                 console.warn('[pages/follow-up] content reuse: no logo in source — falling through', {
@@ -2024,24 +1968,15 @@ export async function POST(
           }
         }
 
-        // Per-image roles: intent wins. classifyAttachedImages only when intent is null.
+        // Per-image roles from intent only (intent is required above).
         if (hasUserImages && !scopedApplied && !scopedFailureReason) {
           let classified:
             | Array<{ url: string; role: 'design_reference' | 'bug_reference' | 'content_asset' }>
-            | 'clarify';
-          if (intent) {
-            classified = imageRolesFromIntent(intent, effectiveImageUrls);
-            console.log('[pages/follow-up] attached image roles from intent', {
-              roles: classified.map((c) => c.role),
-              designReference: intent.designReference,
-            });
-          } else {
-            classified = await classifyAttachedImages({
-              prompt,
-              imageUrls: effectiveImageUrls,
-              usage: usageCtx,
-            });
-          }
+            | 'clarify' = imageRolesFromIntent(intent, effectiveImageUrls);
+          console.log('[pages/follow-up] attached image roles from intent', {
+            roles: classified === 'clarify' ? 'clarify' : classified.map((c) => c.role),
+            designReference: intent.designReference,
+          });
           if (classified === 'clarify') {
             const question =
               'You attached more than one image — which are bug screenshots to fix, which should I place on the page, and which are design references to match (e.g. "make the footer look like this")? Reply briefly.';
@@ -2256,7 +2191,7 @@ export async function POST(
               const patched: Array<{ name: string; html: string }> = [];
               const stepIsDesignMatch =
                 (wantsDesignMatch || designReferenceUrls.length > 0) &&
-                !isLogoColorStyleAsk(step.instruction);
+                !isLogoStyleAsk(step.instruction);
               const stepDesignNote = stepIsDesignMatch
                   ? `\n\n(DESIGN REFERENCE — CRITICAL: Attached images may show how this section should look. Recreate layout/structure/copy from the screenshot in real HTML. Do NOT leave unchanged. Do NOT embed design-reference screenshot URLs as <img src> for the whole section.)`
                   : '';
@@ -2375,7 +2310,7 @@ export async function POST(
                 }
                 const stepIsDesignMatch =
                 (wantsDesignMatch || designReferenceUrls.length > 0) &&
-                !isLogoColorStyleAsk(step.instruction);
+                !isLogoStyleAsk(step.instruction);
                 const patched: Array<{ name: string; html: string }> = [];
                 for (const name of stepTargets) {
                   if (stepOks.includes(name)) continue;
@@ -2888,18 +2823,7 @@ export async function POST(
       if (!scopedApplied) {
       // Classify attachments if we skipped the scoped path (e.g. competitor URL)
       if (hasUserImages && !imageRolesClassified) {
-        let classified:
-          | Array<{ url: string; role: 'design_reference' | 'bug_reference' | 'content_asset' }>
-          | 'clarify';
-        if (intent) {
-          classified = imageRolesFromIntent(intent, effectiveImageUrls);
-        } else {
-          classified = await classifyAttachedImages({
-            prompt,
-            imageUrls: effectiveImageUrls,
-            usage: usageCtx,
-          });
-        }
+        const classified = imageRolesFromIntent(intent, effectiveImageUrls);
         if (classified === 'clarify') {
           const question =
             'You attached more than one image — which are bug screenshots to fix, which should I place on the page, and which are design references to match (e.g. "make the footer look like this")? Reply briefly.';
@@ -2933,8 +2857,7 @@ export async function POST(
       const shouldScrapeCompetitor =
         competitorUrls.length > 0 &&
         !logoSwapCompleted &&
-        ((intent ? intent.fullRebuild : userWantsFullCompetitorRebuild(prompt)) ||
-          (!isScopedDespiteUrl && !isContentImageSwapAttempt));
+        (intent.fullRebuild || (!isScopedDespiteUrl && !isContentImageSwapAttempt));
 
       if (shouldScrapeCompetitor) {
         scrapeAttempted = true;

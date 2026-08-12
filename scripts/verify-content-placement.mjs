@@ -106,6 +106,18 @@ assert(
   '"use the new white logo in the footer" is still placement, not recolor',
   C.isLogoColorStyleAsk('use the new white logo in the footer as well') === false,
 );
+assert(
+  'footer logo size is a style ask, not reuse',
+  C.isLogoStyleAsk('update the size of footer logo as well') === true,
+);
+assert(
+  'footer logo size is not content reuse',
+  C.detectContentReuseIntent('update the size of footer logo as well', SECTIONS) === null,
+);
+assert(
+  'increase logo size is style',
+  C.isLogoStyleAsk('please increase the size of logo, the logo text is not radable right now.') === true,
+);
 
 // ── Logo placement into arbitrary sections ──────────────────────────────────
 

@@ -18,10 +18,9 @@ import {
 import { listSlSectionNames } from '@/lib/ai-visual-qa';
 import {
   extractDesignReferenceCopy,
-  isDesignReferenceAsk,
   inferDesignMatchSectionNames,
 } from '@/lib/ai-follow-up-helpers';
-import { forceAppendMissingDesignCopy, wantsReferenceCopy } from '@/lib/ai-content-placement';
+import { forceAppendMissingDesignCopy } from '@/lib/ai-content-placement';
 import { verifyAndRehostHtmlImages } from '@/lib/ai-asset-integrity';
 import { ensureClickToEditFields } from '@/lib/ai-data-field-stamp';
 import {
@@ -175,14 +174,9 @@ export async function POST(request: NextRequest) {
 
       const hasImages = Array.isArray(image_urls) && (image_urls as string[]).length > 0;
       const promptText = typeof user_prompt === 'string' ? user_prompt : '';
-      // Copy read off a design screenshot is only content when the user asked for
-      // its words. For a pure style reference it must never be required, hinted,
-      // or force-placed — the user's own copy is the copy. The schema pass already
-      // asked the model; only fall back to keywords when it didn't say.
+      // Only use explicit booleans from generate. Missing → false (no keyword guess).
       const reuseReferenceCopy =
-        typeof reuse_reference_copy === 'boolean'
-          ? reuse_reference_copy
-          : wantsReferenceCopy(promptText);
+        typeof reuse_reference_copy === 'boolean' ? reuse_reference_copy : false;
       let designCopyLines = !reuseReferenceCopy ? [] : Array.isArray(design_copy_lines)
         ? (design_copy_lines as unknown[])
             .filter((l): l is string => typeof l === 'string' && l.trim().length >= 6)
@@ -190,15 +184,9 @@ export async function POST(request: NextRequest) {
             .slice(0, 12)
         : [];
 
-      // Detect if images are design-references (screenshots to MATCH, not content
-      // to embed). The schema pass already asked the model this exact question —
-      // use its answer instead of re-deriving a possibly different one from
-      // keywords here, which is how the two passes could disagree.
+      // Schema/generate already decided design_reference. Do not re-guess.
       const promptLooksLikeDesignRef =
-        typeof design_reference === 'boolean'
-          ? design_reference
-          : isDesignReferenceAsk(promptText, hasImages) ||
-            /\b(screenshot|design|mockup|reference|like this|match this|footer|nav|hero)\b/i.test(promptText);
+        typeof design_reference === 'boolean' ? design_reference : false;
       const imagesAreDesignRefs = hasImages && promptLooksLikeDesignRef;
 
       if (designCopyLines.length === 0 && imagesAreDesignRefs && reuseReferenceCopy) {

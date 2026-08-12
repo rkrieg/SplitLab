@@ -121,6 +121,32 @@ export function isLogoColorStyleAsk(prompt: string): boolean {
 }
 
 /**
+ * Logo color OR size/scale — scoped CSS/patch, never "embed logo into section".
+ * "update the size of footer logo" was wrongly treated as content_reuse and
+ * hard-failed with content_reuse_no_target.
+ */
+export function isLogoStyleAsk(prompt: string): boolean {
+  const t = prompt.trim();
+  if (!/\blogos?\b/i.test(t)) return false;
+  if (isLogoColorStyleAsk(t)) return true;
+  const size =
+    /\b(size|bigger|larger|smaller|resize|scale|enlarge|shrink|height|width)\b/i.test(t) ||
+    /\b(not\s+)?readab/i.test(t) ||
+    /\b(increase|decrease)\b[\s\S]{0,40}\b(size|logo)\b/i.test(t) ||
+    /\blogos?\b[\s\S]{0,40}\b(increase|decrease|bigger|larger|smaller)\b/i.test(t);
+  if (!size) return false;
+  // Pure file placement still wins over size words in the same sentence only
+  // when they are clearly copying an asset into a section.
+  if (
+    /\b(put|place|add|copy)\b[\s\S]{0,40}\blogos?\b[\s\S]{0,40}\b(in|into|on|to)\b/i.test(t) &&
+    !/\b(size|bigger|larger|smaller|resize|scale|enlarge|shrink|readab)\b/i.test(t)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/**
  * Detect reuse/placement asks: put existing logo/text/image into named section(s).
  * Null when this is not a reuse ask (let normal edit paths handle it).
  */
@@ -135,20 +161,25 @@ export function detectContentReuseIntent(
   const quotes = extractQuotedPayloads(t);
 
   // ── Logo ──────────────────────────────────────────────────────────────
-  // Recolor ("make the logo white everywhere") is a style patch, not embed.
-  if (isLogoColorStyleAsk(t)) {
+  // Recolor / resize ("make logo white", "increase footer logo size") is a
+  // style patch, not embed. "footer logo" here means the logo IN the footer.
+  if (isLogoStyleAsk(t)) {
     return null;
   }
   // A resolved target already proves the user named a real destination, so any
   // section the page actually has works here — not just a fixed noun list.
   if (/\blogo\b/i.test(t) && placementLanguage(t) && (targets.length > 0 || /\beverywhere\b/i.test(t))) {
     let sourceSectionHint: string | null = null;
+    // Only treat "footer logo" as a COPY SOURCE when they said same-as / from /
+    // copy. Bare "footer logo" is the thing to edit (destination).
     const fromM =
-      /\b(?:same as|same one as|from|used in|in the)\s+(?:the\s+)?(footer|hero|nav|header|navbar)\b/i.exec(t) ||
-      /\b(footer|hero|nav|header|navbar)(?:'s)?\s+logo\b/i.exec(t) ||
-      /\blogo\s+(?:used\s+)?(?:in|on|from)\s+(?:the\s+)?(footer|hero|nav|header|navbar)\b/i.exec(t);
+      /\b(?:same as|same one as|from|used in)\s+(?:the\s+)?(footer|hero|nav|header|navbar)\b/i.exec(t) ||
+      /\blogo\s+(?:used\s+)?(?:in|on|from)\s+(?:the\s+)?(footer|hero|nav|header|navbar)\b/i.exec(t) ||
+      (/\b(copy|same as|same one)\b/i.test(t)
+        ? /\b(footer|hero|nav|header|navbar)(?:'s)?\s+logo\b/i.exec(t)
+        : null);
     if (fromM) {
-      const raw = (fromM[1] || fromM[2] || '').toLowerCase();
+      const raw = (fromM[1] || '').toLowerCase();
       sourceSectionHint = raw === 'navbar' ? 'nav' : raw;
     }
 

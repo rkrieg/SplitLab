@@ -26,6 +26,7 @@ import { parseModelRequirements, type PageRequirement } from '@/lib/ai-page-requ
 import {
   inferTargetSectionNames,
   isLogoColorStyleAsk,
+  isLogoStyleAsk,
   type ContentReuseIntent,
 } from '@/lib/ai-content-placement';
 
@@ -106,8 +107,8 @@ Field meanings:
 - "uses_earlier_source": the user refers to a SITE they gave earlier ("the website i gave you", "get the logo from that url") — NOT "the screenshot i gave you". A screenshot is an attachment, not a source URL.
 - "source_url": a site URL to take brand assets from — from this message, or the earlier one when uses_earlier_source is true and it is listed in the context below. Otherwise null.
 - "asset_source": what must be fetched from that site. "logo" when the user wants the REAL logo file ("use the logo from this site", "the logo is still wrong", "get their actual logo"). "content_images" when they want photos/images from it. null when the site is only a look to imitate — nothing is downloaded. null when this turn is about a screenshot/color, not fetching the site.
-- "content_reuse": the user wants something ALREADY ON THE PAGE reused elsewhere — never invent or generate anything new for this. "kind": "logo" ONLY for placing/copying the existing logo into another section ("put the logo in the footer too"). NOT for recoloring ("make the logo white everywhere") — that is a normal style ask; put nav/footer/hero on that ask's sections instead. "text" for "copy the hero headline to the footer". "image" for reusing an existing photo. null when nothing is being reused.
-  For logo/image reuse: set "source_section_hint" to the section they want to COPY FROM ("navbar logo same as footer" → source_section_hint "footer", targets ["nav"]). Never assume nav is the source. "targets" are destinations only.
+- "content_reuse": the user wants something ALREADY ON THE PAGE reused elsewhere — never invent or generate anything new for this. "kind": "logo" ONLY for placing/copying the existing logo into another section ("put the logo in the footer too"). NOT for recoloring ("make the logo white everywhere") and NOT for resizing ("increase the logo size", "update the size of footer logo") — those are normal style asks; put nav/footer/hero on that ask's sections instead. "text" for "copy the hero headline to the footer". "image" for reusing an existing photo. null when nothing is being reused.
+  For logo/image reuse: set "source_section_hint" to the section they want to COPY FROM ("navbar logo same as footer" → source_section_hint "footer", targets ["nav"]). Never assume nav is the source. "targets" are destinations only. "footer logo" alone means the logo in the footer (a style target), NOT a copy source.
 - "proceed_anyway": true when the user explicitly says to just decide/pick for them ("you decide", "feel free", "surprise me", "whichever") or this message is answering a clarifying question WE just asked — proceed on the best interpretation instead of asking another question.
 
 Then the checklist, which is how we avoid telling the user "Done" when part of their request was silently dropped:
@@ -259,7 +260,7 @@ export function normalizeIntent(
           sourceSectionHint: resolveSections(rawReuse.source_section_hint)[0] ?? null,
         }
       : null;
-  if (contentReuse?.kind === 'logo' && opts.prompt && isLogoColorStyleAsk(opts.prompt)) {
+  if (contentReuse?.kind === 'logo' && opts.prompt && isLogoStyleAsk(opts.prompt)) {
     contentReuse = null;
   }
 

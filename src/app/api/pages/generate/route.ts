@@ -16,16 +16,13 @@ import {
 } from '@/lib/ai-brand-assets';
 import {
   userAskedForSocialProof,
-  isDesignReferenceAsk,
   extractDesignReferenceCopy,
-  looksLikeMultiIntent,
 } from '@/lib/ai-follow-up-helpers';
 import type { AIContent, AIContentBlock, AIMessage } from '@/lib/ai-client';
 import {
   REQUIREMENT_EXTRACTION_INSTRUCTION,
   parseModelRequirements,
 } from '@/lib/ai-page-requirements';
-import { wantsReferenceCopy } from '@/lib/ai-content-placement';
 import { classifyEditIntent } from '@/lib/ai-edit-intent';
 
 const SECTION_TYPES_BLOCK = SECTION_VOCABULARY
@@ -263,19 +260,13 @@ export async function POST(request: NextRequest) {
         }
       : 'none (no attachments) or unavailable');
 
-    const designAsk =
-      attachedImageUrls.length > 0 &&
-      (createIntent
-        ? createIntent.designReference
-        : isDesignReferenceAsk(prompt, true) ||
-          /\b(screenshot|design|mockup|reference|like this|match this|footer|nav|hero)\b/i.test(prompt));
-    const reuseReferenceWords = createIntent
-      ? createIntent.reuseReferenceCopy
-      : wantsReferenceCopy(prompt);
+    const designAsk = attachedImageUrls.length > 0 && !!createIntent?.designReference;
+    const reuseReferenceWords = !!createIntent?.reuseReferenceCopy;
 
     // A style reference is not a content source. Only read copy off the
     // screenshot when the user actually asked for its words — otherwise the
     // reference's headline gets stamped onto a page whose copy they replaced.
+    // No keyword guess when intent is missing — skip OCR rather than invent.
     let designCopyLines: string[] = [];
     if (designAsk && reuseReferenceWords) {
       designCopyLines = await extractDesignReferenceCopy({
@@ -285,7 +276,7 @@ export async function POST(request: NextRequest) {
       console.log('[pages/generate] design-ref OCR', { lines: designCopyLines.length, designAsk });
     }
 
-    const hasMultipleAsks = createIntent ? createIntent.asks.length > 1 : looksLikeMultiIntent(prompt);
+    const hasMultipleAsks = (createIntent?.asks.length ?? 0) > 1;
     const multiNote = hasMultipleAsks
       ? `\n\nMULTI-PART REQUEST: Cover EVERY distinct ask in this prompt in one schema (all listed sections, copy, and constraints). Do not ask clarifying questions just to defer secondary asks — build now.\n`
       : '';
