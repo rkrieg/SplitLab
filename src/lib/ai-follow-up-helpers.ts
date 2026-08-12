@@ -6,6 +6,7 @@
 
 import { askAI, type AIContent, type AIContentBlock } from '@/lib/ai-client';
 import type { UsageContext } from '@/lib/ai-usage';
+import { inferTargetSectionNames, dedupeDesignCopyLines } from '@/lib/ai-content-placement';
 
 export interface PlanStep {
   /** Narrow instruction for this step only */
@@ -35,9 +36,92 @@ export function userWantsUsToDecide(prompt: string): boolean {
  */
 export function isScreenshotComplaint(prompt: string, hasUserImages: boolean): boolean {
   if (!hasUserImages) return false;
+  // Design-match asks ("keep the footer like this") are NOT complaints — they
+  // hand a reference to recreate, not a defect on the current page.
+  if (isDesignReferenceAsk(prompt)) return false;
   return /\b(look(s|ing)? (at )?(this|that|it)|can you (not )?see|this is (ridiculous|absurd|sloppy|wrong|broken|weird)|it looks|doesn'?t (even )?(blend|match|look)|fake logo|line breaks|dark around|background.*(wrong|weird|not)|not (even )?the same)\b/i.test(
     prompt,
   );
+}
+
+/**
+ * The prompt points at a source URL the user supplied in an EARLIER turn, or
+ * complains the sourced logo is wrong — "get the logo from the website i gave
+ * you", "it was in the first prompt", "still not using the correct logo".
+ *
+ * Logo/asset sourcing only ever looked at URLs in the current message, so these
+ * asks dead-ended in a clarifying question ("I don't see a website URL…") about
+ * something the user had already provided. Deliberately narrow: back-reference
+ * or defect language only, never a bare "use the same logo" (that is an on-page
+ * reuse ask, and inheriting a URL there would trigger a needless scrape).
+ */
+export function referencesEarlierSource(prompt: string): boolean {
+  const t = prompt.trim();
+  if (!t) return false;
+  return [
+    /\b(website|site|url|link|page)\b[\s\S]{0,40}\b(i|we)\s+(gave|sent|shared|provided|posted|mentioned)\b/i,
+    /\b(i|we)\s+(gave|sent|shared|provided|posted|mentioned)\b[\s\S]{0,40}\b(website|site|url|link)\b/i,
+    /\b(the|that)\s+(website|site|url|link)\b[\s\S]{0,25}\b(above|earlier|before|already|previously)\b/i,
+    /\b(first|earlier|previous|original)\s+(prompt|message|request)\b/i,
+    /\b(wrong|incorrect)\s+logo\b/i,
+    /\bnot\s+(using|showing|the)\b[\s\S]{0,20}\b(correct|right|real|actual)\s+logo\b/i,
+    /\blogo\b[^.]{0,30}\b(is\s+not|isn'?t|is)\s+(the\s+)?(correct|right|wrong)\b/i,
+    /\b(correct|right|real|actual)\s+logo\b[^.]{0,25}\b(from|on)\s+(the\s+)?(site|website|url|link|page)\b/i,
+  ].some((re) => re.test(t));
+}
+
+/**
+ * User attached (or will attach) an image as a style/layout/copy REFERENCE to
+ * match — e.g. "keep the footer like this", "make the nav match this screenshot".
+ * Distinct from bug screenshots (fix defect) and content assets (embed URL).
+ */
+export function isDesignReferenceAsk(prompt: string, hasAttachments = false): boolean {
+  const t = prompt.trim();
+  if (!t) return false;
+
+  // An attached image is itself most of the signal. Requiring one of the exact
+  // phrases below meant "also match the footer with screenshot" — an attachment,
+  // a named section and the word screenshot — took the generic edit path, got no
+  // design targeting, and ended in "no changes were applied".
+  if (hasAttachments) {
+    const MATCH_VERB =
+      /\b(match|matching|copy|copied|replicate|recreate|mirror|mimic|follow|same|like|similar|as shown|according to)\b/i;
+    const REFERENT = /\b(screenshot|screen\s?shot|image|photo|picture|design|mockup|reference|attachment|this|that|it)\b/i;
+    if (MATCH_VERB.test(t) && REFERENT.test(t)) return true;
+    if (/\bsimilar\s+to\s+(the\s+)?(screenshot|image|photo|this|that)\b/i.test(t)) return true;
+    // "the logo colors are not properly copied" — a defect stated against the
+    // attachment is still an ask to make the page look like the attachment.
+    if (
+      /\b(footer|nav(?:bar)?|header|hero|logo|section|form|cta|colou?rs?|font|spacing|layout)\b/i.test(t) &&
+      /\b(not|isn'?t|aren'?t|wrong|off|incorrect|proper(?:ly)?|fix|adjust|correct)\b/i.test(t)
+    ) {
+      return true;
+    }
+  }
+  if (
+    /\b((keep|make|update|change|redo|rebuild|redesign|restyle|replace)\b.{0,80}\b(like this|like that|like the (image|screenshot|photo|reference)|to (match|look like) this)|(look|looks|looking) like this|match this|match that|same as this|exactly like this|copy this|based on this|use this as (a )?(reference|template|style|design)|style (it |this )?after this|from this (image|screenshot|photo|reference))\b/i.test(
+      t,
+    )
+  ) {
+    return true;
+  }
+  if (
+    /\b(footer|nav(?:bar)?|header|hero|logo|section|form|cta)\b/i.test(t) &&
+    /\b(like this|like that|match this|match that|same as (this|that)|as shown|as in (the )?(image|screenshot|photo))\b/i.test(
+      t,
+    )
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * When the prompt names a page part, map to existing SL section names so
+ * design-match edits can skip ambiguous routing.
+ */
+export function inferDesignMatchSectionNames(prompt: string, sectionNames: string[]): string[] {
+  return inferTargetSectionNames(prompt, sectionNames).slice(0, 3);
 }
 
 /**
@@ -53,8 +137,17 @@ export function looksLikeMultiIntent(prompt: string): boolean {
     return true;
   }
 
-  // Explicit separators between asks
-  if (/\b(?:also|plus|then|after that|and also|as well as)\b/i.test(t) && t.length > 60) {
+  // Explicit separators between asks ("also", "and also", casual "and the footer")
+  if (/\b(?:also|plus|then|after that|and also|as well as|while you'?re at it)\b/i.test(t) && t.length > 50) {
+    return true;
+  }
+
+  // Soft: "fix X and … the Y" / "change the logo and the footer"
+  if (
+    /\b(and|,)\s+(the\s+)?(logo|nav|hero|footer|form|faq|headline|button|cta)\b/i.test(t) &&
+    uniqueSectionCount(t) >= 2 &&
+    t.length > 45
+  ) {
     return true;
   }
 
@@ -71,6 +164,11 @@ export function looksLikeMultiIntent(prompt: string): boolean {
     return true;
   }
 
+  // Longer prompts naming 2+ page parts — cheap planner beats a wrong fat patch
+  if (uniqueSections.size >= 2 && t.length > 120) {
+    return true;
+  }
+
   // "…on the hero…, …on the footer…" style multi-target (Renny dead-end page)
   if (
     uniqueSections.size >= 2 &&
@@ -81,6 +179,62 @@ export function looksLikeMultiIntent(prompt: string): boolean {
   }
 
   return false;
+}
+
+/**
+ * User clearly wants the page redesigned/cloned from a referenced URL.
+ * When true, competitor scrape + full rebuild stays the correct path.
+ */
+export function userWantsFullCompetitorRebuild(prompt: string): boolean {
+  return /\b((look|looks|looking) like|replicate|clone|copy (this|the) (site|page)|same as|exactly like|redesign|rebuild|match (this|the|their) (site|page|design|layout)|make (it|this|the page) (look |be )?(like|similar)|based on (this |the )?(site|page|url|link|website)|(from|using) (this |the )?(site|page|url|link) as (a )?(reference|template))\b/i.test(
+    prompt,
+  );
+}
+
+/**
+ * Non-image URL is present but the ask is a local copy/section edit — keep the
+ * cheap scoped path instead of forcing a full competitor rebuild.
+ * False when redesign/clone language is present (see userWantsFullCompetitorRebuild).
+ */
+export function allowScopedDespiteCompetitorUrl(prompt: string): boolean {
+  if (userWantsFullCompetitorRebuild(prompt)) return false;
+  const withoutUrls = prompt
+    .replace(/https?:\/\/[^\s"'<>)]+/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  // Bare URL (or almost) → treat as reference rebuild, not a scoped tweak
+  if (withoutUrls.length < 16) return false;
+  if (
+    /\b(change|rewrite|rephrase|update|fix|replace|swap|shrink|center|remove|delete|get\s+rid|make)\b/i.test(
+      withoutUrls,
+    ) &&
+    /\b(headline|heading|title|text|copy|button|cta|footer|hero|nav|logo|form|section|wording|subhead|padding|spacing)\b/i.test(
+      withoutUrls,
+    )
+  ) {
+    return true;
+  }
+  if (/["'“][^"'”\n]{6,}["'”]/.test(prompt)) return true;
+  return false;
+}
+
+/** User wants a real photo/headshot/product image from a referenced site (not logo). */
+export function userWantsSiteContentImage(prompt: string): boolean {
+  return /\b((real|actual|their|the)\s+(headshot|photo|picture|product(\s+photo)?)|headshot from|product (photo|image) from|use (their|the|this) (photo|headshot|product|picture)|photo from (the |this )?(site|page|url)|team (photo|headshot)|product shot)\b/i.test(
+    prompt,
+  );
+}
+
+/** User explicitly asked for stats / social proof / testimonials / awards. */
+export function userAskedForSocialProof(prompt: string): boolean {
+  return /\b(stats?|statistics|social proof|testimonials?|reviews?|as seen( in)?|awards?|logo.?wall|trusted by|case stud(?:y|ies)|proof points?|metrics?|kpi)\b/i.test(
+    prompt,
+  );
+}
+
+function uniqueSectionCount(t: string): number {
+  const sectionHits = t.match(/\b(logo|nav(?:bar)?|hero|footer|form|faq|pricing|headline|button|cta|section)\b/gi) ?? [];
+  return new Set(sectionHits.map((s) => s.toLowerCase())).size;
 }
 
 /** Pull quoted strings the user wants applied / referenced. */
@@ -106,19 +260,98 @@ export function verifyScopedPatchIntent(opts: {
   afterHtml: string;
   /** When true, require the new asset URL to be present */
   requiredSubstring?: string | null;
-}): { ok: true } | { ok: false; reason: string } {
-  const { prompt, sectionName, beforeHtml, afterHtml, requiredSubstring } = opts;
+  /** Design-reference OCR lines that must appear in the patched HTML */
+  requiredPhrases?: string[] | null;
+  /**
+   * Sections the intent classifier resolved this ask to target. When given,
+   * this is what "did the user name this section" means — NOT a fresh keyword
+   * guess. Without it, a vague-but-classifier-resolved ask like "make the logo
+   * white everywhere it's used" (→ nav, footer) passed an identical-HTML patch
+   * as "ok" because no literal "nav" or "footer" appeared in the prompt text.
+   */
+  intentTargetSections?: string[] | null;
+  /**
+   * Classifier (or caller) already decided this step is a design-reference
+   * match. When set, do not re-run isDesignReferenceAsk on the prompt — a
+   * multi-ask that includes "like this" must not treat the logo-color step as
+   * a design-match no-op.
+   */
+  designMatch?: boolean;
+}): { ok: true } | { ok: false; reason: string; severity: 'hard' | 'soft' } {
+  const { prompt, sectionName, beforeHtml, afterHtml, requiredSubstring, requiredPhrases, intentTargetSections } = opts;
+  const treatAsDesignMatch = opts.designMatch ?? isDesignReferenceAsk(prompt);
 
   if (requiredSubstring && !afterHtml.includes(requiredSubstring)) {
-    return { ok: false, reason: `patched_${sectionName}_missing_required_asset` };
+    return {
+      ok: false,
+      reason: `patched_${sectionName}_missing_required_asset`,
+      severity: 'hard',
+    };
   }
 
   // No visual/content change at all → caller usually catches htmlUnchanged at
   // page level; still flag section-level no-ops when quotes must land here.
+  // Design-reference asks MUST rewrite the section to match the screenshot —
+  // identical HTML is always a failure (not a soft pass).
   if (beforeHtml === afterHtml) {
     const quotes = extractVerifyQuotes(prompt);
-    if (quotes.length > 0 || requiredSubstring) {
-      return { ok: false, reason: `patched_${sectionName}_unchanged` };
+    // The user naming this section ("make the navbar text bigger") is itself a
+    // requirement: an identical section means the ask was not carried out, even
+    // for style-only edits with nothing quotable to check for. The classifier's
+    // resolved sections take priority — that's what actually routed this patch
+    // here — falling back to keyword inference only when it's unavailable.
+    const userNamedThisSection =
+      intentTargetSections && intentTargetSections.length > 0
+        ? intentTargetSections.includes(sectionName)
+        : inferTargetSectionNames(prompt, [sectionName]).length > 0;
+    if (
+      quotes.length > 0 ||
+      requiredSubstring ||
+      treatAsDesignMatch ||
+      userNamedThisSection ||
+      (requiredPhrases && requiredPhrases.length > 0)
+    ) {
+      return { ok: false, reason: `patched_${sectionName}_unchanged`, severity: 'hard' };
+    }
+  }
+
+  // Click-to-edit handles must survive. The preview's inline editor is driven
+  // entirely by [data-field], so a rewrite that drops them silently takes away
+  // the user's ability to edit that text by hand — invisible damage, and now
+  // that soft misses are kept rather than discarded, nothing else would catch
+  // it. Skipped when the user is deliberately removing content.
+  if (!/\b(remove|delete|get rid of|take (it|that|this|them) (out|off)|drop|strip|hide|without the)\b/i.test(prompt)) {
+    const lostFields = dataFieldNames(beforeHtml).filter(
+      (f) => !dataFieldNames(afterHtml).includes(f),
+    );
+    if (lostFields.length > 0) {
+      return {
+        ok: false,
+        reason: `patched_${sectionName}_lost_editable_fields:${lostFields.slice(0, 3).join(',')}`,
+        severity: 'hard',
+      };
+    }
+  }
+
+  const phrases = (requiredPhrases ?? []).map((p) => p.trim()).filter((p) => p.length >= 6);
+  if (phrases.length > 0) {
+    // Compare as normalized text, not raw HTML substrings: OCR punctuation,
+    // casing, entities and tag boundaries made this test fail on rewrites that
+    // did carry the copy across, and the caller then threw the whole edit away.
+    const haystack = normalizeForPhraseMatch(afterHtml);
+    const hits = phrases.filter((p) => haystack.includes(normalizeForPhraseMatch(p)));
+    // Require a clear majority of OCR'd lines — partial visual match is not Done.
+    const need = Math.max(1, Math.ceil(phrases.length * 0.6));
+    if (hits.length < need) {
+      return {
+        ok: false,
+        reason: `patched_${sectionName}_missing_design_copy`,
+        // SOFT: the section really was rewritten (beforeHtml !== afterHtml by
+        // now), it just doesn't carry enough of the screenshot's wording. That
+        // is a quality shortfall to report, not a reason to discard the edit and
+        // tell the user nothing happened.
+        severity: 'soft',
+      };
     }
   }
 
@@ -143,7 +376,11 @@ export function verifyScopedPatchIntent(opts: {
       if (namesThisSection || anyQuoteInBefore) {
         // If before already had the quote and after still does — fine (already handled).
         // Missing entirely after a named rewrite → fail.
-        return { ok: false, reason: `patched_${sectionName}_missing_quoted_copy` };
+        return {
+          ok: false,
+          reason: `patched_${sectionName}_missing_quoted_copy`,
+          severity: 'hard',
+        };
       }
     }
   }
@@ -156,11 +393,40 @@ export function verifyScopedPatchIntent(opts: {
     const stillPresent = quotes.filter((q) => afterHtml.includes(q) && beforeHtml.includes(q));
     if (stillPresent.length > 0 && stillPresent.length === quotes.length) {
       // All quoted bits still there after a remove on this named section
-      return { ok: false, reason: `patched_${sectionName}_remove_did_not_apply` };
+      return {
+        ok: false,
+        reason: `patched_${sectionName}_remove_did_not_apply`,
+        severity: 'hard',
+      };
     }
   }
 
   return { ok: true };
+}
+
+/** data-field names in a chunk of HTML — the page's click-to-edit handles. */
+function dataFieldNames(html: string): string[] {
+  const out: string[] = [];
+  for (const m of Array.from(html.matchAll(/\bdata-field=["']([^"']+)["']/gi))) {
+    const f = m[1].trim();
+    if (f && !out.includes(f)) out.push(f);
+  }
+  return out;
+}
+
+/** Text-level comparison: strip tags/entities, collapse space, ignore case. */
+function normalizeForPhraseMatch(s: string): string {
+  return s
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&(?:quot|#34);/gi, '"')
+    .replace(/&(?:apos|#39);/gi, "'")
+    .replace(/[’‘]/g, "'")
+    .replace(/[“”]/g, '"')
+    .replace(/\s+/g, ' ')
+    .toLowerCase()
+    .trim();
 }
 
 function escapeRegExp(s: string): string {
@@ -190,8 +456,27 @@ export async function planMultiIntentEdit(opts: {
   imageUrls: string[];
   forceDecide: boolean;
   usage?: UsageContext;
+  /** Classifier-split asks — prefer these over a second planner call. */
+  seedAsks?: Array<{ instruction: string; sections: string[] }>;
 }): Promise<EditPlan> {
   const { prompt, sectionNames, sectionPreviews, imageUrls, forceDecide, usage } = opts;
+
+  const seeded = (opts.seedAsks ?? [])
+    .filter((a) => a && typeof a.instruction === 'string' && a.instruction.trim())
+    .slice(0, 5)
+    .map((a) => {
+      const named = (a.sections ?? []).filter((n) => sectionNames.includes(n));
+      const targets =
+        named.length > 0 ? named : inferTargetSectionNames(a.instruction, sectionNames);
+      return {
+        instruction: a.instruction.trim(),
+        target_sections: targets,
+        op: 'patch' as const,
+      };
+    });
+  if (seeded.length >= 2) {
+    return { mode: 'execute', steps: seeded };
+  }
 
   if (forceDecide || userWantsUsToDecide(prompt)) {
     // Still try to split if multi-intent; never return clarify.
@@ -259,7 +544,12 @@ export async function planMultiIntentEdit(opts: {
           s.op === 'remove_section' || s.op === 'insert_section' || s.op === 'structural' || s.op === 'image_generate'
             ? s.op
             : 'patch';
-        steps.push({ instruction: s.instruction.trim(), target_sections: targets, op });
+        steps.push({
+          instruction: s.instruction.trim(),
+          target_sections:
+            targets.length > 0 ? targets : inferTargetSectionNames(s.instruction.trim(), sectionNames),
+          op,
+        });
       }
       if (steps.length >= 2) return { mode: 'execute', steps };
     }
@@ -268,5 +558,153 @@ export async function planMultiIntentEdit(opts: {
   } catch (err) {
     console.error('[ai-follow-up-helpers] planMultiIntentEdit failed — treating as single', err);
     return { mode: 'single' };
+  }
+}
+
+export type AttachedImageRole = 'bug_reference' | 'content_asset' | 'design_reference';
+
+export interface ClassifiedAttachedImage {
+  url: string;
+  role: AttachedImageRole;
+}
+
+function parseAttachedImageRole(raw: string | undefined): AttachedImageRole {
+  if (raw === 'content_asset') return 'content_asset';
+  if (raw === 'design_reference' || raw === 'style_reference') return 'design_reference';
+  return 'bug_reference';
+}
+
+/**
+ * Fallback when classifyEditIntent is unavailable. Always asks the model with
+ * prompt + every attached image — no single-image regex short-circuit (that
+ * used to see "logo" and force bug_reference while intent already said design).
+ */
+export async function classifyAttachedImages(opts: {
+  prompt: string;
+  imageUrls: string[];
+  usage?: UsageContext;
+}): Promise<ClassifiedAttachedImage[] | 'clarify'> {
+  const { prompt, imageUrls, usage } = opts;
+  if (imageUrls.length === 0) return [];
+
+  try {
+    const text = await askAI({
+      system:
+        'Classify each attached image for a landing-page editor. Return JSON only:\n' +
+        '{"images":[{"index":0,"role":"bug_reference"|"content_asset"|"design_reference"}]}\n' +
+        'bug_reference = screenshot of a defect on the CURRENT page (do not embed in HTML).\n' +
+        'content_asset = photo/logo the user wants placed on the page (embed URL in src).\n' +
+        'design_reference = screenshot/mock of how a section SHOULD look (footer/nav/hero/etc) — recreate that layout and copy in HTML; do NOT embed the screenshot URL as an <img src>.\n' +
+        'Prefer design_reference when the instruction asks to make/match/similar-to a section like the screenshot — even if the same message also mentions logo color or size.\n' +
+        'If two attachments are the same screenshot (or near-duplicates), give them the same role — they are one reference, not two designs.\n' +
+        'Indexes are 0-based in attachment order. Classify every image. Look at the pixels and the full instruction.',
+      messages: [
+        {
+          role: 'user',
+          content: [
+            ...imageUrls.map((url): AIContentBlock => ({ type: 'image', url })),
+            {
+              type: 'text',
+              text: `Instruction: ${prompt}\n\nThere are ${imageUrls.length} attached image(s) in order.`,
+            },
+          ],
+        },
+      ],
+      maxTokens: 800,
+      label: 'follow-up:image-role-classify',
+      usage: usage ? { ...usage, operation: 'route' } : undefined,
+    });
+    let raw = text.trim();
+    if (raw.startsWith('```')) raw = raw.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
+    const start = raw.indexOf('{');
+    const end = raw.lastIndexOf('}');
+    if (start >= 0 && end > start) raw = raw.slice(start, end + 1);
+    const parsed = JSON.parse(raw) as {
+      images?: Array<{ index?: number; role?: string }>;
+    };
+    if (!Array.isArray(parsed.images) || parsed.images.length === 0) {
+      if (imageUrls.length > 1) return 'clarify';
+      return [
+        {
+          url: imageUrls[0],
+          role: isDesignReferenceAsk(prompt) ? 'design_reference' : 'bug_reference',
+        },
+      ];
+    }
+    const out: ClassifiedAttachedImage[] = [];
+    for (let i = 0; i < imageUrls.length; i++) {
+      const row = parsed.images.find((x) => x.index === i) ?? parsed.images[i];
+      let role = parseAttachedImageRole(row?.role);
+      if (isDesignReferenceAsk(prompt) && role === 'bug_reference') {
+        role = 'design_reference';
+      }
+      out.push({ url: imageUrls[i], role });
+    }
+    return out;
+  } catch (err) {
+    console.error('[classifyAttachedImages] failed', err);
+    if (imageUrls.length > 1) return 'clarify';
+    return [
+      {
+        url: imageUrls[0],
+        role: isDesignReferenceAsk(prompt) ? 'design_reference' : 'bug_reference',
+      },
+    ];
+  }
+}
+
+/**
+ * Vision OCR of design-reference screenshot(s): return the main readable
+ * lines the patched section must include. Fail-closed → [] on error.
+ */
+export async function extractDesignReferenceCopy(opts: {
+  imageUrls: string[];
+  prompt: string;
+  usage?: UsageContext;
+}): Promise<string[]> {
+  const { imageUrls, prompt, usage } = opts;
+  if (imageUrls.length === 0) return [];
+  try {
+    const text = await askAI({
+      system:
+        'You read design-reference screenshots for a landing-page editor. Return JSON only:\n' +
+        '{"lines":["exact visible phrase 1","exact visible phrase 2",...]}\n' +
+        'Include every clear readable line of body/legal/contact/headline copy (not tiny UI chrome). ' +
+        'Preserve exact wording/capitalization. Max 12 UNIQUE lines. Skip pure logo wordmarks if they are image-only.\n' +
+        'If two or more images are the SAME screenshot (or near-duplicates / extra crops of one shot), extract the copy ONCE. Never list the same sentence twice.',
+      messages: [
+        {
+          role: 'user',
+          content: [
+            ...imageUrls.slice(0, 3).map((url): AIContentBlock => ({ type: 'image', url })),
+            {
+              type: 'text',
+              text: `User instruction: ${prompt.slice(0, 500)}\n\nExtract the visible copy lines from the design reference image(s).`,
+            },
+          ],
+        },
+      ],
+      maxTokens: 1200,
+      label: 'follow-up:design-ref-ocr',
+      usage: usage ? { ...usage, operation: 'route' } : undefined,
+    });
+    let raw = text.trim();
+    if (raw.startsWith('```')) raw = raw.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
+    const start = raw.indexOf('{');
+    const end = raw.lastIndexOf('}');
+    if (start >= 0 && end > start) raw = raw.slice(start, end + 1);
+    const parsed = JSON.parse(raw) as { lines?: unknown };
+    if (!Array.isArray(parsed.lines)) return [];
+    const out: string[] = [];
+    for (const line of parsed.lines) {
+      if (typeof line !== 'string') continue;
+      const t = line.replace(/\s+/g, ' ').trim();
+      if (t.length >= 6 && t.length <= 280) out.push(t);
+      if (out.length >= 12) break;
+    }
+    return dedupeDesignCopyLines(out);
+  } catch (err) {
+    console.error('[extractDesignReferenceCopy] failed', err);
+    return [];
   }
 }

@@ -1,5 +1,6 @@
 import { askAI, askAIStream, type AIContent, type AIContentBlock } from '@/lib/ai-client';
 import { STYLE_EXEMPLARS, type StyleTag } from '@/lib/ai-page-exemplars';
+import { userWantsCustomOrMinimalPage } from '@/lib/ai-brand-assets';
 import { buildFontLibraryBlock } from '@/lib/ai-page-fonts';
 import { buildIconLibraryBlock } from '@/lib/ai-page-icons';
 
@@ -298,11 +299,14 @@ Examples:
 
 ## Design rules
 - Fully responsive — mobile-first, works on all screen sizes
+- Hierarchy first: one dominant H1, clearly quieter H2s, body never competes with headlines. Keep a consistent vertical rhythm (section padding from the same scale end-to-end).
+- Prefer fewer, stronger elements over decorative chrome — especially on short confirmation / thank-you pages.
 - Follow the "Style reference" block below for palette, typography, and mood. Never default to the same dark/generic aesthetic regardless of business type — a wedding photographer and an enterprise SaaS dashboard must not look like the same template with different words swapped in. If no style reference is provided, choose a palette and mood that genuinely fits the business described in the schema.
 - If a competitor CSS token block is provided, it appears at the top of the user message — treat it as the definitive palette and layout source.
 - Use CSS gradients as background fallbacks for any image fields with null values
 - Forms must be styled and functional (HTML only — no JS submission logic needed)
 - CTAs must be prominent with hover states and a visible active/pressed state
+- Do NOT invent fake statistics, awards, or "as seen in" proof in the HTML unless those values appear in the schema
 
 ## Placeholder fields
 If the user prompt contains bracket-style placeholder text like [firm name], [city], [your result], or [practice area] — the user forgot to fill them in. Do NOT echo the bracket text into the HTML. Instead, invent a realistic, specific value that fits the business context (e.g. [firm name] → "Caldwell & Associates", [city] → "Austin, TX", [your result] → "$2.4M recovered"). The page must always read like real, live content.
@@ -425,24 +429,36 @@ These two inputs have different jobs — follow this division strictly:
 - If the token block says --bg: #F4F1EC, that is the background. If it says --accent: #C8A96E, that is the CTA color.
 - NEVER derive colors visually from the screenshot — JPEG compression shifts colors. The token block has the real values.
 
-### SCREENSHOT = single source of truth for LAYOUT and STRUCTURE only
+### SCREENSHOT = LAYOUT REFERENCE (unless user asked for a minimal/custom page)
 - Use the screenshot to understand: section order, grid columns, card shapes, spacing density, hero layout type, whether sections are full-bleed or contained, border radii feel (sharp vs rounded), visual weight distribution
-- Build EVERY section visible in the screenshot — scroll the full page mentally and replicate each section top to bottom
-- Match the hero layout type exactly (split two-column, centered, full-bleed image, etc.)
-- Match card grid columns (2-col, 3-col, bento, etc.) as seen in the screenshot
+- If the schema / Original user request describes a minimal or confirmation page, build ONLY what the schema contains — do NOT add every section visible in the screenshot
+- Otherwise match structure from the screenshot and schema together
+- Match the hero layout type when it aligns with the schema (split two-column, centered, full-bleed image, etc.)
 - Do NOT use the screenshot for color decisions — trust the token block exclusively
 - STICKY NAV RULE: The navigation bar is sticky and will appear at the top of every screenshot chunk. It is the SAME nav repeated — build it exactly ONCE. Never create duplicate nav elements.
+- NEVER use a screenshot crop/thumbnail as the logo image. If schema.brand_logo_url / nav.logo_url / logo_src is present, that EXACT URL must be the <img src> for the logo (transparent background, no dark box behind it).
 
-### Section completeness — non-negotiable
-- Count every visible section in the screenshot and build ALL of them
-- Do not stop early. If the screenshot shows Nav → Hero → Features → Stats → Testimonials → Pricing → FAQ → CTA → Footer, build all 10.
-- Each section must have real structure (correct grid/flex layout), not a collapsed or placeholder version
+### LOGO + FOOTER
+- Prefer schema.brand_logo_url / nav.logo_url / footer.logo_url for all logo <img> tags
+- If footer.address / footer.email / footer.copyright exist in the schema, render them in the footer exactly
 
 ### Final check before outputting
 - Are :root colors from the token block? ✓
 - Are font families from the token block? ✓
-- Does section count match the screenshot? ✓
-- Does layout structure (grids, columns, hero type) match the screenshot? ✓`;
+- Does the page match the SCHEMA shape (not necessarily every screenshot section)? ✓
+- Is the logo a real asset URL from the schema, not a screenshot? ✓`;
+
+const COMPETITOR_MINIMAL_ADDENDUM = `
+
+## USER SHAPE OVERRIDE — MINIMAL / CUSTOM (highest priority)
+The user asked for a custom or minimal page (confirmation, hero-only, no CTAs, etc.).
+- Build ONLY the sections present in the schema
+- Do NOT recreate the full reference landing page from the screenshot
+- No buttons / CTAs if the schema has none
+- Flat background + real logo URL from schema when provided
+- KPIs/stats only if present in the schema — never invent proof badges
+- Taste: one clear H1 hierarchy, generous whitespace, calm type scale, no decorative card chrome or competing mid-page clutter
+- Match screenshot density only for colors/logo feel — not for section count`;
 
 const AESTHETIC_REFERENCES: Record<StyleTag, string> = {
   corporate_trust: 'Think Stripe, Rippling, Gusto — structured, trustworthy, premium sans-serif with a strong typographic hierarchy',
@@ -496,8 +512,17 @@ export interface BuildHtmlOptions {
   competitorScreenshots?: string[];
   competitorCssTokens?: string;
   competitorPageContent?: string;
+  /** Real logo URL from scrape — must appear as <img src> in nav/footer */
+  realLogoUrl?: string;
   userPrompt?: string;
   imageUrls?: string[];
+  /** OCR lines from a design-reference screenshot — must appear in matching sections. */
+  designReferenceCopy?: string[];
+  /**
+   * When true, imageUrls are design-reference screenshots (for vision/layout matching)
+   * and must NOT be embedded as <img src>. Prevents "screenshot became the logo" bug.
+   */
+  imagesAreDesignRefs?: boolean;
   /**
    * Pre-formatted style context string. When provided, skips the design brief
    * step entirely. Callers are responsible for formatting this.
@@ -512,6 +537,11 @@ export interface BuildHtmlOptions {
    * events to the frontend. When absent, falls back to non-streaming askAI().
    */
   onChunk?: (chunk: string) => void;
+  /**
+   * Called when a dropped connection forces the stream to restart — every chunk
+   * delivered so far is void, so reset whatever they were accumulated into.
+   */
+  onStreamRestart?: () => void;
   /** Identifies the calling route for ai-client logs, e.g. "build" or "follow-up:structural". */
   callerLabel?: string;
 }
@@ -532,8 +562,10 @@ export async function buildHtmlFromSchema(
     competitorScreenshots = [],
     competitorCssTokens,
     competitorPageContent,
+    realLogoUrl,
     userPrompt,
     imageUrls = [],
+    designReferenceCopy = [],
     styleReferenceNote: callerStyleNote,
   } = options;
 
@@ -541,6 +573,12 @@ export async function buildHtmlFromSchema(
     competitorScreenshots.length > 0 ||
     (typeof competitorCssTokens === 'string' && competitorCssTokens.length > 0);
   const hasImages = imageUrls.length > 0;
+  // Design-reference screenshots are for VISION (model sees the layout to match)
+  // but must NOT be embedded as <img src>. Caller can set imagesAreDesignRefs,
+  // or we infer from designReferenceCopy being populated.
+  const imagesAreRefs = options.imagesAreDesignRefs === true || designReferenceCopy.length > 0;
+  const minimalShape =
+    typeof userPrompt === 'string' && userWantsCustomOrMinimalPage(userPrompt);
 
   // Determine style reference:
   // 1. Caller-provided note (follow-up non-URL case) — use as-is, skip design brief
@@ -566,12 +604,22 @@ export async function buildHtmlFromSchema(
     }
   }
 
-  const imageList = hasImages
+  // Only instruct the model to embed images that are content assets (photos to place).
+  // Design-reference screenshots are shown to the model via vision so it can SEE
+  // the layout, but we never embed a screenshot URL as an <img src> — that's the
+  // "my design screenshot became the logo" bug.
+  const imageList = hasImages && !imagesAreRefs
     ? `\n\nThe user has provided ${imageUrls.length} image(s). Embed them directly in the HTML using EXACTLY these URLs (do not use any other URLs):\n${imageUrls.map((u, i) => `Image ${i + 1}: ${u}`).join('\n')}`
-    : '';
+    : hasImages && imagesAreRefs
+      ? `\n\nAttached image(s) are DESIGN REFERENCES showing how the page should LOOK. Use them for layout/style matching only — do NOT embed these screenshot URLs as <img src> anywhere.`
+      : '';
   const promptNote =
     typeof userPrompt === 'string' && userPrompt.trim()
       ? `\n\nOriginal user request: ${userPrompt}`
+      : '';
+  const designCopyNote =
+    designReferenceCopy.length > 0
+      ? `\n\n## REQUIRED design-reference copy (visible in attached screenshot — include verbatim in matching sections, especially footer/nav/hero)\n${designReferenceCopy.map((l, i) => `${i + 1}. ${l}`).join('\n')}\nAim for ~90% text match feel (like Claude Extension), not pixel-perfect CSS.\n`
       : '';
   const competitorTokenNote =
     typeof competitorCssTokens === 'string' && competitorCssTokens.trim()
@@ -581,10 +629,15 @@ export async function buildHtmlFromSchema(
     typeof competitorPageContent === 'string' && competitorPageContent.trim()
       ? `## Competitor page HTML — extract real copy, nav links, section structure and layout from this\nUse the actual text, headings, CTA labels, nav items, and section order visible in this HTML. Do not invent generic copy.\n${competitorPageContent}\n\n`
       : '';
+  const realLogoNote = realLogoUrl
+    ? `## REAL LOGO URL (mandatory)\nUse EXACTLY this URL for every logo <img src> in nav and footer. Never substitute a screenshot, generated image, or different URL:\n${realLogoUrl}\nNo background box behind the logo — transparent / sits on the page background.\n\n`
+    : typeof (schema as Record<string, unknown>).brand_logo_url === 'string'
+      ? `## REAL LOGO URL (mandatory)\nUse EXACTLY this URL for every logo <img src>:\n${(schema as Record<string, unknown>).brand_logo_url as string}\n\n`
+      : '';
 
   const textContent =
-    `${competitorTokenNote}${competitorContentNote}Build the landing page for this schema:\n\n` +
-    `${JSON.stringify(schema, null, 2)}${imageList}${styleReferenceNote}${promptNote}`;
+    `${competitorTokenNote}${competitorContentNote}${realLogoNote}Build the landing page for this schema:\n\n` +
+    `${JSON.stringify(schema, null, 2)}${imageList}${styleReferenceNote}${promptNote}${designCopyNote}`;
 
   const userContent: AIContent = [
     ...competitorScreenshots.map(data => ({ type: 'image_base64' as const, data, mediaType: 'image/jpeg' })),
@@ -592,7 +645,9 @@ export async function buildHtmlFromSchema(
     { type: 'text' as const, text: textContent },
   ];
 
-  const systemPrompt = hasCompetitorContext ? COMPETITOR_SYSTEM_PROMPT : SYSTEM_PROMPT;
+  const systemPrompt = hasCompetitorContext
+    ? COMPETITOR_SYSTEM_PROMPT + (minimalShape ? COMPETITOR_MINIMAL_ADDENDUM : '')
+    : SYSTEM_PROMPT;
 
   const label = `build-html:${options.callerLabel ?? 'unknown-caller'}`;
   const aiOptions = {
@@ -605,7 +660,12 @@ export async function buildHtmlFromSchema(
   console.log(`[buildHtmlFromSchema] label=${label} hasCompetitorContext=${hasCompetitorContext} hasImages=${hasImages} schemaBytes=${JSON.stringify(schema).length} streaming=${Boolean(options.onChunk)}`);
 
   const text = options.onChunk
-    ? await askAIStream(aiOptions, options.onChunk)
+    ? await askAIStream(
+        // A dropped stream restarts from scratch; tell the caller its progress
+        // buffer is stale so a half-written STATUS marker can't be mis-parsed.
+        { ...aiOptions, onStreamRestart: options.onStreamRestart },
+        options.onChunk,
+      )
     : await askAI(aiOptions);
 
   let html = text.trim();

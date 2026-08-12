@@ -41,6 +41,18 @@ export interface AskAIOptions {
    * counted in one place — even when a call truncates. Best-effort; never throws.
    */
   usage?: UsageContext;
+  /**
+   * Streaming only. Set when onChunk deltas are shown to the user as final
+   * output, which makes a mid-stream restart visibly duplicate text. Default
+   * (unset) allows retrying a dropped connection mid-stream, because the current
+   * callers use onChunk purely for progress indicators.
+   */
+  streamChunksAreFinal?: boolean;
+  /**
+   * Streaming only. Called before a retry attempt so the caller can discard the
+   * partial chunks it accumulated — everything delivered so far is void.
+   */
+  onStreamRestart?: () => void;
 }
 
 /**
@@ -331,10 +343,16 @@ async function askAnthropicStream(options: AskAIOptions, onChunk: (text: string)
     } catch (err) {
       lastErr = err;
       if (err instanceof AIResponseTruncatedError) throw err;
-      // Only retry when nothing was flushed to the caller yet.
+      // A connection that dies mid-stream is still retryable: onChunk carries
+      // cosmetic progress (STATUS comments, the one-shot "thinking" line), never
+      // the answer — that is the return value, and a restart rebuilds it from
+      // scratch. Losing a whole page build to one ECONNRESET at chunk 20 is a
+      // far worse outcome than a repeated progress message. Callers that render
+      // raw deltas to the user opt out with streamChunksAreFinal.
+      const midStream = chunkCount > 0;
       const retryable =
         isTransientAIConnectionError(err) &&
-        chunkCount === 0 &&
+        (!midStream || !options.streamChunksAreFinal) &&
         attempt < AI_TRANSIENT_MAX_ATTEMPTS;
       console.error(
         `[ai-client error] callId=${callId} label=${options.label} model=${model} elapsedMs=${Date.now() - startedAt} chunksReceived=${chunkCount} gotFirstChunk=${firstChunkAt !== null} attempt=${attempt} retryable=${retryable}`,
@@ -347,7 +365,8 @@ async function askAnthropicStream(options: AskAIOptions, onChunk: (text: string)
       });
       if (!retryable) throw err;
       const backoffMs = 1000 * attempt;
-      console.warn(`[ai-client retry] callId=${callId} label=${options.label} attempt=${attempt}/${AI_TRANSIENT_MAX_ATTEMPTS} backoffMs=${backoffMs} reason=transient-connection-before-first-chunk`);
+      console.warn(`[ai-client retry] callId=${callId} label=${options.label} attempt=${attempt}/${AI_TRANSIENT_MAX_ATTEMPTS} backoffMs=${backoffMs} chunksDiscarded=${chunkCount} reason=${midStream ? 'transient-connection-mid-stream' : 'transient-connection-before-first-chunk'}`);
+      options.onStreamRestart?.();
       await sleep(backoffMs);
     }
   }

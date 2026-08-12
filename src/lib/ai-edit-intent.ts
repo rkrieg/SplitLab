@@ -1,0 +1,346 @@
+/**
+ * One model call that answers "what is this person asking for?" — replacing the
+ * pile of keyword gates that used to decide it.
+ *
+ * Why this exists: routing used to be decided by hand-written regex before any
+ * model saw the message. "make the footer look like this" matched; "also match
+ * the footer with screenshot" did not, so an identical request took the generic
+ * path, got no design targeting, and ended in "No changes were applied". Every
+ * new phrasing needed a new pattern, and the patterns could never cover what
+ * real users type.
+ *
+ * Division of labour, deliberately:
+ *   - the MODEL interprets the message (this file) and declares what to check,
+ *   - deterministic code applies the edit and verifies those checks.
+ * The model never grades its own work — that is how "Done!" once shipped a page
+ * with a dead logo. See ai-page-requirements.ts for the checking side.
+ *
+ * Fail-open by design: when the call fails, times out, or returns junk, callers
+ * fall back to the old keyword gates. A classification outage must degrade
+ * routing quality, never break editing.
+ */
+
+import { askAI, type AIContent, type AIContentBlock } from '@/lib/ai-client';
+import type { UsageContext } from '@/lib/ai-usage';
+import { parseModelRequirements, type PageRequirement } from '@/lib/ai-page-requirements';
+import {
+  inferTargetSectionNames,
+  isLogoColorStyleAsk,
+  isLogoStyleAsk,
+  type ContentReuseIntent,
+} from '@/lib/ai-content-placement';
+
+/** What one attached image is for. Mirrors the roles the edit paths act on. */
+export type AttachmentRole = 'design_reference' | 'bug_report' | 'content_asset';
+
+export interface EditAsk {
+  /** Self-contained instruction for this one ask. */
+  instruction: string;
+  /** SL section names this ask targets; empty when unknown. */
+  sections: string[];
+}
+
+export interface EditIntent {
+  /** The user wants the page (or a section) to LOOK like an attachment/reference. */
+  designReference: boolean;
+  /** The words visible in the reference are content to reproduce, not just style. */
+  reuseReferenceCopy: boolean;
+  /** An attachment shows a defect on OUR page rather than a target to copy. */
+  bugReport: boolean;
+  /** Per-attachment role, in the order the URLs were passed. */
+  attachmentRoles: AttachmentRole[];
+  /** Distinct asks in the message — a multi-part request is where asks get dropped. */
+  asks: EditAsk[];
+  /** Union of every ask's sections, resolved against the live page. */
+  targetSections: string[];
+  /** The ask needs a full-page rebuild (new sections, whole-page redesign). */
+  fullRebuild: boolean;
+  /** The message points at a URL/asset supplied in an earlier turn. */
+  usesEarlierSource: boolean;
+  /** A site URL to source brand assets from (this message or an earlier one). */
+  sourceUrl: string | null;
+  /**
+   * What the user wants taken FROM that site: the real logo file, content
+   * photos, or nothing (the URL is just a look to imitate). This is the
+   * difference between fetching the brand's actual logo and having the model
+   * invent one from a screenshot.
+   */
+  assetSource: 'logo' | 'content_images' | null;
+  /** Checks the finished HTML must satisfy — verified by code, not by the model. */
+  requirements: PageRequirement[];
+  /**
+   * "put the logo/this text/this image into section X" — reusing something
+   * already on the page rather than generating anything new. Null when the
+   * message isn't asking for that.
+   */
+  contentReuse: ContentReuseIntent | null;
+  /** Low confidence is fine — proceed with the best guess instead of asking. */
+  proceedAnyway: boolean;
+}
+
+const SYSTEM = `You classify a single edit request for an AI landing-page builder. You do NOT edit anything and you do NOT judge the result — you only describe what the user is asking for, so the right code path runs.
+
+Respond with ONLY a JSON object. Begin with { and end with }. No prose, no markdown fences.
+
+{
+  "design_reference": true|false,
+  "reuse_reference_copy": true|false,
+  "bug_report": true|false,
+  "attachment_roles": ["design_reference"|"bug_report"|"content_asset", ...],
+  "asks": [{ "instruction": "<one self-contained ask>", "sections": ["<sl section name>"] }],
+  "full_rebuild": true|false,
+  "uses_earlier_source": true|false,
+  "source_url": "<url or null>",
+  "asset_source": "logo"|"content_images"|null,
+  "content_reuse": { "kind": "logo"|"text"|"image", "targets": ["<sl section name>", ...], "text_payload": "<exact copy or null>", "source_section_hint": "<sl section name or null>" } | null,
+  "proceed_anyway": true|false,
+  "requirements": [ ... ]
+}
+
+Field meanings:
+- "design_reference": the user wants the page, or a named part of it, to LOOK like an attached image or a referenced site. True for "make our footer like this", "also match the footer with screenshot", "make the footer similar to screenshot", "same vibe as the pic", "copy this bottom bar" — the wording does not matter, the intent does.
+- "reuse_reference_copy": the WORDS visible in the reference must appear on the page (cloning a footer's legal text, "use the copy from this"). FALSE when the user supplies their own copy or caps the scope ("except it should say X", "nothing else is required") — putting the reference's words on the page then is wrong.
+- "bug_report": an attachment shows something broken/ugly on OUR OWN page (the user is complaining), rather than a design to copy. Both can be true when the user complains AND points at a reference.
+- "attachment_roles": one entry per attached image, in order. "content_asset" means the image itself belongs on the page (a logo, a photo to embed).
+- "asks": split the message into distinct asks. "make the footer like this and in nav increase the logo size" is TWO asks. Use section names EXACTLY as listed when you can map the user's words to them. "everywhere" / "all logos" / "the top bar" / "the bottom" ARE mappable — put the matching live names (nav, footer, hero, …) on that ask. Never leave "sections" empty just because the user did not type the internal name. Never invent a name that is not in the list.
+- "full_rebuild": true only for whole-page work (redesign the page, clone another site, add several new sections).
+- "uses_earlier_source": the user refers to a SITE they gave earlier ("the website i gave you", "get the logo from that url") — NOT "the screenshot i gave you". A screenshot is an attachment, not a source URL.
+- "source_url": a site URL to take brand assets from — from this message, or the earlier one when uses_earlier_source is true and it is listed in the context below. Otherwise null.
+- "asset_source": what must be fetched from that site. "logo" when the user wants the REAL logo file ("use the logo from this site", "the logo is still wrong", "get their actual logo"). "content_images" when they want photos/images from it. null when the site is only a look to imitate — nothing is downloaded. null when this turn is about a screenshot/color, not fetching the site.
+- "content_reuse": the user wants something ALREADY ON THE PAGE reused elsewhere — never invent or generate anything new for this. "kind": "logo" ONLY for placing/copying the existing logo into another section ("put the logo in the footer too"). NOT for recoloring ("make the logo white everywhere") and NOT for resizing ("increase the logo size", "update the size of footer logo") — those are normal style asks; put nav/footer/hero on that ask's sections instead. "text" for "copy the hero headline to the footer". "image" for reusing an existing photo. null when nothing is being reused.
+  For logo/image reuse: set "source_section_hint" to the section they want to COPY FROM ("navbar logo same as footer" → source_section_hint "footer", targets ["nav"]). Never assume nav is the source. "targets" are destinations only. "footer logo" alone means the logo in the footer (a style target), NOT a copy source.
+- "proceed_anyway": true when the user explicitly says to just decide/pick for them ("you decide", "feel free", "surprise me", "whichever") or this message is answering a clarifying question WE just asked — proceed on the best interpretation instead of asking another question.
+
+Then the checklist, which is how we avoid telling the user "Done" when part of their request was silently dropped:
+`;
+
+/**
+ * Build the classification call. Kept small on purpose: the prompt, the live
+ * section names, and up to two attachments — no page HTML. This runs before
+ * routing on every edit, so it has to be cheap.
+ */
+export async function classifyEditIntent(opts: {
+  prompt: string;
+  /** Live SL section names — the only names the model may target. */
+  sectionNames: string[];
+  /** Attached image URLs for this message, in order. */
+  imageUrls?: string[];
+  /** Site URLs seen in earlier turns, oldest first. */
+  earlierUrls?: string[];
+  /** URLs already in the page we could be asked to keep/verify. */
+  embeddableAssetUrls?: string[];
+  requirementInstruction: string;
+  usage?: UsageContext;
+  label?: string;
+}): Promise<EditIntent | null> {
+  const prompt = opts.prompt.trim();
+  if (!prompt) return null;
+
+  const images = (opts.imageUrls ?? []).slice(0, 2);
+  const context = [
+    `Sections on the page (use these names exactly): ${opts.sectionNames.length > 0 ? opts.sectionNames.join(', ') : '(none detected)'}`,
+    `Images attached to THIS message: ${images.length}`,
+    opts.earlierUrls && opts.earlierUrls.length > 0
+      ? `URLs the user gave in earlier messages (most recent last): ${opts.earlierUrls.slice(-4).join(', ')}`
+      : 'URLs the user gave in earlier messages: (none)',
+    '',
+    `User message:\n${prompt}`,
+  ].join('\n');
+
+  const userContent: AIContent = [
+    ...images.map((url): AIContentBlock => ({ type: 'image', url })),
+    { type: 'text', text: context },
+  ];
+
+  let text: string;
+  try {
+    text = await askAI({
+      system: SYSTEM + opts.requirementInstruction,
+      messages: [{ role: 'user', content: userContent }],
+      // Requirements checklist + asks can exceed 2k; truncation used to force
+      // the keyword fallback and silently mis-route design vs bug.
+      maxTokens: 8000,
+      label: opts.label ?? 'edit-intent',
+      usage: opts.usage,
+    });
+  } catch (err) {
+    console.error('[edit-intent] classification call failed — caller should clarify or decide', err);
+    return null;
+  }
+
+  const raw = parseJsonObject(text);
+  if (!raw) {
+    console.error('[edit-intent] unparseable classification — caller should clarify or decide', {
+      preview: text.slice(0, 200),
+    });
+    return null;
+  }
+
+  return normalizeIntent(raw, { ...opts, prompt });
+}
+
+/** Validate/clamp the model's answer against what actually exists on the page. */
+export function normalizeIntent(
+  raw: Record<string, unknown>,
+  opts: {
+    prompt?: string;
+    sectionNames: string[];
+    imageUrls?: string[];
+    earlierUrls?: string[];
+    embeddableAssetUrls?: string[];
+  },
+): EditIntent {
+  const known = opts.sectionNames;
+  const resolveSections = (v: unknown): string[] => {
+    const arr = Array.isArray(v) ? v : typeof v === 'string' ? [v] : [];
+    const out: string[] = [];
+    for (const entry of arr) {
+      if (typeof entry !== 'string') continue;
+      const hit = known.find((k) => k.toLowerCase() === entry.trim().toLowerCase());
+      if (hit && !out.includes(hit)) out.push(hit);
+    }
+    return out;
+  };
+
+  const asks: EditAsk[] = [];
+  const rawAsks = Array.isArray(raw.asks) ? raw.asks : [];
+  for (const entry of rawAsks) {
+    if (!entry || typeof entry !== 'object') continue;
+    const rec = entry as Record<string, unknown>;
+    const instruction = typeof rec.instruction === 'string' ? rec.instruction.trim() : '';
+    if (!instruction) continue;
+    let sections = resolveSections(rec.sections);
+    if (sections.length === 0) {
+      sections = inferTargetSectionNames(instruction, known);
+    }
+    asks.push({ instruction, sections });
+    if (asks.length >= 6) break;
+  }
+
+  const imageCount = (opts.imageUrls ?? []).slice(0, 2).length;
+  const roles: AttachmentRole[] = [];
+  const rawRoles = Array.isArray(raw.attachment_roles) ? raw.attachment_roles : [];
+  for (let i = 0; i < imageCount; i++) {
+    const r = rawRoles[i];
+    roles.push(
+      r === 'bug_report' || r === 'content_asset' || r === 'design_reference'
+        ? r
+        : 'design_reference',
+    );
+  }
+
+  // A source URL is only usable if the user actually gave it to us: this message
+  // or an earlier turn. Never a URL the model recalled or invented.
+  const claimedUrl = typeof raw.source_url === 'string' ? raw.source_url.trim() : '';
+  const allowedUrls = opts.earlierUrls ?? [];
+  const sourceUrl =
+    /^https?:\/\//i.test(claimedUrl) &&
+    (allowedUrls.includes(claimedUrl) || allowedUrls.length === 0)
+      ? claimedUrl
+      : allowedUrls.length > 0 && truthy(raw.uses_earlier_source)
+        ? allowedUrls[allowedUrls.length - 1]
+        : null;
+
+  const designReference = truthy(raw.design_reference) || roles.includes('design_reference');
+  const assetSource =
+    raw.asset_source === 'logo' || raw.asset_source === 'content_images'
+      ? raw.asset_source
+      : null;
+
+  const rawReuse = asRecord(raw.content_reuse);
+  let contentReuse: ContentReuseIntent | null =
+    rawReuse && (rawReuse.kind === 'logo' || rawReuse.kind === 'text' || rawReuse.kind === 'image')
+      ? {
+          kind: rawReuse.kind,
+          targets: resolveSections(rawReuse.targets),
+          textPayload:
+            typeof rawReuse.text_payload === 'string' && rawReuse.text_payload.trim()
+              ? rawReuse.text_payload.trim()
+              : null,
+          sourceSectionHint: resolveSections(rawReuse.source_section_hint)[0] ?? null,
+        }
+      : null;
+  if (contentReuse?.kind === 'logo' && opts.prompt && isLogoStyleAsk(opts.prompt)) {
+    contentReuse = null;
+  }
+
+  let targetSections = Array.from(new Set(asks.flatMap((a) => a.sections)));
+  if (targetSections.length === 0 && opts.prompt) {
+    targetSections = inferTargetSectionNames(opts.prompt, known);
+  }
+
+  return {
+    designReference,
+    // Style-only references must not stamp the reference's words onto the page.
+    reuseReferenceCopy: truthy(raw.reuse_reference_copy),
+    bugReport: truthy(raw.bug_report) || roles.includes('bug_report'),
+    attachmentRoles: roles,
+    asks,
+    targetSections: targetSections.slice(0, 6),
+    fullRebuild: truthy(raw.full_rebuild),
+    usesEarlierSource: truthy(raw.uses_earlier_source),
+    sourceUrl,
+    assetSource,
+    contentReuse,
+    proceedAnyway: truthy(raw.proceed_anyway),
+    requirements: parseModelRequirements(raw.requirements, {
+      knownSections: known,
+      embeddableAssetUrls: opts.embeddableAssetUrls,
+    }),
+  };
+}
+
+/**
+ * Map intent attachment roles onto image URLs for the follow-up pipeline.
+ * Intent wins: a message-level design_reference must not be flipped to
+ * bug_reference because one ask also said "logo".
+ */
+export function imageRolesFromIntent(
+  intent: EditIntent,
+  imageUrls: string[],
+): Array<{ url: string; role: 'design_reference' | 'bug_reference' | 'content_asset' }> {
+  return imageUrls.map((url, i) => {
+    const raw = intent.attachmentRoles[i];
+    let role: 'design_reference' | 'bug_reference' | 'content_asset' =
+      raw === 'content_asset'
+        ? 'content_asset'
+        : raw === 'bug_report'
+          ? 'bug_reference'
+          : raw === 'design_reference'
+            ? 'design_reference'
+            : intent.designReference
+              ? 'design_reference'
+              : intent.bugReport
+                ? 'bug_reference'
+                : 'design_reference';
+    if (intent.designReference && role === 'bug_reference') {
+      role = 'design_reference';
+    }
+    return { url, role };
+  });
+}
+
+function asRecord(v: unknown): Record<string, unknown> | null {
+  return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+}
+
+function truthy(v: unknown): boolean {
+  return v === true || v === 'true' || v === 1;
+}
+
+/** Tolerant JSON extraction — the same shape of leniency the routing pass uses. */
+function parseJsonObject(text: string): Record<string, unknown> | null {
+  const trimmed = text.trim().replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/, '');
+  const start = trimmed.indexOf('{');
+  const end = trimmed.lastIndexOf('}');
+  if (start < 0 || end <= start) return null;
+  const slice = trimmed.slice(start, end + 1);
+  try {
+    const parsed = JSON.parse(slice);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}

@@ -1,10 +1,22 @@
 import https from 'https';
 import { askAI } from '@/lib/ai-client';
+import { extractFooterContact, extractInlineLogoSvg } from '@/lib/ai-brand-assets';
 
 export interface CompetitorContext {
   screenshots: string[];  // Array of JPEG base64 chunks — each ≤4096px tall, sent as separate image blocks to Claude
   cssTokens: string;      // Structured design token block — injected into schema + build prompts
   pageContent: string;    // First 30K chars of cleaned HTML — generate uses this to extract real copy/nav/sections
+  /** Real logo <img> URL extracted from the site HTML — prefer this over screenshot thumbs */
+  logoUrl: string | null;
+  /**
+   * Inline SVG markup when no fetchable <img> logo exists.
+   * Uploaded to storage at build time via materializeLogoUrl — never invent a mark if both null.
+   */
+  logoSvgMarkup: string | null;
+  /** Address / email / copyright pulled from footer HTML when present */
+  footerContact: { address?: string; email?: string; copyright?: string; phone?: string };
+  /** Non-logo content photos (headshots/products) extracted from page HTML — may be empty */
+  referenceImageUrls: string[];
 }
 
 export function extractUrls(text: string): string[] {
@@ -182,12 +194,28 @@ export async function scrapeCompetitorUrl(url: string): Promise<CompetitorContex
     PromiseSettledResult<string[]>,
   ];
 
-  // Extract CSS tokens from Firecrawl result
+  // Extract CSS tokens + brand assets from Firecrawl result
   let cssTokens: string | null = null;
+  let logoUrl: string | null = null;
+  let logoSvgMarkup: string | null = null;
+  let footerContact: CompetitorContext['footerContact'] = {};
+  let referenceImageUrls: string[] = [];
   if (firecrawlResult.status === 'fulfilled') {
     const { rawHtml, html } = firecrawlResult.value;
     const cssBlocks = extractStyleBlocks(rawHtml);
     cssTokens = await extractCssTokens(cssBlocks, html);
+    logoUrl = extractLogoUrl(rawHtml || html, url);
+    if (!logoUrl) {
+      logoSvgMarkup = extractInlineLogoSvg(rawHtml || html);
+    }
+    footerContact = extractFooterContact(html || rawHtml);
+    referenceImageUrls = extractContentImageUrls(rawHtml || html, url, 6);
+    console.log('[scrapeCompetitorUrl] brand assets', {
+      logoUrl: logoUrl ? logoUrl.slice(0, 120) : null,
+      hasLogoSvg: !!logoSvgMarkup,
+      footerContact,
+      referenceImageCount: referenceImageUrls.length,
+    });
   } else {
     console.error('[scrapeCompetitorUrl] Firecrawl failed:', firecrawlResult.reason);
   }
@@ -211,6 +239,10 @@ export async function scrapeCompetitorUrl(url: string): Promise<CompetitorContex
     screenshots,
     cssTokens: cssTokens ?? '',
     pageContent,
+    logoUrl,
+    logoSvgMarkup,
+    footerContact,
+    referenceImageUrls,
   };
 }
 
@@ -224,12 +256,15 @@ function resolveUrl(src: string, baseUrl: string): string | null {
 
 /**
  * Best-effort extraction of the site's own logo <img> src from raw page
- * HTML — used when a follow-up explicitly asks to use the "real"/"actual"
- * logo from a referenced URL, so the model gets a literal asset to embed
- * instead of hallucinating one from a screenshot or generating a fake one.
+ * HTML — used when create/build/follow-up need a real asset URL to embed
+ * instead of a screenshot thumb or AI-generated mark.
  * Deliberately conservative: returns null rather than guessing when nothing
  * scores as a plausible logo, since embedding the wrong image is worse than
  * falling back to the existing behavior.
+ *
+ * Prefers fetchable image URLs (<img src>, srcset, or icon link).
+ * For pure inline SVG wordmarks, see extractInlineLogoSvg (ai-brand-assets) —
+ * we never invent a mark when both return null.
  */
 export function extractLogoUrl(rawHtml: string, pageUrl: string): string | null {
   const headerMatch = /<header\b[\s\S]*?<\/header>/i.exec(rawHtml);
@@ -263,7 +298,19 @@ export function extractLogoUrl(rawHtml: string, pageUrl: string): string | null 
     candidates.push({ src: rawSrc, score, index: m.index });
   }
 
-  if (candidates.length === 0) return null;
+  if (candidates.length === 0) {
+    // Last-resort: apple-touch-icon / icon with "logo" in href — never og:image (usually a photo)
+    const iconRe = /<link\b[^>]*rel=["'][^"']*(?:apple-touch-icon|icon)[^"']*["'][^>]*>/gi;
+    let iconMatch: RegExpExecArray | null;
+    while ((iconMatch = iconRe.exec(rawHtml))) {
+      const href = /\bhref\s*=\s*["']([^"']+)["']/i.exec(iconMatch[0])?.[1];
+      if (!href || href.startsWith('data:')) continue;
+      if (/logo/i.test(href) || /apple-touch-icon/i.test(iconMatch[0])) {
+        return resolveUrl(href, pageUrl);
+      }
+    }
+    return null;
+  }
   // Highest score wins; ties broken by earliest occurrence — the logo is
   // almost always the first element inside the header/nav.
   candidates.sort((a, b) => b.score - a.score || a.index - b.index);
@@ -271,25 +318,191 @@ export function extractLogoUrl(rawHtml: string, pageUrl: string): string | null 
 }
 
 /**
- * Lightweight fetch for just the site's logo asset — used for "use the real
- * logo" follow-ups. Deliberately skips the screenshot capture and CSS-token
- * extraction that scrapeCompetitorUrl() pays for (an extra ApiFlash call and
- * a Sonnet call), since a logo swap only needs the raw HTML to locate one
- * <img> src. Returns null (never throws) on any failure — callers must treat
- * that as "couldn't find a logo," not as a reason to fall back to guessing.
+ * Lightweight fetch for logo assets — skips screenshot/CSS extraction.
+ * Returns fetchable logoUrl and/or inline logoSvgMarkup (never invents either).
  */
-export async function fetchLogoUrl(url: string): Promise<string | null> {
+export async function fetchLogoAssets(
+  url: string,
+): Promise<{ logoUrl: string | null; logoSvgMarkup: string | null }> {
   const firecrawlKey = process.env.FIRECRAWL_API_KEY?.trim();
-  if (!firecrawlKey) return null;
+  if (!firecrawlKey) return { logoUrl: null, logoSvgMarkup: null };
   try {
-    const { rawHtml } = await Promise.race([
+    const { rawHtml, html } = await Promise.race([
       fetchFirecrawlData(url, firecrawlKey),
       new Promise<never>((_, reject) => setTimeout(() => reject(new Error('20s timeout')), 20_000)),
     ]);
-    if (!rawHtml) return null;
-    return extractLogoUrl(rawHtml, url);
+    const source = rawHtml || html;
+    if (!source) return { logoUrl: null, logoSvgMarkup: null };
+    const logoUrl = extractLogoUrl(source, url);
+    const logoSvgMarkup = logoUrl ? null : extractInlineLogoSvg(source);
+    return { logoUrl, logoSvgMarkup };
   } catch (err) {
-    console.error('[fetchLogoUrl] failed:', err);
-    return null;
+    console.error('[fetchLogoAssets] failed:', err);
+    return { logoUrl: null, logoSvgMarkup: null };
+  }
+}
+
+/**
+ * Conservative extraction of non-logo content photos (team/product/hero-ish).
+ * Never returns logo candidates. Fail-closed: empty array if unsure.
+ */
+export function extractContentImageUrls(
+  rawHtml: string,
+  pageUrl: string,
+  max = 6,
+): string[] {
+  const logoUrl = extractLogoUrl(rawHtml, pageUrl);
+  const headerMatch = /<header\b[\s\S]*?<\/header>/i.exec(rawHtml);
+  const navMatch = /<nav\b[\s\S]*?<\/nav>/i.exec(rawHtml);
+  const skipUntil = Math.max(
+    headerMatch ? headerMatch.index + headerMatch[0].length : 0,
+    navMatch ? navMatch.index + navMatch[0].length : 0,
+  );
+  const scope = rawHtml.slice(skipUntil) || rawHtml;
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const imgRe = /<img\b([^>]*)>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = imgRe.exec(scope)) && out.length < max) {
+    const attrs = m[1];
+    const src =
+      /\bsrc\s*=\s*["']([^"']+)["']/i.exec(attrs)?.[1] ||
+      /\bsrcset\s*=\s*["']([^"'\s,]+)/i.exec(attrs)?.[1];
+    if (!src || src.startsWith('data:') || src.startsWith('blob:')) continue;
+    if (/\.svg(\?|$)/i.test(src)) continue;
+    if (/logo|icon|sprite|spacer|pixel|tracking|badge|favicon/i.test(src + attrs)) continue;
+    const resolved = resolveUrl(src, pageUrl);
+    if (!resolved || (logoUrl && resolved === logoUrl)) continue;
+    if (seen.has(resolved)) continue;
+    // Prefer images that look like photos/people/products
+    let score = 0;
+    if (/headshot|portrait|team|founder|about|product|photo|people|staff/i.test(attrs + src)) score += 3;
+    if (/\.(jpe?g|webp|png)(\?|$)/i.test(src)) score += 1;
+    if (score === 0) continue;
+    seen.add(resolved);
+    out.push(resolved);
+  }
+  return out;
+}
+
+/**
+ * Lightweight fetch for real content photos (headshots/products) — not logos.
+ * Never invents URLs; returns [] on failure.
+ */
+export async function fetchContentImageAssets(url: string): Promise<string[]> {
+  const firecrawlKey = process.env.FIRECRAWL_API_KEY?.trim();
+  if (!firecrawlKey) return [];
+  try {
+    const { rawHtml, html } = await Promise.race([
+      fetchFirecrawlData(url, firecrawlKey),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('20s timeout')), 20_000)),
+    ]);
+    const source = rawHtml || html;
+    if (!source) return [];
+    return extractContentImageUrls(source, url, 6);
+  } catch (err) {
+    console.error('[fetchContentImageAssets] failed:', err);
+    return [];
+  }
+}
+
+/**
+ * Lightweight fetch for just the site's logo image URL — used for "use the real
+ * logo" follow-ups when an <img> exists. Prefer fetchLogoAssets when SVG fallback
+ * is needed. Returns null (never throws) on any failure.
+ */
+export async function fetchLogoUrl(url: string): Promise<string | null> {
+  const { logoUrl } = await fetchLogoAssets(url);
+  return logoUrl;
+}
+
+/**
+ * One viewport screenshot of the ABOVE-THE-FOLD of a public page URL.
+ * Fail-closed: returns null on failure.
+ */
+export async function capturePageTopScreenshot(pageUrl: string): Promise<string | null> {
+  const shots = await capturePageScrollScreenshots(pageUrl);
+  return shots[0] ?? null;
+}
+
+/**
+ * Screenshot the built page for whole-scroll visual QA.
+ * Returns 1–3 jpeg base64 chunks (fold, optional mid, optional bottom).
+ * Fail-closed: returns [] on any failure — callers skip QA and still Done.
+ *
+ * Caps: max 3 shots, ~50s total budget. Never a blind full rewrite.
+ */
+export async function capturePageScrollScreenshots(pageUrl: string): Promise<string[]> {
+  const apiKey = process.env.API_FLASH_KEY?.trim();
+  if (!apiKey || !pageUrl || !/^https?:\/\//i.test(pageUrl)) return [];
+
+  const base = {
+    access_key: apiKey,
+    url: pageUrl,
+    format: 'jpeg',
+    quality: '75',
+    width: '1280',
+    response_type: 'json',
+    fresh: 'true',
+  };
+
+  const capture = async (extra: Record<string, string>, timeoutMs: number): Promise<Buffer | null> => {
+    try {
+      const buf = await Promise.race([
+        apiFlashCapture(new URLSearchParams({ ...base, ...extra })),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`${timeoutMs}ms timeout`)), timeoutMs),
+        ),
+      ]);
+      if (!buf || buf.length < 1500) return null;
+      return buf;
+    } catch (err) {
+      console.warn('[capturePageScrollScreenshots] chunk failed', err);
+      return null;
+    }
+  };
+
+  try {
+    // Prefer one full-page shot when the page is short enough for vision
+    const full = await capture({ full_page: 'true' }, 30_000);
+    if (full) {
+      const h = getJpegHeight(full);
+      console.log('[capturePageScrollScreenshots] full_page', { height: h, bytes: full.length });
+      if (h > 0 && h <= 7900) {
+        return [full.toString('base64')];
+      }
+      // Tall page: use fold + mid + bottom viewport chunks (max 3)
+      const VIEW = 1600;
+      const shots: string[] = [];
+      const top = await capture({ height: String(VIEW) }, 20_000);
+      if (top) shots.push(top.toString('base64'));
+      if (h > VIEW * 1.4) {
+        const midY = Math.floor(h / 2 - VIEW / 2);
+        const mid = await capture(
+          { height: String(VIEW), js: `window.scrollTo(0,${Math.max(0, midY)})` },
+          20_000,
+        );
+        if (mid) shots.push(mid.toString('base64'));
+      }
+      if (h > VIEW * 2) {
+        const bottomY = Math.max(0, h - VIEW);
+        const bottom = await capture(
+          { height: String(VIEW), js: `window.scrollTo(0,${bottomY})` },
+          20_000,
+        );
+        if (bottom) shots.push(bottom.toString('base64'));
+      }
+      console.log('[capturePageScrollScreenshots] tall page chunks', { count: shots.length, pageHeight: h });
+      return shots;
+    }
+
+    // full_page failed — at least try fold
+    const fold = await capture({ height: '1400' }, 25_000);
+    if (!fold) return [];
+    console.log('[capturePageScrollScreenshots] fold-only fallback', { bytes: fold.length });
+    return [fold.toString('base64')];
+  } catch (err) {
+    console.error('[capturePageScrollScreenshots] failed — skip live QA', err);
+    return [];
   }
 }
