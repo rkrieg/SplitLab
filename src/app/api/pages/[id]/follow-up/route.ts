@@ -1970,34 +1970,11 @@ export async function POST(
 
         // Per-image roles from intent only (intent is required above).
         if (hasUserImages && !scopedApplied && !scopedFailureReason) {
-          let classified:
-            | Array<{ url: string; role: 'design_reference' | 'bug_reference' | 'content_asset' }>
-            | 'clarify' = imageRolesFromIntent(intent, effectiveImageUrls);
+          const classified = imageRolesFromIntent(intent, effectiveImageUrls);
           console.log('[pages/follow-up] attached image roles from intent', {
-            roles: classified === 'clarify' ? 'clarify' : classified.map((c) => c.role),
+            roles: classified.map((c) => c.role),
             designReference: intent.designReference,
           });
-          if (classified === 'clarify') {
-            const question =
-              'You attached more than one image — which are bug screenshots to fix, which should I place on the page, and which are design references to match (e.g. "make the footer look like this")? Reply briefly.';
-            const userEntry: Record<string, unknown> = { role: 'user', content: prompt };
-            if (Array.isArray(image_urls) && image_urls.length > 0) userEntry.image_urls = image_urls;
-            const updatedConversation = [
-              ...history,
-              userEntry,
-              { role: 'assistant', content: question, clarify: true },
-            ];
-            await db
-              .from('pages')
-              .update({
-                conversation_json: updatedConversation,
-                updated_at: new Date().toISOString(),
-              })
-              .eq('id', params.id);
-            sendSSE(controller, { type: 'clarify', message: question });
-            closeSSE(controller);
-            return;
-          }
           const bugs = classified.filter((c) => c.role === 'bug_reference').map((c) => c.url);
           const assets = classified.filter((c) => c.role === 'content_asset').map((c) => c.url);
           designReferenceUrls = classified.filter((c) => c.role === 'design_reference').map((c) => c.url);
@@ -2824,27 +2801,6 @@ export async function POST(
       // Classify attachments if we skipped the scoped path (e.g. competitor URL)
       if (hasUserImages && !imageRolesClassified) {
         const classified = imageRolesFromIntent(intent, effectiveImageUrls);
-        if (classified === 'clarify') {
-          const question =
-            'You attached more than one image — which are bug screenshots to fix, which should I place on the page, and which are design references to match (e.g. "make the footer look like this")? Reply briefly.';
-          const userEntry: Record<string, unknown> = { role: 'user', content: prompt };
-          if (Array.isArray(image_urls) && image_urls.length > 0) userEntry.image_urls = image_urls;
-          const updatedConversation = [
-            ...history,
-            userEntry,
-            { role: 'assistant', content: question, clarify: true },
-          ];
-          await db
-            .from('pages')
-            .update({
-              conversation_json: updatedConversation,
-              updated_at: new Date().toISOString(),
-            })
-            .eq('id', params.id);
-          sendSSE(controller, { type: 'clarify', message: question });
-          closeSSE(controller);
-          return;
-        }
         const assets = classified.filter((c) => c.role === 'content_asset').map((c) => c.url);
         designReferenceUrls = classified.filter((c) => c.role === 'design_reference').map((c) => c.url);
         routingImageUrls = effectiveImageUrls;
