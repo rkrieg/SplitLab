@@ -371,6 +371,17 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   const [chatImages, setChatImages] = useState<{ file: File; preview: string }[]>([]);
   const chatImageInputRef = useRef<HTMLInputElement>(null);
   const [isDraggingChatImage, setIsDraggingChatImage] = useState(false);
+  // Full-size preview for chat thumbnails (message history + composer)
+  const [chatImageLightboxUrl, setChatImageLightboxUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!chatImageLightboxUrl) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setChatImageLightboxUrl(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [chatImageLightboxUrl]);
 
   // Background schema synthesis for raw-HTML pages that arrive here without a
   // schema_json (e.g. test variants opened via "Edit using AI"). Isolated
@@ -1489,7 +1500,21 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                   {msg.image_urls && msg.image_urls.length > 0 && (
                     <div className="flex flex-wrap gap-1.5 mb-2">
                       {msg.image_urls.map((url, idx) => (
-                        <img key={idx} src={url} alt="" className="h-20 w-20 object-cover rounded-lg border border-white/10" />
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => setChatImageLightboxUrl(url)}
+                          className="p-0 border-0 bg-transparent rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+                          title="View full size"
+                          aria-label="View attached image full size"
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={url}
+                            alt=""
+                            className="h-20 w-20 object-cover rounded-lg border border-white/10 cursor-zoom-in hover:opacity-90 transition-opacity"
+                          />
+                        </button>
                       ))}
                     </div>
                   )}
@@ -1666,12 +1691,22 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                   <div className="flex items-center gap-2 px-3.5 pt-2.5 flex-wrap">
                     {chatImages.map((img, i) => (
                       <div key={i} className="relative group w-14 h-14 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700 shrink-0">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={img.preview} alt="" className="w-full h-full object-cover" />
                         <button
                           type="button"
-                          onClick={() => removeChatImage(i)}
-                          className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-xs font-bold"
+                          onClick={() => setChatImageLightboxUrl(img.preview)}
+                          className="absolute inset-0 p-0 border-0 bg-transparent"
+                          title="View full size"
+                          aria-label="View attached image full size"
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={img.preview} alt="" className="w-full h-full object-cover cursor-zoom-in" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); removeChatImage(i); }}
+                          className="absolute top-0.5 right-0.5 z-10 w-5 h-5 rounded-full bg-black/70 text-white text-[10px] font-bold opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
+                          title="Remove"
+                          aria-label="Remove attached image"
                         >
                           ✕
                         </button>
@@ -1774,12 +1809,22 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                   <div className="flex items-center gap-2 px-3.5 pt-2.5 flex-wrap">
                     {chatImages.map((img, i) => (
                       <div key={i} className="relative group w-14 h-14 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700 shrink-0">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={img.preview} alt="" className="w-full h-full object-cover" />
                         <button
                           type="button"
-                          onClick={() => removeChatImage(i)}
-                          className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-xs font-bold"
+                          onClick={() => setChatImageLightboxUrl(img.preview)}
+                          className="absolute inset-0 p-0 border-0 bg-transparent"
+                          title="View full size"
+                          aria-label="View attached image full size"
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={img.preview} alt="" className="w-full h-full object-cover cursor-zoom-in" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); removeChatImage(i); }}
+                          className="absolute top-0.5 right-0.5 z-10 w-5 h-5 rounded-full bg-black/70 text-white text-[10px] font-bold opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
+                          title="Remove"
+                          aria-label="Remove attached image"
                         >
                           ✕
                         </button>
@@ -2127,6 +2172,33 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
           )}
         </div>
       </div>
+
+      {/* Chat image lightbox — click thumbnail in messages/composer to open */}
+      {chatImageLightboxUrl && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4"
+          onClick={() => setChatImageLightboxUrl(null)}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Image preview"
+        >
+          <button
+            type="button"
+            onClick={() => setChatImageLightboxUrl(null)}
+            className="absolute top-4 right-4 z-10 w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center text-lg leading-none"
+            aria-label="Close image preview"
+          >
+            ✕
+          </button>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={chatImageLightboxUrl}
+            alt="Attached image preview"
+            className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
 
       {/* Publish confirm dialog */}
       {publishConfirmOpen && (
