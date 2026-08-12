@@ -2528,7 +2528,7 @@ export default function AnalyticsClient({
             ) : (
               <div className="flex items-center gap-2">
                 <h1
-                  className="text-xl font-semibold text-slate-900 dark:text-slate-100 cursor-pointer hover:text-indigo-400 transition-colors inline-block"
+                  className="text-xl font-semibold text-slate-900 dark:text-slate-100 cursor-pointer hover:text-indigo-700 dark:hover:text-indigo-400 transition-colors inline-block"
                   onClick={() => setEditingName(true)}
                   title="Click to edit"
                 >
@@ -2573,7 +2573,7 @@ export default function AnalyticsClient({
                     href={`https://${fullUrl}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-sm font-mono text-indigo-400 hover:text-indigo-300 flex items-center gap-1 transition-colors"
+                    className="text-sm font-mono text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 flex items-center gap-1 transition-colors"
                   >
                     <Globe size={12} />
                     {fullUrl}
@@ -2591,7 +2591,7 @@ export default function AnalyticsClient({
                 <div className="flex flex-col gap-1">
                   <button
                     onClick={() => setEditingPath(true)}
-                    className="text-sm font-mono text-slate-500 dark:text-slate-400 hover:text-indigo-400 transition-colors text-left"
+                    className="text-sm font-mono text-slate-500 dark:text-slate-400 hover:text-indigo-700 dark:hover:text-indigo-400 transition-colors text-left"
                     title="Click to edit path"
                   >
                     {test.url_path}
@@ -2604,7 +2604,7 @@ export default function AnalyticsClient({
                     return (
                       <>
                         <div className="flex items-center gap-2">
-                          <code className="text-[11px] text-indigo-400 font-mono truncate max-w-[360px]">
+                          <code className="text-[11px] text-indigo-600 dark:text-indigo-400 font-mono truncate max-w-[360px]">
                             {testUrl}
                           </code>
                           <button
@@ -2689,8 +2689,8 @@ export default function AnalyticsClient({
               disabled={togglingStatus}
               className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-60 ${
                 test.status === "active"
-                  ? "bg-red-500/15 border border-red-500/30 text-red-400 hover:bg-red-500/25"
-                  : "bg-green-500/15 border border-green-500/30 text-green-400 hover:bg-green-500/25"
+                  ? "bg-red-500/15 border border-red-500/30 text-red-600 dark:text-red-400 hover:bg-red-500/25"
+                  : "bg-green-500/15 border border-green-500/30 text-green-600 dark:text-green-400 hover:bg-green-500/25"
               }`}
             >
               {togglingStatus ? (
@@ -2716,7 +2716,7 @@ export default function AnalyticsClient({
             onClick={() => setTab(t.key)}
             className={`flex items-center gap-1.5 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
               tab === t.key
-                ? "border-indigo-500 text-indigo-400"
+                ? "border-indigo-500 text-indigo-600 dark:text-indigo-400"
                 : "border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
             }`}
           >
@@ -2738,11 +2738,11 @@ export default function AnalyticsClient({
                 >
                   <Code2
                     size={16}
-                    className={`flex-shrink-0 mt-0.5 ${anyTrackerMissing ? "text-red-400" : "text-indigo-400"}`}
+                    className={`flex-shrink-0 mt-0.5 ${anyTrackerMissing ? "text-red-600 dark:text-red-400" : "text-indigo-600 dark:text-indigo-400"}`}
                   />
                   <div className="flex-1 min-w-0">
                     <p
-                      className={`font-medium text-sm ${anyTrackerMissing ? "text-red-400" : "text-indigo-400"}`}
+                      className={`font-medium text-sm ${anyTrackerMissing ? "text-red-600 dark:text-red-400" : "text-indigo-600 dark:text-indigo-400"}`}
                     >
                       {anyTrackerMissing
                         ? "Tracker not detected — paste the snippet on your destination page"
@@ -2783,7 +2783,7 @@ export default function AnalyticsClient({
                   {!anyTrackerMissing && (
                     <button
                       onClick={dismissTrackerCard}
-                      className="p-1 rounded hover:bg-indigo-500/20 text-indigo-400/60 hover:text-indigo-400 transition-colors flex-shrink-0"
+                      className="p-1 rounded hover:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400/60 hover:text-indigo-700 dark:hover:text-indigo-400 transition-colors flex-shrink-0"
                       title="Dismiss"
                     >
                       <X size={14} />
@@ -2796,9 +2796,9 @@ export default function AnalyticsClient({
               <div className="flex items-center gap-2 w-full rounded-lg bg-red-500/10 border border-red-500/30 px-4 py-2.5">
                 <AlertTriangle
                   size={14}
-                  className="text-red-400 flex-shrink-0"
+                  className="text-red-600 dark:text-red-400 flex-shrink-0"
                 />
-                <p className="text-xs text-red-400 font-medium">
+                <p className="text-xs text-red-600 dark:text-red-400 font-medium">
                   Please publish the test in order to see live pages.
                 </p>
               </div>
@@ -2806,9 +2806,9 @@ export default function AnalyticsClient({
 
             {(test.conversion_goals?.length ?? 0) === 0 && (
               <div className="flex items-start gap-3 rounded-xl p-4 border bg-indigo-500/10 border-indigo-500/30">
-                <ScanLine size={16} className="flex-shrink-0 mt-0.5 text-indigo-400" />
+                <ScanLine size={16} className="flex-shrink-0 mt-0.5 text-indigo-600 dark:text-indigo-400" />
                 <div className="flex-1 min-w-0">
-                  <p className="font-medium text-sm text-indigo-400">
+                  <p className="font-medium text-sm text-indigo-600 dark:text-indigo-400">
                     No conversion goals set up yet — nothing is counted as a conversion
                   </p>
                   <p className="text-slate-500 text-xs mt-0.5">
@@ -2816,7 +2816,7 @@ export default function AnalyticsClient({
                     <button
                       type="button"
                       onClick={() => setTab("settings")}
-                      className="font-medium text-indigo-500 hover:text-indigo-400 underline underline-offset-2"
+                      className="font-medium text-indigo-500 hover:text-indigo-700 dark:hover:text-indigo-400 underline underline-offset-2"
                     >
                       Settings
                     </button>{" "}
@@ -2830,9 +2830,9 @@ export default function AnalyticsClient({
               winner.confidence !== null &&
               winner.confidence >= 95 && (
                 <div className="flex items-center gap-3 bg-green-500/10 border border-green-500/30 rounded-xl p-4">
-                  <Trophy size={20} className="text-green-400 flex-shrink-0" />
+                  <Trophy size={20} className="text-green-600 dark:text-green-400 flex-shrink-0" />
                   <div>
-                    <p className="text-green-400 font-semibold text-sm">
+                    <p className="text-green-600 dark:text-green-400 font-semibold text-sm">
                       Winner: {winner.variant.name}
                     </p>
                     <p className="text-slate-500 dark:text-slate-400 text-xs mt-0.5">
@@ -2987,7 +2987,7 @@ export default function AnalyticsClient({
                                 {stat.isWinner && (
                                   <Trophy
                                     size={13}
-                                    className="text-green-400"
+                                    className="text-green-600 dark:text-green-400"
                                   />
                                 )}
                               </div>
@@ -3008,7 +3008,7 @@ export default function AnalyticsClient({
                               {/* HTML/hosted variants: tracker.js is always injected by SplitLab */}
                               {!stat.variant.redirect_url && !isEditing && (
                                 <div className="flex items-center gap-1.5 mt-1">
-                                  <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-green-500/10 border border-green-500/20 text-green-400">
+                                  <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-green-500/10 border border-green-500/20 text-green-600 dark:text-green-400">
                                     <ShieldCheck size={10} /> Tracker injected
                                   </span>
                                 </div>
@@ -3016,7 +3016,7 @@ export default function AnalyticsClient({
                               {stat.variant.redirect_url && !isEditing && (
                                 <div className="flex items-center gap-1.5 mt-1">
                                   {verified === true ? (
-                                    <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-green-500/10 border border-green-500/20 text-green-400">
+                                    <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-green-500/10 border border-green-500/20 text-green-600 dark:text-green-400">
                                       <ShieldCheck size={10} /> Tracker detected
                                       <button
                                         onClick={() =>
@@ -3042,7 +3042,7 @@ export default function AnalyticsClient({
                                       disabled={checkingTracking === stat.variant.id || autoCheckingIds.includes(stat.variant.id)}
                                       className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-lg border transition-colors disabled:opacity-50 ${
                                         verified === false
-                                          ? "bg-red-500/10 border-red-500/40 text-red-400 hover:bg-red-500/20"
+                                          ? "bg-red-500/10 border-red-500/40 text-red-600 dark:text-red-400 hover:bg-red-500/20"
                                           : "bg-slate-500/10 border-slate-500/30 text-slate-400 hover:bg-slate-500/20"
                                       }`}
                                     >
@@ -3090,7 +3090,7 @@ export default function AnalyticsClient({
                                       stat.variant.traffic_weight,
                                     )
                                   }
-                                  className="text-slate-400 hover:text-indigo-400 transition-colors cursor-pointer"
+                                  className="text-slate-400 hover:text-indigo-700 dark:hover:text-indigo-400 transition-colors cursor-pointer"
                                   title="Click to edit weight"
                                 >
                                   {stat.variant.traffic_weight}%
@@ -3141,9 +3141,9 @@ export default function AnalyticsClient({
                                 <span
                                   className={
                                     stat.confidence >= 95
-                                      ? "text-green-400 font-semibold"
+                                      ? "text-green-600 dark:text-green-400 font-semibold"
                                       : stat.confidence >= 80
-                                        ? "text-amber-400"
+                                        ? "text-amber-600 dark:text-amber-400"
                                         : "text-slate-400"
                                   }
                                 >
@@ -3156,7 +3156,7 @@ export default function AnalyticsClient({
                             {/* Uplift % */}
                             <td className={`px-3 py-3.5 text-center ${rowBg}`}>
                               {uplift !== null ? (
-                                <span className={`flex items-center justify-center gap-0.5 text-xs font-medium ${uplift > 0 ? "text-green-400" : "text-red-400"}`}>
+                                <span className={`flex items-center justify-center gap-0.5 text-xs font-medium ${uplift > 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
                                   <TrendingUp size={11} className={uplift < 0 ? "rotate-180" : ""} />
                                   {uplift > 0 ? "+" : ""}{formatPercent(uplift)}
                                 </span>
@@ -3179,9 +3179,9 @@ export default function AnalyticsClient({
                                   <button
                                     onClick={() => startEditVariant(stat.variant)}
                                     className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-500 transition-colors whitespace-nowrap"
-                                    title="Edit variant"
+                                    title="Edit this variant's destination link & traffic split"
                                   >
-                                    <Pencil size={12} /> Edit
+                                    <Pencil size={12} /> Edit link
                                   </button>
                                 )}
                                 <button
@@ -3410,7 +3410,7 @@ export default function AnalyticsClient({
                                         }
                                         className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-lg border transition-colors ${
                                           variantDraft.proxy_mode
-                                            ? "bg-indigo-500/20 text-indigo-400 border-indigo-500/30"
+                                            ? "bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 border-indigo-500/30"
                                             : "bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 border-slate-300 dark:border-slate-600"
                                         }`}
                                       >
@@ -3466,7 +3466,7 @@ export default function AnalyticsClient({
                                         onClick={() =>
                                           setDeleteVariantId(stat.variant.id)
                                         }
-                                        className="btn-secondary text-xs text-red-400 hover:text-red-300"
+                                        className="btn-secondary text-xs text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300"
                                       >
                                         <Trash2 size={12} /> Delete
                                       </button>
@@ -3501,7 +3501,7 @@ export default function AnalyticsClient({
                     setNewVariantMode("url");
                     setAddVariantOpen(true);
                   }}
-                  className="text-indigo-400 hover:text-indigo-300 text-sm font-medium flex items-center gap-1.5 transition-colors"
+                  className="text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 text-sm font-medium flex items-center gap-1.5 transition-colors"
                 >
                   <Plus size={14} /> Add Variant
                 </button>
@@ -3533,7 +3533,7 @@ export default function AnalyticsClient({
                           <button
                             onClick={() => handleUnarchiveVariant(stat.variant.id)}
                             disabled={archivingVariantId === stat.variant.id}
-                            className="flex items-center gap-1.5 text-xs font-medium text-indigo-500 hover:text-indigo-400 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                            className="flex items-center gap-1.5 text-xs font-medium text-indigo-500 hover:text-indigo-700 dark:hover:text-indigo-400 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                           >
                             {archivingVariantId === stat.variant.id ? (
                               <Loader2 size={12} className="animate-spin" />
@@ -3558,7 +3558,7 @@ export default function AnalyticsClient({
                 className="w-full flex items-center justify-between px-5 py-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
               >
                 <div className="flex items-center gap-2.5">
-                  <Activity size={16} className="text-indigo-400" />
+                  <Activity size={16} className="text-indigo-600 dark:text-indigo-400" />
                   <span className="font-semibold text-sm text-slate-800 dark:text-slate-200">Page Reporting</span>
                   {reportingLoaded && (
                     <span className="text-xs text-slate-400 font-normal">
@@ -3684,10 +3684,10 @@ export default function AnalyticsClient({
                   {reportingLoaded && (
                     <div className="px-5 pb-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
                       {[
-                        { label: "Unique Visitors", value: reportingTotals.visitors.toLocaleString(), icon: <Users size={14} className="text-indigo-400" /> },
-                        { label: "Views", value: reportingTotals.views.toLocaleString(), icon: <Eye size={14} className="text-sky-400" /> },
-                        { label: "Conversions", value: reportingTotals.conversions.toLocaleString(), icon: <TrendingUp size={14} className="text-green-400" /> },
-                        { label: "Conv. Rate", value: `${reportingTotals.cvr}%`, icon: <Activity size={14} className="text-amber-400" /> },
+                        { label: "Unique Visitors", value: reportingTotals.visitors.toLocaleString(), icon: <Users size={14} className="text-indigo-600 dark:text-indigo-400" /> },
+                        { label: "Views", value: reportingTotals.views.toLocaleString(), icon: <Eye size={14} className="text-sky-600 dark:text-sky-400" /> },
+                        { label: "Conversions", value: reportingTotals.conversions.toLocaleString(), icon: <TrendingUp size={14} className="text-green-600 dark:text-green-400" /> },
+                        { label: "Conv. Rate", value: `${reportingTotals.cvr}%`, icon: <Activity size={14} className="text-amber-600 dark:text-amber-400" /> },
                       ].map((card) => (
                         <div key={card.label} className="bg-slate-50 dark:bg-slate-800/60 rounded-xl px-4 py-3 flex flex-col gap-1 border border-slate-200 dark:border-slate-700">
                           <div className="flex items-center gap-1.5 text-slate-500 dark:text-slate-400">
@@ -3708,7 +3708,7 @@ export default function AnalyticsClient({
                         <span className="text-sm">Loading chart…</span>
                       </div>
                     ) : reportingError ? (
-                      <div className="flex flex-col items-center justify-center h-64 gap-2 text-red-400">
+                      <div className="flex flex-col items-center justify-center h-64 gap-2 text-red-600 dark:text-red-400">
                         <AlertTriangle size={24} className="opacity-60" />
                         <p className="text-sm">{reportingError}</p>
                         <button onClick={fetchReporting} className="btn-secondary text-xs mt-1">
@@ -4231,7 +4231,7 @@ export default function AnalyticsClient({
                     <button
                       onClick={disconnectHubSpot}
                       disabled={hsDisconnecting}
-                      className="text-xs text-red-400 hover:text-red-300 transition-colors flex items-center gap-1"
+                      className="text-xs text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 transition-colors flex items-center gap-1"
                     >
                       <XCircle size={13} /> {hsDisconnecting ? 'Disconnecting…' : 'Disconnect'}
                     </button>
@@ -4247,11 +4247,11 @@ export default function AnalyticsClient({
                     {testMapping.last_synced_at && (
                       <div className="flex items-center gap-3 text-xs text-slate-400">
                         <span className="flex items-center gap-1">
-                          <CheckCircle2 size={12} className="text-green-400" />
+                          <CheckCircle2 size={12} className="text-green-600 dark:text-green-400" />
                           {testMapping.total_synced ?? 0} synced
                         </span>
                         {(testMapping.total_failed ?? 0) > 0 && (
-                          <span className="flex items-center gap-1 text-red-400">
+                          <span className="flex items-center gap-1 text-red-600 dark:text-red-400">
                             <XCircle size={12} /> {testMapping.total_failed} failed
                           </span>
                         )}
@@ -4272,7 +4272,7 @@ export default function AnalyticsClient({
                       {/* Step 1 — Select HubSpot Form */}
                       <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 p-4">
                         <div className="flex items-center gap-2 mb-3">
-                          <div className="w-5 h-5 rounded-full bg-orange-500/20 text-orange-400 flex items-center justify-center text-xs font-bold flex-shrink-0">1</div>
+                          <div className="w-5 h-5 rounded-full bg-orange-500/20 text-orange-600 dark:text-orange-400 flex items-center justify-center text-xs font-bold flex-shrink-0">1</div>
                           <p className="text-sm font-medium text-slate-700 dark:text-slate-200">Select a HubSpot Form</p>
                         </div>
                           <select
@@ -4306,9 +4306,9 @@ export default function AnalyticsClient({
                         return (
                           <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 p-4 space-y-3">
                             <div className="flex items-center gap-2 mb-1">
-                              <div className="w-5 h-5 rounded-full bg-orange-500/20 text-orange-400 flex items-center justify-center text-xs font-bold flex-shrink-0">2</div>
+                              <div className="w-5 h-5 rounded-full bg-orange-500/20 text-orange-600 dark:text-orange-400 flex items-center justify-center text-xs font-bold flex-shrink-0">2</div>
                               <p className="text-sm font-medium text-slate-700 dark:text-slate-200">Map Fields</p>
-                              {!isDirectContacts && <span className="text-xs text-slate-400 ml-1">→ <span className="text-indigo-400">{selectedForm!.name}</span></span>}
+                              {!isDirectContacts && <span className="text-xs text-slate-400 ml-1">→ <span className="text-indigo-600 dark:text-indigo-400">{selectedForm!.name}</span></span>}
                             </div>
                             <div className="grid grid-cols-[1fr_32px_1fr_32px] gap-2 text-xs font-medium text-slate-500 uppercase tracking-wider">
                               <span>SplitLab Field</span>
@@ -4323,7 +4323,7 @@ export default function AnalyticsClient({
                                   <span className="text-xs px-2 py-1 rounded bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 font-mono">{fk}</span>
                                   <span className="text-xs text-slate-400 bg-slate-50 dark:bg-slate-800/50 px-1.5 py-0.5 rounded">form</span>
                                 </div>
-                                <ArrowRight size={13} className="text-orange-400 mx-auto" />
+                                <ArrowRight size={13} className="text-orange-600 dark:text-orange-400 mx-auto" />
                                 <select
                                   value={testMapping.field_mappings[fk] ?? ''}
                                   onChange={e => updateMapping(fk, e.target.value)}
@@ -4349,7 +4349,7 @@ export default function AnalyticsClient({
                                     <span className="text-xs px-2 py-1 rounded bg-slate-100 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400 font-mono">{sf.label}</span>
                                     <span className="text-xs text-slate-400 bg-slate-50 dark:bg-slate-800/50 px-1.5 py-0.5 rounded">system</span>
                                   </div>
-                                  <ArrowRight size={13} className="text-orange-400 mx-auto" />
+                                  <ArrowRight size={13} className="text-orange-600 dark:text-orange-400 mx-auto" />
                                   <select
                                     value={testMapping.field_mappings[sf.key] ?? ''}
                                     onChange={e => updateMapping(sf.key, e.target.value)}
@@ -4376,7 +4376,7 @@ export default function AnalyticsClient({
                                       <span className="text-xs px-2 py-1 rounded bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 font-mono">{key}</span>
                                       <span className="text-xs text-slate-400 bg-slate-50 dark:bg-slate-800/50 px-1.5 py-0.5 rounded">new</span>
                                     </div>
-                                    <ArrowRight size={13} className="text-orange-400 mx-auto" />
+                                    <ArrowRight size={13} className="text-orange-600 dark:text-orange-400 mx-auto" />
                                     <select
                                       value={testMapping.field_mappings[key] ?? ''}
                                       onChange={e => updateMapping(key, e.target.value)}
@@ -4389,7 +4389,7 @@ export default function AnalyticsClient({
                                       type="button"
                                       title="Dismiss — stop suggesting this field"
                                       onClick={() => dismissExtraParamKey(key)}
-                                      className="text-red-400 hover:text-red-500 transition-colors flex items-center justify-center"
+                                      className="text-red-600 dark:text-red-400 hover:text-red-500 transition-colors flex items-center justify-center"
                                     >
                                       <XCircle size={14} />
                                     </button>
@@ -4418,7 +4418,7 @@ export default function AnalyticsClient({
                                           type="button"
                                           title="Restore — show this field in New Fields again"
                                           onClick={() => restoreDismissedKey(key)}
-                                          className="ml-auto inline-flex items-center gap-1 text-indigo-500 hover:text-indigo-400 font-medium transition-colors flex-shrink-0"
+                                          className="ml-auto inline-flex items-center gap-1 text-indigo-500 hover:text-indigo-700 dark:hover:text-indigo-400 font-medium transition-colors flex-shrink-0"
                                         >
                                           <RefreshCw size={12} /> Restore
                                         </button>
@@ -4440,7 +4440,7 @@ export default function AnalyticsClient({
                                     type="button"
                                     title="Remove this custom parameter"
                                     onClick={() => deleteCustomParam(cp.id)}
-                                    className="ml-auto text-slate-300 hover:text-red-400 transition-colors flex items-center justify-center"
+                                    className="ml-auto text-slate-300 hover:text-red-700 dark:hover:text-red-400 transition-colors flex items-center justify-center"
                                   >
                                     <XCircle size={14} />
                                   </button>
@@ -4466,7 +4466,7 @@ export default function AnalyticsClient({
                                   type="button"
                                   disabled={addingCustomParam || !newCustomParamName.trim()}
                                   onClick={addCustomParam}
-                                  className="text-xs text-indigo-500 hover:text-indigo-400 font-medium flex items-center gap-1 flex-shrink-0 transition-colors disabled:opacity-50"
+                                  className="text-xs text-indigo-500 hover:text-indigo-700 dark:hover:text-indigo-400 font-medium flex items-center gap-1 flex-shrink-0 transition-colors disabled:opacity-50"
                                 >
                                   <Plus size={12} /> Add
                                 </button>
@@ -4491,7 +4491,7 @@ export default function AnalyticsClient({
             <div className="card overflow-hidden">
               <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700 flex items-center gap-3">
                 <div className="w-8 h-8 rounded-lg bg-indigo-500/15 flex items-center justify-center">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-indigo-400"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-indigo-600 dark:text-indigo-400"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
                 </div>
                 <div>
                   <p className="font-semibold text-sm text-slate-800 dark:text-slate-200">Email Notifications</p>
@@ -4525,7 +4525,7 @@ export default function AnalyticsClient({
                     <button
                       onClick={disconnectEmail}
                       disabled={emailDisconnecting}
-                      className="text-xs text-red-400 hover:text-red-300 transition-colors flex items-center gap-1 ml-4 flex-shrink-0"
+                      className="text-xs text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 transition-colors flex items-center gap-1 ml-4 flex-shrink-0"
                     >
                       <XCircle size={13} /> {emailDisconnecting ? 'Removing…' : 'Remove'}
                     </button>
@@ -4541,7 +4541,7 @@ export default function AnalyticsClient({
                   <p className="text-sm font-medium text-slate-800 dark:text-slate-200 flex-1">Email Configuration</p>
                   <button
                     onClick={openEmailModal}
-                    className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors flex items-center gap-1"
+                    className="text-xs text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 transition-colors flex items-center gap-1"
                   >
                     <Pencil size={12} /> Edit
                   </button>
@@ -4551,7 +4551,7 @@ export default function AnalyticsClient({
                     <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Recipients</p>
                     <div className="flex flex-wrap gap-1.5">
                       {emailMapping.recipients.split(',').map(r => r.trim()).filter(Boolean).map(r => (
-                        <span key={r} className="inline-flex items-center px-2 py-0.5 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-xs font-mono">{r}</span>
+                        <span key={r} className="inline-flex items-center px-2 py-0.5 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-600 dark:text-indigo-400 text-xs font-mono">{r}</span>
                       ))}
                     </div>
                   </div>
@@ -4601,25 +4601,25 @@ export default function AnalyticsClient({
                         <div key={wh.id} className="card overflow-hidden">
                           <div className="px-5 py-4 flex items-center gap-4">
                             <div className="w-9 h-9 rounded-lg bg-violet-500/15 flex items-center justify-center flex-shrink-0">
-                              <Link2 size={16} className="text-violet-400" />
+                              <Link2 size={16} className="text-violet-600 dark:text-violet-400" />
                             </div>
                             <div className="flex-1 min-w-0">
                               {/* URL + format badge */}
                               <div className="flex items-center gap-2 mb-1.5">
                                 <span className="flex-shrink-0 text-xs px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 font-semibold uppercase tracking-wide">POST</span>
                                 <p className="text-sm font-mono text-slate-700 dark:text-slate-200 truncate">{wh.config?.url ?? '—'}</p>
-                                <span className="flex-shrink-0 text-xs px-2 py-0.5 rounded-md bg-violet-500/10 text-violet-400 border border-violet-500/20 font-medium uppercase">{wh.config?.format ?? 'json'}</span>
+                                <span className="flex-shrink-0 text-xs px-2 py-0.5 rounded-md bg-violet-500/10 text-violet-600 dark:text-violet-400 border border-violet-500/20 font-medium uppercase">{wh.config?.format ?? 'json'}</span>
                               </div>
                               {/* Stats row */}
                               <div className="flex items-center gap-3 text-xs text-slate-400">
                                 {mapping?.last_synced_at ? (
                                   <>
                                     <span className="flex items-center gap-1">
-                                      <CheckCircle2 size={11} className="text-green-400" />
+                                      <CheckCircle2 size={11} className="text-green-600 dark:text-green-400" />
                                       {mapping.total_synced ?? 0} delivered
                                     </span>
                                     {(mapping.total_failed ?? 0) > 0 && (
-                                      <span className="flex items-center gap-1 text-red-400">
+                                      <span className="flex items-center gap-1 text-red-600 dark:text-red-400">
                                         <XCircle size={11} /> {mapping.total_failed} failed
                                       </span>
                                     )}
@@ -4642,7 +4642,7 @@ export default function AnalyticsClient({
                               <button
                                 onClick={() => deleteWebhook(wh.id)}
                                 disabled={wDeleting === wh.id}
-                                className="text-xs text-red-400 hover:text-red-300 transition-colors flex items-center gap-1.5"
+                                className="text-xs text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 transition-colors flex items-center gap-1.5"
                               >
                                 {wDeleting === wh.id ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
                                 {wDeleting === wh.id ? 'Removing…' : 'Remove'}
@@ -4669,7 +4669,7 @@ export default function AnalyticsClient({
             <div className="grid grid-cols-[1fr_148px] gap-3 items-end">
               <div>
                 <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1.5">
-                  Webhook URL <span className="text-red-400">*</span>
+                  Webhook URL <span className="text-red-600 dark:text-red-400">*</span>
                 </label>
                 <div className="flex items-stretch rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 focus-within:ring-2 focus-within:ring-indigo-500 focus-within:border-transparent transition-all overflow-hidden">
                   <span className="flex items-center px-3 bg-slate-50 dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 text-slate-400 text-xs font-medium select-none flex-shrink-0">
@@ -4702,7 +4702,7 @@ export default function AnalyticsClient({
                 <button
                   type="button"
                   onClick={() => setWHeaders(prev => [...prev, { key: '', value: '' }])}
-                  className="text-xs text-indigo-500 hover:text-indigo-400 font-medium flex items-center gap-1 transition-colors"
+                  className="text-xs text-indigo-500 hover:text-indigo-700 dark:hover:text-indigo-400 font-medium flex items-center gap-1 transition-colors"
                 >
                   <Plus size={12} /> Add Header
                 </button>
@@ -4729,7 +4729,7 @@ export default function AnalyticsClient({
                           onChange={e => setWHeaders(prev => prev.map((x, j) => j === i ? { ...x, value: e.target.value } : x))}
                           className="input text-sm font-mono placeholder:font-sans"
                         />
-                        <button type="button" onClick={() => setWHeaders(prev => prev.filter((_, j) => j !== i))} className="text-slate-400 hover:text-red-400 transition-colors flex items-center justify-center">
+                        <button type="button" onClick={() => setWHeaders(prev => prev.filter((_, j) => j !== i))} className="text-slate-400 hover:text-red-700 dark:hover:text-red-400 transition-colors flex items-center justify-center">
                           <Trash2 size={14} />
                         </button>
                       </div>
@@ -4774,7 +4774,7 @@ export default function AnalyticsClient({
                             placeholder="(excluded)"
                             className="input text-sm font-mono placeholder:font-sans placeholder:text-slate-300 dark:placeholder:text-slate-600"
                           />
-                          <button type="button" onClick={() => setWFormFields(prev => { const n = { ...prev }; delete n[fk]; return n; })} className="text-slate-300 hover:text-red-400 transition-colors flex items-center justify-center">
+                          <button type="button" onClick={() => setWFormFields(prev => { const n = { ...prev }; delete n[fk]; return n; })} className="text-slate-300 hover:text-red-700 dark:hover:text-red-400 transition-colors flex items-center justify-center">
                             <Trash2 size={14} />
                           </button>
                         </div>
@@ -4794,7 +4794,7 @@ export default function AnalyticsClient({
                     <button
                       type="button"
                       onClick={() => { const k = wNewFormKey.trim(); if (k) { setWFormFields(prev => ({ ...prev, [k]: k })); setWNewFormKey(''); } }}
-                      className="text-xs text-indigo-500 hover:text-indigo-400 font-medium flex items-center gap-1 flex-shrink-0 transition-colors"
+                      className="text-xs text-indigo-500 hover:text-indigo-700 dark:hover:text-indigo-400 font-medium flex items-center gap-1 flex-shrink-0 transition-colors"
                     >
                       <Plus size={12} /> Add
                     </button>
@@ -4839,7 +4839,7 @@ export default function AnalyticsClient({
                 {wTesting ? 'Sending test…' : 'Send Test Payload'}
               </button>
               {wTestResult ? (
-                <div className={`flex items-center gap-2 text-sm font-medium ${wTestResult.ok ? 'text-green-500' : 'text-red-400'}`}>
+                <div className={`flex items-center gap-2 text-sm font-medium ${wTestResult.ok ? 'text-green-500' : 'text-red-600 dark:text-red-400'}`}>
                   {wTestResult.ok ? <CheckCircle2 size={15} /> : <XCircle size={15} />}
                   <span>
                     {wTestResult.ok
@@ -4853,7 +4853,7 @@ export default function AnalyticsClient({
             </div>
 
             {wError && (
-              <div className="flex items-center gap-2 rounded-lg bg-red-500/10 border border-red-500/20 px-3 py-2.5 text-sm text-red-400">
+              <div className="flex items-center gap-2 rounded-lg bg-red-500/10 border border-red-500/20 px-3 py-2.5 text-sm text-red-600 dark:text-red-400">
                 <XCircle size={14} className="flex-shrink-0" /> {wError}
               </div>
             )}
@@ -4879,8 +4879,8 @@ export default function AnalyticsClient({
                     <div className="flex items-center gap-3">
                       <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${trackerComplete ? 'bg-green-500/20' : 'bg-indigo-500/20'}`}>
                         {trackerComplete
-                          ? <CheckCircle2 size={16} className="text-green-400" />
-                          : <Code2 size={16} className="text-indigo-400" />
+                          ? <CheckCircle2 size={16} className="text-green-600 dark:text-green-400" />
+                          : <Code2 size={16} className="text-indigo-600 dark:text-indigo-400" />
                         }
                       </div>
                       <div className="flex-1">
@@ -5073,15 +5073,15 @@ export default function AnalyticsClient({
                                 const el = group.representative;
                                 const icon =
                                   el.type === "form" ? (
-                                    <FormInput size={13} className="text-purple-400 flex-shrink-0" />
+                                    <FormInput size={13} className="text-purple-600 dark:text-purple-400 flex-shrink-0" />
                                   ) : el.type === "call" ? (
-                                    <Phone size={13} className="text-green-400 flex-shrink-0" />
+                                    <Phone size={13} className="text-green-600 dark:text-green-400 flex-shrink-0" />
                                   ) : el.type === "link" ? (
-                                    <ExternalLink size={13} className="text-blue-400 flex-shrink-0" />
+                                    <ExternalLink size={13} className="text-blue-600 dark:text-blue-400 flex-shrink-0" />
                                   ) : el.type === "toggle" ? (
-                                    <ToggleLeft size={13} className="text-amber-400 flex-shrink-0" />
+                                    <ToggleLeft size={13} className="text-amber-600 dark:text-amber-400 flex-shrink-0" />
                                   ) : (
-                                    <MousePointerClick size={13} className="text-indigo-400 flex-shrink-0" />
+                                    <MousePointerClick size={13} className="text-indigo-600 dark:text-indigo-400 flex-shrink-0" />
                                   );
 
                                 const label = displayLabelForElement(el);
@@ -5173,15 +5173,15 @@ export default function AnalyticsClient({
                               {activeVs.elements.map((el, i) => {
                                 const icon =
                                   el.type === "form" ? (
-                                    <FormInput size={13} className="text-purple-400 flex-shrink-0" />
+                                    <FormInput size={13} className="text-purple-600 dark:text-purple-400 flex-shrink-0" />
                                   ) : el.type === "call" ? (
-                                    <Phone size={13} className="text-green-400 flex-shrink-0" />
+                                    <Phone size={13} className="text-green-600 dark:text-green-400 flex-shrink-0" />
                                   ) : el.type === "link" ? (
-                                    <ExternalLink size={13} className="text-blue-400 flex-shrink-0" />
+                                    <ExternalLink size={13} className="text-blue-600 dark:text-blue-400 flex-shrink-0" />
                                   ) : el.type === "toggle" ? (
-                                    <ToggleLeft size={13} className="text-amber-400 flex-shrink-0" />
+                                    <ToggleLeft size={13} className="text-amber-600 dark:text-amber-400 flex-shrink-0" />
                                   ) : (
-                                    <MousePointerClick size={13} className="text-indigo-400 flex-shrink-0" />
+                                    <MousePointerClick size={13} className="text-indigo-600 dark:text-indigo-400 flex-shrink-0" />
                                   );
 
                                 const label = displayLabelForElement(el);
@@ -5353,7 +5353,7 @@ export default function AnalyticsClient({
                           onClick={() =>
                             setEditGoals(editGoals.filter((_, gi) => gi !== i))
                           }
-                          className="text-slate-500 hover:text-red-400 transition-colors"
+                          className="text-slate-500 hover:text-red-700 dark:hover:text-red-400 transition-colors"
                         >
                           <X size={14} />
                         </button>
@@ -5544,14 +5544,14 @@ export default function AnalyticsClient({
             <button
               type="button"
               onClick={() => setNewVariantMode("url")}
-              className={`flex-1 py-2 text-sm font-medium transition-colors ${newVariantMode === "url" ? "bg-indigo-500/20 text-indigo-400" : "text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700/50"}`}
+              className={`flex-1 py-2 text-sm font-medium transition-colors ${newVariantMode === "url" ? "bg-indigo-500/20 text-indigo-600 dark:text-indigo-400" : "text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700/50"}`}
             >
               External URL
             </button>
             <button
               type="button"
               onClick={() => setNewVariantMode("html")}
-              className={`flex-1 py-2 text-sm font-medium transition-colors border-l border-slate-200 dark:border-slate-700 ${newVariantMode === "html" ? "bg-indigo-500/20 text-indigo-400" : "text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700/50"}`}
+              className={`flex-1 py-2 text-sm font-medium transition-colors border-l border-slate-200 dark:border-slate-700 ${newVariantMode === "html" ? "bg-indigo-500/20 text-indigo-600 dark:text-indigo-400" : "text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700/50"}`}
             >
               Upload HTML
             </button>
@@ -5636,10 +5636,10 @@ export default function AnalyticsClient({
             variants.
           </p>
           {addVariantError && (
-            <div className="rounded-lg bg-red-500/10 border border-red-500/30 px-3 py-2.5 text-sm text-red-400">
+            <div className="rounded-lg bg-red-500/10 border border-red-500/30 px-3 py-2.5 text-sm text-red-600 dark:text-red-400">
               {addVariantError.message}
               {addVariantError.isLimit && (
-                <> · <a href="/billing" className="underline font-medium hover:text-red-300">Upgrade Plan</a></>
+                <> · <a href="/billing" className="underline font-medium hover:text-red-800 dark:hover:text-red-300">Upgrade Plan</a></>
               )}
             </div>
           )}
@@ -5737,7 +5737,7 @@ export default function AnalyticsClient({
             </p>
           </div>
 
-          <div className="flex items-start gap-2 rounded-lg bg-indigo-500/8 border border-indigo-500/20 px-3 py-2.5 text-xs text-indigo-400">
+          <div className="flex items-start gap-2 rounded-lg bg-indigo-500/8 border border-indigo-500/20 px-3 py-2.5 text-xs text-indigo-600 dark:text-indigo-400">
             <Info size={13} className="flex-shrink-0 mt-0.5" />
             <span>
               The email body includes all captured form fields, variant name, submission time, and UTM data automatically.
@@ -5746,7 +5746,7 @@ export default function AnalyticsClient({
           </div>
 
           {emailModalError && (
-            <div className="flex items-center gap-2 rounded-lg bg-red-500/10 border border-red-500/30 px-3 py-2 text-xs text-red-400">
+            <div className="flex items-center gap-2 rounded-lg bg-red-500/10 border border-red-500/30 px-3 py-2 text-xs text-red-600 dark:text-red-400">
               <AlertTriangle size={13} className="flex-shrink-0" /> {emailModalError}
             </div>
           )}

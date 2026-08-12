@@ -105,7 +105,7 @@ function renderPromptWithHighlights(text: string) {
   const parts = text.split(/(\[[^\]]+\])/g);
   return parts.map((part, i) =>
     /^\[.+\]$/.test(part)
-      ? <strong key={i} className="text-indigo-400 font-semibold not-italic">{part}</strong>
+      ? <strong key={i} className="text-indigo-600 dark:text-indigo-400 font-semibold not-italic">{part}</strong>
       : <span key={i}>{part}</span>
   );
 }
@@ -123,7 +123,7 @@ function SamplePromptChip({ vertical, onUse }: { vertical: string; onUse: (promp
       <button
         type="button"
         onClick={() => onUse(samplePrompt)}
-        className="inline-flex items-center gap-1 text-[11px] text-indigo-400 hover:text-indigo-300 transition-colors"
+        className="inline-flex items-center gap-1 text-[11px] text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 transition-colors"
       >
         <Sparkles size={10} />
         Try an example
@@ -136,7 +136,7 @@ function SamplePromptChip({ vertical, onUse }: { vertical: string; onUse: (promp
           <div className="absolute bottom-full right-0 mb-2 w-72 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-50 overflow-hidden">
             <div className="flex items-center justify-between px-3 py-2 border-b border-slate-700">
               <span className="text-[10px] font-medium text-slate-400 uppercase tracking-wider">Sample prompt</span>
-              {/* <span className="text-[10px] text-indigo-400">Click to use</span> */}
+              {/* <span className="text-[10px] text-indigo-600 dark:text-indigo-400">Click to use</span> */}
             </div>
             <p className="px-3 py-2.5 text-[11px] text-slate-300 leading-relaxed whitespace-pre-wrap max-h-56 overflow-y-auto">
               {renderPromptWithHighlights(samplePrompt)}
@@ -153,6 +153,48 @@ function hasUnfilledPlaceholders(text: string): boolean {
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
+
+/**
+ * Compact AI-credit meter for the builder top bar — always visible so users
+ * know where their monthly allowance stands while editing (Unbounce-style).
+ * Small green bar that shifts amber→red as it fills. Hidden on plans with no
+ * AI credits. Polls lightly so it reflects credits spent during the session.
+ */
+function AiCreditsMeter() {
+  const [data, setData] = useState<{ creditsUsed: number; creditsIncluded: number; percentUsed: number } | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    const load = () => {
+      fetch('/api/ai-usage')
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => { if (active && d) setData(d); })
+        .catch(() => {});
+    };
+    load();
+    const id = setInterval(load, 20_000); // keep it roughly current as edits burn credits
+    return () => { active = false; clearInterval(id); };
+  }, []);
+
+  if (!data || data.creditsIncluded <= 0) return null;
+  const pct = Math.min(100, Math.round(data.percentUsed));
+  const bar = pct >= 100 ? 'bg-red-500' : pct >= 80 ? 'bg-amber-500' : 'bg-green-500';
+
+  return (
+    <div
+      className="flex items-center gap-2 px-2.5 py-1 rounded-md bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+      title={`${data.creditsUsed.toLocaleString()} of ${data.creditsIncluded.toLocaleString()} AI credits used this month`}
+    >
+      <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400 whitespace-nowrap">AI credits</span>
+      <div className="w-16 h-1.5 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
+        <div className={`h-full ${bar} rounded-full transition-all`} style={{ width: `${pct}%` }} />
+      </div>
+      <span className="text-[11px] font-semibold text-slate-700 dark:text-slate-200 tabular-nums whitespace-nowrap">
+        {data.creditsUsed.toLocaleString()}/{data.creditsIncluded.toLocaleString()}
+      </span>
+    </div>
+  );
+}
 
 export default function AIBuilderClient({ workspaceId, clientId, clientName, variantName, initialPage, backPath, canUseAI = true, isTestVariantPage = false, canPublish = true }: Props) {
   const router = useRouter();
@@ -1384,7 +1426,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                   {/* Message actions */}
                   <div className="flex items-center gap-1.5 pl-8">
                     {typeof msg.elapsedMs === 'number' && (
-                      <span className="text-[11px] text-amber-400 dark:text-amber-500">
+                      <span className="text-[11px] text-amber-600 dark:text-amber-500">
                         {(msg.elapsedMs / 1000).toFixed(1)}s
                       </span>
                     )}
@@ -1504,13 +1546,13 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
               />
               <div className="flex items-center gap-1.5">
                 <span className="text-[11px] text-gray-500">Vertical:</span>
-                <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium bg-indigo-600/15 border border-indigo-600/30 text-indigo-400">
+                <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium bg-indigo-600/15 border border-indigo-600/30 text-indigo-600 dark:text-indigo-400">
                   {VERTICAL_LABELS[vertical] ?? vertical}
                 </span>
               </div>
               <SamplePromptChip vertical={vertical} onUse={p => setPrompt(p)} />
               {/https?:\/\/[^\s]+/i.test(prompt) && (
-                <div className="flex items-center gap-1.5 text-[11px] text-indigo-400">
+                <div className="flex items-center gap-1.5 text-[11px] text-indigo-600 dark:text-indigo-400">
                   <Globe size={11} />
                   <span>We&apos;ll reference that site for inspiration</span>
                 </div>
@@ -1732,6 +1774,8 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
 
           {/* Page actions */}
           <div className="flex items-center gap-2">
+            {/* Always-visible AI credit meter (Unbounce-style) */}
+            <AiCreditsMeter />
             {/* UTM Personalization button — links to dedicated picker page */}
             {phase === 'editing' && !!pageId && (
               <button

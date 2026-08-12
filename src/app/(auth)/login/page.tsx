@@ -87,7 +87,7 @@ function LoginForm() {
               <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
                 Password
               </label>
-              <Link href="/forgot-password" className="text-xs text-indigo-500 hover:text-indigo-400 font-medium transition-colors">
+              <Link href="/forgot-password" className="text-xs text-indigo-500 hover:text-indigo-700 dark:hover:text-indigo-400 font-medium transition-colors">
                 Forgot password?
               </Link>
             </div>
@@ -124,7 +124,7 @@ function LoginForm() {
 
       <p className="text-center text-slate-500 dark:text-slate-400 text-sm mt-6">
         Don&apos;t have an account?{' '}
-        <Link href="/signup" className="text-indigo-500 hover:text-indigo-400 font-medium transition-colors">Sign up</Link>
+        <Link href="/signup" className="text-indigo-500 hover:text-indigo-700 dark:hover:text-indigo-400 font-medium transition-colors">Sign up</Link>
       </p>
     </div>
   );

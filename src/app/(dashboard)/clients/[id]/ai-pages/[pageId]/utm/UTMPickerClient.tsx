@@ -927,7 +927,7 @@ export default function UTMPickerClient({ clientId, page, initialRules, canUseUt
                 className="min-w-0 flex-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs text-slate-700 dark:text-slate-200 placeholder-slate-400 focus:outline-none focus:border-indigo-400"
               />
               {rule.conditions.length > 1 && (
-                <button onClick={() => removeCondition(ruleIdx, condIdx)} className="p-1 text-slate-400 hover:text-red-400 transition-colors flex-shrink-0" title="Remove condition">
+                <button onClick={() => removeCondition(ruleIdx, condIdx)} className="p-1 text-slate-400 hover:text-red-700 dark:hover:text-red-400 transition-colors flex-shrink-0" title="Remove condition">
                   <X size={12} />
                 </button>
               )}
@@ -977,7 +977,7 @@ export default function UTMPickerClient({ clientId, page, initialRules, canUseUt
                   onClick={() => suggestHeadlines(ruleIdx, f.key, f.label)}
                   disabled={suggestLoading?.idx === ruleIdx && suggestLoading?.fieldKey === f.key}
                   title={`AI suggest ${f.label}`}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-indigo-400 hover:text-indigo-500 disabled:opacity-50"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-indigo-600 dark:text-indigo-400 hover:text-indigo-500 disabled:opacity-50"
                 >
                   {suggestLoading?.idx === ruleIdx && suggestLoading?.fieldKey === f.key
                     ? <Loader2 size={13} className="animate-spin" />
@@ -1135,7 +1135,7 @@ export default function UTMPickerClient({ clientId, page, initialRules, canUseUt
                       <button
                         onClick={() => removeField(f.key)}
                         disabled={removingFieldKey !== null}
-                        className="p-1 text-red-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors disabled:opacity-60"
+                        className="p-1 text-red-600 dark:text-red-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors disabled:opacity-60"
                         title="Remove field"
                       >
                         {removingFieldKey === f.key
@@ -1268,7 +1268,7 @@ export default function UTMPickerClient({ clientId, page, initialRules, canUseUt
                       <button
                         onClick={() => deleteRule(idx)}
                         disabled={deletingRuleIdx === idx}
-                        className="p-1 text-red-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors disabled:opacity-60"
+                        className="p-1 text-red-600 dark:text-red-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors disabled:opacity-60"
                       >
                         {deletingRuleIdx === idx
                           ? <Loader2 size={13} className="animate-spin text-amber-500" />

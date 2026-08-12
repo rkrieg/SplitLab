@@ -109,7 +109,7 @@ function WelcomeForm() {
               </svg>
             </div>
             <span className="text-xl font-bold text-white">
-              Split<span className="text-blue-400">Lab</span>
+              Split<span className="text-blue-600 dark:text-blue-400">Lab</span>
             </span>
           </div>
         </div>
@@ -117,13 +117,13 @@ function WelcomeForm() {
         {/* Error state — bad session / already expired */}
         {error && !sessionData ? (
           <div className="bg-slate-800 border border-slate-700 rounded-2xl p-8 text-center">
-            <p className="text-red-400 mb-4">{error}</p>
-            <a href="/#pricing" className="text-blue-400 hover:underline text-sm">Back to pricing</a>
+            <p className="text-red-600 dark:text-red-400 mb-4">{error}</p>
+            <a href="/#pricing" className="text-blue-600 dark:text-blue-400 hover:underline text-sm">Back to pricing</a>
           </div>
         ) : (
           <div className="bg-slate-800 border border-slate-700 rounded-2xl p-8">
             <div className="flex items-center gap-2 mb-1">
-              <CheckCircle className="w-5 h-5 text-green-400" />
+              <CheckCircle className="w-5 h-5 text-green-600 dark:text-green-400" />
               <h1 className="text-xl font-semibold text-white">Payment confirmed!</h1>
             </div>
             <p className="text-slate-400 text-sm mb-1">
@@ -134,7 +134,7 @@ function WelcomeForm() {
             </p>
 
             {error && (
-              <div className="bg-red-500/10 border border-red-500/20 rounded-lg px-4 py-3 text-sm text-red-400 mb-4">
+              <div className="bg-red-500/10 border border-red-500/20 rounded-lg px-4 py-3 text-sm text-red-600 dark:text-red-400 mb-4">
                 {error}
               </div>
             )}

@@ -32,11 +32,11 @@ interface Domain {
 function TxtNameNote({ recordName }: { recordName: string }) {
   const shortName = recordName.split('.')[0]; // e.g. "_vercel"
   return (
-    <div className="mb-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-[11px] leading-relaxed text-amber-300">
+    <div className="mb-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-[11px] leading-relaxed text-amber-700 dark:text-amber-300">
       <strong className="text-amber-200">Important:</strong> Most DNS providers automatically add your domain to the Name field. If yours does, enter just{' '}
       <span className="font-mono text-amber-100">"{shortName}"</span> — entering the full{' '}
       <span className="font-mono">{recordName}</span> would create a broken record at{' '}
-      <span className="font-mono text-red-400 break-all">{recordName}.{recordName.replace(`${shortName}.`, '')}</span>.
+      <span className="font-mono text-red-600 dark:text-red-400 break-all">{recordName}.{recordName.replace(`${shortName}.`, '')}</span>.
       Some providers (like GoDaddy) will ask which you meant — choose{' '}
       <span className="font-mono text-amber-100">{recordName}</span>.
     </div>
@@ -315,7 +315,7 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
           <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Base Domain</label>
           <input type="text" value={baseDomain} onChange={e => setBaseDomainFn(e.target.value)} className="input-base font-mono" placeholder="example.com" required />
           {baseDomain.trim() && !baseDomain.replace(/^https?:\/\//, '').includes('.') && (
-            <p className="text-amber-400 text-xs mt-1.5">Include the TLD — e.g. <span className="font-mono">example.com</span>, not just <span className="font-mono">example</span></p>
+            <p className="text-amber-600 dark:text-amber-400 text-xs mt-1.5">Include the TLD — e.g. <span className="font-mono">example.com</span>, not just <span className="font-mono">example</span></p>
           )}
         </div>
         <div>
@@ -365,9 +365,9 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
           <div className="p-5 flex items-center gap-4">
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 mb-1">
-                <Globe size={15} className="text-green-400 flex-shrink-0" />
+                <Globe size={15} className="text-green-600 dark:text-green-400 flex-shrink-0" />
                 <span className="font-medium text-slate-900 dark:text-slate-100">{d.domain}</span>
-                <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-green-500/15 text-green-400 border border-green-500/25">
+                <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-green-500/15 text-green-600 dark:text-green-400 border border-green-500/25">
                   <CheckCircle size={11} /> Domain Active
                 </span>
               </div>
@@ -396,7 +396,7 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
                   <button onClick={() => openEditModal(d)} className="p-2 text-slate-500 hover:text-slate-200 transition-colors rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700" title="Edit domain">
                     <Pencil size={14} />
                   </button>
-                  <button onClick={() => setDeleteId(d.id)} className="p-2 text-slate-500 hover:text-red-400 transition-colors rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700" title="Delete domain">
+                  <button onClick={() => setDeleteId(d.id)} className="p-2 text-slate-500 hover:text-red-700 dark:hover:text-red-400 transition-colors rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700" title="Delete domain">
                     <Trash2 size={14} />
                   </button>
                 </>
@@ -405,9 +405,9 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
           </div>
           <div className="border-t border-slate-200 dark:border-slate-800 px-5 py-3 bg-green-500/5">
             <div className="flex items-center gap-6 text-xs">
-              <span className="flex items-center gap-1.5 text-green-400"><CheckCircle size={13} /> Domain registered</span>
-              <span className="flex items-center gap-1.5 text-green-400"><CheckCircle size={13} /> DNS configured</span>
-              <span className="flex items-center gap-1.5 text-green-400"><CheckCircle size={13} /> Verified</span>
+              <span className="flex items-center gap-1.5 text-green-600 dark:text-green-400"><CheckCircle size={13} /> Domain registered</span>
+              <span className="flex items-center gap-1.5 text-green-600 dark:text-green-400"><CheckCircle size={13} /> DNS configured</span>
+              <span className="flex items-center gap-1.5 text-green-600 dark:text-green-400"><CheckCircle size={13} /> Verified</span>
             </div>
           </div>
           {dnsExpanded && (
@@ -483,9 +483,9 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
               <Globe size={15} className="text-slate-400 flex-shrink-0" />
               <span className="font-medium text-slate-900 dark:text-slate-100">{d.domain}</span>
               {status === 'misconfigured' ? (
-                <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-red-500/15 text-red-400 border border-red-500/25"><XCircle size={11} /> DNS Not Found</span>
+                <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-red-500/15 text-red-600 dark:text-red-400 border border-red-500/25"><XCircle size={11} /> DNS Not Found</span>
               ) : (
-                <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/25"><Clock size={11} /> Pending DNS</span>
+                <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/25"><Clock size={11} /> Pending DNS</span>
               )}
             </div>
             <p className="text-slate-400 dark:text-slate-500 text-xs ml-[23px]">Added {formatDate(d.created_at)}</p>
@@ -498,7 +498,7 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
               <button onClick={() => openEditModal(d)} className="p-2 text-slate-500 hover:text-slate-200 transition-colors rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700" title="Edit domain">
                 <Pencil size={14} />
               </button>
-              <button onClick={() => setDeleteId(d.id)} className="p-2 text-slate-500 hover:text-red-400 transition-colors rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700" title="Delete domain">
+              <button onClick={() => setDeleteId(d.id)} className="p-2 text-slate-500 hover:text-red-700 dark:hover:text-red-400 transition-colors rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700" title="Delete domain">
                 <Trash2 size={14} />
               </button>
             </div>
@@ -507,21 +507,21 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
 
         <div className="border-t border-slate-200 dark:border-slate-800 px-5 py-3 bg-slate-50 dark:bg-slate-800/30">
           <div className="flex items-center gap-6 text-xs">
-            <span className="flex items-center gap-1.5 text-green-400"><CheckCircle size={13} /> Domain registered</span>
-            <span className="flex items-center gap-1.5 text-amber-400"><Clock size={13} /> Configure DNS</span>
+            <span className="flex items-center gap-1.5 text-green-600 dark:text-green-400"><CheckCircle size={13} /> Domain registered</span>
+            <span className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400"><Clock size={13} /> Configure DNS</span>
             <span className="flex items-center gap-1.5 text-slate-500"><span className="w-[13px] h-[13px] rounded-full border border-slate-600 flex-shrink-0" /> Verify</span>
           </div>
         </div>
 
         <div className="border-t border-amber-500/20 px-5 py-3 bg-amber-500/5 flex items-center gap-2">
-          <AlertCircle size={14} className="text-amber-400 flex-shrink-0" />
-          <p className="text-amber-300 text-xs font-medium">1 step remaining: Update your DNS records below, then click Verify DNS</p>
+          <AlertCircle size={14} className="text-amber-600 dark:text-amber-400 flex-shrink-0" />
+          <p className="text-amber-700 dark:text-amber-300 text-xs font-medium">1 step remaining: Update your DNS records below, then click Verify DNS</p>
         </div>
 
         {errorMsg && (
           <div className="border-t border-red-500/20 px-5 py-3 bg-red-500/5 flex items-start gap-2">
-            <XCircle size={14} className="text-red-400 flex-shrink-0 mt-0.5" />
-            <p className="text-red-300 text-xs">{errorMsg}</p>
+            <XCircle size={14} className="text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
+            <p className="text-red-700 dark:text-red-300 text-xs">{errorMsg}</p>
           </div>
         )}
 
@@ -590,7 +590,7 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
                       <button onClick={() => copyToClipboard(rec.domain)} className="ml-2 text-slate-500 hover:text-slate-300 inline-flex"><Copy size={11} /></button>
                     </div>
                     <div className="px-3 py-2.5 font-mono flex items-start justify-between gap-2">
-                      <span className="text-amber-400 break-all">{rec.value}</span>
+                      <span className="text-amber-600 dark:text-amber-400 break-all">{rec.value}</span>
                       <button onClick={() => copyToClipboard(rec.value)} className="text-slate-500 hover:text-slate-300 flex-shrink-0 mt-0.5"><Copy size={11} /></button>
                     </div>
                   </div>
@@ -656,10 +656,10 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
         <form onSubmit={handleAdd} className="space-y-4">
           {renderModeSelector(addMode, setAddMode, addBaseDomain, setAddBaseDomain, addSubdomain, setAddSubdomain, getAddPreview())}
           {addDomainError && (
-            <div className="rounded-lg bg-red-500/10 border border-red-500/30 px-3 py-2.5 text-sm text-red-400">
+            <div className="rounded-lg bg-red-500/10 border border-red-500/30 px-3 py-2.5 text-sm text-red-600 dark:text-red-400">
               {addDomainError.message}
               {addDomainError.isLimit && (
-                <> · <a href="/billing" className="underline font-medium hover:text-red-300">Upgrade Plan</a></>
+                <> · <a href="/billing" className="underline font-medium hover:text-red-800 dark:hover:text-red-300">Upgrade Plan</a></>
               )}
             </div>
           )}
@@ -690,7 +690,7 @@ export default function DomainsClient({ initialDomains, workspaceId, appHostname
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl p-6 w-full max-w-sm mx-4 shadow-2xl">
             <div className="flex items-start justify-between gap-3 mb-3">
               <div className="w-9 h-9 rounded-lg bg-indigo-500/20 flex items-center justify-center flex-shrink-0">
-                <Globe size={18} className="text-indigo-400" />
+                <Globe size={18} className="text-indigo-600 dark:text-indigo-400" />
               </div>
               <button onClick={() => setUpgradeAlertOpen(false)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors">
                 <XCircle size={18} />

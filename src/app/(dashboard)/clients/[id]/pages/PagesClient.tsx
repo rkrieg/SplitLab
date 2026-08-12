@@ -64,7 +64,7 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
   const [pageName, setPageName] = useState('');
   const [urlPath, setUrlPath] = useState('/');
   const [destinationUrl, setDestinationUrl] = useState('');
-  const [createMode, setCreateMode] = useState<'url' | 'html'>('url');
+  const [createMode, setCreateMode] = useState<'url' | 'html' | 'ai'>('url');
   const [createHtml, setCreateHtml] = useState('');
 
   // Edit state
@@ -109,6 +109,49 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
     e.preventDefault();
     setSaving(true);
     try {
+      // Build-with-AI: create a blank AI page + a draft test at this path with
+      // that page as the control variant, then hand off to the AI editor to
+      // actually build the page. The draft test already exists at the path, so
+      // once they build and activate, it serves.
+      if (createMode === 'ai') {
+        const pageRes = await fetch('/api/pages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ workspace_id: workspaceId, name: pageName.trim(), vertical: 'lead_gen' }),
+        });
+        if (!pageRes.ok) {
+          const err = await pageRes.json().catch(() => ({}));
+          const msg = err.error || 'Could not start AI page';
+          toast.error(msg);
+          setCreatePageError({ message: msg, isLimit: !!err.limitError });
+          return;
+        }
+        const page = await pageRes.json();
+        // Register a draft test at the chosen path with the new page as control.
+        const testRes = await fetch(`/api/workspaces/${workspaceId}/tests`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: pageName.trim(),
+            url_path: urlPath,
+            status: 'draft',
+            variants: [{ name: 'Control', page_id: page.id, traffic_weight: 100, is_control: true }],
+          }),
+        });
+        // Without the test the page has no path to serve on, so stay in the
+        // modal with the real reason (taken path, plan limit) rather than
+        // dropping the user into the AI editor with an orphaned page.
+        if (!testRes.ok) {
+          const err = await testRes.json().catch(() => ({}));
+          const msg = err.error || 'Could not reserve that path for the AI page';
+          toast.error(msg);
+          setCreatePageError({ message: msg, isLimit: !!err.limitError });
+          return;
+        }
+        router.push(`/clients/${clientId}/ai-pages/new?page_id=${page.id}`);
+        return;
+      }
+
       let res: Response;
       if (createMode === 'html') {
         res = await fetch('/api/pages/from-html', {
@@ -382,7 +425,7 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
                     <div className="flex items-center gap-2 mb-3">
                       {domain ? (
                         <span className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 font-mono">
-                          <Globe size={12} className="text-green-400" />
+                          <Globe size={12} className="text-green-600 dark:text-green-400" />
                           {fullUrl}
                         </span>
                       ) : (
@@ -394,10 +437,10 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
                         <span key={v.id} className="badge bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 gap-1">
                           {v.name}
                           <span className="text-slate-400 dark:text-slate-500">{v.traffic_weight}%</span>
-                          {v.is_control && <span className="text-indigo-400 text-[10px]">ctrl</span>}
-                          {v.redirect_url && <Link2 size={10} className="text-amber-400" />}
-                          {v.redirect_url && v.tracking_verified === true && <ShieldCheck size={10} className="text-green-400" />}
-                          {v.redirect_url && v.tracking_verified === false && <ShieldX size={10} className="text-red-400" />}
+                          {v.is_control && <span className="text-indigo-600 dark:text-indigo-400 text-[10px]">ctrl</span>}
+                          {v.redirect_url && <Link2 size={10} className="text-amber-600 dark:text-amber-400" />}
+                          {v.redirect_url && v.tracking_verified === true && <ShieldCheck size={10} className="text-green-600 dark:text-green-400" />}
+                          {v.redirect_url && v.tracking_verified === false && <ShieldX size={10} className="text-red-600 dark:text-red-400" />}
                         </span>
                       ))}
                     </div>
@@ -411,7 +454,7 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
                             disabled={checkingTracking === v.id}
                             className="inline-flex items-center gap-1 text-[10px] text-slate-400 hover:text-slate-200 bg-slate-100 dark:bg-slate-700/50 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-600/50 rounded-full px-2 py-0.5 transition-colors disabled:opacity-50"
                           >
-                            {checkingTracking === v.id ? <Spinner size="sm" /> : v.tracking_verified === true ? <ShieldCheck size={9} className="text-green-400" /> : v.tracking_verified === false ? <ShieldX size={9} className="text-red-400" /> : <ShieldCheck size={9} />}
+                            {checkingTracking === v.id ? <Spinner size="sm" /> : v.tracking_verified === true ? <ShieldCheck size={9} className="text-green-600 dark:text-green-400" /> : v.tracking_verified === false ? <ShieldX size={9} className="text-red-600 dark:text-red-400" /> : <ShieldCheck size={9} />}
                             Check {v.name}
                           </button>
                         ))}
@@ -431,34 +474,34 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
                           <div className="absolute right-0 top-full mt-1 w-44 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl z-10 overflow-hidden">
                             {test.status === 'draft' && (
                               <button onClick={(e) => { e.stopPropagation(); updateStatus(test.id, 'active'); }} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700">
-                                <Play size={14} className="text-green-400" /> Activate
+                                <Play size={14} className="text-green-600 dark:text-green-400" /> Activate
                               </button>
                             )}
                             {test.status === 'active' && (
                               <button onClick={(e) => { e.stopPropagation(); updateStatus(test.id, 'paused'); }} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700">
-                                <Pause size={14} className="text-amber-400" /> Pause
+                                <Pause size={14} className="text-amber-600 dark:text-amber-400" /> Pause
                               </button>
                             )}
                             {test.status === 'paused' && (
                               <>
                                 <button onClick={(e) => { e.stopPropagation(); updateStatus(test.id, 'active'); }} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700">
-                                  <Play size={14} className="text-green-400" /> Resume
+                                  <Play size={14} className="text-green-600 dark:text-green-400" /> Resume
                                 </button>
                                 <button onClick={(e) => { e.stopPropagation(); updateStatus(test.id, 'completed'); }} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700">
-                                  <Check size={14} className="text-blue-400" /> Complete
+                                  <Check size={14} className="text-blue-600 dark:text-blue-400" /> Complete
                                 </button>
                               </>
                             )}
                             <button onClick={(e) => { e.stopPropagation(); openEditModal(test); }} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700">
-                              <Edit2 size={14} className="text-indigo-400" /> Edit
+                              <Edit2 size={14} className="text-indigo-600 dark:text-indigo-400" /> Edit
                             </button>
                             <button onClick={(e) => { e.stopPropagation(); openAddVariant(test); }} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700">
-                              <Plus size={14} className="text-indigo-400" /> Add Variant
+                              <Plus size={14} className="text-indigo-600 dark:text-indigo-400" /> Add Variant
                             </button>
                             <button onClick={(e) => { e.stopPropagation(); openDuplicate(test); }} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700">
-                              <Copy size={14} className="text-indigo-400" /> Duplicate
+                              <Copy size={14} className="text-indigo-600 dark:text-indigo-400" /> Duplicate
                             </button>
-                            <button onClick={(e) => { e.stopPropagation(); setDeleteId(test.id); setActiveMenu(null); }} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-400 hover:bg-slate-100 dark:hover:bg-slate-700 border-t border-slate-200 dark:border-slate-700">
+                            <button onClick={(e) => { e.stopPropagation(); setDeleteId(test.id); setActiveMenu(null); }} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-slate-100 dark:hover:bg-slate-700 border-t border-slate-200 dark:border-slate-700">
                               <Trash2 size={14} /> Delete
                             </button>
                           </div>
@@ -476,22 +519,39 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
       {/* Create Page Modal */}
       <Modal open={createOpen} onClose={() => { setCreateOpen(false); resetCreateForm(); }} title="New Page" size="sm">
         <form onSubmit={handleCreate} className="space-y-4">
-          {/* URL / HTML tabs */}
-          <div className="flex rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden -mt-1">
+          {/* How do you want to add this page? */}
+          <div className="grid grid-cols-3 rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden -mt-1">
             <button
               type="button"
               onClick={() => setCreateMode('url')}
-              className={`flex-1 py-2 text-sm font-medium transition-colors ${createMode === 'url' ? 'bg-[#3D8BDA] text-white' : 'bg-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
+              className={`py-2 text-sm font-medium transition-colors ${createMode === 'url' ? 'bg-[#3D8BDA] text-white' : 'bg-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
             >
-              Paste a URL
+              Paste a link
             </button>
             <button
               type="button"
               onClick={() => setCreateMode('html')}
-              className={`flex-1 py-2 text-sm font-medium transition-colors ${createMode === 'html' ? 'bg-[#3D8BDA] text-white' : 'bg-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
+              className={`py-2 text-sm font-medium transition-colors border-l border-slate-200 dark:border-slate-700 ${createMode === 'html' ? 'bg-[#3D8BDA] text-white' : 'bg-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
             >
               Paste HTML
             </button>
+            <button
+              type="button"
+              onClick={() => setCreateMode('ai')}
+              className={`py-2 text-sm font-medium transition-colors border-l border-slate-200 dark:border-slate-700 ${createMode === 'ai' ? 'bg-[#3D8BDA] text-white' : 'bg-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
+            >
+              Build with AI
+            </button>
+          </div>
+
+          {/* Mode explainer — clarifies that the base domain is already set in Domains */}
+          <div className="flex items-start gap-2 rounded-lg bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 px-3 py-2.5 text-xs text-slate-500 dark:text-slate-400">
+            <Info size={13} className="flex-shrink-0 mt-px text-slate-400" />
+            <span>
+              {createMode === 'url' && <>Paste the link to your existing page (Lovable, Webflow, Framer, or any URL). We serve it under your domain and add tracking automatically. You&apos;re not choosing a new URL — your domain is already set in <strong>Domains</strong>; you just pick the path below.</>}
+              {createMode === 'html' && <>Paste your page&apos;s full HTML below. We host and serve it under your domain with tracking built in — no <code className="font-mono">tracker.js</code> tag needed.</>}
+              {createMode === 'ai' && <>Give the page a name and path, and we&apos;ll open the AI editor so you can build it from scratch. It&apos;s saved as a draft on your domain until you publish it.</>}
+            </span>
           </div>
 
           <div>
@@ -501,17 +561,18 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
 
           {createMode === 'url' ? (
             <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Your Page URL</label>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Link to your existing page</label>
               <input
                 type="text"
                 value={destinationUrl}
                 onChange={(e) => { setDestinationUrl(e.target.value); }}
                 className="input-base font-mono text-sm"
-                placeholder="https://yoursite.com/landing"
+                placeholder="https://your-page.lovable.app"
                 required
               />
+              <p className="text-slate-400 dark:text-slate-500 text-xs mt-1">The Lovable / Webflow / Framer / any URL where your page currently lives.</p>
             </div>
-          ) : (
+          ) : createMode === 'html' ? (
             <div>
               <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">HTML Content</label>
               <textarea
@@ -546,7 +607,7 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
                 <span>Tracking is already built in for this page — <strong>no need to add a <code className="font-mono">tracker.js</code> script tag.</strong></span>
               </div>
             </div>
-          )}
+          ) : null}
 
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Path on your domain</label>
@@ -577,16 +638,16 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
           </div>
 
           {createPageError && (
-            <div className="rounded-lg bg-red-500/10 border border-red-500/30 px-3 py-2.5 text-sm text-red-400">
+            <div className="rounded-lg bg-red-500/10 border border-red-500/30 px-3 py-2.5 text-sm text-red-600 dark:text-red-400">
               {createPageError.message}
               {createPageError.isLimit && (
-                <> · <a href="/billing" className="underline font-medium hover:text-red-300">Upgrade Plan</a></>
+                <> · <a href="/billing" className="underline font-medium hover:text-red-800 dark:hover:text-red-300">Upgrade Plan</a></>
               )}
             </div>
           )}
           <div className="flex justify-end gap-3 pt-2">
             <Button variant="secondary" type="button" onClick={() => { setCreateOpen(false); resetCreateForm(); }}>Cancel</Button>
-            <Button type="submit" loading={saving}>Create Page</Button>
+            <Button type="submit" loading={saving}>{createMode === 'ai' ? 'Create & open AI editor' : 'Create Page'}</Button>
           </div>
         </form>
       </Modal>
@@ -655,14 +716,14 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
             <button
               type="button"
               onClick={() => setVariantMode('url')}
-              className={`flex-1 py-2 text-sm font-medium transition-colors ${variantMode === 'url' ? 'bg-indigo-500/20 text-indigo-400' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700/50'}`}
+              className={`flex-1 py-2 text-sm font-medium transition-colors ${variantMode === 'url' ? 'bg-indigo-500/20 text-indigo-600 dark:text-indigo-400' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700/50'}`}
             >
               External URL
             </button>
             <button
               type="button"
               onClick={() => setVariantMode('html')}
-              className={`flex-1 py-2 text-sm font-medium transition-colors border-l border-slate-200 dark:border-slate-700 ${variantMode === 'html' ? 'bg-indigo-500/20 text-indigo-400' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700/50'}`}
+              className={`flex-1 py-2 text-sm font-medium transition-colors border-l border-slate-200 dark:border-slate-700 ${variantMode === 'html' ? 'bg-indigo-500/20 text-indigo-600 dark:text-indigo-400' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700/50'}`}
             >
               Upload HTML
             </button>
@@ -726,10 +787,10 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
           </div>
 
           {addVariantError && (
-            <div className="rounded-lg bg-red-500/10 border border-red-500/30 px-3 py-2.5 text-sm text-red-400">
+            <div className="rounded-lg bg-red-500/10 border border-red-500/30 px-3 py-2.5 text-sm text-red-600 dark:text-red-400">
               {addVariantError.message}
               {addVariantError.isLimit && (
-                <> · <a href="/billing" className="underline font-medium hover:text-red-300">Upgrade Plan</a></>
+                <> · <a href="/billing" className="underline font-medium hover:text-red-800 dark:hover:text-red-300">Upgrade Plan</a></>
               )}
             </div>
           )}

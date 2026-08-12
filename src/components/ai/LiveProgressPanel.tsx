@@ -166,7 +166,7 @@ export function LiveProgressPanel({ events, isComplete = false }: Props) {
       {/* Thinking shown at bottom if no status events yet (style patch — thinking arrives first) */}
       {thinkingEvent && statusEvents.length === 0 && (
         <div className="flex items-start gap-1.5 pl-0.5">
-          <Sparkles size={10} className="text-indigo-400 flex-shrink-0 mt-0.5" />
+          <Sparkles size={10} className="text-indigo-600 dark:text-indigo-400 flex-shrink-0 mt-0.5" />
           <span className="text-[11px] text-slate-400 italic leading-relaxed">
             &ldquo;{thinkingEvent.message}&rdquo;
           </span>

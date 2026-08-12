@@ -67,7 +67,7 @@ export default async function AllPagesPage() {
                       <td className="px-5 py-3.5 font-medium text-slate-800 dark:text-slate-200">{test.name as string}</td>
                       <td className="px-5 py-3.5 text-slate-500 dark:text-slate-400">
                         {ws?.client_id ? (
-                          <Link href={`/clients/${ws.client_id}/pages`} className="hover:text-indigo-400 transition-colors">
+                          <Link href={`/clients/${ws.client_id}/pages`} className="hover:text-indigo-700 dark:hover:text-indigo-400 transition-colors">
                             {ws.clients?.name ?? '—'}
                           </Link>
                         ) : '—'}
@@ -79,7 +79,7 @@ export default async function AllPagesPage() {
                         {ws?.client_id && (
                           <Link
                             href={`/clients/${ws.client_id}/tests/${test.id}`}
-                            className="text-indigo-400 hover:text-indigo-300 text-xs"
+                            className="text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 text-xs"
                           >
                             View →
                           </Link>
