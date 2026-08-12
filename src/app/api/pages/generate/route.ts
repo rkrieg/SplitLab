@@ -14,7 +14,13 @@ import {
   classifyPageShapeIntent,
   stripUnpromptedSocialProof,
 } from '@/lib/ai-brand-assets';
-import { userAskedForSocialProof } from '@/lib/ai-follow-up-helpers';
+import {
+  userAskedForSocialProof,
+  isDesignReferenceAsk,
+  extractDesignReferenceCopy,
+  looksLikeMultiIntent,
+} from '@/lib/ai-follow-up-helpers';
+import type { AIContent, AIContentBlock, AIMessage } from '@/lib/ai-client';
 
 const SECTION_TYPES_BLOCK = SECTION_VOCABULARY
   .map(s => `- ${s.schemaExample}\n  Use when: ${s.whenToUse}`)
@@ -37,6 +43,12 @@ Ask questions ONLY if the prompt is missing ALL of: a goal, specific sections, o
 If the user says "surprise me", "just build it", "you decide", or "feel free" — generate immediately. Never ask again on those.
 If you already asked clarifying questions in a prior turn and the user answered (even vaguely or with "you decide"), BUILD — do not ask another round.
 You may ask more than one round only when still genuinely blocked (e.g. no business at all AND no goal). Prefer building with reasonable defaults over interrogation. Maximum 3 questions per round.
+
+## Multi-part first prompts (mandatory)
+If the user lists MULTIPLE requirements in one message (numbered/bulleted list, "also", "and then", several section asks), satisfy ALL of them in a single schema. Do not drop secondary asks. Prefer building over asking questions when the brief already lists concrete requirements — clarifying rounds must not erase earlier asks.
+
+## Design / screenshot references
+When the user attaches a screenshot/design image and asks to match look/copy (footer, nav, hero, "like this"), read the image(s) and put the visible copy into the matching schema fields (especially footer/nav/hero). Prefer exact visible phrases over invented filler.
 
 ## Schema structure
 {
@@ -128,7 +140,7 @@ export async function POST(request: NextRequest) {
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   try {
-    const { prompt, vertical, conversation_json, workspace_id } = await request.json();
+    const { prompt, vertical, conversation_json, workspace_id, image_urls } = await request.json();
 
     if (!workspace_id || typeof workspace_id !== 'string') {
       return NextResponse.json({ error: 'workspace_id is required' }, { status: 400 });
@@ -216,13 +228,54 @@ export async function POST(request: NextRequest) {
         : `\n\n## Reference site context — MANDATORY\nThe user wants a page that closely replicates: ${urls[0]}\n\n${competitorContext.cssTokens ? `CSS token analysis:\n${competitorContext.cssTokens}\n\n` : ''}${competitorContext.pageContent ? `Reference site HTML (use to extract real copy, nav links, headlines, CTAs, section structure):\n${competitorContext.pageContent}\n\n` : ''}${logoNote}${footerNote}${referenceImagesNote}CRITICAL SCHEMA RULES when a reference site is provided AND the user did not ask for a minimal/custom shape:\n- Read the HTML above and extract the REAL headline text, subheadline, CTA button text, nav links, feature titles, testimonial copy — use the actual words from the site, not invented placeholders\n- Match the SECTION ORDER and TYPES from the reference unless the user explicitly removed sections\n- Replicate the nav link labels exactly as they appear on the reference site\n- Use the reference site's actual CTA button text, not generic "Get Started"\n- ALWAYS use the REAL LOGO ASSET URL above for nav/footer — never a screenshot thumbnail\n- Do NOT invent fake statistics — use real numbers from the reference HTML or omit`
       : '';
 
-    const messages: { role: 'user' | 'assistant'; content: string }[] = [
-      ...history,
-      { role: 'user', content: prompt + competitorNote },
+    const attachedImageUrls = Array.isArray(image_urls)
+      ? (image_urls as unknown[]).filter((u): u is string => typeof u === 'string' && u.trim().length > 0).slice(0, 3)
+      : [];
+    const designAsk =
+      attachedImageUrls.length > 0 &&
+      (isDesignReferenceAsk(prompt) ||
+        /\b(screenshot|design|mockup|reference|like this|match this|footer|nav|hero)\b/i.test(prompt));
+
+    let designCopyLines: string[] = [];
+    if (designAsk) {
+      designCopyLines = await extractDesignReferenceCopy({
+        imageUrls: attachedImageUrls,
+        prompt,
+      });
+      console.log('[pages/generate] design-ref OCR', { lines: designCopyLines.length, designAsk });
+    }
+
+    const multiNote = looksLikeMultiIntent(prompt)
+      ? `\n\nMULTI-PART REQUEST: Cover EVERY distinct ask in this prompt in one schema (all listed sections, copy, and constraints). Do not ask clarifying questions just to defer secondary asks — build now.\n`
+      : '';
+
+    const designNote =
+      designCopyLines.length > 0
+        ? `\n\n## REQUIRED copy from attached design screenshot (use verbatim in matching sections)\n${designCopyLines.map((l, i) => `${i + 1}. ${l}`).join('\n')}\nPut these into footer/nav/hero (or the section the user named). Do not invent substitute legal/contact lines when these are present.\n`
+        : attachedImageUrls.length > 0
+          ? `\n\nThe user attached ${attachedImageUrls.length} image(s) as design/content reference — read them and reflect visible layout/copy in the schema.\n`
+          : '';
+
+    const finalUserText = prompt + competitorNote + multiNote + designNote;
+
+    const historyMessages: AIMessage[] = history.map((m) => ({
+      role: m.role,
+      content: m.content,
+    }));
+
+    const lastUserContent: AIContent =
+      attachedImageUrls.length > 0
+        ? [
+            ...attachedImageUrls.map((url): AIContentBlock => ({ type: 'image', url })),
+            { type: 'text', text: finalUserText },
+          ]
+        : finalUserText;
+
+    const messages: AIMessage[] = [
+      ...historyMessages,
+      { role: 'user', content: lastUserContent },
     ];
 
-    // Screenshot is NOT passed here — schema generation doesn't need vision. It is returned
-    // to the client and forwarded to /build where Claude uses it as a visual reference.
     let text: string;
     try {
       text = await askAI({ system: systemPrompt, messages, maxTokens: 128000, label: 'generate' });
@@ -297,6 +350,7 @@ export async function POST(request: NextRequest) {
         ? { competitor_footer_contact: competitorContext.footerContact }
         : {}),
       ...(minimalOrCustom ? { user_shape_intent: 'minimal_or_custom' } : {}),
+      ...(designCopyLines.length > 0 ? { design_copy_lines: designCopyLines } : {}),
     });
   } catch (err) {
     console.error('[pages/generate]', err);

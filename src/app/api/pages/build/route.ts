@@ -16,6 +16,12 @@ import {
   type FooterContact,
 } from '@/lib/ai-brand-assets';
 import { runPostUploadNavLogoQa } from '@/lib/ai-visual-qa';
+import {
+  extractDesignReferenceCopy,
+  isDesignReferenceAsk,
+  inferDesignMatchSectionNames,
+} from '@/lib/ai-follow-up-helpers';
+import { forceAppendMissingDesignCopy } from '@/lib/ai-content-placement';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 800;
@@ -52,7 +58,8 @@ export async function POST(request: NextRequest) {
     competitor_page_content: unknown,
     competitor_logo_url: unknown,
     competitor_logo_svg: unknown,
-    competitor_footer_contact: unknown;
+    competitor_footer_contact: unknown,
+    design_copy_lines: unknown;
 
   try {
     ({
@@ -67,6 +74,7 @@ export async function POST(request: NextRequest) {
       competitor_logo_url,
       competitor_logo_svg,
       competitor_footer_contact,
+      design_copy_lines,
     } = await request.json());
   } catch {
     return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
@@ -150,6 +158,27 @@ export async function POST(request: NextRequest) {
       if (request.signal.aborted) { closeSSE(controller); return; }
 
       const hasImages = Array.isArray(image_urls) && (image_urls as string[]).length > 0;
+      const promptText = typeof user_prompt === 'string' ? user_prompt : '';
+      let designCopyLines = Array.isArray(design_copy_lines)
+        ? (design_copy_lines as unknown[])
+            .filter((l): l is string => typeof l === 'string' && l.trim().length >= 6)
+            .map((l) => l.replace(/\s+/g, ' ').trim())
+            .slice(0, 12)
+        : [];
+
+      if (
+        designCopyLines.length === 0 &&
+        hasImages &&
+        (isDesignReferenceAsk(promptText) ||
+          /\b(screenshot|design|mockup|reference|like this|match this|footer|nav|hero)\b/i.test(promptText))
+      ) {
+        sendSSE(controller, { type: 'status', message: 'Reading design screenshot…' });
+        designCopyLines = await extractDesignReferenceCopy({
+          imageUrls: (image_urls as string[]).slice(0, 3),
+          prompt: promptText,
+        });
+        console.log('[pages/build] design-ref OCR', { lines: designCopyLines.length });
+      }
 
       sendSSE(controller, { type: 'status', message: 'Building HTML...' });
 
@@ -161,8 +190,9 @@ export async function POST(request: NextRequest) {
           competitorCssTokens: typeof competitor_css_tokens === 'string' ? competitor_css_tokens : undefined,
           competitorPageContent: typeof competitor_page_content === 'string' ? competitor_page_content : undefined,
           realLogoUrl: logoUrl ?? undefined,
-          userPrompt: typeof user_prompt === 'string' ? user_prompt : undefined,
+          userPrompt: promptText || undefined,
           imageUrls: hasImages ? (image_urls as string[]) : [],
+          designReferenceCopy: designCopyLines,
           callerLabel: 'build',
           onChunk: (chunk) => {
             statusBuffer += chunk;
@@ -180,6 +210,26 @@ export async function POST(request: NextRequest) {
         sendSSE(controller, { type: 'error', message: 'AI provider returned invalid HTML' });
         closeSSE(controller);
         return;
+      }
+
+      // Soft prove-it: push missing OCR lines into named sections (~90% text feel, not pixel CSS).
+      if (designCopyLines.length > 0) {
+        const slNames = Array.from(html.matchAll(/<!--\s*SL:([a-z0-9_-]+)\s*-->/gi)).map((m) => m[1]);
+        let targets = inferDesignMatchSectionNames(promptText, slNames);
+        if (targets.length === 0) {
+          targets = slNames.filter((n) => /footer/i.test(n));
+          if (targets.length === 0 && /<footer\b/i.test(html)) targets = ['footer'];
+          if (targets.length === 0) {
+            targets = slNames.filter((n) => /^(nav|header|hero)/i.test(n)).slice(0, 2);
+          }
+        }
+        if (targets.length > 0) {
+          html = forceAppendMissingDesignCopy(html, targets[0], designCopyLines);
+          console.log('[pages/build] design-copy force place', {
+            target: targets[0],
+            lines: designCopyLines.length,
+          });
+        }
       }
 
       if (logoUrl || logoSvg) {

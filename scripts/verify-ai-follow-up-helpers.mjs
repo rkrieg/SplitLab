@@ -685,6 +685,19 @@ const placement = readFileSync(join(__dirname, '../src/lib/ai-content-placement.
 assert('placement detectContentReuseIntent', placement.includes('export function detectContentReuseIntent'));
 assert('placement forcePlaceTextInSection', placement.includes('export function forcePlaceTextInSection'));
 assert('placement inferTargetSectionNames', placement.includes('export function inferTargetSectionNames'));
+assert('placement forceAppendMissingDesignCopy', placement.includes('export function forceAppendMissingDesignCopy'));
+
+// Create-path parity: screenshot OCR + multi-ask (must stay wired)
+assert('generate accepts image_urls', gen.includes('image_urls'));
+assert('generate design OCR', gen.includes('extractDesignReferenceCopy'));
+assert('generate multi-part prompts', gen.includes('Multi-part first prompts'));
+assert('generate looksLikeMultiIntent', gen.includes('looksLikeMultiIntent'));
+assert('generate returns design_copy_lines', gen.includes('design_copy_lines'));
+assert('generate vision images on schema', gen.includes("type: 'image'") || gen.includes('type: "image"'));
+assert('build accepts design_copy_lines', build.includes('design_copy_lines'));
+assert('build design OCR fallback', build.includes('Reading design screenshot'));
+assert('build forceAppendMissingDesignCopy', build.includes('forceAppendMissingDesignCopy'));
+
 assert('brand materializeLogoUrl', brand.includes('export async function materializeLogoUrl'));
 assert('brand classifyPageShapeIntent', brand.includes('export async function classifyPageShapeIntent'));
 assert('brand forceEmbed accepts logoSvg', brand.includes('logoSvg: string | null'));
@@ -697,12 +710,16 @@ const client = readFileSync(
 assert('client competitorLogoSvg state', client.includes('competitorLogoSvg'));
 assert('client passes competitor_logo_svg', client.includes('competitor_logo_svg'));
 assert('client partial toast path', client.includes('Partly done (not fully finished)'));
+assert('client uploads before generate', client.includes('upload-chat-image') && client.includes('createAttachUrlsRef'));
+assert('client passes design_copy_lines to build', client.includes('design_copy_lines'));
+assert('client passes image_urls to generate', client.includes('image_urls: createImageUrls'));
 
 const pageBuilder = readFileSync(join(__dirname, '../src/lib/ai-page-builder.ts'), 'utf8');
 assert('builder minimal addendum', pageBuilder.includes('COMPETITOR_MINIMAL_ADDENDUM'));
 assert('builder realLogoUrl option', pageBuilder.includes('realLogoUrl'));
 assert('builder minimal taste hierarchy', pageBuilder.includes('Taste: one clear H1 hierarchy'));
 assert('builder no invent stats in HTML', pageBuilder.includes('Do NOT invent fake statistics'));
+assert('builder designReferenceCopy option', pageBuilder.includes('designReferenceCopy'));
 
 const visualQa = readFileSync(join(__dirname, '../src/lib/ai-visual-qa.ts'), 'utf8');
 assert('visual-qa module shouldRun', visualQa.includes('export function shouldRunNavLogoVisualQa'));

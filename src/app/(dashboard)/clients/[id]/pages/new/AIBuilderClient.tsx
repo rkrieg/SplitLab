@@ -281,6 +281,9 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   const [publishedUrl, setPublishedUrl] = useState<string | null>(null);
   const [urlCopied, setUrlCopied] = useState(false);
   const [publishConfirmOpen, setPublishConfirmOpen] = useState(false);
+  /** Survives generate → questions → generate so create screenshots aren't dropped. */
+  const createAttachUrlsRef = useRef<string[]>([]);
+  const createDesignCopyRef = useRef<string[]>([]);
 
   const [pendingImageField, setPendingImageField] = useState<string | null>(null);
   const [uploadingImage, setUploadingImage] = useState(false);
@@ -802,10 +805,54 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
 
   async function runGenerate(userPrompt: string, history: { role: string; content: string; image_urls?: string[] }[]) {
     setPhase('generating');
+
+    // Upload create-time attachments before schema gen so generate/build both see them
+    // (same screenshot reader path as follow-up design refs).
+    let createImageUrls: string[] = [...createAttachUrlsRef.current];
+    if (chatImages.length > 0 && pageId) {
+      const attachedImages = chatImages;
+      setChatImages([]);
+      try {
+        const uploaded = await Promise.all(
+          attachedImages.map(async ({ file }) => {
+            const fd = new FormData();
+            fd.append('file', file);
+            const r = await fetch(`/api/pages/${pageId}/upload-chat-image`, { method: 'POST', body: fd });
+            if (!r.ok) { const err = await r.json(); throw new Error(err.error || 'Image upload failed'); }
+            const { url } = await r.json();
+            return url as string;
+          })
+        );
+        createImageUrls = [...createImageUrls, ...uploaded];
+        createAttachUrlsRef.current = createImageUrls;
+        attachedImages.forEach(img => URL.revokeObjectURL(img.preview));
+        setMessages(prev => {
+          const updated = [...prev];
+          for (let i = updated.length - 1; i >= 0; i--) {
+            if (updated[i].role === 'user') {
+              updated[i] = { ...updated[i], image_urls: createImageUrls };
+              break;
+            }
+          }
+          return updated;
+        });
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Image upload failed');
+        setPhase(history.length > 0 ? 'questions' : 'prompt');
+        return;
+      }
+    }
+
     const res = await fetch('/api/pages/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt: userPrompt, vertical, conversation_json: history, workspace_id: workspaceId }),
+      body: JSON.stringify({
+        prompt: userPrompt,
+        vertical,
+        conversation_json: history,
+        workspace_id: workspaceId,
+        ...(createImageUrls.length > 0 ? { image_urls: createImageUrls } : {}),
+      }),
     });
     if (!res.ok) {
       const err = await res.json();
@@ -831,6 +878,10 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     const freshCompetitorLogoUrl = (data.competitor_logo_url as string) ?? null;
     const freshCompetitorLogoSvg = (data.competitor_logo_svg as string) ?? null;
     const freshCompetitorFooter = (data.competitor_footer_contact as Record<string, string>) ?? null;
+    const freshDesignCopyLines = Array.isArray(data.design_copy_lines)
+      ? (data.design_copy_lines as string[])
+      : createDesignCopyRef.current;
+    if (freshDesignCopyLines.length > 0) createDesignCopyRef.current = freshDesignCopyLines;
 
     if (data.type === 'questions') {
       setQuestions(data.questions);
@@ -842,7 +893,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     addMessage({ role: 'assistant', content: `Got it! Building your ${VERTICAL_LABELS[vertical]} page now…` });
     const updatedHistory = [
       ...history,
-      { role: 'user', content: userPrompt },
+      { role: 'user', content: userPrompt, ...(createImageUrls.length > 0 ? { image_urls: createImageUrls } : {}) },
       { role: 'assistant', content: JSON.stringify(data.schema) },
     ];
     setConversationJson(updatedHistory);
@@ -855,7 +906,11 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       freshCompetitorLogoUrl,
       freshCompetitorFooter,
       freshCompetitorLogoSvg,
+      createImageUrls,
+      freshDesignCopyLines,
     );
+    createAttachUrlsRef.current = [];
+    createDesignCopyRef.current = [];
   }
 
   async function runBuild(
@@ -867,18 +922,20 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     freshLogoUrl?: string | null,
     freshFooter?: Record<string, string> | null,
     freshLogoSvg?: string | null,
+    preUploadedImageUrls?: string[],
+    designCopyLines?: string[],
   ) {
     if (!pageId) return;
     setPhase('building');
     setBuildEvents([]);
 
-    // Step 1: upload any attached images first
-    let image_urls: string[] = [];
+    // Step 1: upload any remaining attached images (generate may already have uploaded)
+    let image_urls: string[] = Array.isArray(preUploadedImageUrls) ? [...preUploadedImageUrls] : [];
     if (chatImages.length > 0) {
       const attachedImages = chatImages;
       setChatImages([]);
       try {
-        image_urls = await Promise.all(
+        const uploaded = await Promise.all(
           attachedImages.map(async ({ file }) => {
             const fd = new FormData();
             fd.append('file', file);
@@ -888,6 +945,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
             return url as string;
           })
         );
+        image_urls = [...image_urls, ...uploaded];
         attachedImages.forEach(img => URL.revokeObjectURL(img.preview));
         setMessages(prev => {
           const updated = [...prev];
@@ -915,6 +973,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         user_prompt: prompt,
         workspace_id: workspaceId,
         ...(image_urls.length > 0 ? { image_urls } : {}),
+        ...(designCopyLines && designCopyLines.length > 0 ? { design_copy_lines: designCopyLines } : {}),
         ...((freshScreenshots ?? competitorScreenshots)?.length ? { competitor_screenshots: freshScreenshots ?? competitorScreenshots } : {}),
         ...(((freshCssTokens ?? competitorCssTokens)) ? { competitor_css_tokens: freshCssTokens ?? competitorCssTokens } : {}),
         ...(((freshPageContent ?? competitorPageContent)) ? { competitor_page_content: freshPageContent ?? competitorPageContent } : {}),

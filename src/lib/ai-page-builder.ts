@@ -516,6 +516,8 @@ export interface BuildHtmlOptions {
   realLogoUrl?: string;
   userPrompt?: string;
   imageUrls?: string[];
+  /** OCR lines from a design-reference screenshot — must appear in matching sections. */
+  designReferenceCopy?: string[];
   /**
    * Pre-formatted style context string. When provided, skips the design brief
    * step entirely. Callers are responsible for formatting this.
@@ -553,6 +555,7 @@ export async function buildHtmlFromSchema(
     realLogoUrl,
     userPrompt,
     imageUrls = [],
+    designReferenceCopy = [],
     styleReferenceNote: callerStyleNote,
   } = options;
 
@@ -594,6 +597,10 @@ export async function buildHtmlFromSchema(
     typeof userPrompt === 'string' && userPrompt.trim()
       ? `\n\nOriginal user request: ${userPrompt}`
       : '';
+  const designCopyNote =
+    designReferenceCopy.length > 0
+      ? `\n\n## REQUIRED design-reference copy (visible in attached screenshot — include verbatim in matching sections, especially footer/nav/hero)\n${designReferenceCopy.map((l, i) => `${i + 1}. ${l}`).join('\n')}\nAim for ~90% text match feel (like Claude Extension), not pixel-perfect CSS.\n`
+      : '';
   const competitorTokenNote =
     typeof competitorCssTokens === 'string' && competitorCssTokens.trim()
       ? `## Competitor CSS token block — use these EXACT values\n${competitorCssTokens}\n\n`
@@ -610,7 +617,7 @@ export async function buildHtmlFromSchema(
 
   const textContent =
     `${competitorTokenNote}${competitorContentNote}${realLogoNote}Build the landing page for this schema:\n\n` +
-    `${JSON.stringify(schema, null, 2)}${imageList}${styleReferenceNote}${promptNote}`;
+    `${JSON.stringify(schema, null, 2)}${imageList}${styleReferenceNote}${promptNote}${designCopyNote}`;
 
   const userContent: AIContent = [
     ...competitorScreenshots.map(data => ({ type: 'image_base64' as const, data, mediaType: 'image/jpeg' })),

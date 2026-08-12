@@ -240,6 +240,35 @@ export function forcePlaceTextIntoSections(
   return out;
 }
 
+/**
+ * Append missing design-OCR lines as paragraphs inside a section (create path).
+ * Does not overwrite existing headlines — only adds lines still absent from HTML.
+ */
+export function forceAppendMissingDesignCopy(
+  html: string,
+  sectionName: string,
+  lines: string[],
+): string {
+  const missing = lines
+    .map((l) => l.replace(/\s+/g, ' ').trim())
+    .filter((l) => l.length >= 6 && !html.includes(l));
+  if (missing.length === 0) return html;
+  const sl = getSlSectionInner(html, sectionName);
+  if (!sl) return html;
+  const block = missing
+    .map(
+      (l) =>
+        `<p data-field="text" data-sl-design-copy="1" style="margin:0 0 8px;">${escapeHtml(l)}</p>`,
+    )
+    .join('');
+  const inner = sl.inner + block;
+  return (
+    html.slice(0, sl.index) +
+    `<!-- SL:${sectionName} -->${inner}<!-- /SL:${sectionName} -->` +
+    html.slice(sl.index + sl.full.length)
+  );
+}
+
 export function sectionHasText(html: string, sectionName: string, text: string): boolean {
   const sl = getSlSectionInner(html, sectionName);
   if (!sl) return false;
