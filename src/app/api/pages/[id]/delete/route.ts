@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { resolveWorkspaceRole } from '@/lib/workspace-auth';
+import { softDeletePage } from '@/lib/services/pages';
 
 export async function POST(
   _req: NextRequest,
@@ -24,19 +25,10 @@ export async function POST(
   const wsRole = await resolveWorkspaceRole(page.workspace_id, session.user.id, session.user.role);
   if (!wsRole || wsRole === 'viewer') return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
-  const { error } = await db
-    .from('pages')
-    .update({
-      deleted_at: new Date().toISOString(),
-      is_published: false,
-      published_url: null,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', params.id);
+  const result = await softDeletePage(params.id);
+  if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.status });
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-
-  if (page.slug) revalidatePath(`/pages/${page.slug}`);
+  if (result.data.slug) revalidatePath(`/pages/${result.data.slug}`);
 
   return NextResponse.json({ success: true });
 }
