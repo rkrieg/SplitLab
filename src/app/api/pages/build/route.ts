@@ -14,6 +14,7 @@ import {
   materializeLogoUrl,
   type FooterContact,
 } from '@/lib/ai-brand-assets';
+import { runPostUploadNavLogoQa } from '@/lib/ai-visual-qa';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 800;
@@ -198,7 +199,36 @@ export async function POST(request: NextRequest) {
       html = html.replace(/<!--\s*STATUS:[^>]*-->/g, '');
 
       const storagePath = `pages/${pageSlug}.html`;
-      const htmlUrl = await uploadHtml(storagePath, html);
+      let htmlUrl = await uploadHtml(storagePath, html);
+
+      // Live nav/logo QA: ApiFlash top-of-page of OUR result vs reference.
+      // Fail-closed — screenshot failure → HTML fallback or skip; never blocks Done.
+      const qaScreenshots = Array.isArray(competitor_screenshots)
+        ? (competitor_screenshots as string[]).slice(0, 2)
+        : [];
+      const qaImageUrls = hasImages ? (image_urls as string[]).slice(0, 2) : [];
+      if (qaScreenshots.length > 0 || qaImageUrls.length > 0 || logoUrl || logoSvg) {
+        sendSSE(controller, { type: 'status', message: 'Checking logo / nav…' });
+        const qa = await runPostUploadNavLogoQa({
+          html,
+          publicHtmlUrl: htmlUrl,
+          prompt: typeof user_prompt === 'string' ? user_prompt : null,
+          expectedLogoUrl: logoUrl,
+          imageUrls: qaImageUrls,
+          competitorScreenshots: qaScreenshots,
+          logoIntent: !!(logoUrl || logoSvg),
+          label: 'build:visual-qa',
+        });
+        console.log('[pages/build] visual-qa', {
+          mode: qa.mode,
+          appliedFix: qa.appliedFix,
+          issues: qa.issues,
+        });
+        if (qa.appliedFix) {
+          html = qa.html;
+          htmlUrl = await uploadHtml(storagePath, html);
+        }
+      }
 
       sendSSE(controller, { type: 'done', html_url: htmlUrl, slug: pageSlug, schema_json: enrichedSchema });
       closeSSE(controller);

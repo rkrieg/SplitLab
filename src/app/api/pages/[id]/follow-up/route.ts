@@ -31,6 +31,7 @@ import {
   forceEmbedFooterContactInHtml,
   materializeLogoUrl,
 } from '@/lib/ai-brand-assets';
+import { runNavLogoVisualQaOnce, runPostUploadNavLogoQa } from '@/lib/ai-visual-qa';
 
 export const dynamic = 'force-dynamic';
 // Large full-page rewrites can run several minutes; raised well past the old
@@ -1278,7 +1279,7 @@ export async function POST(
   // token ceiling (seen in practice: a 2.2MB page → 2M+ tokens, rejected
   // outright). Swap real image bytes for short placeholders once here, before
   // any AI call or section/string splicing happens, and restore them only
-  // once at the very end (see `finalHtmlReal`/`finalSchemaJsonReal` below) —
+  // once at the very end (see `finalHtmlPersisted`/`finalSchemaJsonReal` below) —
   // every intermediate operation (splicing, matching, prompting) works
   // identically on placeholders since none of it inspects image byte content.
   const DATA_URI_SPLIT = ' __SL_HTML_SCHEMA_BOUNDARY__ ';
@@ -1385,6 +1386,8 @@ export async function POST(
       let routingImageUrls = effectiveImageUrls;
       let embedImageUrls = effectiveImageUrls;
       let imageRolesClassified = false;
+      /** Set when a logo-swap applied a real hosted URL — used by visual QA. */
+      let logoSwapAppliedUrl: string | null = null;
 
       // ── Scoped-patch attempt (input-side token reduction) ─────────────────
       // Only attempted when there's no competitor URL (slSections/quoteMatchSection
@@ -1466,6 +1469,7 @@ export async function POST(
             if (patchResult.html && patchResult.html.includes(realLogoUrl)) {
               finalHtml = applyPatch(html, [{ name: logoTargetName, html: patchResult.html }]);
               scopedApplied = true;
+              logoSwapAppliedUrl = realLogoUrl;
               console.log('[pages/follow-up] real logo swap applied', { section: logoTargetName, realLogoUrl });
             } else {
               // Deterministic fallback
@@ -1477,6 +1481,7 @@ export async function POST(
               if (forced.includes(realLogoUrl)) {
                 finalHtml = forced;
                 scopedApplied = true;
+                logoSwapAppliedUrl = realLogoUrl;
               } else {
                 console.error('[pages/follow-up] real logo swap: scoped patch failed to embed the fetched logo', {
                   section: logoTargetName,
@@ -1491,6 +1496,28 @@ export async function POST(
             scopedApplied = finalHtml !== html;
             if (!scopedApplied) scopedFailureReason = 'logo_swap_svg_embed_failed';
             else console.log('[pages/follow-up] real logo SVG embedded inline', { section: logoTargetName });
+          }
+        }
+
+        // Once-only nav/logo visual QA after a successful logo swap when the
+        // user attached reference/bug screenshots. Fail-closed — never undoes
+        // a good swap; never blocks Done.
+        if (scopedApplied && isLogoSwapAttempt && hasUserImages) {
+          sendSSE(controller, { type: 'status', message: 'Checking logo / nav…' });
+          const qa = await runNavLogoVisualQaOnce({
+            html: finalHtml,
+            prompt,
+            expectedLogoUrl: logoSwapAppliedUrl,
+            imageUrls: effectiveImageUrls,
+            logoIntent: true,
+            usage: usageCtx,
+            label: 'follow-up:visual-qa',
+          });
+          if (qa.appliedFix) {
+            finalHtml = qa.html;
+            console.log('[pages/follow-up] visual-qa applied nav/logo fix', { issues: qa.issues });
+          } else if (qa.ran) {
+            console.log('[pages/follow-up] visual-qa ok / no fix', { issues: qa.issues });
           }
         }
 
@@ -2427,6 +2454,7 @@ export async function POST(
           if (competitorContext?.footerContact) {
             finalHtml = forceEmbedFooterContactInHtml(finalHtml, competitorContext.footerContact);
           }
+          // Live pixel QA runs after upload (see below) — avoids double work here.
         } catch (err) {
           if (isPromptTooLongError(err)) {
             console.error('[pages/follow-up] structural rebuild exceeded model context limit', {
@@ -2501,7 +2529,7 @@ export async function POST(
       // Every AI call and string splice above only ever saw placeholders — swap
       // real image bytes back in now, exactly once, for everything that gets
       // persisted or sent back to the client from this point on.
-      const finalHtmlReal = restoreDataUris(finalHtml, dataUriMap);
+      let finalHtmlPersisted = restoreDataUris(finalHtml, dataUriMap);
       const finalSchemaJsonReal = finalSchemaJson
         ? (restoreDataUrisInValue(finalSchemaJson, dataUriMap) as Record<string, unknown>)
         : undefined;
@@ -2512,7 +2540,41 @@ export async function POST(
       let htmlUrl: string = page.html_url ?? '';
       if (!isVariant) {
         const storagePath = fileNameFromUrl(page.html_url);
-        htmlUrl = await uploadHtml(storagePath, finalHtmlReal);
+        htmlUrl = await uploadHtml(storagePath, finalHtmlPersisted);
+
+        // Live nav/logo QA after upload when we have reference shots + logo intent.
+        // Fail-closed: screenshot failure → HTML fallback or skip; never blocks Done.
+        const liveQaShots = competitorContext?.screenshots?.slice(0, 2) ?? [];
+        const liveLogo =
+          typeof finalSchemaJsonReal?.brand_logo_url === 'string'
+            ? (finalSchemaJsonReal.brand_logo_url as string)
+            : competitorContext?.logoUrl ?? null;
+        if (
+          (liveQaShots.length > 0 || hasUserImages) &&
+          (liveLogo || competitorContext?.logoSvgMarkup || /\blogo\b/i.test(prompt))
+        ) {
+          sendSSE(controller, { type: 'status', message: 'Checking logo / nav…' });
+          const qa = await runPostUploadNavLogoQa({
+            html: finalHtmlPersisted,
+            publicHtmlUrl: htmlUrl,
+            prompt,
+            expectedLogoUrl: liveLogo,
+            imageUrls: hasUserImages ? effectiveImageUrls : [],
+            competitorScreenshots: liveQaShots,
+            logoIntent: true,
+            usage: usageCtx,
+            label: 'follow-up:live-visual-qa',
+          });
+          console.log('[pages/follow-up] live visual-qa', {
+            mode: qa.mode,
+            appliedFix: qa.appliedFix,
+            issues: qa.issues,
+          });
+          if (qa.appliedFix) {
+            finalHtmlPersisted = qa.html;
+            htmlUrl = await uploadHtml(storagePath, finalHtmlPersisted);
+          }
+        }
       }
 
       // Save conversation
@@ -2534,10 +2596,10 @@ export async function POST(
         updated_at: new Date().toISOString(),
       };
       if (isVariant) {
-        updatePayload.draft_html_content = finalHtmlReal;
+        updatePayload.draft_html_content = finalHtmlPersisted;
       } else {
         updatePayload.html_url = htmlUrl;
-        updatePayload.html_content = finalHtmlReal.length < 500_000 ? finalHtmlReal : null;
+        updatePayload.html_content = finalHtmlPersisted.length < 500_000 ? finalHtmlPersisted : null;
         // HTML was rewritten by the AI — old UTM selectors can't be trusted, so
         // clear mappings (and rules below), same as manual HTML edits do
         updatePayload.field_selectors_json = null;

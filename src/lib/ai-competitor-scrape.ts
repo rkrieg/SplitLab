@@ -415,3 +415,46 @@ export async function fetchLogoUrl(url: string): Promise<string | null> {
   const { logoUrl } = await fetchLogoAssets(url);
   return logoUrl;
 }
+
+/**
+ * One viewport screenshot of the TOP of a public page URL (nav/logo band).
+ * Used for post-build live visual QA. Fail-closed: returns null on any failure
+ * (missing key, timeout, empty buffer) — callers must skip QA and still Done.
+ */
+export async function capturePageTopScreenshot(pageUrl: string): Promise<string | null> {
+  const apiKey = process.env.API_FLASH_KEY?.trim();
+  if (!apiKey || !pageUrl || !/^https?:\/\//i.test(pageUrl)) return null;
+
+  try {
+    const buf = await Promise.race([
+      apiFlashCapture(
+        new URLSearchParams({
+          access_key: apiKey,
+          url: pageUrl,
+          format: 'jpeg',
+          quality: '80',
+          width: '1280',
+          height: '900',
+          response_type: 'json',
+          // Bypass ApiFlash cache — page was just uploaded
+          fresh: 'true',
+        }),
+      ),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('25s timeout')), 25_000),
+      ),
+    ]);
+    if (!buf || buf.length < 1500) {
+      console.warn('[capturePageTopScreenshot] empty/too-small buffer — skip');
+      return null;
+    }
+    console.log('[capturePageTopScreenshot] ok', {
+      url: pageUrl.slice(0, 120),
+      bytes: buf.length,
+    });
+    return buf.toString('base64');
+  } catch (err) {
+    console.error('[capturePageTopScreenshot] failed — skip live QA', err);
+    return null;
+  }
+}

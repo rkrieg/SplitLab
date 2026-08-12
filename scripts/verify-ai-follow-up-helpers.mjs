@@ -426,6 +426,38 @@ assert('builder realLogoUrl option', pageBuilder.includes('realLogoUrl'));
 assert('builder minimal taste hierarchy', pageBuilder.includes('Taste: one clear H1 hierarchy'));
 assert('builder no invent stats in HTML', pageBuilder.includes('Do NOT invent fake statistics'));
 
+const visualQa = readFileSync(join(__dirname, '../src/lib/ai-visual-qa.ts'), 'utf8');
+assert('visual-qa module shouldRun', visualQa.includes('export function shouldRunNavLogoVisualQa'));
+assert('visual-qa once helper', visualQa.includes('export async function runNavLogoVisualQaOnce'));
+assert('visual-qa nav/logo only scope', visualQa.includes('ONLY the navigation/logo'));
+assert('visual-qa fail-closed parse', visualQa.includes('treating as ok (fail-closed)'));
+assert('visual-qa live post-upload', visualQa.includes('export async function runPostUploadNavLogoQa'));
+assert('visual-qa result screenshot support', visualQa.includes('resultScreenshot'));
+assert('build wires visual-qa', build.includes('runPostUploadNavLogoQa'));
+assert('follow-up wires visual-qa', follow.includes('runPostUploadNavLogoQa') || follow.includes('runNavLogoVisualQaOnce'));
+assert('scrape capturePageTopScreenshot', scrape.includes('export async function capturePageTopScreenshot'));
+
+function shouldRunNavLogoVisualQa(opts) {
+  const hasExternalRef = (opts.imageUrls?.length || 0) > 0 || (opts.competitorScreenshots?.length || 0) > 0;
+  const hasResult = !!opts.resultScreenshot;
+  if (!hasExternalRef && !hasResult) return false;
+  if (opts.logoIntent) return true;
+  if (opts.expectedLogoUrl) return true;
+  return false;
+}
+assert(
+  'visual-qa gate: no images → skip',
+  !shouldRunNavLogoVisualQa({ logoIntent: true, imageUrls: [], competitorScreenshots: [] }),
+);
+assert(
+  'visual-qa gate: screenshots + logo → run',
+  shouldRunNavLogoVisualQa({ logoIntent: true, competitorScreenshots: ['abc'] }),
+);
+assert(
+  'visual-qa gate: live result + logo → run',
+  shouldRunNavLogoVisualQa({ logoIntent: true, resultScreenshot: 'abc', expectedLogoUrl: 'https://x/logo.svg' }),
+);
+
 if (failed > 0) {
   console.error(`\n${failed} assertion(s) failed`);
   process.exit(1);
