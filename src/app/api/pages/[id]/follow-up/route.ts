@@ -1200,7 +1200,9 @@ export async function POST(
 
   // Soft-cap gate (admins bypass). Runs before the SSE stream opens, so a
   // blocked request returns clean JSON the editor can turn into an upsell.
-  if (session.user.role !== 'admin') {
+  // TEMP TEST (renny): also enforce for this one admin id so the cap can be
+  // verified end-to-end on staging. REVERT to `session.user.role !== 'admin'`.
+  if (session.user.role !== 'admin' || session.user.id === 'ec6fdf83-10b1-458e-a7c4-a8708c19a74f') {
     const gate = await checkAiAllowance(aiOwnerId, aiOwnerPlan);
     if (!gate.allowed) {
       return NextResponse.json(

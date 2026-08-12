@@ -347,10 +347,14 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   const imageInputRef = useRef<HTMLInputElement>(null);
 
   // Restore state from pre-created page
-  // Editing wipes UTM mappings/rules server-side — warn once when edit mode starts,
-  // in a toast the user can dismiss (stays up until they do)
+  // Editing wipes UTM mappings/rules server-side — warn ONCE the first time edit
+  // mode starts this session, not on every edit. (phase cycles editing→…→editing
+  // per edit, which used to re-fire this toast each time.) The Save confirm modal
+  // repeats the UTM-clear warning at replace time, so once here is enough.
+  const utmWarnedRef = useRef(false);
   useEffect(() => {
-    if (phase !== 'editing') return;
+    if (phase !== 'editing' || utmWarnedRef.current) return;
+    utmWarnedRef.current = true;
     toast(
       () => (
         <span className="text-xs">
@@ -374,9 +378,12 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         style: { background: 'rgb(254 243 199)', color: 'rgb(146 64 14)', maxWidth: '420px' },
       }
     );
-    return () => toast.dismiss('utm-wipe-warning');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase]);
+
+  // Dismiss the UTM warning only when leaving the builder — not on every phase
+  // change — so it stays put once (until the user closes it) instead of flashing.
+  useEffect(() => () => toast.dismiss('utm-wipe-warning'), []);
 
   useEffect(() => {
     if (!initialPage) return;
