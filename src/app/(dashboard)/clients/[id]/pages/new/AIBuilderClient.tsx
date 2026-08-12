@@ -309,6 +309,42 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   const [saveVariantName, setSaveVariantName] = useState('');
   const [savingAsVariant, setSavingAsVariant] = useState(false);
 
+  // Out-of-credits upsell modal — opened when an edit is soft-capped (402 softCap).
+  // Lets the user turn on metered overage (auto-bill) with a spend cap + reminder
+  // threshold, then retries the blocked edit. Wired to PATCH /api/ai-usage.
+  const [outOfCredits, setOutOfCredits] = useState<{ creditsUsed: number; creditsIncluded: number; retry: () => void } | null>(null);
+  const [ocCapDollars, setOcCapDollars] = useState('50');
+  const [ocNotifyDollars, setOcNotifyDollars] = useState('50');
+  const [ocAutoBill, setOcAutoBill] = useState(false);
+  const [ocSaving, setOcSaving] = useState(false);
+
+  async function enableOverageAndRetry() {
+    setOcSaving(true);
+    try {
+      const capCents = Math.max(0, Math.round(Number(ocCapDollars) || 0) * 100);
+      const res = await fetch('/api/ai-usage', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          enabled: true,
+          capCents,
+          // Auto-bill = don't nag mid-way, only pause at the cap. Otherwise warn
+          // at the user's chosen reminder threshold.
+          notifyCents: ocAutoBill ? capCents : Math.max(0, Math.round(Number(ocNotifyDollars) || 0) * 100),
+        }),
+      });
+      if (!res.ok) throw new Error();
+      const retry = outOfCredits?.retry;
+      setOutOfCredits(null);
+      toast.success(`Overage on — you can keep building up to $${(capCents / 100).toFixed(0)}.`);
+      retry?.();
+    } catch {
+      toast.error('Could not update billing settings. Please try again.');
+    } finally {
+      setOcSaving(false);
+    }
+  }
+
   // Chat image attachments (paste / file-picker / drag-and-drop)
   const [chatImages, setChatImages] = useState<{ file: File; preview: string }[]>([]);
   const chatImageInputRef = useRef<HTMLInputElement>(null);
@@ -355,6 +391,13 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   useEffect(() => {
     if (phase !== 'editing' || utmWarnedRef.current) return;
     utmWarnedRef.current = true;
+    // Show it at most once per page — and remember across refreshes — so it stops
+    // nagging on every edit. The Save confirm modal repeats the warning at replace time.
+    const seenKey = `sl-utm-warned-${initialPage?.id ?? 'new'}`;
+    try {
+      if (localStorage.getItem(seenKey)) return;
+      localStorage.setItem(seenKey, '1');
+    } catch { /* ignore storage errors */ }
     toast(
       () => (
         <span className="text-xs">
@@ -1043,8 +1086,13 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
           </span>
         ), { duration: 8000 });
       } else if (err.softCap) {
-        // Out of AI credits / over the overage spend cap — message points to Billing.
-        toast.error(message, { duration: 8000 });
+        // Out of AI credits / over the overage spend cap — open the upsell modal so
+        // they can turn on overage and continue; on confirm we retry this same edit.
+        setOutOfCredits({
+          creditsUsed: err.usage?.creditsUsed ?? 0,
+          creditsIncluded: err.usage?.creditsIncluded ?? 0,
+          retry: () => sendFollowUp(instruction, images, pid, true),
+        });
       } else {
         toast.error(message);
       }
@@ -2126,6 +2174,68 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {outOfCredits && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => !ocSaving && setOutOfCredits(null)}>
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl p-6 w-full max-w-md mx-4 shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-start gap-3 mb-4">
+              <div className="flex-shrink-0 w-10 h-10 rounded-full bg-amber-100 dark:bg-amber-500/15 flex items-center justify-center">
+                <Sparkles size={18} className="text-amber-600 dark:text-amber-400" />
+              </div>
+              <div>
+                <h3 className="text-slate-900 dark:text-slate-100 font-semibold text-base">You&apos;re out of AI credits</h3>
+                <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">
+                  You&apos;ve used {outOfCredits.creditsUsed.toLocaleString()} of {outOfCredits.creditsIncluded.toLocaleString()} credits this month. Keep building by turning on overage — usage beyond your plan is billed at cost&nbsp;+&nbsp;10%, and we pause you at the spend cap you set. No surprise bills.
+                </p>
+              </div>
+            </div>
+
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Continue and bill me up to</label>
+            <select value={ocCapDollars} onChange={(e) => setOcCapDollars(e.target.value)} className="input-base w-full">
+              <option value="50">$50</option>
+              <option value="100">$100</option>
+              <option value="200">$200</option>
+              <option value="500">$500</option>
+            </select>
+
+            <label className="flex items-start gap-2.5 mt-4 cursor-pointer">
+              <input type="checkbox" checked={ocAutoBill} onChange={(e) => setOcAutoBill(e.target.checked)} className="mt-0.5 h-4 w-4 rounded border-slate-300 dark:border-slate-600 text-indigo-600 focus:ring-indigo-500" />
+              <span className="text-sm text-slate-700 dark:text-slate-300">
+                <span className="font-medium">Auto-bill me as I go</span>
+                <span className="block text-xs text-slate-500 dark:text-slate-400">Don&apos;t ask again — keep building and bill me for usage, pausing only at the ${(Number(ocCapDollars) || 0)} cap above.</span>
+              </span>
+            </label>
+
+            {!ocAutoBill && (
+              <div className="mt-4">
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Remind me every</label>
+                <select value={ocNotifyDollars} onChange={(e) => setOcNotifyDollars(e.target.value)} className="input-base w-full">
+                  <option value="25">$25</option>
+                  <option value="50">$50</option>
+                  <option value="100">$100</option>
+                  <option value="200">$200</option>
+                </select>
+              </div>
+            )}
+
+            <div className="flex justify-between items-center gap-2 mt-6">
+              <a href="/billing" className="text-xs text-slate-500 dark:text-slate-400 hover:text-indigo-500 underline">Or upgrade your plan</a>
+              <div className="flex gap-2">
+                <button type="button" onClick={() => setOutOfCredits(null)} disabled={ocSaving} className="btn-secondary text-sm rounded-xl">Not now</button>
+                <button
+                  type="button"
+                  onClick={enableOverageAndRetry}
+                  disabled={ocSaving}
+                  className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 disabled:cursor-not-allowed text-white text-sm px-4 py-2 rounded-xl font-medium transition-colors"
+                >
+                  {ocSaving && <Loader2 size={13} className="animate-spin" />}
+                  Continue building
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
