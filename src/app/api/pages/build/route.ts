@@ -201,14 +201,14 @@ export async function POST(request: NextRequest) {
       const storagePath = `pages/${pageSlug}.html`;
       let htmlUrl = await uploadHtml(storagePath, html);
 
-      // Live nav/logo QA: ApiFlash top-of-page of OUR result vs reference.
+      // Live above-the-fold QA: ApiFlash of OUR result vs reference.
       // Fail-closed — screenshot failure → HTML fallback or skip; never blocks Done.
       const qaScreenshots = Array.isArray(competitor_screenshots)
         ? (competitor_screenshots as string[]).slice(0, 2)
         : [];
       const qaImageUrls = hasImages ? (image_urls as string[]).slice(0, 2) : [];
       if (qaScreenshots.length > 0 || qaImageUrls.length > 0 || logoUrl || logoSvg) {
-        sendSSE(controller, { type: 'status', message: 'Checking logo / nav…' });
+        sendSSE(controller, { type: 'status', message: 'Checking full page look…' });
         const qa = await runPostUploadNavLogoQa({
           html,
           publicHtmlUrl: htmlUrl,

@@ -429,18 +429,23 @@ assert('builder no invent stats in HTML', pageBuilder.includes('Do NOT invent fa
 const visualQa = readFileSync(join(__dirname, '../src/lib/ai-visual-qa.ts'), 'utf8');
 assert('visual-qa module shouldRun', visualQa.includes('export function shouldRunNavLogoVisualQa'));
 assert('visual-qa once helper', visualQa.includes('export async function runNavLogoVisualQaOnce'));
-assert('visual-qa nav/logo only scope', visualQa.includes('ONLY the navigation/logo'));
+assert('visual-qa whole-scroll scope', visualQa.includes('FULL page') || visualQa.includes('whole-scroll') || visualQa.includes('WHOLE-SCROLL'));
+assert('visual-qa max section fixes', visualQa.includes('MAX_SECTION_FIXES'));
+assert('visual-qa listSlSectionNames', visualQa.includes('export function listSlSectionNames'));
 assert('visual-qa fail-closed parse', visualQa.includes('treating as ok (fail-closed)'));
 assert('visual-qa live post-upload', visualQa.includes('export async function runPostUploadNavLogoQa'));
-assert('visual-qa result screenshot support', visualQa.includes('resultScreenshot'));
+assert('visual-qa resultScreenshots', visualQa.includes('resultScreenshots'));
+assert('visual-qa extractHero', visualQa.includes('export function extractHeroSectionHtml'));
 assert('build wires visual-qa', build.includes('runPostUploadNavLogoQa'));
 assert('follow-up wires visual-qa', follow.includes('runPostUploadNavLogoQa') || follow.includes('runNavLogoVisualQaOnce'));
 assert('scrape capturePageTopScreenshot', scrape.includes('export async function capturePageTopScreenshot'));
+assert('scrape capturePageScrollScreenshots', scrape.includes('export async function capturePageScrollScreenshots'));
 
 function shouldRunNavLogoVisualQa(opts) {
   const hasExternalRef = (opts.imageUrls?.length || 0) > 0 || (opts.competitorScreenshots?.length || 0) > 0;
-  const hasResult = !!opts.resultScreenshot;
+  const hasResult = !!opts.resultScreenshot || (opts.resultScreenshots?.length || 0) > 0;
   if (!hasExternalRef && !hasResult) return false;
+  if (hasExternalRef) return true;
   if (opts.logoIntent) return true;
   if (opts.expectedLogoUrl) return true;
   return false;
@@ -450,12 +455,29 @@ assert(
   !shouldRunNavLogoVisualQa({ logoIntent: true, imageUrls: [], competitorScreenshots: [] }),
 );
 assert(
-  'visual-qa gate: screenshots + logo → run',
-  shouldRunNavLogoVisualQa({ logoIntent: true, competitorScreenshots: ['abc'] }),
+  'visual-qa gate: screenshots alone → run',
+  shouldRunNavLogoVisualQa({ competitorScreenshots: ['abc'] }),
 );
 assert(
-  'visual-qa gate: live result + logo → run',
-  shouldRunNavLogoVisualQa({ logoIntent: true, resultScreenshot: 'abc', expectedLogoUrl: 'https://x/logo.svg' }),
+  'visual-qa gate: live chunks + logo → run',
+  shouldRunNavLogoVisualQa({ logoIntent: true, resultScreenshots: ['a', 'b'], expectedLogoUrl: 'https://x/logo.svg' }),
+);
+
+function listSlSectionNames(html) {
+  const names = [];
+  const re = /<!--\s*SL:([a-zA-Z0-9_-]+)\s*-->/gi;
+  let m;
+  while ((m = re.exec(html))) {
+    const n = m[1].toLowerCase();
+    if (!names.includes(n)) names.push(n);
+  }
+  return names;
+}
+assert(
+  'listSlSectionNames finds nav hero footer',
+  listSlSectionNames(
+    '<!-- SL:nav -->a<!-- /SL:nav --><!-- SL:hero -->b<!-- /SL:hero --><!-- SL:footer -->c<!-- /SL:footer -->',
+  ).join(',') === 'nav,hero,footer',
 );
 
 if (failed > 0) {

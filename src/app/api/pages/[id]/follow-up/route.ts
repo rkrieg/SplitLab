@@ -1503,7 +1503,7 @@ export async function POST(
         // user attached reference/bug screenshots. Fail-closed — never undoes
         // a good swap; never blocks Done.
         if (scopedApplied && isLogoSwapAttempt && hasUserImages) {
-          sendSSE(controller, { type: 'status', message: 'Checking logo / nav…' });
+          sendSSE(controller, { type: 'status', message: 'Checking full page look…' });
           const qa = await runNavLogoVisualQaOnce({
             html: finalHtml,
             prompt,
@@ -1515,7 +1515,7 @@ export async function POST(
           });
           if (qa.appliedFix) {
             finalHtml = qa.html;
-            console.log('[pages/follow-up] visual-qa applied nav/logo fix', { issues: qa.issues });
+            console.log('[pages/follow-up] visual-qa applied above-fold fix', { issues: qa.issues });
           } else if (qa.ran) {
             console.log('[pages/follow-up] visual-qa ok / no fix', { issues: qa.issues });
           }
@@ -2550,10 +2550,10 @@ export async function POST(
             ? (finalSchemaJsonReal.brand_logo_url as string)
             : competitorContext?.logoUrl ?? null;
         if (
-          (liveQaShots.length > 0 || hasUserImages) &&
-          (liveLogo || competitorContext?.logoSvgMarkup || /\blogo\b/i.test(prompt))
+          liveQaShots.length > 0 ||
+          hasUserImages
         ) {
-          sendSSE(controller, { type: 'status', message: 'Checking logo / nav…' });
+          sendSSE(controller, { type: 'status', message: 'Checking full page look…' });
           const qa = await runPostUploadNavLogoQa({
             html: finalHtmlPersisted,
             publicHtmlUrl: htmlUrl,
@@ -2561,7 +2561,7 @@ export async function POST(
             expectedLogoUrl: liveLogo,
             imageUrls: hasUserImages ? effectiveImageUrls : [],
             competitorScreenshots: liveQaShots,
-            logoIntent: true,
+            logoIntent: !!(liveLogo || competitorContext?.logoSvgMarkup || /\blogo\b/i.test(prompt)),
             usage: usageCtx,
             label: 'follow-up:live-visual-qa',
           });

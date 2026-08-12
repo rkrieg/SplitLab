@@ -417,44 +417,92 @@ export async function fetchLogoUrl(url: string): Promise<string | null> {
 }
 
 /**
- * One viewport screenshot of the TOP of a public page URL (nav/logo band).
- * Used for post-build live visual QA. Fail-closed: returns null on any failure
- * (missing key, timeout, empty buffer) — callers must skip QA and still Done.
+ * One viewport screenshot of the ABOVE-THE-FOLD of a public page URL.
+ * Fail-closed: returns null on failure.
  */
 export async function capturePageTopScreenshot(pageUrl: string): Promise<string | null> {
-  const apiKey = process.env.API_FLASH_KEY?.trim();
-  if (!apiKey || !pageUrl || !/^https?:\/\//i.test(pageUrl)) return null;
+  const shots = await capturePageScrollScreenshots(pageUrl);
+  return shots[0] ?? null;
+}
 
-  try {
-    const buf = await Promise.race([
-      apiFlashCapture(
-        new URLSearchParams({
-          access_key: apiKey,
-          url: pageUrl,
-          format: 'jpeg',
-          quality: '80',
-          width: '1280',
-          height: '900',
-          response_type: 'json',
-          // Bypass ApiFlash cache — page was just uploaded
-          fresh: 'true',
-        }),
-      ),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('25s timeout')), 25_000),
-      ),
-    ]);
-    if (!buf || buf.length < 1500) {
-      console.warn('[capturePageTopScreenshot] empty/too-small buffer — skip');
+/**
+ * Screenshot the built page for whole-scroll visual QA.
+ * Returns 1–3 jpeg base64 chunks (fold, optional mid, optional bottom).
+ * Fail-closed: returns [] on any failure — callers skip QA and still Done.
+ *
+ * Caps: max 3 shots, ~50s total budget. Never a blind full rewrite.
+ */
+export async function capturePageScrollScreenshots(pageUrl: string): Promise<string[]> {
+  const apiKey = process.env.API_FLASH_KEY?.trim();
+  if (!apiKey || !pageUrl || !/^https?:\/\//i.test(pageUrl)) return [];
+
+  const base = {
+    access_key: apiKey,
+    url: pageUrl,
+    format: 'jpeg',
+    quality: '75',
+    width: '1280',
+    response_type: 'json',
+    fresh: 'true',
+  };
+
+  const capture = async (extra: Record<string, string>, timeoutMs: number): Promise<Buffer | null> => {
+    try {
+      const buf = await Promise.race([
+        apiFlashCapture(new URLSearchParams({ ...base, ...extra })),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`${timeoutMs}ms timeout`)), timeoutMs),
+        ),
+      ]);
+      if (!buf || buf.length < 1500) return null;
+      return buf;
+    } catch (err) {
+      console.warn('[capturePageScrollScreenshots] chunk failed', err);
       return null;
     }
-    console.log('[capturePageTopScreenshot] ok', {
-      url: pageUrl.slice(0, 120),
-      bytes: buf.length,
-    });
-    return buf.toString('base64');
+  };
+
+  try {
+    // Prefer one full-page shot when the page is short enough for vision
+    const full = await capture({ full_page: 'true' }, 30_000);
+    if (full) {
+      const h = getJpegHeight(full);
+      console.log('[capturePageScrollScreenshots] full_page', { height: h, bytes: full.length });
+      if (h > 0 && h <= 7900) {
+        return [full.toString('base64')];
+      }
+      // Tall page: use fold + mid + bottom viewport chunks (max 3)
+      const VIEW = 1600;
+      const shots: string[] = [];
+      const top = await capture({ height: String(VIEW) }, 20_000);
+      if (top) shots.push(top.toString('base64'));
+      if (h > VIEW * 1.4) {
+        const midY = Math.floor(h / 2 - VIEW / 2);
+        const mid = await capture(
+          { height: String(VIEW), js: `window.scrollTo(0,${Math.max(0, midY)})` },
+          20_000,
+        );
+        if (mid) shots.push(mid.toString('base64'));
+      }
+      if (h > VIEW * 2) {
+        const bottomY = Math.max(0, h - VIEW);
+        const bottom = await capture(
+          { height: String(VIEW), js: `window.scrollTo(0,${bottomY})` },
+          20_000,
+        );
+        if (bottom) shots.push(bottom.toString('base64'));
+      }
+      console.log('[capturePageScrollScreenshots] tall page chunks', { count: shots.length, pageHeight: h });
+      return shots;
+    }
+
+    // full_page failed — at least try fold
+    const fold = await capture({ height: '1400' }, 25_000);
+    if (!fold) return [];
+    console.log('[capturePageScrollScreenshots] fold-only fallback', { bytes: fold.length });
+    return [fold.toString('base64')];
   } catch (err) {
-    console.error('[capturePageTopScreenshot] failed — skip live QA', err);
-    return null;
+    console.error('[capturePageScrollScreenshots] failed — skip live QA', err);
+    return [];
   }
 }
