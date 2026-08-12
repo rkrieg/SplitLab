@@ -314,7 +314,6 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   // threshold, then retries the blocked edit. Wired to PATCH /api/ai-usage.
   const [outOfCredits, setOutOfCredits] = useState<{ creditsUsed: number; creditsIncluded: number; retry: () => void } | null>(null);
   const [ocCapDollars, setOcCapDollars] = useState('50');
-  const [ocNotifyDollars, setOcNotifyDollars] = useState('50');
   const [ocAutoBill, setOcAutoBill] = useState(false);
   const [ocSaving, setOcSaving] = useState(false);
 
@@ -325,18 +324,13 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       const res = await fetch('/api/ai-usage', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          enabled: true,
-          capCents,
-          // Auto-bill = don't nag mid-way, only pause at the cap. Otherwise warn
-          // at the user's chosen reminder threshold.
-          notifyCents: ocAutoBill ? capCents : Math.max(0, Math.round(Number(ocNotifyDollars) || 0) * 100),
-        }),
+        // The spend cap is the single guard against surprise bills; pause there.
+        body: JSON.stringify({ enabled: true, capCents, notifyCents: capCents }),
       });
       if (!res.ok) throw new Error();
       const retry = outOfCredits?.retry;
       setOutOfCredits(null);
-      toast.success(`Overage on — you can keep building up to $${(capCents / 100).toFixed(0)}.`);
+      toast.success(`You're all set. You can keep building up to $${(capCents / 100).toFixed(0)}.`);
       retry?.();
     } catch {
       toast.error('Could not update billing settings. Please try again.');
@@ -2188,7 +2182,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
               <div>
                 <h3 className="text-slate-900 dark:text-slate-100 font-semibold text-base">You&apos;re out of AI credits</h3>
                 <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">
-                  You&apos;ve used {outOfCredits.creditsUsed.toLocaleString()} of {outOfCredits.creditsIncluded.toLocaleString()} credits this month. Keep building by turning on overage — usage beyond your plan is billed at cost&nbsp;+&nbsp;10%, and we pause you at the spend cap you set. No surprise bills.
+                  You&apos;ve used {outOfCredits.creditsUsed.toLocaleString()} of {outOfCredits.creditsIncluded.toLocaleString()} credits this month. To keep building right now, turn on overage and you&apos;ll just pay for any usage beyond your plan, up to the spend cap you set. If you&apos;d rather not, you can wait until your credits reset when your plan renews next month.
                 </p>
               </div>
             </div>
@@ -2205,21 +2199,9 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
               <input type="checkbox" checked={ocAutoBill} onChange={(e) => setOcAutoBill(e.target.checked)} className="mt-0.5 h-4 w-4 rounded border-slate-300 dark:border-slate-600 text-indigo-600 focus:ring-indigo-500" />
               <span className="text-sm text-slate-700 dark:text-slate-300">
                 <span className="font-medium">Auto-bill me as I go</span>
-                <span className="block text-xs text-slate-500 dark:text-slate-400">Don&apos;t ask again — keep building and bill me for usage, pausing only at the ${(Number(ocCapDollars) || 0)} cap above.</span>
+                <span className="block text-xs text-slate-500 dark:text-slate-400">Keep building without seeing this again. You&apos;re still capped at the ${(Number(ocCapDollars) || 0)} above, so there are no surprise bills.</span>
               </span>
             </label>
-
-            {!ocAutoBill && (
-              <div className="mt-4">
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Remind me every</label>
-                <select value={ocNotifyDollars} onChange={(e) => setOcNotifyDollars(e.target.value)} className="input-base w-full">
-                  <option value="25">$25</option>
-                  <option value="50">$50</option>
-                  <option value="100">$100</option>
-                  <option value="200">$200</option>
-                </select>
-              </div>
-            )}
 
             <div className="flex justify-between items-center gap-2 mt-6">
               <a href="/billing" className="text-xs text-slate-500 dark:text-slate-400 hover:text-indigo-500 underline">Or upgrade your plan</a>
