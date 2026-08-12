@@ -19,6 +19,17 @@ export function costMicros(model: string, inputTokens: number, outputTokens: num
 /** Markup applied to overage: we pass provider cost through at cost + 10%. */
 export const OVERAGE_MARKUP = 1.1;
 
+// ── Prepaid credit top-ups ──────────────────────────────────────────────────
+// Retail price of a prepaid credit, in cents. $0.05/credit → $50 buys 1,000
+// credits. Change this one number to reprice top-ups.
+export const TOPUP_CENTS_PER_CREDIT = 5;
+/** Purchasable top-up amounts, in cents ($50 / $100 / $200 / $500). */
+export const TOPUP_AMOUNTS_CENTS = [5000, 10000, 20000, 50000];
+/** Credits granted for a given dollar amount (in cents). */
+export function creditsForCents(cents: number): number {
+  return Math.floor(cents / TOPUP_CENTS_PER_CREDIT);
+}
+
 export interface UsageContext {
   ownerId: string | null;
   workspaceId?: string | null;
@@ -62,6 +73,8 @@ function periodStartIso(): string {
 
 export interface AiUsageSummary {
   plan: string;
+  planCredits?: number;        // monthly allowance from the plan alone
+  topupCredits?: number;       // prepaid credits added this period
   creditsIncluded: number;     // monthly allowance, in credits
   tokensIncluded: number;      // allowance in tokens
   tokensUsed: number;          // total tokens this period
@@ -79,9 +92,23 @@ export interface AiUsageSummary {
  * cost + 10% — the amount we'd bill (bounded elsewhere by the user's spend cap).
  */
 export async function getAiUsageSummary(ownerId: string, plan: string): Promise<AiUsageSummary> {
-  const creditsIncluded = aiCreditsForPlan(plan);
-  const tokensIncluded = creditsIncluded * TOKENS_PER_CREDIT;
   const periodStart = periodStartIso();
+
+  // Prepaid top-ups bought this period add to the plan allowance so the meter
+  // reflects purchased credits. Degrades to 0 if the table isn't present yet.
+  let topupCredits = 0;
+  if (ownerId) {
+    const { data: topups, error } = await db
+      .from('ai_credit_topups')
+      .select('credits')
+      .eq('owner_id', ownerId)
+      .gte('created_at', periodStart);
+    if (!error && topups) topupCredits = topups.reduce((a, t) => a + (t.credits ?? 0), 0);
+  }
+
+  const planCredits = aiCreditsForPlan(plan);
+  const creditsIncluded = planCredits + topupCredits;
+  const tokensIncluded = creditsIncluded * TOKENS_PER_CREDIT;
 
   const { data } = await db
     .from('ai_usage')
@@ -109,6 +136,8 @@ export async function getAiUsageSummary(ownerId: string, plan: string): Promise<
   const overageTokens = Math.max(0, tokensUsed - tokensIncluded);
   return {
     plan,
+    planCredits,
+    topupCredits,
     creditsIncluded,
     tokensIncluded,
     tokensUsed,

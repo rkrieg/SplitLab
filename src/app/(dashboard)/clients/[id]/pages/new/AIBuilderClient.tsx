@@ -313,18 +313,46 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   // Lets the user turn on metered overage (auto-bill) with a spend cap + reminder
   // threshold, then retries the blocked edit. Wired to PATCH /api/ai-usage.
   const [outOfCredits, setOutOfCredits] = useState<{ creditsUsed: number; creditsIncluded: number; retry: () => void } | null>(null);
-  const [ocCapDollars, setOcCapDollars] = useState('50');
-  const [ocAutoBill, setOcAutoBill] = useState(false);
-  const [ocSaving, setOcSaving] = useState(false);
+  // Prepaid top-up amounts (cents) → credits, at $0.05/credit (keep in sync with
+  // TOPUP_CENTS_PER_CREDIT server-side). Labels avoid em dashes on purpose.
+  const TOPUP_OPTIONS = [
+    { cents: 5000, label: '$50 (1,000 credits)' },
+    { cents: 10000, label: '$100 (2,000 credits)' },
+    { cents: 20000, label: '$200 (4,000 credits)' },
+    { cents: 50000, label: '$500 (10,000 credits)' },
+  ];
+  const [ocAmountCents, setOcAmountCents] = useState(5000);
+  const [ocBuying, setOcBuying] = useState(false);  // redirecting to Stripe
+  const [ocSaving, setOcSaving] = useState(false);  // enabling auto-billing
 
+  // Prepaid: send them to Stripe to buy credits; the webhook grants them on success.
+  async function buyCredits() {
+    setOcBuying(true);
+    try {
+      const res = await fetch('/api/ai-usage/topup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amountCents: ocAmountCents, returnUrl: window.location.href }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (res.ok && d.url) { window.location.href = d.url; return; }
+      toast.error(d.error || 'Could not start checkout.');
+    } catch {
+      toast.error('Could not start checkout.');
+    } finally {
+      setOcBuying(false);
+    }
+  }
+
+  // Alternative: pay only for what you use. Turns on overage capped at the amount
+  // selected above, then retries the blocked edit.
   async function enableOverageAndRetry() {
     setOcSaving(true);
     try {
-      const capCents = Math.max(0, Math.round(Number(ocCapDollars) || 0) * 100);
+      const capCents = ocAmountCents;
       const res = await fetch('/api/ai-usage', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        // The spend cap is the single guard against surprise bills; pause there.
         body: JSON.stringify({ enabled: true, capCents, notifyCents: capCents }),
       });
       if (!res.ok) throw new Error();
@@ -421,6 +449,18 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   // Dismiss the UTM warning only when leaving the builder — not on every phase
   // change — so it stays put once (until the user closes it) instead of flashing.
   useEffect(() => () => toast.dismiss('utm-wipe-warning'), []);
+
+  // Returning from a Stripe credit top-up: confirm and strip the query param so
+  // the meter (which polls /api/ai-usage) reflects the new balance on next tick.
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search);
+    const status = p.get('topup');
+    if (!status) return;
+    if (status === 'success') toast.success('Credits added. You can keep building.');
+    p.delete('topup');
+    const q = p.toString();
+    window.history.replaceState({}, '', window.location.pathname + (q ? `?${q}` : ''));
+  }, []);
 
   useEffect(() => {
     if (!initialPage) return;
@@ -2182,39 +2222,41 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
               <h3 className="text-slate-900 dark:text-slate-100 font-semibold text-base">You&apos;re out of AI credits</h3>
             </div>
             <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
-              You&apos;ve used {outOfCredits.creditsUsed.toLocaleString()} of {outOfCredits.creditsIncluded.toLocaleString()} credits this month. Keep building now and pay only for what you use beyond your plan, up to a cap you set below. Or wait for your credits to reset when your plan renews next month.
+              You&apos;ve used {outOfCredits.creditsUsed.toLocaleString()} of {outOfCredits.creditsIncluded.toLocaleString()} credits this month. Add more credits to keep building, or wait for your credits to reset when your plan renews next month.
             </p>
 
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Continue and bill me up to</label>
-            <select value={ocCapDollars} onChange={(e) => setOcCapDollars(e.target.value)} className="input-base w-full">
-              <option value="50">$50</option>
-              <option value="100">$100</option>
-              <option value="200">$200</option>
-              <option value="500">$500</option>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Add credits</label>
+            <select value={ocAmountCents} onChange={(e) => setOcAmountCents(Number(e.target.value))} className="input-base w-full">
+              {TOPUP_OPTIONS.map((o) => (
+                <option key={o.cents} value={o.cents}>{o.label}</option>
+              ))}
             </select>
 
-            <label className="flex items-start gap-2.5 mt-4 cursor-pointer">
-              <input type="checkbox" checked={ocAutoBill} onChange={(e) => setOcAutoBill(e.target.checked)} className="mt-0.5 h-4 w-4 rounded border-slate-300 dark:border-slate-600 text-indigo-600 focus:ring-indigo-500" />
-              <span className="text-sm text-slate-700 dark:text-slate-300">
-                <span className="font-medium">Auto-bill me as I go</span>
-                <span className="block text-xs text-slate-500 dark:text-slate-400">Keep building without seeing this again. You&apos;re still capped at the ${(Number(ocCapDollars) || 0)} above, so there are no surprise bills.</span>
-              </span>
-            </label>
+            <button
+              type="button"
+              onClick={buyCredits}
+              disabled={ocBuying || ocSaving}
+              className="mt-3 w-full flex items-center justify-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 disabled:cursor-not-allowed text-white text-sm px-4 py-2.5 rounded-xl font-medium transition-colors"
+            >
+              {ocBuying && <Loader2 size={14} className="animate-spin" />}
+              Add credits
+            </button>
 
-            <div className="flex justify-between items-center gap-2 mt-6">
+            <p className="text-center text-xs text-slate-500 dark:text-slate-400 mt-3">
+              Prefer to pay only for what you use?{' '}
+              <button
+                type="button"
+                onClick={enableOverageAndRetry}
+                disabled={ocSaving || ocBuying}
+                className="text-indigo-600 dark:text-indigo-400 hover:underline font-medium disabled:opacity-60"
+              >
+                {ocSaving ? 'Turning on…' : 'Turn on auto-billing'}
+              </button>
+            </p>
+
+            <div className="flex justify-between items-center gap-2 mt-5 pt-4 border-t border-slate-100 dark:border-slate-800">
               <a href="/billing" className="text-xs text-slate-500 dark:text-slate-400 hover:text-indigo-500 underline">Or upgrade your plan</a>
-              <div className="flex gap-2">
-                <button type="button" onClick={() => setOutOfCredits(null)} disabled={ocSaving} className="btn-secondary text-sm rounded-xl">Not now</button>
-                <button
-                  type="button"
-                  onClick={enableOverageAndRetry}
-                  disabled={ocSaving}
-                  className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 disabled:cursor-not-allowed text-white text-sm px-4 py-2 rounded-xl font-medium transition-colors"
-                >
-                  {ocSaving && <Loader2 size={13} className="animate-spin" />}
-                  Continue building
-                </button>
-              </div>
+              <button type="button" onClick={() => setOutOfCredits(null)} disabled={ocBuying || ocSaving} className="btn-secondary text-sm rounded-xl">Not now</button>
             </div>
           </div>
         </div>

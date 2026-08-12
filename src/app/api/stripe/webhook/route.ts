@@ -62,11 +62,38 @@ export async function POST(request: NextRequest) {
       // ── Payment completed ────────────────────────────────────────────────
       case 'checkout.session.completed': {
         const session = event.data.object as {
+          id: string;
           mode: string;
           customer: unknown;
           subscription: unknown;
           metadata: Record<string, string>;
         };
+
+        // ── Prepaid AI credit top-up (one-time payment) ──────────────────────
+        // Grant credits once payment succeeds, idempotently (webhooks retry).
+        if (session.mode === 'payment' && session.metadata?.kind === 'ai_topup') {
+          const topupUserId = session.metadata?.userId ?? null;
+          const credits     = parseInt(session.metadata?.credits ?? '0', 10);
+          const amountCents  = parseInt(session.metadata?.amountCents ?? '0', 10);
+          if (topupUserId && credits > 0) {
+            const { data: existing } = await db
+              .from('ai_credit_topups')
+              .select('id')
+              .eq('stripe_session_id', session.id)
+              .maybeSingle();
+            if (!existing) {
+              await db.from('ai_credit_topups').insert({
+                owner_id:          topupUserId,
+                credits,
+                amount_cents:      amountCents,
+                stripe_session_id: session.id,
+                status:            'completed',
+              } as never);
+            }
+          }
+          break;
+        }
+
         if (session.mode !== 'subscription') break;
 
         const custId = extractId(session.customer);
