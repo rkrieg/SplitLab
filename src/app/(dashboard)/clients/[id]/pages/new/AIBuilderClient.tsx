@@ -407,6 +407,8 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   const [competitorScreenshots, setCompetitorScreenshots] = useState<string[] | null>(null);
   const [competitorCssTokens, setCompetitorCssTokens] = useState<string | null>(null);
   const [competitorPageContent, setCompetitorPageContent] = useState<string | null>(null);
+  const [competitorLogoUrl, setCompetitorLogoUrl] = useState<string | null>(null);
+  const [competitorFooterContact, setCompetitorFooterContact] = useState<Record<string, string> | null>(null);
 
   const schemaRef = useRef<unknown>(null);
   const threadRef = useRef<HTMLDivElement>(null);
@@ -816,12 +818,16 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     if (data.competitor_screenshots) setCompetitorScreenshots(data.competitor_screenshots as string[]);
     if (data.competitor_css_tokens) setCompetitorCssTokens(data.competitor_css_tokens);
     if (data.competitor_page_content) setCompetitorPageContent(data.competitor_page_content);
+    if (data.competitor_logo_url) setCompetitorLogoUrl(data.competitor_logo_url as string);
+    if (data.competitor_footer_contact) setCompetitorFooterContact(data.competitor_footer_contact as Record<string, string>);
 
     // Capture competitor data directly from response — React setState is async so reading
     // state immediately after set would still return the old null values.
     const freshCompetitorScreenshots = (data.competitor_screenshots as string[]) ?? null;
     const freshCompetitorCssTokens = (data.competitor_css_tokens as string) ?? null;
     const freshCompetitorPageContent = (data.competitor_page_content as string) ?? null;
+    const freshCompetitorLogoUrl = (data.competitor_logo_url as string) ?? null;
+    const freshCompetitorFooter = (data.competitor_footer_contact as Record<string, string>) ?? null;
 
     if (data.type === 'questions') {
       setQuestions(data.questions);
@@ -837,10 +843,26 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       { role: 'assistant', content: JSON.stringify(data.schema) },
     ];
     setConversationJson(updatedHistory);
-    await runBuild(data.schema, updatedHistory, freshCompetitorScreenshots, freshCompetitorCssTokens, freshCompetitorPageContent);
+    await runBuild(
+      data.schema,
+      updatedHistory,
+      freshCompetitorScreenshots,
+      freshCompetitorCssTokens,
+      freshCompetitorPageContent,
+      freshCompetitorLogoUrl,
+      freshCompetitorFooter,
+    );
   }
 
-  async function runBuild(schema: unknown, history: { role: string; content: string; image_urls?: string[] }[], freshScreenshots?: string[] | null, freshCssTokens?: string | null, freshPageContent?: string | null) {
+  async function runBuild(
+    schema: unknown,
+    history: { role: string; content: string; image_urls?: string[] }[],
+    freshScreenshots?: string[] | null,
+    freshCssTokens?: string | null,
+    freshPageContent?: string | null,
+    freshLogoUrl?: string | null,
+    freshFooter?: Record<string, string> | null,
+  ) {
     if (!pageId) return;
     setPhase('building');
     setBuildEvents([]);
@@ -891,6 +913,8 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         ...((freshScreenshots ?? competitorScreenshots)?.length ? { competitor_screenshots: freshScreenshots ?? competitorScreenshots } : {}),
         ...(((freshCssTokens ?? competitorCssTokens)) ? { competitor_css_tokens: freshCssTokens ?? competitorCssTokens } : {}),
         ...(((freshPageContent ?? competitorPageContent)) ? { competitor_page_content: freshPageContent ?? competitorPageContent } : {}),
+        ...(((freshLogoUrl ?? competitorLogoUrl)) ? { competitor_logo_url: freshLogoUrl ?? competitorLogoUrl } : {}),
+        ...(((freshFooter ?? competitorFooterContact)) ? { competitor_footer_contact: freshFooter ?? competitorFooterContact } : {}),
       }),
     });
 

@@ -201,6 +201,64 @@ const helpers = readFileSync(join(__dirname, '../src/lib/ai-follow-up-helpers.ts
 assert('helpers export userWantsUsToDecide', helpers.includes('export function userWantsUsToDecide'));
 assert('helpers export looksLikeMultiIntent', helpers.includes('export function looksLikeMultiIntent'));
 
+// Brand assets / create+URL parity (confirmation-page gold case)
+function userWantsCustomOrMinimalPage(prompt) {
+  return /\b(pretty much just|just (look|be|the)|only (the )?(hero|footer)|hero (section )?only|thank[- ]?you|confirmation|confirmed|dead-?end|no buttons|no (calls? to action|ctas?)|nothing else|that'?s (pretty much|about) it|keep it (nice and )?simple|flat background|success page)\b/i.test(
+    prompt,
+  );
+}
+function userWantsLogoFromReference(prompt) {
+  return /\b((real|actual|exact|same|correct)\s+logo|use (the |their |this )?logo|logo from|with (the )?logo|keep (the )?logo|same logo|focused capital.*logo|logo.*from (this|the|that))\b/i.test(
+    prompt,
+  );
+}
+function forceEmbedLogoInHtml(html, logoUrl) {
+  if (!logoUrl || html.includes(logoUrl)) return html;
+  const logoImg = `<img src="${logoUrl}" alt="logo" style="height:40px;width:auto;display:block;background:transparent;" />`;
+  const slNav = /<!--\s*SL:nav\s*-->([\s\S]*?)<!--\s*\/SL:nav\s*-->/i.exec(html);
+  if (slNav) {
+    let inner = slNav[1];
+    if (/<img\b/i.test(inner)) inner = inner.replace(/<img\b[^>]*>/i, logoImg);
+    else inner = logoImg + inner;
+    return html.slice(0, slNav.index) + `<!-- SL:nav -->${inner}<!-- /SL:nav -->` + html.slice(slNav.index + slNav[0].length);
+  }
+  return html;
+}
+
+const rennyPrompt =
+  'The page should pretty much just look like this hero section, except it should say, "Your call is confirmed." Use the logo, use the same colors, flat background. There are no buttons. https://investor.focusedcapital.com/accredited';
+assert('renny prompt = minimal shape', userWantsCustomOrMinimalPage(rennyPrompt));
+assert('renny prompt = wants logo', userWantsLogoFromReference(rennyPrompt));
+assert(
+  'forceEmbedLogo replaces screenshot thumb',
+  forceEmbedLogoInHtml(
+    '<!-- SL:nav --><nav><img src="data:image/jpeg;base64,AAA" alt="x"></nav><!-- /SL:nav -->',
+    'https://cdn.example/logo.svg',
+  ).includes('https://cdn.example/logo.svg'),
+);
+
+assert('generate has minimal competitor branch', gen.includes('STYLE + ASSETS ONLY'));
+assert('generate returns competitor_logo_url', gen.includes('competitor_logo_url'));
+assert('generate injectBrandAssets', gen.includes('injectBrandAssetsIntoSchema'));
+
+const build = readFileSync(join(__dirname, '../src/app/api/pages/build/route.ts'), 'utf8');
+assert('build forceEmbedLogo', build.includes('forceEmbedLogoInHtml'));
+assert('build accepts competitor_logo_url', build.includes('competitor_logo_url'));
+
+const scrape = readFileSync(join(__dirname, '../src/lib/ai-competitor-scrape.ts'), 'utf8');
+assert('scrape returns logoUrl', scrape.includes('logoUrl'));
+assert('scrape returns footerContact', scrape.includes('footerContact'));
+
+const brand = readFileSync(join(__dirname, '../src/lib/ai-brand-assets.ts'), 'utf8');
+assert('brand-assets module exists', brand.includes('forceEmbedLogoInHtml'));
+
+assert('follow-up broader logo intent', follow.includes('use|keep|with|from'));
+assert('follow-up forceEmbed on structural', follow.includes('forceEmbedLogoInHtml'));
+
+const pageBuilder = readFileSync(join(__dirname, '../src/lib/ai-page-builder.ts'), 'utf8');
+assert('builder minimal addendum', pageBuilder.includes('COMPETITOR_MINIMAL_ADDENDUM'));
+assert('builder realLogoUrl option', pageBuilder.includes('realLogoUrl'));
+
 if (failed > 0) {
   console.error(`\n${failed} assertion(s) failed`);
   process.exit(1);

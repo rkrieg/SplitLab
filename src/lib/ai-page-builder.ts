@@ -1,5 +1,6 @@
 import { askAI, askAIStream, type AIContent, type AIContentBlock } from '@/lib/ai-client';
 import { STYLE_EXEMPLARS, type StyleTag } from '@/lib/ai-page-exemplars';
+import { userWantsCustomOrMinimalPage } from '@/lib/ai-brand-assets';
 import { buildFontLibraryBlock } from '@/lib/ai-page-fonts';
 import { buildIconLibraryBlock } from '@/lib/ai-page-icons';
 
@@ -425,24 +426,34 @@ These two inputs have different jobs — follow this division strictly:
 - If the token block says --bg: #F4F1EC, that is the background. If it says --accent: #C8A96E, that is the CTA color.
 - NEVER derive colors visually from the screenshot — JPEG compression shifts colors. The token block has the real values.
 
-### SCREENSHOT = single source of truth for LAYOUT and STRUCTURE only
+### SCREENSHOT = LAYOUT REFERENCE (unless user asked for a minimal/custom page)
 - Use the screenshot to understand: section order, grid columns, card shapes, spacing density, hero layout type, whether sections are full-bleed or contained, border radii feel (sharp vs rounded), visual weight distribution
-- Build EVERY section visible in the screenshot — scroll the full page mentally and replicate each section top to bottom
-- Match the hero layout type exactly (split two-column, centered, full-bleed image, etc.)
-- Match card grid columns (2-col, 3-col, bento, etc.) as seen in the screenshot
+- If the schema / Original user request describes a minimal or confirmation page, build ONLY what the schema contains — do NOT add every section visible in the screenshot
+- Otherwise match structure from the screenshot and schema together
+- Match the hero layout type when it aligns with the schema (split two-column, centered, full-bleed image, etc.)
 - Do NOT use the screenshot for color decisions — trust the token block exclusively
 - STICKY NAV RULE: The navigation bar is sticky and will appear at the top of every screenshot chunk. It is the SAME nav repeated — build it exactly ONCE. Never create duplicate nav elements.
+- NEVER use a screenshot crop/thumbnail as the logo image. If schema.brand_logo_url / nav.logo_url / logo_src is present, that EXACT URL must be the <img src> for the logo (transparent background, no dark box behind it).
 
-### Section completeness — non-negotiable
-- Count every visible section in the screenshot and build ALL of them
-- Do not stop early. If the screenshot shows Nav → Hero → Features → Stats → Testimonials → Pricing → FAQ → CTA → Footer, build all 10.
-- Each section must have real structure (correct grid/flex layout), not a collapsed or placeholder version
+### LOGO + FOOTER
+- Prefer schema.brand_logo_url / nav.logo_url / footer.logo_url for all logo <img> tags
+- If footer.address / footer.email / footer.copyright exist in the schema, render them in the footer exactly
 
 ### Final check before outputting
 - Are :root colors from the token block? ✓
 - Are font families from the token block? ✓
-- Does section count match the screenshot? ✓
-- Does layout structure (grids, columns, hero type) match the screenshot? ✓`;
+- Does the page match the SCHEMA shape (not necessarily every screenshot section)? ✓
+- Is the logo a real asset URL from the schema, not a screenshot? ✓`;
+
+const COMPETITOR_MINIMAL_ADDENDUM = `
+
+## USER SHAPE OVERRIDE — MINIMAL / CUSTOM (highest priority)
+The user asked for a custom or minimal page (confirmation, hero-only, no CTAs, etc.).
+- Build ONLY the sections present in the schema
+- Do NOT recreate the full reference landing page from the screenshot
+- No buttons / CTAs if the schema has none
+- Flat background + real logo URL from schema when provided
+- KPIs/stats only if present in the schema`;
 
 const AESTHETIC_REFERENCES: Record<StyleTag, string> = {
   corporate_trust: 'Think Stripe, Rippling, Gusto — structured, trustworthy, premium sans-serif with a strong typographic hierarchy',
@@ -496,6 +507,8 @@ export interface BuildHtmlOptions {
   competitorScreenshots?: string[];
   competitorCssTokens?: string;
   competitorPageContent?: string;
+  /** Real logo URL from scrape — must appear as <img src> in nav/footer */
+  realLogoUrl?: string;
   userPrompt?: string;
   imageUrls?: string[];
   /**
@@ -532,6 +545,7 @@ export async function buildHtmlFromSchema(
     competitorScreenshots = [],
     competitorCssTokens,
     competitorPageContent,
+    realLogoUrl,
     userPrompt,
     imageUrls = [],
     styleReferenceNote: callerStyleNote,
@@ -541,6 +555,8 @@ export async function buildHtmlFromSchema(
     competitorScreenshots.length > 0 ||
     (typeof competitorCssTokens === 'string' && competitorCssTokens.length > 0);
   const hasImages = imageUrls.length > 0;
+  const minimalShape =
+    typeof userPrompt === 'string' && userWantsCustomOrMinimalPage(userPrompt);
 
   // Determine style reference:
   // 1. Caller-provided note (follow-up non-URL case) — use as-is, skip design brief
@@ -581,9 +597,14 @@ export async function buildHtmlFromSchema(
     typeof competitorPageContent === 'string' && competitorPageContent.trim()
       ? `## Competitor page HTML — extract real copy, nav links, section structure and layout from this\nUse the actual text, headings, CTA labels, nav items, and section order visible in this HTML. Do not invent generic copy.\n${competitorPageContent}\n\n`
       : '';
+  const realLogoNote = realLogoUrl
+    ? `## REAL LOGO URL (mandatory)\nUse EXACTLY this URL for every logo <img src> in nav and footer. Never substitute a screenshot, generated image, or different URL:\n${realLogoUrl}\nNo background box behind the logo — transparent / sits on the page background.\n\n`
+    : typeof (schema as Record<string, unknown>).brand_logo_url === 'string'
+      ? `## REAL LOGO URL (mandatory)\nUse EXACTLY this URL for every logo <img src>:\n${(schema as Record<string, unknown>).brand_logo_url as string}\n\n`
+      : '';
 
   const textContent =
-    `${competitorTokenNote}${competitorContentNote}Build the landing page for this schema:\n\n` +
+    `${competitorTokenNote}${competitorContentNote}${realLogoNote}Build the landing page for this schema:\n\n` +
     `${JSON.stringify(schema, null, 2)}${imageList}${styleReferenceNote}${promptNote}`;
 
   const userContent: AIContent = [
@@ -592,7 +613,9 @@ export async function buildHtmlFromSchema(
     { type: 'text' as const, text: textContent },
   ];
 
-  const systemPrompt = hasCompetitorContext ? COMPETITOR_SYSTEM_PROMPT : SYSTEM_PROMPT;
+  const systemPrompt = hasCompetitorContext
+    ? COMPETITOR_SYSTEM_PROMPT + (minimalShape ? COMPETITOR_MINIMAL_ADDENDUM : '')
+    : SYSTEM_PROMPT;
 
   const label = `build-html:${options.callerLabel ?? 'unknown-caller'}`;
   const aiOptions = {

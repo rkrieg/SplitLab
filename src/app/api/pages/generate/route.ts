@@ -8,6 +8,10 @@ import { SECTION_VOCABULARY, VERTICAL_PRIORITY_HINTS } from '@/lib/ai-page-vocab
 import { resolveWorkspaceRole, resolveOwnerPlan } from '@/lib/workspace-auth';
 import { PLAN_LIMITS } from '@/lib/plans';
 import { extractUrls, scrapeCompetitorUrl } from '@/lib/ai-competitor-scrape';
+import {
+  userWantsCustomOrMinimalPage,
+  injectBrandAssetsIntoSchema,
+} from '@/lib/ai-brand-assets';
 
 const SECTION_TYPES_BLOCK = SECTION_VOCABULARY
   .map(s => `- ${s.schemaExample}\n  Use when: ${s.whenToUse}`)
@@ -162,15 +166,32 @@ export async function POST(request: NextRequest) {
     // so the schema reflects the competitor's actual section count and order.
     const urls = extractUrls(prompt);
     const competitorContext = urls.length > 0 ? await scrapeCompetitorUrl(urls[0]) : null;
+    const minimalOrCustom = userWantsCustomOrMinimalPage(prompt);
 
     if (competitorContext) {
       console.log('[competitor] cssTokens:\n', competitorContext.cssTokens || '(empty)');
       console.log('[competitor] pageContent length:', competitorContext.pageContent?.length ?? 0);
       console.log('[competitor] screenshots count:', competitorContext.screenshots?.length ?? 0);
+      console.log('[competitor] logoUrl:', competitorContext.logoUrl);
+      console.log('[competitor] minimalOrCustomShape:', minimalOrCustom);
     }
 
+    const logoNote = competitorContext?.logoUrl
+      ? `\nREAL LOGO ASSET (mandatory): Use this exact URL as the nav/footer logo <img src> — never paste a screenshot thumbnail or invent a mark:\n${competitorContext.logoUrl}\nPut logo_url / logo_src on nav and footer in the schema.\n`
+      : `\nNo extractable logo <img> was found — do NOT use a screenshot crop as a logo. Use text wordmark or a simple SVG icon that matches the brand, never a full-page screenshot image.\n`;
+
+    const footerNote =
+      competitorContext &&
+      (competitorContext.footerContact.address ||
+        competitorContext.footerContact.email ||
+        competitorContext.footerContact.copyright)
+        ? `\nFOOTER CONTACT (use these exact strings when the user wants a footer):\n${JSON.stringify(competitorContext.footerContact)}\n`
+        : '';
+
     const competitorNote = competitorContext
-      ? `\n\n## Reference site context — MANDATORY\nThe user wants a page that closely replicates: ${urls[0]}\n\n${competitorContext.cssTokens ? `CSS token analysis:\n${competitorContext.cssTokens}\n\n` : ''}${competitorContext.pageContent ? `Reference site HTML (use to extract real copy, nav links, headlines, CTAs, section structure):\n${competitorContext.pageContent}\n\n` : ''}CRITICAL SCHEMA RULES when a reference site is provided:\n- Read the HTML above and extract the REAL headline text, subheadline, CTA button text, nav links, feature titles, testimonial copy — use the actual words from the site, not invented placeholders\n- Extract EVERY section visible on the reference site and include it in the schema\n- Match the SECTION ORDER exactly from the SECTION ORDER list above\n- Match the section TYPES exactly (if reference has Stats, Testimonials, Pricing, FAQ — include all of them)\n- Do NOT collapse or omit sections — a reference site with 8 sections must produce a schema with 8 sections\n- Replicate the nav link labels exactly as they appear on the reference site\n- Use the reference site's actual CTA button text, not generic "Get Started"`
+      ? minimalOrCustom
+        ? `\n\n## Reference site context — STYLE + ASSETS ONLY (user asked for a custom/minimal page)\nReference URL: ${urls[0]}\nThe user's instruction OVERRIDES full-page cloning. Follow THEIR shape (e.g. confirmation/hero-only, no CTAs) even if the reference site has many sections.\nUse the reference for: colors/fonts (CSS tokens), logo, optional KPIs/stats they mentioned, flat background feel.\nDo NOT copy every section, nav links, or CTAs from the reference unless the user asked for them.\n\n${competitorContext.cssTokens ? `CSS token analysis:\n${competitorContext.cssTokens}\n\n` : ''}${competitorContext.pageContent ? `Reference site HTML (extract logo text, KPI numbers, colors, footer contact — NOT a full section clone):\n${competitorContext.pageContent.slice(0, 20_000)}\n\n` : ''}${logoNote}${footerNote}CRITICAL:\n- Page shape follows the USER prompt first\n- If they said no buttons / no CTAs — schema must have none\n- If they gave exact headline copy — use it verbatim\n- Prefer hero (+ optional stats/KPIs + simple footer) when they asked for a simple confirmation page`
+        : `\n\n## Reference site context — MANDATORY\nThe user wants a page that closely replicates: ${urls[0]}\n\n${competitorContext.cssTokens ? `CSS token analysis:\n${competitorContext.cssTokens}\n\n` : ''}${competitorContext.pageContent ? `Reference site HTML (use to extract real copy, nav links, headlines, CTAs, section structure):\n${competitorContext.pageContent}\n\n` : ''}${logoNote}${footerNote}CRITICAL SCHEMA RULES when a reference site is provided AND the user did not ask for a minimal/custom shape:\n- Read the HTML above and extract the REAL headline text, subheadline, CTA button text, nav links, feature titles, testimonial copy — use the actual words from the site, not invented placeholders\n- Match the SECTION ORDER and TYPES from the reference unless the user explicitly removed sections\n- Replicate the nav link labels exactly as they appear on the reference site\n- Use the reference site's actual CTA button text, not generic "Get Started"\n- ALWAYS use the REAL LOGO ASSET URL above for nav/footer — never a screenshot thumbnail`
       : '';
 
     const messages: { role: 'user' | 'assistant'; content: string }[] = [
@@ -225,10 +246,19 @@ export async function POST(request: NextRequest) {
     }
 
     if (parsed.type === 'schema') {
-      const s = parsed.schema as Record<string, unknown>;
+      let schema = parsed.schema as Record<string, unknown>;
+      if (competitorContext?.logoUrl || (competitorContext?.footerContact && Object.keys(competitorContext.footerContact).length > 0)) {
+        schema = injectBrandAssetsIntoSchema(schema, {
+          logoUrl: competitorContext.logoUrl,
+          footer: competitorContext.footerContact,
+        });
+        parsed = { ...parsed, schema };
+      }
+      const s = schema;
       const sections = Array.isArray(s.sections) ? s.sections as Array<{type?: string}> : [];
       console.log('[generate] schema section types:', sections.map(sec => sec.type).join(' → '));
       console.log('[generate] hero headline:', (s.hero as Record<string, unknown>)?.headline);
+      console.log('[generate] brand_logo_url:', s.brand_logo_url ?? (s.nav as Record<string, unknown>)?.logo_url);
     }
 
     return NextResponse.json({
@@ -236,6 +266,11 @@ export async function POST(request: NextRequest) {
       ...(competitorContext?.screenshots?.length ? { competitor_screenshots: competitorContext.screenshots } : {}),
       ...(competitorContext?.cssTokens ? { competitor_css_tokens: competitorContext.cssTokens } : {}),
       ...(competitorContext?.pageContent ? { competitor_page_content: competitorContext.pageContent } : {}),
+      ...(competitorContext?.logoUrl ? { competitor_logo_url: competitorContext.logoUrl } : {}),
+      ...(competitorContext?.footerContact && Object.keys(competitorContext.footerContact).length > 0
+        ? { competitor_footer_contact: competitorContext.footerContact }
+        : {}),
+      ...(minimalOrCustom ? { user_shape_intent: 'minimal_or_custom' } : {}),
     });
   } catch (err) {
     console.error('[pages/generate]', err);

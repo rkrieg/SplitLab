@@ -21,6 +21,11 @@ import {
   isScreenshotComplaint,
   verifyScopedPatchIntent,
 } from '@/lib/ai-follow-up-helpers';
+import {
+  injectBrandAssetsIntoSchema,
+  forceEmbedLogoInHtml,
+  forceEmbedFooterContactInHtml,
+} from '@/lib/ai-brand-assets';
 
 export const dynamic = 'force-dynamic';
 // Large full-page rewrites can run several minutes; raised well past the old
@@ -1316,8 +1321,13 @@ export async function POST(
   // to obtain the real logo file — it only ever sees a lossy screenshot or
   // generates a brand-new (fake) one, which was the actual client complaint
   // this exists to fix.
-  const REAL_LOGO_INTENT_RE = /\b(real|actual|exact|same|correct)\s+logo\b/i;
-  const isLogoSwapAttempt = competitorUrls.length > 0 && REAL_LOGO_INTENT_RE.test(prompt);
+  // "Use the logo from this URL" / "real logo" / soft "use the logo" — not only
+  // the narrow real|actual phrasing. Still requires a non-image URL in the prompt.
+  const isLogoSwapAttempt = competitorUrls.length > 0 && (
+    /\b(real|actual|exact|same|correct)\s+logo\b/i.test(prompt) ||
+    /\b(use|keep|with|from)\b[\s\S]{0,40}\blogo\b/i.test(prompt) ||
+    /\blogo\b[\s\S]{0,40}\b(from|on)\b/i.test(prompt)
+  );
 
   // Scoped-patch candidates — cheap, synchronous, no AI call. A genuine
   // competitor URL always means full-page rebuild (see
@@ -2129,9 +2139,16 @@ export async function POST(
 
         const pageSlug = page.slug ?? crypto.randomUUID();
 
-        const schemaForImages = hasCompetitorContext
+        let schemaForImages = hasCompetitorContext
           ? stripGeneratedImageUrls(parsed.schema_json as Record<string, unknown>)
           : (parsed.schema_json as Record<string, unknown>);
+
+        if (competitorContext?.logoUrl || (competitorContext?.footerContact && Object.keys(competitorContext.footerContact).length > 0)) {
+          schemaForImages = injectBrandAssetsIntoSchema(schemaForImages, {
+            logoUrl: competitorContext.logoUrl,
+            footer: competitorContext.footerContact,
+          });
+        }
 
         const imageCount = countImagePrompts(schemaForImages);
         if (imageCount > 0) {
@@ -2172,6 +2189,7 @@ export async function POST(
             competitorScreenshots: competitorContext?.screenshots ?? [],
             competitorCssTokens: competitorContext?.cssTokens ?? undefined,
             competitorPageContent: competitorContext?.pageContent ?? undefined,
+            realLogoUrl: competitorContext?.logoUrl ?? undefined,
             userPrompt: prompt,
             styleReferenceNote,
             callerLabel: 'follow-up:structural',
@@ -2187,6 +2205,12 @@ export async function POST(
               if (statusBuffer.length > 200) statusBuffer = statusBuffer.slice(-100);
             },
           });
+          if (competitorContext?.logoUrl) {
+            finalHtml = forceEmbedLogoInHtml(finalHtml, competitorContext.logoUrl);
+          }
+          if (competitorContext?.footerContact) {
+            finalHtml = forceEmbedFooterContactInHtml(finalHtml, competitorContext.footerContact);
+          }
         } catch (err) {
           if (isPromptTooLongError(err)) {
             console.error('[pages/follow-up] structural rebuild exceeded model context limit', {

@@ -1,10 +1,15 @@
 import https from 'https';
 import { askAI } from '@/lib/ai-client';
+import { extractFooterContact } from '@/lib/ai-brand-assets';
 
 export interface CompetitorContext {
   screenshots: string[];  // Array of JPEG base64 chunks — each ≤4096px tall, sent as separate image blocks to Claude
   cssTokens: string;      // Structured design token block — injected into schema + build prompts
   pageContent: string;    // First 30K chars of cleaned HTML — generate uses this to extract real copy/nav/sections
+  /** Real logo <img> URL extracted from the site HTML — prefer this over screenshot thumbs */
+  logoUrl: string | null;
+  /** Address / email / copyright pulled from footer HTML when present */
+  footerContact: { address?: string; email?: string; copyright?: string; phone?: string };
 }
 
 export function extractUrls(text: string): string[] {
@@ -182,12 +187,20 @@ export async function scrapeCompetitorUrl(url: string): Promise<CompetitorContex
     PromiseSettledResult<string[]>,
   ];
 
-  // Extract CSS tokens from Firecrawl result
+  // Extract CSS tokens + brand assets from Firecrawl result
   let cssTokens: string | null = null;
+  let logoUrl: string | null = null;
+  let footerContact: CompetitorContext['footerContact'] = {};
   if (firecrawlResult.status === 'fulfilled') {
     const { rawHtml, html } = firecrawlResult.value;
     const cssBlocks = extractStyleBlocks(rawHtml);
     cssTokens = await extractCssTokens(cssBlocks, html);
+    logoUrl = extractLogoUrl(rawHtml || html, url);
+    footerContact = extractFooterContact(html || rawHtml);
+    console.log('[scrapeCompetitorUrl] brand assets', {
+      logoUrl: logoUrl ? logoUrl.slice(0, 120) : null,
+      footerContact,
+    });
   } else {
     console.error('[scrapeCompetitorUrl] Firecrawl failed:', firecrawlResult.reason);
   }
@@ -211,6 +224,8 @@ export async function scrapeCompetitorUrl(url: string): Promise<CompetitorContex
     screenshots,
     cssTokens: cssTokens ?? '',
     pageContent,
+    logoUrl,
+    footerContact,
   };
 }
 
@@ -224,12 +239,15 @@ function resolveUrl(src: string, baseUrl: string): string | null {
 
 /**
  * Best-effort extraction of the site's own logo <img> src from raw page
- * HTML — used when a follow-up explicitly asks to use the "real"/"actual"
- * logo from a referenced URL, so the model gets a literal asset to embed
- * instead of hallucinating one from a screenshot or generating a fake one.
+ * HTML — used when create/build/follow-up need a real asset URL to embed
+ * instead of a screenshot thumb or AI-generated mark.
  * Deliberately conservative: returns null rather than guessing when nothing
  * scores as a plausible logo, since embedding the wrong image is worse than
  * falling back to the existing behavior.
+ *
+ * LIMIT: only works when the site exposes a fetchable image URL (<img src>,
+ * srcset, or icon link). Pure inline SVG wordmarks (no image URL) cannot be
+ * extracted — we do not invent or recreate those marks.
  */
 export function extractLogoUrl(rawHtml: string, pageUrl: string): string | null {
   const headerMatch = /<header\b[\s\S]*?<\/header>/i.exec(rawHtml);
@@ -263,7 +281,19 @@ export function extractLogoUrl(rawHtml: string, pageUrl: string): string | null 
     candidates.push({ src: rawSrc, score, index: m.index });
   }
 
-  if (candidates.length === 0) return null;
+  if (candidates.length === 0) {
+    // Last-resort: apple-touch-icon / icon with "logo" in href — never og:image (usually a photo)
+    const iconRe = /<link\b[^>]*rel=["'][^"']*(?:apple-touch-icon|icon)[^"']*["'][^>]*>/gi;
+    let iconMatch: RegExpExecArray | null;
+    while ((iconMatch = iconRe.exec(rawHtml))) {
+      const href = /\bhref\s*=\s*["']([^"']+)["']/i.exec(iconMatch[0])?.[1];
+      if (!href || href.startsWith('data:')) continue;
+      if (/logo/i.test(href) || /apple-touch-icon/i.test(iconMatch[0])) {
+        return resolveUrl(href, pageUrl);
+      }
+    }
+    return null;
+  }
   // Highest score wins; ties broken by earliest occurrence — the logo is
   // almost always the first element inside the header/nav.
   candidates.sort((a, b) => b.score - a.score || a.index - b.index);

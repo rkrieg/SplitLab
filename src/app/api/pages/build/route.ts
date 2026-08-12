@@ -7,6 +7,12 @@ import { resolveWorkspaceRole, resolveOwnerPlan } from '@/lib/workspace-auth';
 import { PLAN_LIMITS } from '@/lib/plans';
 import { buildHtmlFromSchema } from '@/lib/ai-page-builder';
 import { createSSEStream, sendSSE, closeSSE, SSE_HEADERS } from '@/lib/sse';
+import {
+  injectBrandAssetsIntoSchema,
+  forceEmbedLogoInHtml,
+  forceEmbedFooterContactInHtml,
+  type FooterContact,
+} from '@/lib/ai-brand-assets';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 800;
@@ -40,7 +46,9 @@ export async function POST(request: NextRequest) {
     workspace_id: unknown,
     competitor_screenshots: unknown,
     competitor_css_tokens: unknown,
-    competitor_page_content: unknown;
+    competitor_page_content: unknown,
+    competitor_logo_url: unknown,
+    competitor_footer_contact: unknown;
 
   try {
     ({
@@ -52,6 +60,8 @@ export async function POST(request: NextRequest) {
       competitor_screenshots,
       competitor_css_tokens,
       competitor_page_content,
+      competitor_logo_url,
+      competitor_footer_contact,
     } = await request.json());
   } catch {
     return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
@@ -96,8 +106,27 @@ export async function POST(request: NextRequest) {
         });
       }
 
+      const logoUrl =
+        typeof competitor_logo_url === 'string' && competitor_logo_url.trim()
+          ? competitor_logo_url.trim()
+          : typeof (schema_json as Record<string, unknown>).brand_logo_url === 'string'
+            ? ((schema_json as Record<string, unknown>).brand_logo_url as string)
+            : null;
+      const footerContact =
+        competitor_footer_contact && typeof competitor_footer_contact === 'object'
+          ? (competitor_footer_contact as FooterContact)
+          : null;
+
+      let workingSchema = schema_json as Record<string, unknown>;
+      if (logoUrl || footerContact) {
+        workingSchema = injectBrandAssetsIntoSchema(workingSchema, {
+          logoUrl,
+          footer: footerContact,
+        });
+      }
+
       const enrichedSchema = await generatePageImages(
-        schema_json as Record<string, unknown>,
+        workingSchema,
         pageSlug,
         (url) => { sendSSE(controller, { type: 'image_ready', url }); },
       );
@@ -115,6 +144,7 @@ export async function POST(request: NextRequest) {
           competitorScreenshots: Array.isArray(competitor_screenshots) ? competitor_screenshots as string[] : [],
           competitorCssTokens: typeof competitor_css_tokens === 'string' ? competitor_css_tokens : undefined,
           competitorPageContent: typeof competitor_page_content === 'string' ? competitor_page_content : undefined,
+          realLogoUrl: logoUrl ?? undefined,
           userPrompt: typeof user_prompt === 'string' ? user_prompt : undefined,
           imageUrls: hasImages ? (image_urls as string[]) : [],
           callerLabel: 'build',
@@ -134,6 +164,19 @@ export async function POST(request: NextRequest) {
         sendSSE(controller, { type: 'error', message: 'AI provider returned invalid HTML' });
         closeSSE(controller);
         return;
+      }
+
+      if (logoUrl) {
+        const before = html.includes(logoUrl);
+        html = forceEmbedLogoInHtml(html, logoUrl);
+        console.log('[pages/build] logo embed', {
+          hadLogo: before,
+          hasLogoAfter: html.includes(logoUrl),
+          logoUrl: logoUrl.slice(0, 120),
+        });
+      }
+      if (footerContact) {
+        html = forceEmbedFooterContactInHtml(html, footerContact);
       }
 
       // Strip any remaining STATUS comments before upload
