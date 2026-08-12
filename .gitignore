@@ -38,6 +38,9 @@ settings.local.json
 *.tsbuildinfo
 next-env.d.ts
 
+# scratch output from scripts/verify-page-requirements.mjs
+/.verify-tmp
+
 stripe.exe
 
 # local test page for form-lead validation fix

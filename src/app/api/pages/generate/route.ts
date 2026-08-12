@@ -21,6 +21,10 @@ import {
   looksLikeMultiIntent,
 } from '@/lib/ai-follow-up-helpers';
 import type { AIContent, AIContentBlock, AIMessage } from '@/lib/ai-client';
+import {
+  REQUIREMENT_EXTRACTION_INSTRUCTION,
+  parseModelRequirements,
+} from '@/lib/ai-page-requirements';
 
 const SECTION_TYPES_BLOCK = SECTION_VOCABULARY
   .map(s => `- ${s.schemaExample}\n  Use when: ${s.whenToUse}`)
@@ -36,7 +40,12 @@ Shape 1 — clarifying questions (only when prompt is too vague):
 {"type":"questions","questions":["question 1","question 2","question 3"]}
 
 Shape 2 — page schema (when you have enough to build):
-{"type":"schema","schema":{...}}
+{"type":"schema","schema":{...},"requirements":[...]}
+
+### "requirements" (schema shape only)
+${REQUIREMENT_EXTRACTION_INSTRUCTION}
+
+On a brand-new page there is no "before", so never emit "section_changed". Section names available here are "nav", "hero", "footer", and the "type" of any section you put in the schema.
 
 ## When to ask questions vs build immediately
 Ask questions ONLY if the prompt is missing ALL of: a goal, specific sections, or business details.
@@ -320,6 +329,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unexpected response shape', raw: text }, { status: 500 });
     }
 
+    // The model's own checklist of what this brief demands, written in the same
+    // call that produced the schema. Validated here; the build step merges it
+    // with the regex floor and verifies it against the finished HTML.
+    const modelRequirements =
+      parsed.type === 'schema' ? parseModelRequirements(parsed) : [];
+
     if (parsed.type === 'schema') {
       let schema = parsed.schema as Record<string, unknown>;
       if (competitorContext?.logoUrl || (competitorContext?.footerContact && Object.keys(competitorContext.footerContact).length > 0)) {
@@ -351,6 +366,7 @@ export async function POST(request: NextRequest) {
         : {}),
       ...(minimalOrCustom ? { user_shape_intent: 'minimal_or_custom' } : {}),
       ...(designCopyLines.length > 0 ? { design_copy_lines: designCopyLines } : {}),
+      ...(modelRequirements.length > 0 ? { requirements: modelRequirements } : {}),
     });
   } catch (err) {
     console.error('[pages/generate]', err);

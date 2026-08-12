@@ -19,32 +19,71 @@ const SECTION_NOUN =
   'footer|hero|nav(?:bar)?|header|about|cta|sidebar|pricing|faq|form|section';
 
 /**
- * Map user nouns → existing SL section names.
- * Shared by design-match, logo placement, text/image reuse.
+ * Words users say for parts whose section name doesn't contain that word.
+ * Everything else resolves by matching the live section names themselves, so a
+ * page with `testimonials` or `how_it_works` works without being listed here.
+ */
+const SECTION_SYNONYMS: { key: RegExp; spoken: RegExp }[] = [
+  { key: /nav|header/, spoken: /\b(nav|navbar|navigation(?:\s*bar)?|header|top\s*bar|menu\s*bar)\b/i },
+  { key: /footer/, spoken: /\b(footer|bottom\s*(?:bar|section))\b/i },
+  { key: /hero/, spoken: /\b(hero|banner|above[- ]the[- ]fold|top\s*section|first\s*section)\b/i },
+  { key: /cta|form|popup|contact|lead/, spoken: /\b(form|cta|sign[- ]?up|contact|lead\s*capture)\b/i },
+  { key: /faq/, spoken: /\b(faq|questions?|q\s*&\s*a)\b/i },
+  { key: /social_proof|testimonial|review/, spoken: /\b(testimonials?|reviews?|social\s*proof)\b/i },
+  { key: /logo_wall|logos/, spoken: /\b(logo\s*wall|client\s*logos)\b/i },
+];
+
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Map what the user said → existing SL section names.
+ *
+ * Matches the live section list first (so any section the builder can emit is
+ * addressable — "put the logo in the testimonials section" works without the
+ * word "testimonials" being hardcoded), then falls back to spoken synonyms for
+ * parts whose section name doesn't contain the word people use for it.
+ *
+ * Word-boundary matched: a section called `form` must not be triggered by the
+ * word "information".
  */
 export function inferTargetSectionNames(prompt: string, sectionNames: string[]): string[] {
   const found: string[] = [];
-  const addMatching = (pred: (name: string) => boolean) => {
-    for (const name of sectionNames) {
-      if (pred(name.toLowerCase()) && !found.includes(name)) found.push(name);
-    }
+  const add = (name: string) => {
+    if (!found.includes(name)) found.push(name);
   };
 
   const everywhere =
-    /\beverywhere\b|\ball sections\b|\bnav and footer\b|\bfooter and nav\b|\bboth (the )?(nav|footer)/i.test(
+    /\beverywhere\b|\ball sections\b|\bevery section\b|\bnav and footer\b|\bfooter and nav\b|\bboth (the )?(nav|footer)/i.test(
       prompt,
     );
 
-  if (everywhere || /\bfooter\b/i.test(prompt)) addMatching((n) => n.includes('footer'));
-  if (everywhere || /\b(nav(?:bar)?|header)\b/i.test(prompt)) {
-    addMatching((n) => n === 'nav' || n.startsWith('nav') || n.includes('header') || n === 'navbar');
+  if (everywhere) {
+    for (const name of sectionNames) {
+      if (/nav|header|footer/i.test(name)) add(name);
+    }
+    if (found.length > 0) return found.slice(0, 4);
   }
-  if (/\bhero\b/i.test(prompt)) addMatching((n) => n.includes('hero'));
-  if (/\babout\b/i.test(prompt)) addMatching((n) => n.includes('about'));
-  if (/\b(cta|pricing|faq|sidebar|form)\b/i.test(prompt)) {
-    const m = prompt.match(/\b(cta|pricing|faq|sidebar|form)\b/i);
-    if (m) addMatching((n) => n.includes(m[1].toLowerCase()) || (m[1].toLowerCase() === 'form' && /cta|popup|contact|lead/.test(n)));
+
+  // 1. The section's own name, spoken literally (`how_it_works` → "how it works")
+  for (const name of sectionNames) {
+    const spoken = name.toLowerCase().replace(/[-_]+/g, ' ').trim();
+    if (spoken.length < 3) continue;
+    if (new RegExp(`\\b${escapeRe(spoken)}s?\\b`, 'i').test(prompt)) add(name);
+    else if (spoken.endsWith('s') && new RegExp(`\\b${escapeRe(spoken.slice(0, -1))}\\b`, 'i').test(prompt)) {
+      add(name);
+    }
   }
+
+  // 2. Spoken synonyms for sections named something else
+  for (const { key, spoken } of SECTION_SYNONYMS) {
+    if (!spoken.test(prompt)) continue;
+    for (const name of sectionNames) {
+      if (key.test(name.toLowerCase())) add(name);
+    }
+  }
+
   return found.slice(0, 4);
 }
 
@@ -80,17 +119,15 @@ export function detectContentReuseIntent(
   const quotes = extractQuotedPayloads(t);
 
   // ── Logo ──────────────────────────────────────────────────────────────
+  // A resolved target already proves the user named a real destination, so any
+  // section the page actually has works here — not just a fixed noun list.
   if (/\blogo\b/i.test(t) && placementLanguage(t) && (targets.length > 0 || /\beverywhere\b/i.test(t))) {
-    // Bare "use logo from https://…" without in/on/also destination → not reuse
-    const hasDestNoun = new RegExp(`\\b(${SECTION_NOUN}|everywhere)\\b`, 'i').test(t);
-    if (hasDestNoun) {
-      return {
-        kind: 'logo',
-        targets,
-        textPayload: null,
-        sourceSectionHint: null,
-      };
-    }
+    return {
+      kind: 'logo',
+      targets,
+      textPayload: null,
+      sourceSectionHint: null,
+    };
   }
 
   // ── Text ──────────────────────────────────────────────────────────────
@@ -106,8 +143,7 @@ export function detectContentReuseIntent(
     /\b(put|place|add|use|show)\b[\s\S]{0,60}\b(text|headline|copy|heading|title)\b[\s\S]{0,40}\b(in|on|to|into)\b/i.test(
       t,
     ) ||
-    (quotes.length > 0 &&
-      /\b(in|on|to|into|for)\b[\s\S]{0,30}\b(footer|hero|nav|header|about|cta|section)\b/i.test(t));
+    (quotes.length > 0 && targets.length > 0 && /\b(in|on|to|into|for)\b/i.test(t));
 
   if (textish && copyFromTo && placementLanguage(t)) {
     let sourceSectionHint: string | null = null;
@@ -121,8 +157,10 @@ export function detectContentReuseIntent(
     if (sourceSectionHint && dests.length > 1) {
       dests = dests.filter((n) => !n.toLowerCase().includes(sourceSectionHint!));
     }
-    // "copy hero … to footer" — hero may be inferred as target; fix via to/in clause
-    const toM = /\b(?:to|into|in)\s+(?:the\s+)?(footer|hero|nav|header|about|cta)\b/i.exec(t);
+    // "copy hero … to footer" — hero may be inferred as target; fix via to/in
+    // clause. The destination phrase is resolved against live sections rather
+    // than matched against a fixed list, so "to the testimonials" works too.
+    const toM = /\b(?:to|into|in)\s+(?:the\s+)?([a-z][a-z0-9 _-]{2,30})/i.exec(t);
     if (toM) {
       const mapped = inferTargetSectionNames(toM[1], sectionNames);
       if (mapped.length > 0) dests = mapped;

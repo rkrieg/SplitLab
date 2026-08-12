@@ -5,7 +5,20 @@ export type SSEEvent =
   | { type: 'image_ready'; url: string }
   | { type: 'clarify'; message: string }
   | { type: 'error'; message: string }
-  | { type: 'done'; html_url: string; slug?: string; schema_json?: unknown; competitor_fetch_failed?: boolean; elapsed_ms?: number; already?: boolean; partial_message?: string };
+  | {
+      type: 'done';
+      html_url: string;
+      slug?: string;
+      schema_json?: unknown;
+      competitor_fetch_failed?: boolean;
+      elapsed_ms?: number;
+      already?: boolean;
+      partial_message?: string;
+      /** Asks from the prompt the finished page still doesn't satisfy. */
+      unmet_requirements?: string;
+      /** External images that failed verification and were left untouched. */
+      broken_assets?: number;
+    };
 
 export const SSE_HEADERS = {
   'Content-Type': 'text/event-stream',

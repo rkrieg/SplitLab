@@ -721,6 +721,49 @@ assert('builder minimal taste hierarchy', pageBuilder.includes('Taste: one clear
 assert('builder no invent stats in HTML', pageBuilder.includes('Do NOT invent fake statistics'));
 assert('builder designReferenceCopy option', pageBuilder.includes('designReferenceCopy'));
 
+// Asset integrity: nothing may embed an unverified third-party URL
+const assets = readFileSync(join(__dirname, '../src/lib/ai-asset-integrity.ts'), 'utf8');
+assert('assets materializeAsset', assets.includes('export async function materializeAsset'));
+assert('assets verifyAndRehostHtmlImages', assets.includes('export async function verifyAndRehostHtmlImages'));
+assert('assets checks content-type', assets.includes("contentType.startsWith('image/')"));
+assert('assets re-host via uploadImage', assets.includes('uploadImage('));
+assert('brand logo verifies before embed', brand.includes('materializeAsset'));
+assert('brand no raw hotlink return', !/if \(opts\.logoUrl && \/\^https\?:\\\/\\\/\/i\.test\(opts\.logoUrl\)\) return opts\.logoUrl;/.test(brand));
+assert('build verifies page images', build.includes('verifyAndRehostHtmlImages'));
+assert('follow-up verifies page images', follow.includes('verifyAndRehostHtmlImages'));
+
+// Layout-safe injection: never prepend bare markup onto a section body
+assert('brand injectIntoFirstContainer', brand.includes('function injectIntoFirstContainer'));
+assert('brand footer injects inside wrapper', !brand.includes('block.replace(/<footer\\b[^>]*>/i, (open) => `${open}${markup}`)'));
+
+// Requirements: prompt → checkable asks → honest completion
+const reqs = readFileSync(join(__dirname, '../src/lib/ai-page-requirements.ts'), 'utf8');
+assert('requirements extract', reqs.includes('export function extractRequirements'));
+assert('requirements enforce', reqs.includes('export function enforceRequirements'));
+assert('requirements check', reqs.includes('export function checkRequirements'));
+assert('requirements describeUnmet', reqs.includes('export function describeUnmet'));
+assert('requirements retry instruction', reqs.includes('export function retryInstructionFor'));
+assert('requirements CTA strip', reqs.includes('export function stripCtaElements'));
+assert('requirements theme color', reqs.includes('export function extractThemeBackgroundColor'));
+assert('requirements protects logo from CTA strip', reqs.includes('if (/<(img|svg)\\b/i.test(tag)) return false;'));
+assert('requirements match the color asked for', reqs.includes('export function colorMatchesName'));
+assert('requirements parse real CSS colors', reqs.includes('export function parseCssColor'));
+assert('requirements no non-white shortcut', !reqs.includes('sectionHasNonWhiteBackground'));
+
+// Preservation: an edit must not silently destroy what it wasn't asked to touch
+const preserve = readFileSync(join(__dirname, '../src/lib/ai-page-preservation.ts'), 'utf8');
+assert('preservation snapshot', preserve.includes('export function snapshotPageFacts'));
+assert('preservation finds losses', preserve.includes('export function findUnrequestedLosses'));
+assert('preservation respects removal intent', preserve.includes('export function promptHasRemovalIntent'));
+assert('follow-up guards against losses', follow.includes('findUnrequestedLosses'));
+assert('follow-up restores a deleted logo', follow.includes('restored logo removed without request'));
+assert('follow-up reports unrepaired losses', follow.includes('describeLosses'));
+assert('build wires requirements', build.includes('extractRequirements') && build.includes('checkRequirements'));
+assert('build reports unmet', build.includes('unmet_requirements'));
+assert('follow-up wires requirements', follow.includes('extractRequirements') && follow.includes('describeUnmet'));
+assert('follow-up unmet downgrades toast', follow.includes('Still not applied'));
+assert('client surfaces unmet on create', client.includes('unmet_requirements') && client.includes('not everything landed'));
+
 const visualQa = readFileSync(join(__dirname, '../src/lib/ai-visual-qa.ts'), 'utf8');
 assert('visual-qa module shouldRun', visualQa.includes('export function shouldRunNavLogoVisualQa'));
 assert('visual-qa once helper', visualQa.includes('export async function runNavLogoVisualQaOnce'));
@@ -774,6 +817,57 @@ assert(
     '<!-- SL:nav -->a<!-- /SL:nav --><!-- SL:hero -->b<!-- /SL:hero --><!-- SL:footer -->c<!-- /SL:footer -->',
   ).join(',') === 'nav,hero,footer',
 );
+
+// ── Section targeting must stay general, not a hardcoded noun list ──────────
+assert(
+  'placement resolves targets against live section names',
+  /for \(const name of sectionNames\)[\s\S]{0,400}escapeRe\(spoken\)/.test(placement),
+);
+assert(
+  'placement keeps synonyms only for parts named differently',
+  placement.includes('SECTION_SYNONYMS'),
+);
+assert(
+  'placement logo branch no longer gated on a fixed noun list',
+  !/hasDestNoun/.test(placement),
+);
+assert(
+  'preservation can locate an asset by section',
+  preserve.includes('export function sectionsContainingAsset'),
+);
+assert(
+  'follow-up restores a lost logo where it was, not always nav/footer',
+  follow.includes('sectionsContainingAsset(originalHtmlForPreservation'),
+);
+assert(
+  'unchanged section fails when the user named that section',
+  helpers.includes('userNamedThisSection'),
+);
+
+// ── The model writes the checklist; code still does the checking ────────────
+const requirementsSrc = readFileSync(join(__dirname, '../src/lib/ai-page-requirements.ts'), 'utf8');
+assert('requirements expose a model-facing schema',
+  requirementsSrc.includes('export const REQUIREMENT_EXTRACTION_INSTRUCTION'));
+assert('model checklist is validated, not trusted',
+  requirementsSrc.includes('export function parseModelRequirements'));
+assert('model and regex checklists merge',
+  requirementsSrc.includes('export function mergeRequirements'));
+assert('section_changed is a checkable kind', requirementsSrc.includes("'section_changed'"));
+assert('edit router asks for the checklist',
+  follow.includes('REQUIREMENT_EXTRACTION_INSTRUCTION') && follow.includes('"requirements":[...]'));
+assert('edit flow captures the routed checklist',
+  follow.includes('captureModelRequirements'));
+assert('edit flow merges model + regex checklists',
+  /mergeRequirements\(\s*modelRequirements/.test(follow));
+assert('edit flow passes the before-image so section_changed is checkable',
+  follow.includes('beforeHtml: originalHtmlForPreservation'));
+assert('create schema pass asks for the checklist',
+  gen.includes('REQUIREMENT_EXTRACTION_INSTRUCTION') && gen.includes('parseModelRequirements'));
+assert('create returns the checklist', gen.includes('{ requirements: modelRequirements }'));
+assert('build accepts and merges the checklist',
+  build.includes('parseModelRequirements(model_requirements') && build.includes('mergeRequirements('));
+assert('client forwards the checklist to build',
+  client.includes('createRequirementsRef') && client.includes('requirements: modelRequirements'));
 
 if (failed > 0) {
   console.error(`\n${failed} assertion(s) failed`);

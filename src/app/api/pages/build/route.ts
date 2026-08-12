@@ -15,13 +15,22 @@ import {
   materializeLogoUrl,
   type FooterContact,
 } from '@/lib/ai-brand-assets';
-import { runPostUploadNavLogoQa } from '@/lib/ai-visual-qa';
+import { runPostUploadNavLogoQa, listSlSectionNames } from '@/lib/ai-visual-qa';
 import {
   extractDesignReferenceCopy,
   isDesignReferenceAsk,
   inferDesignMatchSectionNames,
 } from '@/lib/ai-follow-up-helpers';
 import { forceAppendMissingDesignCopy } from '@/lib/ai-content-placement';
+import { verifyAndRehostHtmlImages } from '@/lib/ai-asset-integrity';
+import {
+  extractRequirements,
+  enforceRequirements,
+  checkRequirements,
+  describeUnmet,
+  parseModelRequirements,
+  mergeRequirements,
+} from '@/lib/ai-page-requirements';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 800;
@@ -59,7 +68,8 @@ export async function POST(request: NextRequest) {
     competitor_logo_url: unknown,
     competitor_logo_svg: unknown,
     competitor_footer_contact: unknown,
-    design_copy_lines: unknown;
+    design_copy_lines: unknown,
+    model_requirements: unknown;
 
   try {
     ({
@@ -75,6 +85,7 @@ export async function POST(request: NextRequest) {
       competitor_logo_svg,
       competitor_footer_contact,
       design_copy_lines,
+      requirements: model_requirements,
     } = await request.json());
   } catch {
     return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
@@ -274,6 +285,45 @@ export async function POST(request: NextRequest) {
       // Strip any remaining STATUS comments before upload
       html = html.replace(/<!--\s*STATUS:[^>]*-->/g, '');
 
+      // Every external <img> the model wrote is verified and re-hosted, so a
+      // hotlink that 403s in the browser can't ship as a "successful" build.
+      const assetScan = await verifyAndRehostHtmlImages({ pageSlug, html });
+      html = assetScan.html;
+      if (assetScan.rehosted.length > 0 || assetScan.broken.length > 0) {
+        console.log('[pages/build] asset integrity', {
+          rehosted: assetScan.rehosted.length,
+          broken: assetScan.broken,
+        });
+      }
+
+      // Requirements: turn the prompt into checkable asks, apply what we can
+      // deterministically, and remember what still failed for an honest Done.
+      const requirements = mergeRequirements(
+        // Written by the model during the schema pass, so asks that no regex
+        // here would recognise still get verified.
+        parseModelRequirements(model_requirements, { knownSections: listSlSectionNames(html) }),
+        extractRequirements({
+          prompt: promptText,
+          assetUrls: logoUrl ? [logoUrl] : [],
+          designCopyLines,
+        }),
+      );
+      if (requirements.length > 0) {
+        const enforced = enforceRequirements(html, requirements);
+        html = enforced.html;
+        if (enforced.applied.length > 0) {
+          console.log('[pages/build] requirements enforced', enforced.applied);
+        }
+      }
+      const requirementResults = checkRequirements(html, requirements);
+      const unmet = describeUnmet(requirementResults);
+      if (unmet) {
+        console.warn('[pages/build] unmet requirements', {
+          unmet,
+          prompt: promptText.slice(0, 200),
+        });
+      }
+
       const storagePath = `pages/${pageSlug}.html`;
       let htmlUrl = await uploadHtml(storagePath, html);
 
@@ -302,11 +352,26 @@ export async function POST(request: NextRequest) {
         });
         if (qa.appliedFix) {
           html = qa.html;
+          // QA rewrites sections, so re-apply and re-check requirements against
+          // what we actually ship rather than the pre-QA draft.
+          const reEnforced = enforceRequirements(html, requirements);
+          html = reEnforced.html;
           htmlUrl = await uploadHtml(storagePath, html);
         }
       }
 
-      sendSSE(controller, { type: 'done', html_url: htmlUrl, slug: pageSlug, schema_json: enrichedSchema });
+      const finalUnmet = requirements.length > 0
+        ? describeUnmet(checkRequirements(html, requirements))
+        : unmet;
+
+      sendSSE(controller, {
+        type: 'done',
+        html_url: htmlUrl,
+        slug: pageSlug,
+        schema_json: enrichedSchema,
+        ...(finalUnmet ? { unmet_requirements: finalUnmet } : {}),
+        ...(assetScan.broken.length > 0 ? { broken_assets: assetScan.broken.length } : {}),
+      });
       closeSSE(controller);
     } catch (err) {
       console.error('[pages/build]', err);

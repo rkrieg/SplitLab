@@ -5,7 +5,7 @@
  */
 
 import { askAI } from '@/lib/ai-client';
-import { uploadImage } from '@/lib/storage';
+import { materializeAsset, materializeSvgMarkup } from '@/lib/ai-asset-integrity';
 import { detectContentReuseIntent, inferTargetSectionNames } from '@/lib/ai-content-placement';
 
 /** User wants a custom/minimal page — not a full clone of the reference URL. */
@@ -139,30 +139,52 @@ export function extractInlineLogoSvg(rawHtml: string): string | null {
 }
 
 /**
- * Prefer existing logo URL; else upload inline SVG to storage and return public URL.
- * Returns null if neither is available (callers must not invent a logo).
+ * Return a logo URL that is proven to load: remote candidates are fetched,
+ * content-type checked and re-hosted on our storage before we ever put them in
+ * an <img src>. Hotlinking a client's CDN used to pass every string check while
+ * rendering a broken image, so an unverifiable URL now falls through to the
+ * inline-SVG path instead of being embedded on trust.
+ *
+ * Returns null if nothing verifiable is available (callers must not invent a logo).
  */
 export async function materializeLogoUrl(opts: {
   pageSlug: string;
   logoUrl?: string | null;
   logoSvg?: string | null;
 }): Promise<string | null> {
-  if (opts.logoUrl && /^https?:\/\//i.test(opts.logoUrl)) return opts.logoUrl;
+  if (opts.logoUrl && /^https?:\/\//i.test(opts.logoUrl)) {
+    const asset = await materializeAsset({ pageSlug: opts.pageSlug, url: opts.logoUrl });
+    if (asset.ok) {
+      console.log('[materializeLogoUrl] verified logo asset', {
+        pageSlug: opts.pageSlug,
+        reused: asset.reused,
+        contentType: asset.contentType,
+        bytes: asset.bytes,
+        url: asset.url.slice(0, 120),
+      });
+      return asset.url;
+    }
+    console.error('[materializeLogoUrl] logo URL failed verification', {
+      pageSlug: opts.pageSlug,
+      reason: asset.reason,
+      status: asset.status,
+      contentType: asset.contentType,
+      url: opts.logoUrl.slice(0, 120),
+    });
+  }
+
   const svg = opts.logoSvg?.trim();
   if (!svg || !/^<svg\b/i.test(svg)) return null;
-  try {
-    const buffer = Buffer.from(svg, 'utf8');
-    const ab = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer;
-    const url = await uploadImage(opts.pageSlug, ab, 'image/svg+xml', 'svg');
+  const hosted = await materializeSvgMarkup({ pageSlug: opts.pageSlug, svg });
+  if (hosted) {
     console.log('[materializeLogoUrl] uploaded inline SVG logo', {
       pageSlug: opts.pageSlug,
-      url: url.slice(0, 120),
+      url: hosted.slice(0, 120),
     });
-    return url;
-  } catch (err) {
-    console.error('[materializeLogoUrl] SVG upload failed', err);
-    return null;
+  } else {
+    console.error('[materializeLogoUrl] SVG upload failed', { pageSlug: opts.pageSlug });
   }
+  return hosted;
 }
 
 /** Put real logo URL + footer facts onto the schema so build doesn't invent them. */
@@ -212,7 +234,9 @@ export function injectBrandAssetsIntoSchema(
 
 function logoMarkupForEmbed(logoUrl: string | null, logoSvg: string | null): string | null {
   if (logoUrl) {
-    return `<img src="${logoUrl}" alt="logo" style="height:40px;width:auto;display:block;background:transparent;" />`;
+    // max-width guards against a wide wordmark stretching a flex row; the
+    // transparent background keeps it from rendering as a boxed sticker.
+    return `<img src="${logoUrl}" alt="logo" style="height:40px;width:auto;max-width:200px;object-fit:contain;display:block;background:transparent;" />`;
   }
   if (logoSvg && /^<svg\b/i.test(logoSvg)) {
     let svg = logoSvg;
@@ -312,6 +336,22 @@ export function sectionHasLogoAsset(
   return false;
 }
 
+/**
+ * Place markup just inside the section's first block-level wrapper.
+ *
+ * Prepending to the raw section body instead put the asset *outside* the div
+ * that carries the background/padding/max-width, so a 40px logo rendered on the
+ * page background as a full-width white band above the real footer.
+ */
+function injectIntoFirstContainer(inner: string, markup: string): string {
+  const container = /<(div|section|header|nav|footer|aside|main|ul)\b[^>]*>/i.exec(inner);
+  if (container && container.index !== undefined) {
+    const at = container.index + container[0].length;
+    return inner.slice(0, at) + markup + inner.slice(at);
+  }
+  return markup + inner;
+}
+
 function injectLogoMarkupIntoBlock(inner: string, markup: string): string {
   if (/<img\b/i.test(inner)) {
     return inner.replace(/<img\b[^>]*>/i, markup);
@@ -322,7 +362,7 @@ function injectLogoMarkupIntoBlock(inner: string, markup: string): string {
   if (/<a\b[^>]*>/i.test(inner)) {
     return inner.replace(/(<a\b[^>]*>)([\s\S]*?)(<\/a>)/i, `$1${markup}$3`);
   }
-  return markup + inner;
+  return injectIntoFirstContainer(inner, markup);
 }
 
 /** Put the working logo into the footer section (or <footer> fallback). Internal — use forceEmbedLogoInSection / IntoSections. */
@@ -361,7 +401,11 @@ function embedLogoInFooterBlock(
     } else if (/<svg\b[\s\S]*?<\/svg>/i.test(block)) {
       block = block.replace(/<svg\b[\s\S]*?<\/svg>/i, markup);
     } else {
-      block = block.replace(/<footer\b[^>]*>/i, (open) => `${open}${markup}`);
+      // Inside the footer's own wrapper — not between <footer> and it, which
+      // rendered the logo on the body background as a stray white strip.
+      block = block.replace(/(<footer\b[^>]*>)([\s\S]*)(<\/footer>)/i, (_m, open, body, close) =>
+        `${open}${injectIntoFirstContainer(body, markup)}${close}`,
+      );
     }
     return withSl.slice(0, footerEl.index) + block + withSl.slice(footerEl.index + footerEl[0].length);
   }
@@ -455,7 +499,10 @@ export function forceEmbedLogoInHtml(
     } else if (/<svg\b[\s\S]*?<\/svg>/i.test(block)) {
       block = block.replace(/<svg\b[\s\S]*?<\/svg>/i, markup);
     } else {
-      block = block.replace(/<(header|nav)\b[^>]*>/i, (open) => `${open}${markup}`);
+      block = block.replace(
+        /(<(?:header|nav)\b[^>]*>)([\s\S]*)(<\/(?:header|nav)>)/i,
+        (_m, open, body, close) => `${open}${injectIntoFirstContainer(body, markup)}${close}`,
+      );
     }
     return html.slice(0, headerOrNav.index) + block + html.slice(headerOrNav.index + headerOrNav[0].length);
   }

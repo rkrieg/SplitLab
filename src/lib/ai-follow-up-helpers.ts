@@ -229,10 +229,15 @@ export function verifyScopedPatchIntent(opts: {
   // identical HTML is always a failure (not a soft pass).
   if (beforeHtml === afterHtml) {
     const quotes = extractVerifyQuotes(prompt);
+    // The user naming this section ("make the navbar text bigger") is itself a
+    // requirement: an identical section means the ask was not carried out, even
+    // for style-only edits with nothing quotable to check for.
+    const userNamedThisSection = inferTargetSectionNames(prompt, [sectionName]).length > 0;
     if (
       quotes.length > 0 ||
       requiredSubstring ||
       isDesignReferenceAsk(prompt) ||
+      userNamedThisSection ||
       (requiredPhrases && requiredPhrases.length > 0)
     ) {
       return { ok: false, reason: `patched_${sectionName}_unchanged` };

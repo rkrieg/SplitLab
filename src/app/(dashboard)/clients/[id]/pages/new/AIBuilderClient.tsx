@@ -284,6 +284,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   /** Survives generate → questions → generate so create screenshots aren't dropped. */
   const createAttachUrlsRef = useRef<string[]>([]);
   const createDesignCopyRef = useRef<string[]>([]);
+  const createRequirementsRef = useRef<unknown[]>([]);
 
   const [pendingImageField, setPendingImageField] = useState<string | null>(null);
   const [uploadingImage, setUploadingImage] = useState(false);
@@ -882,6 +883,12 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       ? (data.design_copy_lines as string[])
       : createDesignCopyRef.current;
     if (freshDesignCopyLines.length > 0) createDesignCopyRef.current = freshDesignCopyLines;
+    // The checklist the schema pass wrote for this brief; build verifies it
+    // against the finished HTML so a dropped ask can't be reported as "ready".
+    const freshRequirements = Array.isArray(data.requirements)
+      ? (data.requirements as unknown[])
+      : createRequirementsRef.current;
+    if (freshRequirements.length > 0) createRequirementsRef.current = freshRequirements;
 
     if (data.type === 'questions') {
       setQuestions(data.questions);
@@ -908,9 +915,11 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       freshCompetitorLogoSvg,
       createImageUrls,
       freshDesignCopyLines,
+      freshRequirements,
     );
     createAttachUrlsRef.current = [];
     createDesignCopyRef.current = [];
+    createRequirementsRef.current = [];
   }
 
   async function runBuild(
@@ -924,6 +933,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     freshLogoSvg?: string | null,
     preUploadedImageUrls?: string[],
     designCopyLines?: string[],
+    modelRequirements?: unknown[],
   ) {
     if (!pageId) return;
     setPhase('building');
@@ -974,6 +984,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         workspace_id: workspaceId,
         ...(image_urls.length > 0 ? { image_urls } : {}),
         ...(designCopyLines && designCopyLines.length > 0 ? { design_copy_lines: designCopyLines } : {}),
+        ...(modelRequirements && modelRequirements.length > 0 ? { requirements: modelRequirements } : {}),
         ...((freshScreenshots ?? competitorScreenshots)?.length ? { competitor_screenshots: freshScreenshots ?? competitorScreenshots } : {}),
         ...(((freshCssTokens ?? competitorCssTokens)) ? { competitor_css_tokens: freshCssTokens ?? competitorCssTokens } : {}),
         ...(((freshPageContent ?? competitorPageContent)) ? { competitor_page_content: freshPageContent ?? competitorPageContent } : {}),
@@ -994,6 +1005,8 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     let finalSlug: string | null = null;
     let finalSchema: unknown = schema;
     let buildError = false;
+    let unmetRequirements: string | null = null;
+    let brokenAssets = 0;
 
     await readSSEStream(res, (event) => {
       setBuildEvents(prev => [...prev, event]);
@@ -1001,6 +1014,8 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         htmlUrl = event.html_url;
         finalSlug = event.slug ?? null;
         finalSchema = event.schema_json ?? schema;
+        unmetRequirements = event.unmet_requirements ?? null;
+        brokenAssets = event.broken_assets ?? 0;
       } else if (event.type === 'error') {
         buildError = true;
         toast.error(event.message || 'Build failed');
@@ -1042,7 +1057,23 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     schemaRef.current = finalSchema;
     setSchemaJson(finalSchema);
     setPhase('editing');
-    addMessage({ role: 'assistant', content: 'Your page is ready! Click any text in the preview to edit it, or ask me to make changes.' });
+
+    // Name what didn't land instead of a blanket "ready" — a page with a
+    // banned CTA still on it is not what the user asked for.
+    const caveats: string[] = [];
+    if (unmetRequirements) caveats.push(unmetRequirements);
+    if (brokenAssets > 0) {
+      caveats.push(`${brokenAssets} image URL(s) couldn't be loaded`);
+    }
+    if (caveats.length > 0) {
+      toast('Built, but some asks need another pass.', { icon: '⚠️' });
+      addMessage({
+        role: 'assistant',
+        content: `Your page is built, but not everything landed — ${caveats.join('; ')}. Tell me to fix it and I'll take another pass.`,
+      });
+    } else {
+      addMessage({ role: 'assistant', content: 'Your page is ready! Click any text in the preview to edit it, or ask me to make changes.' });
+    }
   }
 
   async function handleGenerate(e: React.FormEvent) {

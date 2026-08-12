@@ -47,6 +47,23 @@ import {
   inferTargetSectionNames,
 } from '@/lib/ai-content-placement';
 import { runNavLogoVisualQaOnce, runPostUploadNavLogoQa } from '@/lib/ai-visual-qa';
+import { verifyAndRehostHtmlImages } from '@/lib/ai-asset-integrity';
+import {
+  findUnrequestedLosses,
+  hasLosses,
+  describeLosses,
+  sectionsContainingAsset,
+} from '@/lib/ai-page-preservation';
+import {
+  extractRequirements,
+  enforceRequirements,
+  checkRequirements,
+  describeUnmet,
+  parseModelRequirements,
+  mergeRequirements,
+  REQUIREMENT_EXTRACTION_INSTRUCTION,
+  type PageRequirement,
+} from '@/lib/ai-page-requirements';
 
 export const dynamic = 'force-dynamic';
 // Large full-page rewrites can run several minutes; raised well past the old
@@ -497,7 +514,7 @@ async function trySurgicalTextEdit(
 const ROUTING_SYSTEM_PROMPT = `You are a routing classifier for a landing-page AI edit assistant. Given a list of the page's sections (name + a short text/image preview of each) and an edit instruction, decide which section(s) the instruction targets and how big the change is.
 
 Return JSON only. No markdown fences, no explanation.
-{"type":"patch"|"style"|"structural"|"image_generate"|"insert_section"|"remove_section"|"reorder_sections","target_sections":["section-name", ...],"confidence":"high"|"low","clarifying_question":"...","image_prompt":"...","anchor_section":"...","position":"before"|"after","new_order":["section-name", ...]}
+{"type":"patch"|"style"|"structural"|"image_generate"|"insert_section"|"remove_section"|"reorder_sections","target_sections":["section-name", ...],"confidence":"high"|"low","clarifying_question":"...","image_prompt":"...","anchor_section":"...","position":"before"|"after","new_order":["section-name", ...],"requirements":[...]}
 
 Rules:
 - "patch": the instruction clearly targets 1-3 specific existing sections you can identify from the previews below (a heading, button, image, paragraph, one section's design/spacing/color, or a full redesign/rebuild of ONE existing section).
@@ -519,7 +536,9 @@ Rules:
 - Set confidence "low" when the referenced element/text/section could plausibly belong to two or more different sections, or doesn't appear in any preview at all — including truly ambiguous image references ("use this image" when multiple sections have images) or vague whole-page requests ("make it feel more premium"). When confidence is "low", still fill in your best guess for type/target_sections, AND you MUST also return "clarifying_question": a short plain-English question for the user that names the plausible section options using EXACT section names from the list (e.g. "Did you mean the form in cta-form, or the FAQ in faq?"). The product will ask the user instead of guessing.
 - **Never set confidence "low" / clarifying_question when:** (1) the user says "you decide", "feel free", "just do it", "up to you", or similar — pick the best section and use confidence "high"; (2) they attached a screenshot and are complaining that something looks wrong/sloppy/broken/fake — LOOK at the screenshot, decide the fix, confidence "high" on the section that matches the problem (often nav/logo). Do NOT ask "did you mean the logo?" when the rant + screenshot already make that obvious; (3) they attached a screenshot and ask to keep/make/match a named part "like this" (e.g. "keep the footer like this") — that is a design-reference match: confidence "high" on the named section (footer → footer, nav → nav), never clarify.
 - **Attached screenshots (vision):** When image(s) are included with the instruction, LOOK at them. Screenshots of a lead form / dropdown questions / "investment range" style fields almost always mean a form section (names like cta-form, form, popup, contact — whatever matches the list), NOT faq. FAQ is for Q&A accordion copy. Prefer the section whose preview/schema looks like a form when the screenshot shows form fields. Screenshots of a visual defect (logo box, broken line, bad spacing) are diagnostic — route to the broken section and fix it; do not clarify. Screenshots of a desired footer/nav/hero look with "like this" / "match this" language are design references — route to that section for a patch that recreates the look.
-- Only ever use section names EXACTLY as given in the list — never invent one.`;
+- Only ever use section names EXACTLY as given in the list — never invent one.
+
+${REQUIREMENT_EXTRACTION_INSTRUCTION}`;
 
 interface RoutingResult {
   type: string;
@@ -530,6 +549,8 @@ interface RoutingResult {
   anchor_section?: string;
   position?: string;
   new_order?: string[];
+  /** Model-written checklist; validated by parseModelRequirements before use. */
+  requirements?: unknown;
 }
 
 function buildDefaultClarifyQuestion(routing: RoutingResult, sections: SlSection[]): string {
@@ -1312,6 +1333,12 @@ export async function POST(
   html = htmlNoDataUris;
   schema = JSON.parse(schemaStrNoDataUris);
 
+  // Snapshot of the page as it stood before this edit, used at the end to catch
+  // content the edit destroyed without being asked to (a nav-color request has
+  // no business deleting the logo).
+  const originalHtmlForPreservation = html;
+  const preEditLogoUrl = extractPrimaryLogoUrlFromHtml(html);
+
   // Prepare synchronous data
   const history: { role: 'user' | 'assistant'; content: string; image_urls?: string[]; clarify?: boolean }[] =
     Array.isArray(page.conversation_json) ? page.conversation_json : [];
@@ -1376,6 +1403,20 @@ export async function POST(
     competitorUrls.length === 0 || allowScopedWithCompetitorUrl
       ? tryDirectQuoteMatch(prompt, slSections)
       : null;
+
+  // The router already reads the instruction, the screenshots and every
+  // section, so it writes the verification checklist in the same call — the
+  // model interprets the ask, deterministic code still does the checking.
+  // Regex extraction stays as the floor, so a skipped or malformed routing
+  // call can only mean fewer model-written checks, never fewer guarantees.
+  let modelRequirements: PageRequirement[] = [];
+  const captureModelRequirements = (routing: RoutingResult | null) => {
+    if (!routing?.requirements) return;
+    const parsed = parseModelRequirements(routing, {
+      knownSections: slSections.map((s) => s.name),
+    });
+    if (parsed.length > 0) modelRequirements = parsed;
+  };
 
   // ── Open SSE stream — no NextResponse.json after this point ───────────────
 
@@ -1465,6 +1506,7 @@ export async function POST(
           let logoTargetName: string | null = navSection?.name ?? null;
           if (!logoTargetName) {
             const routing = await tryRoutingCall(prompt, schema, slSections, [], usageCtx);
+            captureModelRequirements(routing);
             if (
               routing &&
               routing.target_sections.length === 1 &&
@@ -1568,6 +1610,7 @@ export async function POST(
             let targets = reuse.targets;
             if (targets.length === 0) {
               const routing = await tryRoutingCall(prompt, schema, slSections, [], usageCtx);
+              captureModelRequirements(routing);
               if (
                 routing &&
                 routing.target_sections.length >= 1 &&
@@ -1747,6 +1790,7 @@ export async function POST(
           }
           const photoUrl = photos[0];
           const routing = await tryRoutingCall(prompt, schema, slSections, [photoUrl], usageCtx);
+          captureModelRequirements(routing);
           const targetName =
             routing &&
             routing.type === 'patch' &&
@@ -2172,6 +2216,7 @@ export async function POST(
         if (!scopedApplied && !targetSections && !scopedFailureReason) {
           sendSSE(controller, { type: 'status', message: 'Locating section...' });
           const routing = await tryRoutingCall(prompt, schema, slSections, routingImageUrls, usageCtx);
+          captureModelRequirements(routing);
           const basicShapeOk = !!routing &&
             routing.type === 'patch' &&
             routing.target_sections.length >= 1 &&
@@ -2966,6 +3011,120 @@ export async function POST(
       const finalSchemaJsonReal = finalSchemaJson
         ? (restoreDataUrisInValue(finalSchemaJson, dataUriMap) as Record<string, unknown>)
         : undefined;
+
+      // Any external <img> — ours or one the model wrote — is fetched, verified
+      // and re-hosted so an edit can't ship a URL that 404s in the browser.
+      const assetScan = await verifyAndRehostHtmlImages({
+        pageSlug: params.id,
+        html: finalHtmlPersisted,
+      });
+      finalHtmlPersisted = assetScan.html;
+      if (assetScan.rehosted.length > 0 || assetScan.broken.length > 0) {
+        console.log('[pages/follow-up] asset integrity', {
+          rehosted: assetScan.rehosted.length,
+          broken: assetScan.broken,
+        });
+      }
+
+      // Requirements: what the user actually asked for, checked against what we
+      // built. Deterministic fixes are applied here; anything still unmet
+      // downgrades the toast instead of claiming Done.
+      const editRequirementAssets = [
+        typeof finalSchemaJsonReal?.brand_logo_url === 'string'
+          ? (finalSchemaJsonReal.brand_logo_url as string)
+          : null,
+        competitorContext?.logoUrl ?? null,
+      ].filter((u): u is string => !!u && finalHtmlPersisted.includes(u));
+
+      const requirements = mergeRequirements(
+        modelRequirements,
+        extractRequirements({
+          prompt,
+          assetUrls: editRequirementAssets,
+          designCopyLines,
+        }),
+      );
+      if (requirements.length > 0) {
+        const enforced = enforceRequirements(finalHtmlPersisted, requirements);
+        finalHtmlPersisted = enforced.html;
+        if (enforced.applied.length > 0) {
+          console.log('[pages/follow-up] requirements enforced', enforced.applied);
+        }
+        const unmet = describeUnmet(
+          checkRequirements(finalHtmlPersisted, requirements, {
+            beforeHtml: originalHtmlForPreservation,
+          }),
+        );
+        if (unmet) {
+          console.warn('[pages/follow-up] unmet requirements', { unmet, prompt: prompt.slice(0, 200) });
+          partialMessage = partialMessage
+            ? `${partialMessage} Still not applied: ${unmet}.`
+            : `Still not applied: ${unmet}.`;
+        }
+      }
+      if (assetScan.broken.length > 0) {
+        const note = `${assetScan.broken.length} image URL(s) could not be loaded and were left as-is.`;
+        partialMessage = partialMessage ? `${partialMessage} ${note}` : note;
+      }
+
+      // Collateral damage guard: an edit about colors has no business deleting
+      // the logo. Compare against the pre-edit page and put back what vanished
+      // without being asked for. Skipped entirely when the user said "remove".
+      const losses = findUnrequestedLosses({
+        beforeHtml: originalHtmlForPreservation,
+        afterHtml: finalHtmlPersisted,
+        prompt,
+      });
+      if (hasLosses(losses)) {
+        console.warn('[pages/follow-up] unrequested losses', {
+          images: losses.images.length,
+          sections: losses.sections,
+          headings: losses.headings.length,
+          prompt: prompt.slice(0, 200),
+        });
+
+        // Brand marks are restorable deterministically — we know where they go.
+        const lostLogo = losses.images.find(
+          (u) => /logo|brand|wordmark/i.test(u) || u === preEditLogoUrl,
+        );
+        let restoredLogo = false;
+        if (lostLogo) {
+          // Put it back where the user had it — assuming nav/footer would move
+          // a hero logo somewhere they never asked for.
+          const slNames = Array.from(
+            finalHtmlPersisted.matchAll(/<!--\s*SL:([a-z0-9_-]+)\s*-->/gi),
+          ).map((m) => m[1]);
+          const original = sectionsContainingAsset(originalHtmlForPreservation, lostLogo);
+          const targets = original.filter((n) => slNames.includes(n));
+          if (targets.length === 0) {
+            targets.push(...slNames.filter((n) => /nav|header|footer/i.test(n)));
+          }
+          if (targets.length === 0) targets.push('nav', 'footer');
+          const restored = forceEmbedLogoIntoSections(finalHtmlPersisted, targets, lostLogo, null);
+          if (restored !== finalHtmlPersisted) {
+            finalHtmlPersisted = restored;
+            restoredLogo = true;
+            console.log('[pages/follow-up] restored logo removed without request', {
+              targets,
+              logo: lostLogo.slice(0, 120),
+            });
+          }
+        }
+
+        // Anything we could not put back is reported rather than hidden.
+        const remaining = findUnrequestedLosses({
+          beforeHtml: originalHtmlForPreservation,
+          afterHtml: finalHtmlPersisted,
+          prompt,
+        });
+        const lossNote = describeLosses(remaining);
+        if (lossNote) {
+          const note = `Heads up: ${lossNote}.`;
+          partialMessage = partialMessage ? `${partialMessage} ${note}` : note;
+        } else if (restoredLogo) {
+          console.log('[pages/follow-up] all unrequested losses repaired');
+        }
+      }
 
       // Variant pages write to draft_* columns and never touch the live storage
       // file a test is actually serving — only "Replace Current Variant" uploads
