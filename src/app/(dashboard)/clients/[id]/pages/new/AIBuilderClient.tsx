@@ -1765,6 +1765,8 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
             {showPreview && (
               <button
                 onClick={() => pageId && setIframeSrc(previewUrl(pageId))}
+                title="Reload preview"
+                aria-label="Reload preview"
                 className="p-1 text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
               >
                 <RefreshCw size={13} />
