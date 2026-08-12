@@ -1,6 +1,6 @@
 import https from 'https';
 import { askAI } from '@/lib/ai-client';
-import { extractFooterContact } from '@/lib/ai-brand-assets';
+import { extractFooterContact, extractInlineLogoSvg } from '@/lib/ai-brand-assets';
 
 export interface CompetitorContext {
   screenshots: string[];  // Array of JPEG base64 chunks — each ≤4096px tall, sent as separate image blocks to Claude
@@ -8,8 +8,15 @@ export interface CompetitorContext {
   pageContent: string;    // First 30K chars of cleaned HTML — generate uses this to extract real copy/nav/sections
   /** Real logo <img> URL extracted from the site HTML — prefer this over screenshot thumbs */
   logoUrl: string | null;
+  /**
+   * Inline SVG markup when no fetchable <img> logo exists.
+   * Uploaded to storage at build time via materializeLogoUrl — never invent a mark if both null.
+   */
+  logoSvgMarkup: string | null;
   /** Address / email / copyright pulled from footer HTML when present */
   footerContact: { address?: string; email?: string; copyright?: string; phone?: string };
+  /** Non-logo content photos (headshots/products) extracted from page HTML — may be empty */
+  referenceImageUrls: string[];
 }
 
 export function extractUrls(text: string): string[] {
@@ -190,16 +197,24 @@ export async function scrapeCompetitorUrl(url: string): Promise<CompetitorContex
   // Extract CSS tokens + brand assets from Firecrawl result
   let cssTokens: string | null = null;
   let logoUrl: string | null = null;
+  let logoSvgMarkup: string | null = null;
   let footerContact: CompetitorContext['footerContact'] = {};
+  let referenceImageUrls: string[] = [];
   if (firecrawlResult.status === 'fulfilled') {
     const { rawHtml, html } = firecrawlResult.value;
     const cssBlocks = extractStyleBlocks(rawHtml);
     cssTokens = await extractCssTokens(cssBlocks, html);
     logoUrl = extractLogoUrl(rawHtml || html, url);
+    if (!logoUrl) {
+      logoSvgMarkup = extractInlineLogoSvg(rawHtml || html);
+    }
     footerContact = extractFooterContact(html || rawHtml);
+    referenceImageUrls = extractContentImageUrls(rawHtml || html, url, 6);
     console.log('[scrapeCompetitorUrl] brand assets', {
       logoUrl: logoUrl ? logoUrl.slice(0, 120) : null,
+      hasLogoSvg: !!logoSvgMarkup,
       footerContact,
+      referenceImageCount: referenceImageUrls.length,
     });
   } else {
     console.error('[scrapeCompetitorUrl] Firecrawl failed:', firecrawlResult.reason);
@@ -225,7 +240,9 @@ export async function scrapeCompetitorUrl(url: string): Promise<CompetitorContex
     cssTokens: cssTokens ?? '',
     pageContent,
     logoUrl,
+    logoSvgMarkup,
     footerContact,
+    referenceImageUrls,
   };
 }
 
@@ -245,9 +262,9 @@ function resolveUrl(src: string, baseUrl: string): string | null {
  * scores as a plausible logo, since embedding the wrong image is worse than
  * falling back to the existing behavior.
  *
- * LIMIT: only works when the site exposes a fetchable image URL (<img src>,
- * srcset, or icon link). Pure inline SVG wordmarks (no image URL) cannot be
- * extracted — we do not invent or recreate those marks.
+ * Prefers fetchable image URLs (<img src>, srcset, or icon link).
+ * For pure inline SVG wordmarks, see extractInlineLogoSvg (ai-brand-assets) —
+ * we never invent a mark when both return null.
  */
 export function extractLogoUrl(rawHtml: string, pageUrl: string): string | null {
   const headerMatch = /<header\b[\s\S]*?<\/header>/i.exec(rawHtml);
@@ -301,25 +318,100 @@ export function extractLogoUrl(rawHtml: string, pageUrl: string): string | null 
 }
 
 /**
- * Lightweight fetch for just the site's logo asset — used for "use the real
- * logo" follow-ups. Deliberately skips the screenshot capture and CSS-token
- * extraction that scrapeCompetitorUrl() pays for (an extra ApiFlash call and
- * a Sonnet call), since a logo swap only needs the raw HTML to locate one
- * <img> src. Returns null (never throws) on any failure — callers must treat
- * that as "couldn't find a logo," not as a reason to fall back to guessing.
+ * Lightweight fetch for logo assets — skips screenshot/CSS extraction.
+ * Returns fetchable logoUrl and/or inline logoSvgMarkup (never invents either).
  */
-export async function fetchLogoUrl(url: string): Promise<string | null> {
+export async function fetchLogoAssets(
+  url: string,
+): Promise<{ logoUrl: string | null; logoSvgMarkup: string | null }> {
   const firecrawlKey = process.env.FIRECRAWL_API_KEY?.trim();
-  if (!firecrawlKey) return null;
+  if (!firecrawlKey) return { logoUrl: null, logoSvgMarkup: null };
   try {
-    const { rawHtml } = await Promise.race([
+    const { rawHtml, html } = await Promise.race([
       fetchFirecrawlData(url, firecrawlKey),
       new Promise<never>((_, reject) => setTimeout(() => reject(new Error('20s timeout')), 20_000)),
     ]);
-    if (!rawHtml) return null;
-    return extractLogoUrl(rawHtml, url);
+    const source = rawHtml || html;
+    if (!source) return { logoUrl: null, logoSvgMarkup: null };
+    const logoUrl = extractLogoUrl(source, url);
+    const logoSvgMarkup = logoUrl ? null : extractInlineLogoSvg(source);
+    return { logoUrl, logoSvgMarkup };
   } catch (err) {
-    console.error('[fetchLogoUrl] failed:', err);
-    return null;
+    console.error('[fetchLogoAssets] failed:', err);
+    return { logoUrl: null, logoSvgMarkup: null };
   }
+}
+
+/**
+ * Conservative extraction of non-logo content photos (team/product/hero-ish).
+ * Never returns logo candidates. Fail-closed: empty array if unsure.
+ */
+export function extractContentImageUrls(
+  rawHtml: string,
+  pageUrl: string,
+  max = 6,
+): string[] {
+  const logoUrl = extractLogoUrl(rawHtml, pageUrl);
+  const headerMatch = /<header\b[\s\S]*?<\/header>/i.exec(rawHtml);
+  const navMatch = /<nav\b[\s\S]*?<\/nav>/i.exec(rawHtml);
+  const skipUntil = Math.max(
+    headerMatch ? headerMatch.index + headerMatch[0].length : 0,
+    navMatch ? navMatch.index + navMatch[0].length : 0,
+  );
+  const scope = rawHtml.slice(skipUntil) || rawHtml;
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const imgRe = /<img\b([^>]*)>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = imgRe.exec(scope)) && out.length < max) {
+    const attrs = m[1];
+    const src =
+      /\bsrc\s*=\s*["']([^"']+)["']/i.exec(attrs)?.[1] ||
+      /\bsrcset\s*=\s*["']([^"'\s,]+)/i.exec(attrs)?.[1];
+    if (!src || src.startsWith('data:') || src.startsWith('blob:')) continue;
+    if (/\.svg(\?|$)/i.test(src)) continue;
+    if (/logo|icon|sprite|spacer|pixel|tracking|badge|favicon/i.test(src + attrs)) continue;
+    const resolved = resolveUrl(src, pageUrl);
+    if (!resolved || (logoUrl && resolved === logoUrl)) continue;
+    if (seen.has(resolved)) continue;
+    // Prefer images that look like photos/people/products
+    let score = 0;
+    if (/headshot|portrait|team|founder|about|product|photo|people|staff/i.test(attrs + src)) score += 3;
+    if (/\.(jpe?g|webp|png)(\?|$)/i.test(src)) score += 1;
+    if (score === 0) continue;
+    seen.add(resolved);
+    out.push(resolved);
+  }
+  return out;
+}
+
+/**
+ * Lightweight fetch for real content photos (headshots/products) — not logos.
+ * Never invents URLs; returns [] on failure.
+ */
+export async function fetchContentImageAssets(url: string): Promise<string[]> {
+  const firecrawlKey = process.env.FIRECRAWL_API_KEY?.trim();
+  if (!firecrawlKey) return [];
+  try {
+    const { rawHtml, html } = await Promise.race([
+      fetchFirecrawlData(url, firecrawlKey),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('20s timeout')), 20_000)),
+    ]);
+    const source = rawHtml || html;
+    if (!source) return [];
+    return extractContentImageUrls(source, url, 6);
+  } catch (err) {
+    console.error('[fetchContentImageAssets] failed:', err);
+    return [];
+  }
+}
+
+/**
+ * Lightweight fetch for just the site's logo image URL — used for "use the real
+ * logo" follow-ups when an <img> exists. Prefer fetchLogoAssets when SVG fallback
+ * is needed. Returns null (never throws) on any failure.
+ */
+export async function fetchLogoUrl(url: string): Promise<string | null> {
+  const { logoUrl } = await fetchLogoAssets(url);
+  return logoUrl;
 }

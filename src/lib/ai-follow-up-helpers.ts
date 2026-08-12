@@ -53,8 +53,17 @@ export function looksLikeMultiIntent(prompt: string): boolean {
     return true;
   }
 
-  // Explicit separators between asks
-  if (/\b(?:also|plus|then|after that|and also|as well as)\b/i.test(t) && t.length > 60) {
+  // Explicit separators between asks ("also", "and also", casual "and the footer")
+  if (/\b(?:also|plus|then|after that|and also|as well as|while you'?re at it)\b/i.test(t) && t.length > 50) {
+    return true;
+  }
+
+  // Soft: "fix X and … the Y" / "change the logo and the footer"
+  if (
+    /\b(and|,)\s+(the\s+)?(logo|nav|hero|footer|form|faq|headline|button|cta)\b/i.test(t) &&
+    uniqueSectionCount(t) >= 2 &&
+    t.length > 45
+  ) {
     return true;
   }
 
@@ -71,6 +80,11 @@ export function looksLikeMultiIntent(prompt: string): boolean {
     return true;
   }
 
+  // Longer prompts naming 2+ page parts — cheap planner beats a wrong fat patch
+  if (uniqueSections.size >= 2 && t.length > 120) {
+    return true;
+  }
+
   // "…on the hero…, …on the footer…" style multi-target (Renny dead-end page)
   if (
     uniqueSections.size >= 2 &&
@@ -81,6 +95,62 @@ export function looksLikeMultiIntent(prompt: string): boolean {
   }
 
   return false;
+}
+
+/**
+ * User clearly wants the page redesigned/cloned from a referenced URL.
+ * When true, competitor scrape + full rebuild stays the correct path.
+ */
+export function userWantsFullCompetitorRebuild(prompt: string): boolean {
+  return /\b((look|looks|looking) like|replicate|clone|copy (this|the) (site|page)|same as|exactly like|redesign|rebuild|match (this|the|their) (site|page|design|layout)|make (it|this|the page) (look |be )?(like|similar)|based on (this |the )?(site|page|url|link|website)|(from|using) (this |the )?(site|page|url|link) as (a )?(reference|template))\b/i.test(
+    prompt,
+  );
+}
+
+/**
+ * Non-image URL is present but the ask is a local copy/section edit — keep the
+ * cheap scoped path instead of forcing a full competitor rebuild.
+ * False when redesign/clone language is present (see userWantsFullCompetitorRebuild).
+ */
+export function allowScopedDespiteCompetitorUrl(prompt: string): boolean {
+  if (userWantsFullCompetitorRebuild(prompt)) return false;
+  const withoutUrls = prompt
+    .replace(/https?:\/\/[^\s"'<>)]+/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  // Bare URL (or almost) → treat as reference rebuild, not a scoped tweak
+  if (withoutUrls.length < 16) return false;
+  if (
+    /\b(change|rewrite|rephrase|update|fix|replace|swap|shrink|center|remove|delete|get\s+rid|make)\b/i.test(
+      withoutUrls,
+    ) &&
+    /\b(headline|heading|title|text|copy|button|cta|footer|hero|nav|logo|form|section|wording|subhead|padding|spacing)\b/i.test(
+      withoutUrls,
+    )
+  ) {
+    return true;
+  }
+  if (/["'“][^"'”\n]{6,}["'”]/.test(prompt)) return true;
+  return false;
+}
+
+/** User wants a real photo/headshot/product image from a referenced site (not logo). */
+export function userWantsSiteContentImage(prompt: string): boolean {
+  return /\b((real|actual|their|the)\s+(headshot|photo|picture|product(\s+photo)?)|headshot from|product (photo|image) from|use (their|the|this) (photo|headshot|product|picture)|photo from (the |this )?(site|page|url)|team (photo|headshot)|product shot)\b/i.test(
+    prompt,
+  );
+}
+
+/** User explicitly asked for stats / social proof / testimonials / awards. */
+export function userAskedForSocialProof(prompt: string): boolean {
+  return /\b(stats?|statistics|social proof|testimonials?|reviews?|as seen( in)?|awards?|logo.?wall|trusted by|case stud(?:y|ies)|proof points?|metrics?|kpi)\b/i.test(
+    prompt,
+  );
+}
+
+function uniqueSectionCount(t: string): number {
+  const sectionHits = t.match(/\b(logo|nav(?:bar)?|hero|footer|form|faq|pricing|headline|button|cta|section)\b/gi) ?? [];
+  return new Set(sectionHits.map((s) => s.toLowerCase())).size;
 }
 
 /** Pull quoted strings the user wants applied / referenced. */
@@ -268,5 +338,87 @@ export async function planMultiIntentEdit(opts: {
   } catch (err) {
     console.error('[ai-follow-up-helpers] planMultiIntentEdit failed — treating as single', err);
     return { mode: 'single' };
+  }
+}
+
+export type AttachedImageRole = 'bug_reference' | 'content_asset';
+
+export interface ClassifiedAttachedImage {
+  url: string;
+  role: AttachedImageRole;
+}
+
+/**
+ * Label each user-attached image as a bug screenshot vs content to embed.
+ * Fail-safe: single image + complaint language → bug; single image + place/use → asset;
+ * ambiguous multi-image → return null so caller can clarify.
+ */
+export async function classifyAttachedImages(opts: {
+  prompt: string;
+  imageUrls: string[];
+  usage?: UsageContext;
+}): Promise<ClassifiedAttachedImage[] | 'clarify'> {
+  const { prompt, imageUrls, usage } = opts;
+  if (imageUrls.length === 0) return [];
+
+  if (imageUrls.length === 1) {
+    if (isScreenshotComplaint(prompt, true)) {
+      return [{ url: imageUrls[0], role: 'bug_reference' }];
+    }
+    if (/\b(use|add|place|put|embed|insert|as (the )?(hero|background|image|photo))\b/i.test(prompt)) {
+      return [{ url: imageUrls[0], role: 'content_asset' }];
+    }
+    // Default single attachment with edit language → treat as bug reference (safer than embedding)
+    if (/\b(fix|wrong|broken|sloppy|look|align|spacing|logo)\b/i.test(prompt)) {
+      return [{ url: imageUrls[0], role: 'bug_reference' }];
+    }
+  }
+
+  try {
+    const text = await askAI({
+      system:
+        'Classify each attached image for a landing-page editor. Return JSON only:\n' +
+        '{"images":[{"index":0,"role":"bug_reference"|"content_asset"}]}\n' +
+        'bug_reference = screenshot of a defect on the CURRENT page (do not embed in HTML).\n' +
+        'content_asset = photo/logo the user wants placed on the page.\n' +
+        'Indexes are 0-based in attachment order. Classify every image.',
+      messages: [
+        {
+          role: 'user',
+          content: [
+            ...imageUrls.map((url): AIContentBlock => ({ type: 'image', url })),
+            {
+              type: 'text',
+              text: `Instruction: ${prompt}\n\nThere are ${imageUrls.length} attached image(s) in order.`,
+            },
+          ],
+        },
+      ],
+      maxTokens: 800,
+      label: 'follow-up:image-role-classify',
+      usage: usage ? { ...usage, operation: 'route' } : undefined,
+    });
+    let raw = text.trim();
+    if (raw.startsWith('```')) raw = raw.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
+    const start = raw.indexOf('{');
+    const end = raw.lastIndexOf('}');
+    if (start >= 0 && end > start) raw = raw.slice(start, end + 1);
+    const parsed = JSON.parse(raw) as {
+      images?: Array<{ index?: number; role?: string }>;
+    };
+    if (!Array.isArray(parsed.images) || parsed.images.length === 0) {
+      return imageUrls.length > 1 ? 'clarify' : [{ url: imageUrls[0], role: 'bug_reference' }];
+    }
+    const out: ClassifiedAttachedImage[] = [];
+    for (let i = 0; i < imageUrls.length; i++) {
+      const row = parsed.images.find((x) => x.index === i) ?? parsed.images[i];
+      const role = row?.role === 'content_asset' ? 'content_asset' : 'bug_reference';
+      out.push({ url: imageUrls[i], role });
+    }
+    return out;
+  } catch (err) {
+    console.error('[classifyAttachedImages] failed', err);
+    if (imageUrls.length > 1) return 'clarify';
+    return [{ url: imageUrls[0], role: 'bug_reference' }];
   }
 }

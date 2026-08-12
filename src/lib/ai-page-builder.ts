@@ -299,11 +299,14 @@ Examples:
 
 ## Design rules
 - Fully responsive — mobile-first, works on all screen sizes
+- Hierarchy first: one dominant H1, clearly quieter H2s, body never competes with headlines. Keep a consistent vertical rhythm (section padding from the same scale end-to-end).
+- Prefer fewer, stronger elements over decorative chrome — especially on short confirmation / thank-you pages.
 - Follow the "Style reference" block below for palette, typography, and mood. Never default to the same dark/generic aesthetic regardless of business type — a wedding photographer and an enterprise SaaS dashboard must not look like the same template with different words swapped in. If no style reference is provided, choose a palette and mood that genuinely fits the business described in the schema.
 - If a competitor CSS token block is provided, it appears at the top of the user message — treat it as the definitive palette and layout source.
 - Use CSS gradients as background fallbacks for any image fields with null values
 - Forms must be styled and functional (HTML only — no JS submission logic needed)
 - CTAs must be prominent with hover states and a visible active/pressed state
+- Do NOT invent fake statistics, awards, or "as seen in" proof in the HTML unless those values appear in the schema
 
 ## Placeholder fields
 If the user prompt contains bracket-style placeholder text like [firm name], [city], [your result], or [practice area] — the user forgot to fill them in. Do NOT echo the bracket text into the HTML. Instead, invent a realistic, specific value that fits the business context (e.g. [firm name] → "Caldwell & Associates", [city] → "Austin, TX", [your result] → "$2.4M recovered"). The page must always read like real, live content.
@@ -453,7 +456,9 @@ The user asked for a custom or minimal page (confirmation, hero-only, no CTAs, e
 - Do NOT recreate the full reference landing page from the screenshot
 - No buttons / CTAs if the schema has none
 - Flat background + real logo URL from schema when provided
-- KPIs/stats only if present in the schema`;
+- KPIs/stats only if present in the schema — never invent proof badges
+- Taste: one clear H1 hierarchy, generous whitespace, calm type scale, no decorative card chrome or competing mid-page clutter
+- Match screenshot density only for colors/logo feel — not for section count`;
 
 const AESTHETIC_REFERENCES: Record<StyleTag, string> = {
   corporate_trust: 'Think Stripe, Rippling, Gusto — structured, trustworthy, premium sans-serif with a strong typographic hierarchy',

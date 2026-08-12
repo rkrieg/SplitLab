@@ -9,7 +9,7 @@ import { resolveWorkspaceRole, resolveOwnerPlan, resolveWorkspaceOwner } from '@
 import { PLAN_LIMITS } from '@/lib/plans';
 import { checkAiAllowance, type UsageContext } from '@/lib/ai-usage';
 import { reportAiOverageUsage } from '@/lib/ai-overage-billing';
-import { extractUrls, scrapeCompetitorUrl, fetchLogoUrl } from '@/lib/ai-competitor-scrape';
+import { extractUrls, scrapeCompetitorUrl, fetchLogoAssets, fetchContentImageAssets } from '@/lib/ai-competitor-scrape';
 import { buildHtmlFromSchema } from '@/lib/ai-page-builder';
 import { createSSEStream, sendSSE, closeSSE, SSE_HEADERS, type SSEEvent } from '@/lib/sse';
 import { isTestVariantPage } from '@/lib/page-drafts';
@@ -20,11 +20,16 @@ import {
   userWantsUsToDecide,
   isScreenshotComplaint,
   verifyScopedPatchIntent,
+  classifyAttachedImages,
+  allowScopedDespiteCompetitorUrl,
+  userWantsSiteContentImage,
+  userWantsFullCompetitorRebuild,
 } from '@/lib/ai-follow-up-helpers';
 import {
   injectBrandAssetsIntoSchema,
   forceEmbedLogoInHtml,
   forceEmbedFooterContactInHtml,
+  materializeLogoUrl,
 } from '@/lib/ai-brand-assets';
 
 export const dynamic = 'force-dynamic';
@@ -1328,14 +1333,25 @@ export async function POST(
     /\b(use|keep|with|from)\b[\s\S]{0,40}\blogo\b/i.test(prompt) ||
     /\blogo\b[\s\S]{0,40}\b(from|on)\b/i.test(prompt)
   );
+  // Local edit that happens to include a URL → keep scoped path (avoid huge rebuild).
+  // Redesign/clone language still forces full competitor rebuild.
+  const isScopedDespiteUrl =
+    competitorUrls.length > 0 && !isLogoSwapAttempt && allowScopedDespiteCompetitorUrl(prompt);
+  const isContentImageSwapAttempt =
+    competitorUrls.length > 0 && userWantsSiteContentImage(prompt) && !isLogoSwapAttempt;
 
   // Scoped-patch candidates — cheap, synchronous, no AI call. A genuine
-  // competitor URL always means full-page rebuild (see
+  // competitor redesign URL always means full-page rebuild (see
   // follow-up-input-scoping.md), so scoping is never attempted when one is
-  // mentioned — except the real-logo-swap case above, which is itself a
-  // scoped op and needs the section list to splice into.
-  const slSections = (competitorUrls.length === 0 || isLogoSwapAttempt) ? extractSlSections(html) : [];
-  const quoteMatchSection = (competitorUrls.length === 0 || isLogoSwapAttempt) ? tryDirectQuoteMatch(prompt, slSections) : null;
+  // mentioned — except logo/content-image swaps and incidental-URL local edits.
+  const allowScopedWithCompetitorUrl =
+    isLogoSwapAttempt || isScopedDespiteUrl || isContentImageSwapAttempt;
+  const slSections =
+    competitorUrls.length === 0 || allowScopedWithCompetitorUrl ? extractSlSections(html) : [];
+  const quoteMatchSection =
+    competitorUrls.length === 0 || allowScopedWithCompetitorUrl
+      ? tryDirectQuoteMatch(prompt, slSections)
+      : null;
 
   // ── Open SSE stream — no NextResponse.json after this point ───────────────
 
@@ -1364,6 +1380,11 @@ export async function POST(
       // always a 'patch' by construction, so this is set once up front and
       // only overwritten inside the fallback branch below.
       let resultType: 'structural' | 'style' | 'patch' = 'patch';
+      // Per-image roles (bug screenshot vs content asset). Default = treat all
+      // as both vision + embed candidates; classification may narrow embed list.
+      let routingImageUrls = effectiveImageUrls;
+      let embedImageUrls = effectiveImageUrls;
+      let imageRolesClassified = false;
 
       // ── Scoped-patch attempt (input-side token reduction) ─────────────────
       // Only attempted when there's no competitor URL (slSections/quoteMatchSection
@@ -1390,13 +1411,17 @@ export async function POST(
         if (!scopedApplied && !targetSections && isLogoSwapAttempt) {
           if (request.signal.aborted) { closeSSE(controller); return; }
           sendSSE(controller, { type: 'status', message: 'Fetching logo...' });
-          const fetchedLogoUrl = await fetchLogoUrl(competitorUrls[0]);
-          // Confirm it's actually an image before trusting it — extraction is
-          // regex-based against arbitrary third-party HTML and could in
-          // theory pick up a non-image src.
-          const realLogoUrl = fetchedLogoUrl && (await isImageUrl(fetchedLogoUrl)) ? fetchedLogoUrl : null;
+          const assets = await fetchLogoAssets(competitorUrls[0]);
+          const pageSlugForLogo = page.slug ?? crypto.randomUUID();
+          let realLogoUrl = await materializeLogoUrl({
+            pageSlug: pageSlugForLogo,
+            logoUrl: assets.logoUrl && (await isImageUrl(assets.logoUrl)) ? assets.logoUrl : null,
+            logoSvg: assets.logoSvgMarkup,
+          });
+          // If materialize only had SVG and upload failed, still allow inline SVG embed via force path
+          const inlineSvgFallback = !realLogoUrl ? assets.logoSvgMarkup : null;
 
-          if (!realLogoUrl) {
+          if (!realLogoUrl && !inlineSvgFallback) {
             console.error('[pages/follow-up] real logo swap: could not find/verify a logo on the referenced page', {
               url: competitorUrls[0],
             });
@@ -1426,7 +1451,7 @@ export async function POST(
               knownSectionNames: slSections.map((s) => s.name),
             });
             scopedFailureReason = 'logo_swap_no_target_section';
-          } else {
+          } else if (realLogoUrl) {
             const logoSection = slSections.find((s) => s.name === logoTargetName)!;
             const logoPrompt =
               `${prompt}\n\n(The real logo image has just been fetched directly from the referenced site — it is attached below and is the FINAL, intended logo. Replace whatever currently represents the logo (an <img> tag, or inline <svg>/icon markup) with a single <img src="${realLogoUrl}" alt="logo" style="height:<match the current logo's rendered height>; width:auto;"> in its place. Do not invent or generate a different image. Do not leave the old logo markup in place alongside the new one. Do not add any background color/box behind the image — it must sit directly on the section's existing background so it blends in.)`;
@@ -1443,12 +1468,75 @@ export async function POST(
               scopedApplied = true;
               console.log('[pages/follow-up] real logo swap applied', { section: logoTargetName, realLogoUrl });
             } else {
-              console.error('[pages/follow-up] real logo swap: scoped patch failed to embed the fetched logo', {
-                section: logoTargetName,
-                failedSanity: patchResult.failedSanity,
-                failedParse: patchResult.failedParse,
-              });
-              scopedFailureReason = 'logo_swap_patch_failed';
+              // Deterministic fallback
+              const forced = forceEmbedLogoInHtml(
+                applyPatch(html, [{ name: logoTargetName, html: patchResult.html ?? logoSection.html }]),
+                realLogoUrl,
+                null,
+              );
+              if (forced.includes(realLogoUrl)) {
+                finalHtml = forced;
+                scopedApplied = true;
+              } else {
+                console.error('[pages/follow-up] real logo swap: scoped patch failed to embed the fetched logo', {
+                  section: logoTargetName,
+                  failedSanity: patchResult.failedSanity,
+                  failedParse: patchResult.failedParse,
+                });
+                scopedFailureReason = 'logo_swap_patch_failed';
+              }
+            }
+          } else if (inlineSvgFallback) {
+            finalHtml = forceEmbedLogoInHtml(html, null, inlineSvgFallback);
+            scopedApplied = finalHtml !== html;
+            if (!scopedApplied) scopedFailureReason = 'logo_swap_svg_embed_failed';
+            else console.log('[pages/follow-up] real logo SVG embedded inline', { section: logoTargetName });
+          }
+        }
+
+        // "Use their headshot / product photo from this URL" — fail-closed fetch,
+        // scoped embed (same family as logo swap; never invent a photo).
+        if (!scopedApplied && !scopedFailureReason && isContentImageSwapAttempt) {
+          if (request.signal.aborted) { closeSSE(controller); return; }
+          sendSSE(controller, { type: 'status', message: 'Fetching photo from site...' });
+          const photos = await fetchContentImageAssets(competitorUrls[0]);
+          if (photos.length === 0) {
+            sendSSE(controller, {
+              type: 'error',
+              message:
+                "We couldn't find a usable headshot/product photo on that page. Try attaching the image file directly instead.",
+            });
+            closeSSE(controller);
+            return;
+          }
+          const photoUrl = photos[0];
+          const routing = await tryRoutingCall(prompt, schema, slSections, [photoUrl], usageCtx);
+          const targetName =
+            routing &&
+            routing.type === 'patch' &&
+            routing.target_sections.length >= 1 &&
+            routing.target_sections.every((n) => slSections.some((s) => s.name === n))
+              ? routing.target_sections[0]
+              : (slSections.find((s) => /hero|team|about|testimonial/i.test(s.name))?.name ?? null);
+          if (!targetName) {
+            scopedFailureReason = 'content_image_no_target_section';
+          } else {
+            const section = slSections.find((s) => s.name === targetName)!;
+            const photoPrompt =
+              `${prompt}\n\n(A real photo was fetched from the referenced site — attached below. Embed it with src="${photoUrl}" exactly. Do not invent a different image URL. Prefer replacing an existing <img> in this section; if none, add one that fits the layout.)`;
+            const patchResult = await runScopedPatchWithRetry(
+              section.html,
+              { [targetName]: (schema as Record<string, unknown> | null | undefined)?.[targetName] },
+              photoPrompt,
+              [photoUrl],
+              usageCtx,
+            );
+            if (patchResult.html && patchResult.html.includes(photoUrl)) {
+              finalHtml = applyPatch(html, [{ name: targetName, html: patchResult.html }]);
+              scopedApplied = true;
+              console.log('[pages/follow-up] content image swap applied', { section: targetName, photoUrl: photoUrl.slice(0, 120) });
+            } else {
+              scopedFailureReason = 'content_image_patch_failed';
             }
           }
         }
@@ -1468,6 +1556,45 @@ export async function POST(
           }
         }
 
+        // Per-image roles: bug screenshots vs content assets (before planner/routing)
+        if (hasUserImages && !scopedApplied && !scopedFailureReason) {
+          const classified = await classifyAttachedImages({
+            prompt,
+            imageUrls: effectiveImageUrls,
+            usage: usageCtx,
+          });
+          if (classified === 'clarify') {
+            const question =
+              'You attached more than one image — which are bug screenshots to fix, and which should I place on the page? Reply briefly (e.g. "first is the bug, second is the hero photo").';
+            const userEntry: Record<string, unknown> = { role: 'user', content: prompt };
+            if (Array.isArray(image_urls) && image_urls.length > 0) userEntry.image_urls = image_urls;
+            const updatedConversation = [
+              ...history,
+              userEntry,
+              { role: 'assistant', content: question, clarify: true },
+            ];
+            await db
+              .from('pages')
+              .update({
+                conversation_json: updatedConversation,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', params.id);
+            sendSSE(controller, { type: 'clarify', message: question });
+            closeSSE(controller);
+            return;
+          }
+          const bugs = classified.filter((c) => c.role === 'bug_reference').map((c) => c.url);
+          const assets = classified.filter((c) => c.role === 'content_asset').map((c) => c.url);
+          routingImageUrls = effectiveImageUrls; // vision for section targeting uses all
+          embedImageUrls = assets.length > 0 ? assets : []; // never embed bug screenshots
+          imageRolesClassified = true;
+          console.log('[pages/follow-up] attached image roles', {
+            bugs: bugs.length,
+            assets: assets.length,
+          });
+        }
+
         // Multi-intent planner — only when the prompt looks like several
         // distinct asks. Single clear edits skip this (stay fast).
         if (!scopedApplied && !scopedFailureReason && looksLikeMultiIntent(prompt)) {
@@ -1480,7 +1607,7 @@ export async function POST(
             prompt,
             sectionNames: slSections.map((s) => s.name),
             sectionPreviews: slSections.map((s) => ({ name: s.name, text: s.text })),
-            imageUrls: effectiveImageUrls,
+            imageUrls: routingImageUrls,
             forceDecide: forceDecidePlan,
             usage: usageCtx,
           });
@@ -1552,7 +1679,7 @@ export async function POST(
                   step.instruction,
                   schema,
                   liveSections,
-                  effectiveImageUrls,
+                  routingImageUrls,
                   usageCtx,
                 );
                 if (
@@ -1598,13 +1725,27 @@ export async function POST(
                   break;
                 }
                 const schemaSlice = { [name]: (schema as Record<string, unknown> | null | undefined)?.[name] };
-                const patchResult = await runScopedPatchWithRetry(
+                let patchResult = await runScopedPatchWithRetry(
                   section.html,
                   schemaSlice,
                   step.instruction,
-                  effectiveImageUrls,
+                  routingImageUrls,
                   usageCtx,
                 );
+                // One automatic retry for flaky scoped patches before recording failure
+                if (!patchResult.html) {
+                  sendSSE(controller, {
+                    type: 'status',
+                    message: `Retrying step ${i + 1}/${plan.steps.length}…`,
+                  });
+                  patchResult = await runScopedPatchWithRetry(
+                    section.html,
+                    schemaSlice,
+                    step.instruction,
+                    routingImageUrls,
+                    usageCtx,
+                  );
+                }
                 if (!patchResult.html) {
                   stepOk = false;
                   stepFailures.push(`patch_fail:${name}`);
@@ -1619,7 +1760,7 @@ export async function POST(
                 if (!verify.ok) {
                   console.error('[pages/follow-up] multi-intent step failed verify', { name, reason: verify.reason });
                   stepOk = false;
-                  stepFailures.push(verify.reason);
+                  stepFailures.push(verify.reason ?? `verify_fail:${name}`);
                   break;
                 }
                 patched.push({ name, html: patchResult.html });
@@ -1636,14 +1777,18 @@ export async function POST(
               scopedApplied = true;
               console.log('[pages/follow-up] multi-intent plan applied', { stepOks });
             } else if (stepOks.length > 0 && stepFailures.length > 0) {
-              // Partial success — save what worked and report clearly (no fake full Done).
+              // Partial success — save what worked; never claim full Done in the message.
               finalHtml = workingHtml;
               scopedApplied = true;
-              partialMessage = `Updated ${stepOks.length} part(s); couldn't finish: ${stepFailures.slice(0, 3).join(', ')}. You can retry the failed parts.`;
+              const failList = stepFailures.slice(0, 3).join('; ');
+              partialMessage =
+                `Saved ${stepOks.length} of ${stepOks.length + stepFailures.length} edits ` +
+                `(ok: ${stepOks.slice(0, 4).join(', ')}${stepOks.length > 4 ? '…' : ''}). ` +
+                `Still need a retry for: ${failList}. Reply with only the failed part(s) to finish.`;
               console.warn('[pages/follow-up] multi-intent partial', { stepOks, stepFailures });
               sendSSE(controller, {
                 type: 'status',
-                message: `Partial: updated ${stepOks.length} part(s); failed: ${stepFailures.slice(0, 3).join(', ')}`,
+                message: `Partial: ${stepOks.length} saved, ${stepFailures.length} failed — not fully done`,
               });
             } else if (stepFailures.includes('structural_needs_full_page')) {
               console.log('[pages/follow-up] multi-intent deferred to full-page (structural step)');
@@ -1663,7 +1808,7 @@ export async function POST(
         // logo), silently reproducing the bug this branch exists to prevent.
         if (!scopedApplied && !targetSections && !scopedFailureReason) {
           sendSSE(controller, { type: 'status', message: 'Locating section...' });
-          const routing = await tryRoutingCall(prompt, schema, slSections, effectiveImageUrls, usageCtx);
+          const routing = await tryRoutingCall(prompt, schema, slSections, routingImageUrls, usageCtx);
           const basicShapeOk = !!routing &&
             routing.type === 'patch' &&
             routing.target_sections.length >= 1 &&
@@ -1845,7 +1990,7 @@ export async function POST(
             const anchorSection = slSections.find((s) => s.name === anchorName)!;
             const headSection = slSections.find((s) => s.name === 'head');
             const usedNames = slSections.map((s) => s.name);
-            const inserted = await runScopedInsert(anchorSection.html, headSection?.html ?? '', usedNames, prompt, effectiveImageUrls);
+            const inserted = await runScopedInsert(anchorSection.html, headSection?.html ?? '', usedNames, prompt, routingImageUrls);
             if (inserted) {
               const wrappedBlock = `<!-- SL:${inserted.name} -->\n${inserted.html.trim()}\n<!-- /SL:${inserted.name} -->`;
               const spliced = insertSlSectionBlock(html, anchorName, routing!.position as 'before' | 'after', wrappedBlock);
@@ -1895,7 +2040,15 @@ export async function POST(
           const scopedPrompt = generatedImageUrl
             ? `${prompt}\n\n(A brand-new image has just been generated to satisfy this request — it is attached below, and it is the FINAL, intended replacement. Regardless of how the instruction above orders the words "replace/with/current/new" — real users often phrase this ambiguously (e.g. "create a new X and replace with the current one" is meant as "replace the current X with this new one", NOT "keep the current one" or "revert") — you must make this section visibly display the attached image in place of whatever currently represents it. If the current logo/element is an <img> tag, swap its src to the attached image URL. If it is instead built from inline <svg>/icon markup (common for hand-drawn logo icons), you MUST delete that entire inline SVG/icon markup and replace it with a single <img src="ATTACHED_IMAGE_URL" alt="logo" style="height:<match the icon's original rendered height>; width:auto;"> in its place — do not leave the old SVG/icon untouched alongside or instead of the new image. Do not leave the section unchanged and do not generate or invent a different image URL.)`
             : prompt;
-          const scopedImageUrls = generatedImageUrl ? [...effectiveImageUrls, generatedImageUrl] : effectiveImageUrls;
+          const embedNote =
+            hasUserImages && embedImageUrls.length !== routingImageUrls.length
+              ? `\n\n(Image roles: ONLY embed these content-asset URL(s) into src attributes: ${embedImageUrls.length ? embedImageUrls.join(', ') : '(none)'}. Any other attached images are bug-reference screenshots for diagnosis — never put those URLs in src.)`
+              : '';
+          const scopedPromptFinal = scopedPrompt + embedNote;
+          // Vision: all images. URL list for embedding prefers assets; include generated URL last.
+          const scopedImageUrls = generatedImageUrl
+            ? Array.from(new Set([...(embedImageUrls.length ? embedImageUrls : routingImageUrls), generatedImageUrl]))
+            : (embedImageUrls.length ? Array.from(new Set([...embedImageUrls, ...routingImageUrls])) : routingImageUrls);
 
           const patchedSections: Array<{ name: string; html: string }> = [];
           let allOk = true;
@@ -1908,7 +2061,7 @@ export async function POST(
               break;
             }
             const schemaSlice = { [name]: (schema as Record<string, unknown> | null | undefined)?.[name] };
-            const patchResult = await runScopedPatchWithRetry(section.html, schemaSlice, scopedPrompt, scopedImageUrls, usageCtx);
+            const patchResult = await runScopedPatchWithRetry(section.html, schemaSlice, scopedPromptFinal, scopedImageUrls, usageCtx);
             const updated = patchResult.html;
             if (!updated) {
               console.error(`[pages/follow-up] scoped patch failed for section "${name}" after retry`, {
@@ -1990,7 +2143,48 @@ export async function POST(
 
       // ── Fallback: today's full-page single-call path, unchanged ──────────
       if (!scopedApplied) {
-      if (competitorUrls.length > 0) {
+      // Classify attachments if we skipped the scoped path (e.g. competitor URL)
+      if (hasUserImages && !imageRolesClassified) {
+        const classified = await classifyAttachedImages({
+          prompt,
+          imageUrls: effectiveImageUrls,
+          usage: usageCtx,
+        });
+        if (classified === 'clarify') {
+          const question =
+            'You attached more than one image — which are bug screenshots to fix, and which should I place on the page? Reply briefly (e.g. "first is the bug, second is the hero photo").';
+          const userEntry: Record<string, unknown> = { role: 'user', content: prompt };
+          if (Array.isArray(image_urls) && image_urls.length > 0) userEntry.image_urls = image_urls;
+          const updatedConversation = [
+            ...history,
+            userEntry,
+            { role: 'assistant', content: question, clarify: true },
+          ];
+          await db
+            .from('pages')
+            .update({
+              conversation_json: updatedConversation,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', params.id);
+          sendSSE(controller, { type: 'clarify', message: question });
+          closeSSE(controller);
+          return;
+        }
+        const assets = classified.filter((c) => c.role === 'content_asset').map((c) => c.url);
+        routingImageUrls = effectiveImageUrls;
+        embedImageUrls = assets.length > 0 ? assets : [];
+        imageRolesClassified = true;
+      }
+
+      // Only scrape/rebuild from a URL when the user asked for a redesign/clone.
+      // Incidental URLs on local edits skip scrape (keeps huge-page path rare).
+      const shouldScrapeCompetitor =
+        competitorUrls.length > 0 &&
+        (userWantsFullCompetitorRebuild(prompt) ||
+          (!isScopedDespiteUrl && !isContentImageSwapAttempt));
+
+      if (shouldScrapeCompetitor) {
         let hostname = competitorUrls[0];
         try { hostname = new URL(competitorUrls[0]).hostname; } catch { /* keep raw */ }
         sendSSE(controller, { type: 'status', message: `Fetching ${hostname}...` });
@@ -2021,10 +2215,22 @@ export async function POST(
           ? [
               {
                 type: 'text' as const,
-                text: 'User-attached image(s) — apply the "Attached images" rule from the system prompt to determine whether each is a bug reference screenshot or a content asset to embed. If embedding, you MUST use these EXACT URL strings verbatim in any src attribute — the image content below only shows you the pixels, not the URL:\n' +
-                  effectiveImageUrls.map((u, i) => `${i + 1}. ${u}`).join('\n'),
+                text:
+                  (embedImageUrls.length > 0 && embedImageUrls.length !== routingImageUrls.length
+                    ? 'User-attached image(s): ONLY these URL(s) may be used in src attributes (content assets):\n' +
+                      embedImageUrls.map((u, i) => `${i + 1}. ${u}`).join('\n') +
+                      '\nOther attached images are bug-reference screenshots — diagnose from them but NEVER put those URLs in src.\n'
+                    : embedImageUrls.length === 0 && routingImageUrls.length > 0
+                      ? 'User-attached image(s) are bug-reference screenshots for diagnosis — do NOT embed their URLs in src attributes.\n'
+                      : 'User-attached image(s) — apply the "Attached images" rule from the system prompt to determine whether each is a bug reference screenshot or a content asset to embed. If embedding, you MUST use these EXACT URL strings verbatim in any src attribute — the image content below only shows you the pixels, not the URL:\n' +
+                        routingImageUrls.map((u, i) => `${i + 1}. ${u}`).join('\n') +
+                        '\n') +
+                  (embedImageUrls.length > 0 && embedImageUrls.length === routingImageUrls.length
+                    ? 'If embedding, you MUST use these EXACT URL strings verbatim in any src attribute:\n' +
+                      embedImageUrls.map((u, i) => `${i + 1}. ${u}`).join('\n')
+                    : ''),
               },
-              ...effectiveImageUrls.map((url): AIContentBlock => ({ type: 'image', url })),
+              ...routingImageUrls.map((url): AIContentBlock => ({ type: 'image', url })),
             ]
           : []),
       ];
@@ -2139,14 +2345,20 @@ export async function POST(
 
         const pageSlug = page.slug ?? crypto.randomUUID();
 
+        const materializedLogoUrl = await materializeLogoUrl({
+          pageSlug,
+          logoUrl: competitorContext?.logoUrl,
+          logoSvg: competitorContext?.logoSvgMarkup,
+        });
+
         let schemaForImages = hasCompetitorContext
           ? stripGeneratedImageUrls(parsed.schema_json as Record<string, unknown>)
           : (parsed.schema_json as Record<string, unknown>);
 
-        if (competitorContext?.logoUrl || (competitorContext?.footerContact && Object.keys(competitorContext.footerContact).length > 0)) {
+        if (materializedLogoUrl || competitorContext?.logoUrl || (competitorContext?.footerContact && Object.keys(competitorContext.footerContact).length > 0)) {
           schemaForImages = injectBrandAssetsIntoSchema(schemaForImages, {
-            logoUrl: competitorContext.logoUrl,
-            footer: competitorContext.footerContact,
+            logoUrl: materializedLogoUrl ?? competitorContext?.logoUrl,
+            footer: competitorContext?.footerContact,
           });
         }
 
@@ -2171,7 +2383,7 @@ export async function POST(
         // back to the full rebuild below on any failure.
         sendSSE(controller, { type: 'status', message: 'Applying changes...' });
         const diffSplicedHtml = !hasCompetitorContext
-          ? await tryStructuralDiffSplice(html, schema, enrichedSchema, slSections, prompt, effectiveImageUrls, usageCtx)
+          ? await tryStructuralDiffSplice(html, schema, enrichedSchema, slSections, prompt, routingImageUrls, usageCtx)
           : null;
 
         if (diffSplicedHtml) {
@@ -2189,7 +2401,7 @@ export async function POST(
             competitorScreenshots: competitorContext?.screenshots ?? [],
             competitorCssTokens: competitorContext?.cssTokens ?? undefined,
             competitorPageContent: competitorContext?.pageContent ?? undefined,
-            realLogoUrl: competitorContext?.logoUrl ?? undefined,
+            realLogoUrl: materializedLogoUrl ?? undefined,
             userPrompt: prompt,
             styleReferenceNote,
             callerLabel: 'follow-up:structural',
@@ -2205,8 +2417,12 @@ export async function POST(
               if (statusBuffer.length > 200) statusBuffer = statusBuffer.slice(-100);
             },
           });
-          if (competitorContext?.logoUrl) {
-            finalHtml = forceEmbedLogoInHtml(finalHtml, competitorContext.logoUrl);
+          if (materializedLogoUrl || competitorContext?.logoSvgMarkup) {
+            finalHtml = forceEmbedLogoInHtml(
+              finalHtml,
+              materializedLogoUrl,
+              materializedLogoUrl ? null : competitorContext?.logoSvgMarkup ?? null,
+            );
           }
           if (competitorContext?.footerContact) {
             finalHtml = forceEmbedFooterContactInHtml(finalHtml, competitorContext.footerContact);

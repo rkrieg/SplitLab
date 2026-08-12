@@ -11,7 +11,10 @@ import { extractUrls, scrapeCompetitorUrl } from '@/lib/ai-competitor-scrape';
 import {
   userWantsCustomOrMinimalPage,
   injectBrandAssetsIntoSchema,
+  classifyPageShapeIntent,
+  stripUnpromptedSocialProof,
 } from '@/lib/ai-brand-assets';
+import { userAskedForSocialProof } from '@/lib/ai-follow-up-helpers';
 
 const SECTION_TYPES_BLOCK = SECTION_VOCABULARY
   .map(s => `- ${s.schemaExample}\n  Use when: ${s.whenToUse}`)
@@ -61,7 +64,8 @@ ${SECTION_TYPES_BLOCK}
   - Minimal / thank-you / confirmation / "dead-end" / "just a hero" / "hero + footer only" → hero (+ optional tiny footer/nav). Zero or almost no mid-page sections. Do NOT pad with fake features/FAQ/testimonials.
   - Focused landing (a few named sections) → only those sections (+ hero/footer as needed).
   - Full offer / marketing LP with no size constraint → typically 3–7 mid-page sections; vary the mix.
-- Do NOT invent fake statistics, awards, client logos, or "as seen in" proof unless the user provided them or explicitly asked for social proof.
+- Do NOT invent fake statistics, awards, client logos, "as seen in" bars, or social-proof numbers unless the user provided them or explicitly asked for social proof / testimonials / stats. Prefer omitting proof sections over fabricating them.
+- If the user asked for a confirmation / thank-you / dead-end / hero-only page: do NOT add stats, logo walls, testimonials, or mid-page marketing sections they did not request.
 - JSON validity is non-negotiable. If any copy you write — including phrases quoted or reused from the user's prompt — contains a double-quote character, you MUST escape it as \" inside the JSON string. Never emit a literal unescaped " inside a string value.
 
 ## Visual-first bias — nobody reads landing pages, they skim
@@ -166,19 +170,28 @@ export async function POST(request: NextRequest) {
     // so the schema reflects the competitor's actual section count and order.
     const urls = extractUrls(prompt);
     const competitorContext = urls.length > 0 ? await scrapeCompetitorUrl(urls[0]) : null;
-    const minimalOrCustom = userWantsCustomOrMinimalPage(prompt);
-
+    let minimalOrCustom = false;
+    if (competitorContext) {
+      if (userWantsCustomOrMinimalPage(prompt)) {
+        minimalOrCustom = true;
+      } else {
+        minimalOrCustom = (await classifyPageShapeIntent(prompt)) === 'minimal_or_custom';
+      }
+    }
     if (competitorContext) {
       console.log('[competitor] cssTokens:\n', competitorContext.cssTokens || '(empty)');
       console.log('[competitor] pageContent length:', competitorContext.pageContent?.length ?? 0);
       console.log('[competitor] screenshots count:', competitorContext.screenshots?.length ?? 0);
       console.log('[competitor] logoUrl:', competitorContext.logoUrl);
+      console.log('[competitor] hasLogoSvg:', !!competitorContext.logoSvgMarkup);
       console.log('[competitor] minimalOrCustomShape:', minimalOrCustom);
     }
 
     const logoNote = competitorContext?.logoUrl
       ? `\nREAL LOGO ASSET (mandatory): Use this exact URL as the nav/footer logo <img src> — never paste a screenshot thumbnail or invent a mark:\n${competitorContext.logoUrl}\nPut logo_url / logo_src on nav and footer in the schema.\n`
-      : `\nNo extractable logo <img> was found — do NOT use a screenshot crop as a logo. Use text wordmark or a simple SVG icon that matches the brand, never a full-page screenshot image.\n`;
+      : competitorContext?.logoSvgMarkup
+        ? `\nREAL LOGO SVG was extracted from the site header/nav. The build step will host it — put logo_url placeholder "INLINE_SVG_LOGO" on nav/footer and do NOT use a screenshot crop as the logo.\n`
+        : `\nNo extractable logo <img> or header SVG was found — do NOT use a screenshot crop as a logo. Use text wordmark only, never a full-page screenshot image.\n`;
 
     const footerNote =
       competitorContext &&
@@ -188,10 +201,19 @@ export async function POST(request: NextRequest) {
         ? `\nFOOTER CONTACT (use these exact strings when the user wants a footer):\n${JSON.stringify(competitorContext.footerContact)}\n`
         : '';
 
+    const referenceImagesNote =
+      competitorContext && competitorContext.referenceImageUrls.length > 0
+        ? `\nREAL SITE PHOTOS (optional — only when the user wants real headshots/product photos from the site; prefer these exact URLs over inventing image_prompt for those slots):\n${competitorContext.referenceImageUrls.map((u, i) => `${i + 1}. ${u}`).join('\n')}\nPut the URL on the schema field as image_url / photo_url when using one. Do NOT use these as the logo.\n`
+        : '';
+
+    const tasteNote = minimalOrCustom
+      ? `\nMINIMAL PAGE TASTE:\n- Strong hierarchy: one clear H1, short supporting line, generous whitespace, flat or near-flat background\n- No decorative card chrome, no competing CTAs, no mid-page clutter\n- Type scale slightly calmer than a full marketing LP (still clamp()-based)\n`
+      : '';
+
     const competitorNote = competitorContext
       ? minimalOrCustom
-        ? `\n\n## Reference site context — STYLE + ASSETS ONLY (user asked for a custom/minimal page)\nReference URL: ${urls[0]}\nThe user's instruction OVERRIDES full-page cloning. Follow THEIR shape (e.g. confirmation/hero-only, no CTAs) even if the reference site has many sections.\nUse the reference for: colors/fonts (CSS tokens), logo, optional KPIs/stats they mentioned, flat background feel.\nDo NOT copy every section, nav links, or CTAs from the reference unless the user asked for them.\n\n${competitorContext.cssTokens ? `CSS token analysis:\n${competitorContext.cssTokens}\n\n` : ''}${competitorContext.pageContent ? `Reference site HTML (extract logo text, KPI numbers, colors, footer contact — NOT a full section clone):\n${competitorContext.pageContent.slice(0, 20_000)}\n\n` : ''}${logoNote}${footerNote}CRITICAL:\n- Page shape follows the USER prompt first\n- If they said no buttons / no CTAs — schema must have none\n- If they gave exact headline copy — use it verbatim\n- Prefer hero (+ optional stats/KPIs + simple footer) when they asked for a simple confirmation page`
-        : `\n\n## Reference site context — MANDATORY\nThe user wants a page that closely replicates: ${urls[0]}\n\n${competitorContext.cssTokens ? `CSS token analysis:\n${competitorContext.cssTokens}\n\n` : ''}${competitorContext.pageContent ? `Reference site HTML (use to extract real copy, nav links, headlines, CTAs, section structure):\n${competitorContext.pageContent}\n\n` : ''}${logoNote}${footerNote}CRITICAL SCHEMA RULES when a reference site is provided AND the user did not ask for a minimal/custom shape:\n- Read the HTML above and extract the REAL headline text, subheadline, CTA button text, nav links, feature titles, testimonial copy — use the actual words from the site, not invented placeholders\n- Match the SECTION ORDER and TYPES from the reference unless the user explicitly removed sections\n- Replicate the nav link labels exactly as they appear on the reference site\n- Use the reference site's actual CTA button text, not generic "Get Started"\n- ALWAYS use the REAL LOGO ASSET URL above for nav/footer — never a screenshot thumbnail`
+        ? `\n\n## Reference site context — STYLE + ASSETS ONLY (user asked for a custom/minimal page)\nReference URL: ${urls[0]}\nThe user's instruction OVERRIDES full-page cloning. Follow THEIR shape (e.g. confirmation/hero-only, no CTAs) even if the reference site has many sections.\nUse the reference for: colors/fonts (CSS tokens), logo, optional KPIs/stats they mentioned, flat background feel.\nDo NOT copy every section, nav links, or CTAs from the reference unless the user asked for them.\n\n${competitorContext.cssTokens ? `CSS token analysis:\n${competitorContext.cssTokens}\n\n` : ''}${competitorContext.pageContent ? `Reference site HTML (extract logo text, KPI numbers, colors, footer contact — NOT a full section clone):\n${competitorContext.pageContent.slice(0, 20_000)}\n\n` : ''}${logoNote}${footerNote}${referenceImagesNote}${tasteNote}CRITICAL:\n- Page shape follows the USER prompt first\n- If they said no buttons / no CTAs — schema must have none\n- If they gave exact headline copy — use it verbatim\n- Prefer hero (+ optional stats/KPIs + simple footer) when they asked for a simple confirmation page\n- Do NOT invent fake KPIs — only use numbers present in the reference HTML or user prompt`
+        : `\n\n## Reference site context — MANDATORY\nThe user wants a page that closely replicates: ${urls[0]}\n\n${competitorContext.cssTokens ? `CSS token analysis:\n${competitorContext.cssTokens}\n\n` : ''}${competitorContext.pageContent ? `Reference site HTML (use to extract real copy, nav links, headlines, CTAs, section structure):\n${competitorContext.pageContent}\n\n` : ''}${logoNote}${footerNote}${referenceImagesNote}CRITICAL SCHEMA RULES when a reference site is provided AND the user did not ask for a minimal/custom shape:\n- Read the HTML above and extract the REAL headline text, subheadline, CTA button text, nav links, feature titles, testimonial copy — use the actual words from the site, not invented placeholders\n- Match the SECTION ORDER and TYPES from the reference unless the user explicitly removed sections\n- Replicate the nav link labels exactly as they appear on the reference site\n- Use the reference site's actual CTA button text, not generic "Get Started"\n- ALWAYS use the REAL LOGO ASSET URL above for nav/footer — never a screenshot thumbnail\n- Do NOT invent fake statistics — use real numbers from the reference HTML or omit`
       : '';
 
     const messages: { role: 'user' | 'assistant'; content: string }[] = [
@@ -252,8 +274,11 @@ export async function POST(request: NextRequest) {
           logoUrl: competitorContext.logoUrl,
           footer: competitorContext.footerContact,
         });
-        parsed = { ...parsed, schema };
       }
+      const keepProof =
+        userAskedForSocialProof(prompt) || (!!competitorContext && !minimalOrCustom);
+      schema = stripUnpromptedSocialProof(schema, prompt, keepProof);
+      parsed = { ...parsed, schema };
       const s = schema;
       const sections = Array.isArray(s.sections) ? s.sections as Array<{type?: string}> : [];
       console.log('[generate] schema section types:', sections.map(sec => sec.type).join(' → '));
@@ -267,6 +292,7 @@ export async function POST(request: NextRequest) {
       ...(competitorContext?.cssTokens ? { competitor_css_tokens: competitorContext.cssTokens } : {}),
       ...(competitorContext?.pageContent ? { competitor_page_content: competitorContext.pageContent } : {}),
       ...(competitorContext?.logoUrl ? { competitor_logo_url: competitorContext.logoUrl } : {}),
+      ...(competitorContext?.logoSvgMarkup ? { competitor_logo_svg: competitorContext.logoSvgMarkup } : {}),
       ...(competitorContext?.footerContact && Object.keys(competitorContext.footerContact).length > 0
         ? { competitor_footer_contact: competitorContext.footerContact }
         : {}),

@@ -408,6 +408,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   const [competitorCssTokens, setCompetitorCssTokens] = useState<string | null>(null);
   const [competitorPageContent, setCompetitorPageContent] = useState<string | null>(null);
   const [competitorLogoUrl, setCompetitorLogoUrl] = useState<string | null>(null);
+  const [competitorLogoSvg, setCompetitorLogoSvg] = useState<string | null>(null);
   const [competitorFooterContact, setCompetitorFooterContact] = useState<Record<string, string> | null>(null);
 
   const schemaRef = useRef<unknown>(null);
@@ -819,6 +820,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     if (data.competitor_css_tokens) setCompetitorCssTokens(data.competitor_css_tokens);
     if (data.competitor_page_content) setCompetitorPageContent(data.competitor_page_content);
     if (data.competitor_logo_url) setCompetitorLogoUrl(data.competitor_logo_url as string);
+    if (data.competitor_logo_svg) setCompetitorLogoSvg(data.competitor_logo_svg as string);
     if (data.competitor_footer_contact) setCompetitorFooterContact(data.competitor_footer_contact as Record<string, string>);
 
     // Capture competitor data directly from response — React setState is async so reading
@@ -827,6 +829,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     const freshCompetitorCssTokens = (data.competitor_css_tokens as string) ?? null;
     const freshCompetitorPageContent = (data.competitor_page_content as string) ?? null;
     const freshCompetitorLogoUrl = (data.competitor_logo_url as string) ?? null;
+    const freshCompetitorLogoSvg = (data.competitor_logo_svg as string) ?? null;
     const freshCompetitorFooter = (data.competitor_footer_contact as Record<string, string>) ?? null;
 
     if (data.type === 'questions') {
@@ -851,6 +854,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       freshCompetitorPageContent,
       freshCompetitorLogoUrl,
       freshCompetitorFooter,
+      freshCompetitorLogoSvg,
     );
   }
 
@@ -862,6 +866,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     freshPageContent?: string | null,
     freshLogoUrl?: string | null,
     freshFooter?: Record<string, string> | null,
+    freshLogoSvg?: string | null,
   ) {
     if (!pageId) return;
     setPhase('building');
@@ -914,6 +919,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         ...(((freshCssTokens ?? competitorCssTokens)) ? { competitor_css_tokens: freshCssTokens ?? competitorCssTokens } : {}),
         ...(((freshPageContent ?? competitorPageContent)) ? { competitor_page_content: freshPageContent ?? competitorPageContent } : {}),
         ...(((freshLogoUrl ?? competitorLogoUrl)) ? { competitor_logo_url: freshLogoUrl ?? competitorLogoUrl } : {}),
+        ...(((freshLogoSvg ?? competitorLogoSvg)) ? { competitor_logo_svg: freshLogoSvg ?? competitorLogoSvg } : {}),
         ...(((freshFooter ?? competitorFooterContact)) ? { competitor_footer_contact: freshFooter ?? competitorFooterContact } : {}),
       }),
     });
@@ -1227,13 +1233,20 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     if (isTestVariantPage) setHasDraft(true);
     // Server only emits `done` when HTML actually changed — never claim success otherwise.
     if (!silent) {
-      addMessage({
-        role: 'assistant',
-        content: done.partial_message
-          ? `Partly done. ${done.partial_message}`
-          : 'Done! The page has been updated.',
-        elapsedMs: done.elapsed_ms,
-      });
+      if (done.partial_message) {
+        toast(`Partly done — some edits still need a retry.`, { icon: '⚠️' });
+        addMessage({
+          role: 'assistant',
+          content: `Partly done (not fully finished). ${done.partial_message}`,
+          elapsedMs: done.elapsed_ms,
+        });
+      } else {
+        addMessage({
+          role: 'assistant',
+          content: 'Done! The page has been updated.',
+          elapsedMs: done.elapsed_ms,
+        });
+      }
     }
     setConversationJson(prev => [
       ...prev,

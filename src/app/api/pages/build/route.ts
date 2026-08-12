@@ -11,6 +11,7 @@ import {
   injectBrandAssetsIntoSchema,
   forceEmbedLogoInHtml,
   forceEmbedFooterContactInHtml,
+  materializeLogoUrl,
   type FooterContact,
 } from '@/lib/ai-brand-assets';
 
@@ -48,6 +49,7 @@ export async function POST(request: NextRequest) {
     competitor_css_tokens: unknown,
     competitor_page_content: unknown,
     competitor_logo_url: unknown,
+    competitor_logo_svg: unknown,
     competitor_footer_contact: unknown;
 
   try {
@@ -61,6 +63,7 @@ export async function POST(request: NextRequest) {
       competitor_css_tokens,
       competitor_page_content,
       competitor_logo_url,
+      competitor_logo_svg,
       competitor_footer_contact,
     } = await request.json());
   } catch {
@@ -106,12 +109,23 @@ export async function POST(request: NextRequest) {
         });
       }
 
-      const logoUrl =
+      const logoSvg =
+        typeof competitor_logo_svg === 'string' && competitor_logo_svg.trim().startsWith('<svg')
+          ? competitor_logo_svg.trim()
+          : null;
+      let logoUrl =
         typeof competitor_logo_url === 'string' && competitor_logo_url.trim()
           ? competitor_logo_url.trim()
           : typeof (schema_json as Record<string, unknown>).brand_logo_url === 'string'
             ? ((schema_json as Record<string, unknown>).brand_logo_url as string)
             : null;
+      // Host inline SVG so <img src> works everywhere (create path)
+      logoUrl = await materializeLogoUrl({
+        pageSlug,
+        logoUrl,
+        logoSvg,
+      });
+
       const footerContact =
         competitor_footer_contact && typeof competitor_footer_contact === 'object'
           ? (competitor_footer_contact as FooterContact)
@@ -166,13 +180,14 @@ export async function POST(request: NextRequest) {
         return;
       }
 
-      if (logoUrl) {
-        const before = html.includes(logoUrl);
-        html = forceEmbedLogoInHtml(html, logoUrl);
+      if (logoUrl || logoSvg) {
+        const before = logoUrl ? html.includes(logoUrl) : false;
+        html = forceEmbedLogoInHtml(html, logoUrl, logoUrl ? null : logoSvg);
         console.log('[pages/build] logo embed', {
           hadLogo: before,
-          hasLogoAfter: html.includes(logoUrl),
-          logoUrl: logoUrl.slice(0, 120),
+          hasLogoAfter: logoUrl ? html.includes(logoUrl) : /<svg\b/i.test(html),
+          logoUrl: logoUrl ? logoUrl.slice(0, 120) : null,
+          usedInlineSvgFallback: !logoUrl && !!logoSvg,
         });
       }
       if (footerContact) {
