@@ -19,18 +19,33 @@ import {
   planMultiIntentEdit,
   userWantsUsToDecide,
   isScreenshotComplaint,
+  isDesignReferenceAsk,
+  inferDesignMatchSectionNames,
   verifyScopedPatchIntent,
   classifyAttachedImages,
   allowScopedDespiteCompetitorUrl,
   userWantsSiteContentImage,
   userWantsFullCompetitorRebuild,
+  extractDesignReferenceCopy,
 } from '@/lib/ai-follow-up-helpers';
 import {
   injectBrandAssetsIntoSchema,
   forceEmbedLogoInHtml,
+  forceEmbedLogoIntoSections,
   forceEmbedFooterContactInHtml,
   materializeLogoUrl,
+  extractPrimaryLogoUrlFromHtml,
+  extractInlineLogoSvg,
+  sectionHasLogoAsset,
 } from '@/lib/ai-brand-assets';
+import {
+  detectContentReuseIntent,
+  extractPrimaryHeadlineFromHtml,
+  forcePlaceTextIntoSections,
+  resolveSourceSectionName,
+  sectionHasText,
+  inferTargetSectionNames,
+} from '@/lib/ai-content-placement';
 import { runNavLogoVisualQaOnce, runPostUploadNavLogoQa } from '@/lib/ai-visual-qa';
 
 export const dynamic = 'force-dynamic';
@@ -87,8 +102,9 @@ Example: instruction "make the form smaller so it's not massive on desktop and m
 When the user attaches one or more images, decide their role by reading the full instruction:
 - If the instruction is about something being wrong, broken, misaligned, or needs fixing on the CURRENT page → the image is a reference screenshot showing the problem. Use it to diagnose the exact CSS/layout issue and fix only that. Never embed it in the page HTML.
 - If the instruction asks you to add, place, use, include, or display the image somewhere on the page → the image is content to embed. Insert it in the appropriate section using the provided URL.
+- If the instruction asks to keep/make/match a section "like this" / "match this" / "same as this" with a screenshot of the desired look → the image is a DESIGN REFERENCE. Recreate that section's layout, structure, and visible copy from the screenshot in real HTML/CSS. Never paste the screenshot as an <img src> of the whole section. Leaving the section unchanged is a failure.
 - If both purposes appear in one instruction (e.g. "use photo A on hero and fix this alignment issue in photo B") → handle each image accordingly.
-When in doubt, ask yourself: is the user pointing at a problem, or handing you an asset? Let the instruction answer that.
+When in doubt, ask yourself: is the user pointing at a problem, handing you an asset to embed, or showing how something should look? Let the instruction answer that.
 
 ## Surgical change rule — CRITICAL for patch and style
 Make the MINIMUM edit required. Do NOT restructure, reorganize, or rebuild any section. Change only the specific property, value, or element the instruction targets.
@@ -347,16 +363,19 @@ function tryDirectQuoteMatch(prompt: string, sections: SlSection[]): string | nu
 function isSimpleTextRewritePrompt(prompt: string): boolean {
   const p = prompt.toLowerCase();
   if (/\b(https?:\/\/|www\.)/i.test(prompt)) return false;
+  // "in this section" is a destination, not a structural redesign ask.
   if (
-    /\b(redesign|rebuild|restructure|layout|spacing|padding|margin|font-size|color|colour|background|image|logo|photo|section|add a |remove |delete |reorder|move .+ (above|below|before|after)|button style|css|stylesheet)\b/i.test(
+    /\b(redesign|rebuild|restructure|layout|spacing|padding|margin|font-size|color|colour|background|image|logo|photo|add a |remove |delete |reorder|move .+ (above|below|before|after)|button style|css|stylesheet)\b/i.test(
       p,
     )
   ) {
     return false;
   }
   return (
-    /\b(change|rewrite|rephrase|improve|update|better|alternative)\b/i.test(p) &&
-    /\b(text|copy|headline|heading|title|subhead|sub-head|tagline|wording|this)\b/i.test(p)
+    /\b(change|rewrite|rephrase|improve|update|better|alternative|nicer|polish|tighten|shorten|clarify|refine)\b/i.test(
+      p,
+    ) &&
+    /\b(text|copy|headline|heading|title|subhead|sub-head|tagline|wording|this|it)\b/i.test(p)
   );
 }
 
@@ -498,8 +517,8 @@ Rules:
   Always include "transparent background" and "high resolution" so it composites cleanly into the section.
 - Confidence is about WHICH SECTION, not about literal wording match. The instruction will often describe UI in generic terms ("button", "form", "banner") that don't literally match the underlying HTML tag — a labeled pill, badge, link, or div styled as a button all count as a match for "button." If exactly one section's preview clearly contains the referenced text/element, that is high confidence — do not lower it just because the HTML tag isn't literally a <button>/<form>/etc. The same applies to "insert_section"'s anchor, "remove_section"'s target, and "reorder_sections"' new_order — if you can confidently name the section(s) from the list, that is high confidence, even for a simple, plainly-worded request like "add a pricing section after X" or "remove the calculator."
 - Set confidence "low" when the referenced element/text/section could plausibly belong to two or more different sections, or doesn't appear in any preview at all — including truly ambiguous image references ("use this image" when multiple sections have images) or vague whole-page requests ("make it feel more premium"). When confidence is "low", still fill in your best guess for type/target_sections, AND you MUST also return "clarifying_question": a short plain-English question for the user that names the plausible section options using EXACT section names from the list (e.g. "Did you mean the form in cta-form, or the FAQ in faq?"). The product will ask the user instead of guessing.
-- **Never set confidence "low" / clarifying_question when:** (1) the user says "you decide", "feel free", "just do it", "up to you", or similar — pick the best section and use confidence "high"; (2) they attached a screenshot and are complaining that something looks wrong/sloppy/broken/fake — LOOK at the screenshot, decide the fix, confidence "high" on the section that matches the problem (often nav/logo). Do NOT ask "did you mean the logo?" when the rant + screenshot already make that obvious.
-- **Attached screenshots (vision):** When image(s) are included with the instruction, LOOK at them. Screenshots of a lead form / dropdown questions / "investment range" style fields almost always mean a form section (names like cta-form, form, popup, contact — whatever matches the list), NOT faq. FAQ is for Q&A accordion copy. Prefer the section whose preview/schema looks like a form when the screenshot shows form fields. Screenshots of a visual defect (logo box, broken line, bad spacing) are diagnostic — route to the broken section and fix it; do not clarify.
+- **Never set confidence "low" / clarifying_question when:** (1) the user says "you decide", "feel free", "just do it", "up to you", or similar — pick the best section and use confidence "high"; (2) they attached a screenshot and are complaining that something looks wrong/sloppy/broken/fake — LOOK at the screenshot, decide the fix, confidence "high" on the section that matches the problem (often nav/logo). Do NOT ask "did you mean the logo?" when the rant + screenshot already make that obvious; (3) they attached a screenshot and ask to keep/make/match a named part "like this" (e.g. "keep the footer like this") — that is a design-reference match: confidence "high" on the named section (footer → footer, nav → nav), never clarify.
+- **Attached screenshots (vision):** When image(s) are included with the instruction, LOOK at them. Screenshots of a lead form / dropdown questions / "investment range" style fields almost always mean a form section (names like cta-form, form, popup, contact — whatever matches the list), NOT faq. FAQ is for Q&A accordion copy. Prefer the section whose preview/schema looks like a form when the screenshot shows form fields. Screenshots of a visual defect (logo box, broken line, bad spacing) are diagnostic — route to the broken section and fix it; do not clarify. Screenshots of a desired footer/nav/hero look with "like this" / "match this" language are design references — route to that section for a patch that recreates the look.
 - Only ever use section names EXACTLY as given in the list — never invent one.`;
 
 interface RoutingResult {
@@ -636,10 +655,14 @@ async function runScopedPatch(
     // The image content blocks below only give the model PIXELS — the
     // literal URL string is never otherwise visible to it, so without this
     // it has no way to know what to actually write into an <img src="...">.
-    // Every attached image is listed here by index so the model can quote
-    // the exact URL string back into the HTML it returns.
+    // Design-reference asks must NOT get a blanket "put these URLs in src"
+    // note — that causes the model to paste the screenshot as an <img>.
+    const isDesignMatchPrompt =
+      /DESIGN REFERENCE/i.test(prompt) || isDesignReferenceAsk(prompt);
     const imageUrlsNote = (imageUrls ?? []).length > 0
-      ? `\n\nAttached image URL(s) — use these EXACT strings verbatim in any src attribute, in the order attached:\n${(imageUrls ?? []).map((u, i) => `${i + 1}. ${u}`).join('\n')}`
+      ? isDesignMatchPrompt
+        ? `\n\nAttached image(s) are for VISION only (design/bug reference). Do NOT put these URL(s) into src attributes unless the instruction explicitly lists them as content-asset embed URLs:\n${(imageUrls ?? []).map((u, i) => `${i + 1}. ${u}`).join('\n')}`
+        : `\n\nAttached image URL(s) — use these EXACT strings verbatim in any src attribute, in the order attached:\n${(imageUrls ?? []).map((u, i) => `${i + 1}. ${u}`).join('\n')}`
       : '';
     const correctionBlock = correctionNote ? `\n\n${correctionNote}` : '';
     const userContent: AIContent = [
@@ -1347,7 +1370,7 @@ export async function POST(
   // mentioned — except logo/content-image swaps and incidental-URL local edits.
   const allowScopedWithCompetitorUrl =
     isLogoSwapAttempt || isScopedDespiteUrl || isContentImageSwapAttempt;
-  const slSections =
+  let slSections =
     competitorUrls.length === 0 || allowScopedWithCompetitorUrl ? extractSlSections(html) : [];
   const quoteMatchSection =
     competitorUrls.length === 0 || allowScopedWithCompetitorUrl
@@ -1381,10 +1404,12 @@ export async function POST(
       // always a 'patch' by construction, so this is set once up front and
       // only overwritten inside the fallback branch below.
       let resultType: 'structural' | 'style' | 'patch' = 'patch';
-      // Per-image roles (bug screenshot vs content asset). Default = treat all
-      // as both vision + embed candidates; classification may narrow embed list.
+      // Per-image roles (bug screenshot vs content asset vs design reference).
+      // Default = treat all as both vision + embed candidates; classification may narrow embed list.
       let routingImageUrls = effectiveImageUrls;
       let embedImageUrls = effectiveImageUrls;
+      let designReferenceUrls: string[] = [];
+      let designCopyLines: string[] = [];
       let imageRolesClassified = false;
       /** Set when a logo-swap applied a real hosted URL — used by visual QA. */
       let logoSwapAppliedUrl: string | null = null;
@@ -1497,6 +1522,190 @@ export async function POST(
             if (!scopedApplied) scopedFailureReason = 'logo_swap_svg_embed_failed';
             else console.log('[pages/follow-up] real logo SVG embedded inline', { section: logoTargetName });
           }
+
+          // If they also asked to place the logo in other sections (footer,
+          // hero, …), deterministically put the SAME asset there — never invent.
+          if (scopedApplied) {
+            const place = detectContentReuseIntent(
+              prompt,
+              slSections.map((s) => s.name),
+            );
+            if (place?.kind === 'logo') {
+              const url = logoSwapAppliedUrl ?? realLogoUrl;
+              const svg = url ? null : inlineSvgFallback;
+              const targets = (place.targets.length > 0
+                ? place.targets
+                : inferTargetSectionNames(prompt, slSections.map((s) => s.name))
+              ).filter((n) => n !== logoTargetName);
+              if (targets.length > 0) {
+                finalHtml = forceEmbedLogoIntoSections(finalHtml, targets, url, svg);
+                const missing = targets.filter((n) => !sectionHasLogoAsset(finalHtml, n, url, svg));
+                if (missing.length > 0) {
+                  console.error('[pages/follow-up] logo swap: placement embed failed', { missing });
+                  scopedFailureReason = 'logo_swap_placement_embed_failed';
+                  scopedApplied = false;
+                } else {
+                  console.log('[pages/follow-up] real logo also embedded in sections', {
+                    targets,
+                    url: url?.slice(0, 120),
+                  });
+                }
+              }
+            }
+          }
+        }
+
+        // ── Reuse existing page content into named section(s) ─────────────
+        // Logo, text, or image — one path. Never invent assets; fail closed.
+        if (!scopedApplied && !scopedFailureReason) {
+          const reuse = detectContentReuseIntent(
+            prompt,
+            slSections.map((s) => s.name),
+          );
+          if (reuse) {
+            if (request.signal.aborted) { closeSSE(controller); return; }
+
+            let targets = reuse.targets;
+            if (targets.length === 0) {
+              const routing = await tryRoutingCall(prompt, schema, slSections, [], usageCtx);
+              if (
+                routing &&
+                routing.target_sections.length >= 1 &&
+                routing.target_sections.every((n) => slSections.some((s) => s.name === n))
+              ) {
+                targets = routing.target_sections.slice(0, 3);
+              }
+            }
+
+            if (targets.length === 0) {
+              console.error('[pages/follow-up] content reuse: no target section', { kind: reuse.kind });
+              scopedFailureReason = 'content_reuse_no_target';
+            } else if (reuse.kind === 'logo') {
+              let existingLogoUrl = extractPrimaryLogoUrlFromHtml(html);
+              let existingSvg = !existingLogoUrl ? extractInlineLogoSvg(html) : null;
+              // Prefer page logo; else a user-attached image URL (still a real asset).
+              if (!existingLogoUrl && effectiveImageUrls.length > 0) {
+                existingLogoUrl = effectiveImageUrls[0];
+              }
+              if (!existingLogoUrl && !existingSvg && competitorUrls.length > 0) {
+                sendSSE(controller, { type: 'status', message: 'Fetching logo...' });
+                const assets = await fetchLogoAssets(competitorUrls[0]);
+                const pageSlugForLogo = page.slug ?? crypto.randomUUID();
+                existingLogoUrl = await materializeLogoUrl({
+                  pageSlug: pageSlugForLogo,
+                  logoUrl: assets.logoUrl && (await isImageUrl(assets.logoUrl)) ? assets.logoUrl : null,
+                  logoSvg: assets.logoSvgMarkup,
+                });
+                if (!existingLogoUrl) existingSvg = assets.logoSvgMarkup;
+              }
+              if (!existingLogoUrl && !existingSvg) {
+                // Don't toast an error for a simple "logo in footer" — fall through
+                // so routing/AI can still try; forceEmbed may catch after.
+                console.warn('[pages/follow-up] content reuse: no logo asset yet — falling through');
+              } else {
+              sendSSE(controller, {
+                type: 'status',
+                message: `Placing logo in ${targets.join(', ')}...`,
+              });
+              let next = forceEmbedLogoIntoSections(html, targets, existingLogoUrl, existingSvg);
+              let missing = targets.filter(
+                (n) => !sectionHasLogoAsset(next, n, existingLogoUrl, existingSvg),
+              );
+              if (missing.length > 0 && existingLogoUrl) {
+                const patched: Array<{ name: string; html: string }> = [];
+                for (const name of missing) {
+                  const section = slSections.find((s) => s.name === name);
+                  if (!section) continue;
+                  const logoPrompt =
+                    `${prompt}\n\n(Use this EXACT logo URL in "${name}" — already on the page. <img src="${existingLogoUrl}" alt="logo">. Do NOT invent a URL.)`;
+                  const patchResult = await runScopedPatchWithRetry(
+                    section.html,
+                    { [name]: (schema as Record<string, unknown> | null | undefined)?.[name] },
+                    logoPrompt,
+                    [existingLogoUrl],
+                    usageCtx,
+                  );
+                  if (patchResult.html) patched.push({ name, html: patchResult.html });
+                }
+                if (patched.length > 0) next = applyPatch(html, patched);
+                next = forceEmbedLogoIntoSections(next, targets, existingLogoUrl, null);
+                missing = targets.filter((n) => !sectionHasLogoAsset(next, n, existingLogoUrl, null));
+              }
+              if (missing.length === 0) {
+                finalHtml = next;
+                scopedApplied = true;
+                logoSwapAppliedUrl = existingLogoUrl;
+                console.log('[pages/follow-up] content reuse: logo placed', { targets });
+              } else {
+                // Still force what we can; prefer partial success over user-facing error.
+                finalHtml = next;
+                scopedApplied = next !== html;
+                logoSwapAppliedUrl = existingLogoUrl;
+                console.warn('[pages/follow-up] content reuse: logo partial', { missing, targets });
+              }
+              }
+            } else if (reuse.kind === 'text') {
+              let text = reuse.textPayload;
+              if (!text && reuse.sourceSectionHint) {
+                const srcName = resolveSourceSectionName(
+                  reuse.sourceSectionHint,
+                  slSections.map((s) => s.name),
+                );
+                const src = srcName ? slSections.find((s) => s.name === srcName) : null;
+                text = src ? extractPrimaryHeadlineFromHtml(src.html) : null;
+              }
+              if (!text) {
+                sendSSE(controller, {
+                  type: 'error',
+                  message:
+                    'Quote the exact text to place, or say which section to copy from (e.g. "copy the hero headline to the footer").',
+                });
+                closeSSE(controller);
+                return;
+              }
+              sendSSE(controller, {
+                type: 'status',
+                message: `Placing text in ${targets.join(', ')}...`,
+              });
+              const next = forcePlaceTextIntoSections(html, targets, text);
+              const missing = targets.filter((n) => !sectionHasText(next, n, text!));
+              if (missing.length === 0) {
+                finalHtml = next;
+                scopedApplied = true;
+                console.log('[pages/follow-up] content reuse: text placed', {
+                  targets,
+                  textPreview: text.slice(0, 80),
+                });
+              } else {
+                scopedFailureReason = 'content_reuse_text_failed';
+              }
+            } else if (reuse.kind === 'image') {
+              const existingImg = extractPrimaryLogoUrlFromHtml(html);
+              if (!existingImg && effectiveImageUrls.length === 0) {
+                sendSSE(controller, {
+                  type: 'error',
+                  message:
+                    'Attach the image to place, or make sure a working image is already on the page.',
+                });
+                closeSSE(controller);
+                return;
+              }
+              const imgUrl = effectiveImageUrls[0] ?? existingImg!;
+              sendSSE(controller, {
+                type: 'status',
+                message: `Placing image in ${targets.join(', ')}...`,
+              });
+              const next = forceEmbedLogoIntoSections(html, targets, imgUrl, null);
+              const missing = targets.filter((n) => !sectionHasLogoAsset(next, n, imgUrl, null));
+              if (missing.length === 0) {
+                finalHtml = next;
+                scopedApplied = true;
+                console.log('[pages/follow-up] content reuse: image placed', { targets });
+              } else {
+                scopedFailureReason = 'content_reuse_image_failed';
+              }
+            }
+          }
         }
 
         // Once-only nav/logo visual QA after a successful logo swap when the
@@ -1592,7 +1801,7 @@ export async function POST(
           });
           if (classified === 'clarify') {
             const question =
-              'You attached more than one image — which are bug screenshots to fix, and which should I place on the page? Reply briefly (e.g. "first is the bug, second is the hero photo").';
+              'You attached more than one image — which are bug screenshots to fix, which should I place on the page, and which are design references to match (e.g. "make the footer look like this")? Reply briefly.';
             const userEntry: Record<string, unknown> = { role: 'user', content: prompt };
             if (Array.isArray(image_urls) && image_urls.length > 0) userEntry.image_urls = image_urls;
             const updatedConversation = [
@@ -1613,13 +1822,47 @@ export async function POST(
           }
           const bugs = classified.filter((c) => c.role === 'bug_reference').map((c) => c.url);
           const assets = classified.filter((c) => c.role === 'content_asset').map((c) => c.url);
+          designReferenceUrls = classified.filter((c) => c.role === 'design_reference').map((c) => c.url);
           routingImageUrls = effectiveImageUrls; // vision for section targeting uses all
-          embedImageUrls = assets.length > 0 ? assets : []; // never embed bug screenshots
+          // Never embed bug or design-reference screenshots as <img src>
+          embedImageUrls = assets.length > 0 ? assets : [];
           imageRolesClassified = true;
           console.log('[pages/follow-up] attached image roles', {
             bugs: bugs.length,
             assets: assets.length,
+            designRefs: designReferenceUrls.length,
           });
+
+          if (designReferenceUrls.length > 0 || isDesignReferenceAsk(prompt)) {
+            const ocrUrls =
+              designReferenceUrls.length > 0 ? designReferenceUrls : effectiveImageUrls.slice(0, 2);
+            sendSSE(controller, { type: 'status', message: 'Reading design reference…' });
+            designCopyLines = await extractDesignReferenceCopy({
+              imageUrls: ocrUrls,
+              prompt,
+              usage: usageCtx,
+            });
+            console.log('[pages/follow-up] design-ref OCR lines', {
+              count: designCopyLines.length,
+              preview: designCopyLines.slice(0, 4),
+            });
+          }
+
+          // Design-match with a named section (e.g. "keep the footer like this")
+          // → pin targets before routing so we don't under-confidence or no-op.
+          if (!targetSections && designReferenceUrls.length > 0) {
+            const hinted = inferDesignMatchSectionNames(
+              prompt,
+              slSections.map((s) => s.name),
+            );
+            if (hinted.length >= 1 && hinted.length <= 3) {
+              targetSections = hinted;
+              console.log('[pages/follow-up] design-reference section pin', {
+                hinted,
+                promptPreview: prompt.slice(0, 200),
+              });
+            }
+          }
         }
 
         // Multi-intent planner — only when the prompt looks like several
@@ -1628,7 +1871,9 @@ export async function POST(
           const forceDecidePlan =
             lastAssistantWasClarify ||
             userWantsUsToDecide(prompt) ||
-            isScreenshotComplaint(prompt, hasUserImages);
+            isScreenshotComplaint(prompt, hasUserImages) ||
+            isDesignReferenceAsk(prompt) ||
+            designReferenceUrls.length > 0;
           sendSSE(controller, { type: 'status', message: 'Planning edits...' });
           const plan = await planMultiIntentEdit({
             prompt,
@@ -1744,6 +1989,10 @@ export async function POST(
 
               const patched: Array<{ name: string; html: string }> = [];
               let stepOk = true;
+              const stepDesignNote =
+                designReferenceUrls.length > 0 || isDesignReferenceAsk(step.instruction) || isDesignReferenceAsk(prompt)
+                  ? `\n\n(DESIGN REFERENCE — CRITICAL: Attached images may show how this section should look. Recreate layout/structure/copy from the screenshot in real HTML. Do NOT leave unchanged. Do NOT embed design-reference screenshot URLs as <img src> for the whole section.)`
+                  : '';
               for (const name of stepTargets) {
                 const section = liveSections.find((s) => s.name === name);
                 if (!section) {
@@ -1755,7 +2004,7 @@ export async function POST(
                 let patchResult = await runScopedPatchWithRetry(
                   section.html,
                   schemaSlice,
-                  step.instruction,
+                  step.instruction + stepDesignNote,
                   routingImageUrls,
                   usageCtx,
                 );
@@ -1779,7 +2028,10 @@ export async function POST(
                   break;
                 }
                 const verify = verifyScopedPatchIntent({
-                  prompt: step.instruction,
+                  prompt:
+                    isDesignReferenceAsk(prompt) || designReferenceUrls.length > 0
+                      ? `${prompt}\n${step.instruction}`
+                      : step.instruction,
                   sectionName: name,
                   beforeHtml: section.html,
                   afterHtml: patchResult.html,
@@ -1804,19 +2056,103 @@ export async function POST(
               scopedApplied = true;
               console.log('[pages/follow-up] multi-intent plan applied', { stepOks });
             } else if (stepOks.length > 0 && stepFailures.length > 0) {
-              // Partial success — save what worked; never claim full Done in the message.
-              finalHtml = workingHtml;
-              scopedApplied = true;
-              const failList = stepFailures.slice(0, 3).join('; ');
-              partialMessage =
-                `Saved ${stepOks.length} of ${stepOks.length + stepFailures.length} edits ` +
-                `(ok: ${stepOks.slice(0, 4).join(', ')}${stepOks.length > 4 ? '…' : ''}). ` +
-                `Still need a retry for: ${failList}. Reply with only the failed part(s) to finish.`;
-              console.warn('[pages/follow-up] multi-intent partial', { stepOks, stepFailures });
-              sendSSE(controller, {
-                type: 'status',
-                message: `Partial: ${stepOks.length} saved, ${stepFailures.length} failed — not fully done`,
+              // Auto-retry failed steps before accepting a partial outcome.
+              sendSSE(controller, { type: 'status', message: 'Finishing remaining edits…' });
+              const failedInstructions = plan.steps.filter((s) => {
+                // Re-run steps whose targets aren't in stepOks / still pending
+                const targets = s.target_sections;
+                if (targets.length === 0) return true;
+                return targets.some((t) => !stepOks.includes(t));
               });
+              const retryFailures: string[] = [];
+              for (const step of failedInstructions) {
+                const liveSections = extractSlSections(workingHtml);
+                let stepTargets = step.target_sections.filter((n) => liveSections.some((s) => s.name === n));
+                if (stepTargets.length === 0) {
+                  const stepRouting = await tryRoutingCall(
+                    step.instruction,
+                    schema,
+                    liveSections,
+                    routingImageUrls,
+                    usageCtx,
+                  );
+                  if (
+                    stepRouting?.type === 'patch' &&
+                    stepRouting.target_sections?.length >= 1 &&
+                    stepRouting.target_sections.every((n) => liveSections.some((s) => s.name === n))
+                  ) {
+                    stepTargets = stepRouting.target_sections.slice(0, 3);
+                  }
+                }
+                if (stepTargets.length === 0) {
+                  retryFailures.push(`unrouted:${step.instruction.slice(0, 40)}`);
+                  continue;
+                }
+                let stepOk = true;
+                const patched: Array<{ name: string; html: string }> = [];
+                for (const name of stepTargets) {
+                  if (stepOks.includes(name)) continue;
+                  const section = liveSections.find((s) => s.name === name);
+                  if (!section) {
+                    stepOk = false;
+                    retryFailures.push(`missing:${name}`);
+                    break;
+                  }
+                  const schemaSlice = {
+                    [name]: (schema as Record<string, unknown> | null | undefined)?.[name],
+                  };
+                  const patchResult = await runScopedPatchWithRetry(
+                    section.html,
+                    schemaSlice,
+                    step.instruction +
+                      '\n\n(RETRY — previous attempt failed. Apply this edit completely.)',
+                    routingImageUrls,
+                    usageCtx,
+                  );
+                  if (!patchResult.html) {
+                    stepOk = false;
+                    retryFailures.push(`patch_fail:${name}`);
+                    break;
+                  }
+                  const verify = verifyScopedPatchIntent({
+                    prompt: step.instruction,
+                    sectionName: name,
+                    beforeHtml: section.html,
+                    afterHtml: patchResult.html,
+                    requiredPhrases:
+                      designCopyLines.length > 0 &&
+                      (isDesignReferenceAsk(prompt) || designReferenceUrls.length > 0)
+                        ? designCopyLines
+                        : null,
+                  });
+                  if (!verify.ok) {
+                    stepOk = false;
+                    retryFailures.push(verify.reason ?? `verify_fail:${name}`);
+                    break;
+                  }
+                  patched.push({ name, html: patchResult.html });
+                }
+                if (stepOk && patched.length > 0) {
+                  workingHtml = applyPatch(workingHtml, patched);
+                  stepOks.push(...patched.map((p) => p.name));
+                }
+              }
+
+              if (retryFailures.length === 0) {
+                finalHtml = workingHtml;
+                scopedApplied = true;
+                console.log('[pages/follow-up] multi-intent completed after retry', { stepOks });
+              } else {
+                // Still unfinished after retry — keep progress, continue into
+                // normal path for leftovers instead of "partial Done" toast.
+                finalHtml = workingHtml;
+                html = workingHtml;
+                slSections = extractSlSections(workingHtml);
+                console.warn('[pages/follow-up] multi-intent unfinished after retry — continuing', {
+                  stepOks,
+                  retryFailures,
+                });
+              }
             } else if (stepFailures.includes('structural_needs_full_page')) {
               console.log('[pages/follow-up] multi-intent deferred to full-page (structural step)');
               // fall through — don't set scopedApplied
@@ -1854,7 +2190,13 @@ export async function POST(
           const forceDecideEarly =
             lastAssistantWasClarify ||
             userWantsUsToDecide(prompt) ||
-            isScreenshotComplaint(prompt, hasUserImages);
+            isScreenshotComplaint(prompt, hasUserImages) ||
+            isDesignReferenceAsk(prompt) ||
+            designReferenceUrls.length > 0 ||
+            // Soft copy polish ("make the text nicer") — decide a section and act,
+            // don't ask clarifying questions or error-toast for a normal edit.
+            (/\b(nicer|polish|improve|better|tighten|refine|clarify|shorten)\b/i.test(prompt) &&
+              /\b(text|copy|headline|heading|wording|this|here)\b/i.test(prompt));
           const routingQualifies = basicShapeOk && (
             routing!.confidence === 'high' ||
             namesItsSingleSection ||
@@ -2067,11 +2409,20 @@ export async function POST(
           const scopedPrompt = generatedImageUrl
             ? `${prompt}\n\n(A brand-new image has just been generated to satisfy this request — it is attached below, and it is the FINAL, intended replacement. Regardless of how the instruction above orders the words "replace/with/current/new" — real users often phrase this ambiguously (e.g. "create a new X and replace with the current one" is meant as "replace the current X with this new one", NOT "keep the current one" or "revert") — you must make this section visibly display the attached image in place of whatever currently represents it. If the current logo/element is an <img> tag, swap its src to the attached image URL. If it is instead built from inline <svg>/icon markup (common for hand-drawn logo icons), you MUST delete that entire inline SVG/icon markup and replace it with a single <img src="ATTACHED_IMAGE_URL" alt="logo" style="height:<match the icon's original rendered height>; width:auto;"> in its place — do not leave the old SVG/icon untouched alongside or instead of the new image. Do not leave the section unchanged and do not generate or invent a different image URL.)`
             : prompt;
-          const embedNote =
-            hasUserImages && embedImageUrls.length !== routingImageUrls.length
-              ? `\n\n(Image roles: ONLY embed these content-asset URL(s) into src attributes: ${embedImageUrls.length ? embedImageUrls.join(', ') : '(none)'}. Any other attached images are bug-reference screenshots for diagnosis — never put those URLs in src.)`
+          const designNote =
+            designReferenceUrls.length > 0 || isDesignReferenceAsk(prompt)
+              ? `\n\n(DESIGN REFERENCE — CRITICAL: One or more attached images show how THIS section should look. Recreate the visible layout, structure, spacing, and readable copy from the screenshot in real HTML/CSS inside this section. OCR/transcribe visible text from the reference when present. Do NOT leave the section unchanged even if it looks vaguely similar. Do NOT embed the design-reference screenshot URL as an <img src> for the whole section. Existing page logo <img> URLs already in the section may be kept if they match the brand mark; otherwise rebuild the mark with inline SVG or keep the closest existing logo asset. This overrides the usual "minimum surgical edit" bias — matching the reference is the job.)` +
+                (designCopyLines.length > 0
+                  ? `\n\nREQUIRED visible copy from the design reference — each of these strings MUST appear verbatim in the section HTML:\n` +
+                    designCopyLines.map((l, i) => `${i + 1}. ${l}`).join('\n')
+                  : '')
               : '';
-          const scopedPromptFinal = scopedPrompt + embedNote;
+          const embedNote =
+            hasUserImages &&
+            (embedImageUrls.length !== routingImageUrls.length || designReferenceUrls.length > 0)
+              ? `\n\n(Image roles: ONLY embed these content-asset URL(s) into src attributes: ${embedImageUrls.length ? embedImageUrls.join(', ') : '(none)'}. Bug-reference images are for diagnosing defects — never put those URLs in src. Design-reference images are for matching layout/copy — recreate in HTML, never put those screenshot URLs in src.)`
+              : '';
+          const scopedPromptFinal = scopedPrompt + designNote + embedNote;
           // Vision: all images. URL list for embedding prefers assets; include generated URL last.
           const scopedImageUrls = generatedImageUrl
             ? Array.from(new Set([...(embedImageUrls.length ? embedImageUrls : routingImageUrls), generatedImageUrl]))
@@ -2088,8 +2439,8 @@ export async function POST(
               break;
             }
             const schemaSlice = { [name]: (schema as Record<string, unknown> | null | undefined)?.[name] };
-            const patchResult = await runScopedPatchWithRetry(section.html, schemaSlice, scopedPromptFinal, scopedImageUrls, usageCtx);
-            const updated = patchResult.html;
+            let patchResult = await runScopedPatchWithRetry(section.html, schemaSlice, scopedPromptFinal, scopedImageUrls, usageCtx);
+            let updated = patchResult.html;
             if (!updated) {
               console.error(`[pages/follow-up] scoped patch failed for section "${name}" after retry`, {
                 failedSanity: patchResult.failedSanity,
@@ -2117,13 +2468,45 @@ export async function POST(
               allOk = false;
               break;
             }
-            const verify = verifyScopedPatchIntent({
+            let verify = verifyScopedPatchIntent({
               prompt,
               sectionName: name,
               beforeHtml: section.html,
               afterHtml: updated,
               requiredSubstring: generatedImageUrl,
+              requiredPhrases: designCopyLines.length > 0 ? designCopyLines : null,
             });
+            // Design-match miss: one forced rewrite with the missing OCR lines.
+            if (
+              !verify.ok &&
+              verify.reason.includes('design_copy') &&
+              designCopyLines.length > 0
+            ) {
+              const missing = designCopyLines.filter((l) => !updated!.includes(l));
+              sendSSE(controller, { type: 'status', message: 'Matching design copy…' });
+              const retryPrompt =
+                scopedPromptFinal +
+                `\n\nCRITICAL RETRY — previous HTML was missing design-reference copy. You MUST include ALL of these strings verbatim:\n` +
+                missing.map((l, i) => `${i + 1}. ${l}`).join('\n');
+              patchResult = await runScopedPatchWithRetry(
+                section.html,
+                schemaSlice,
+                retryPrompt,
+                scopedImageUrls,
+                usageCtx,
+              );
+              if (patchResult.html) {
+                updated = patchResult.html;
+                verify = verifyScopedPatchIntent({
+                  prompt,
+                  sectionName: name,
+                  beforeHtml: section.html,
+                  afterHtml: updated,
+                  requiredSubstring: generatedImageUrl,
+                  requiredPhrases: designCopyLines,
+                });
+              }
+            }
             if (!verify.ok) {
               console.error('[pages/follow-up] scoped patch failed intent verify', {
                 section: name,
@@ -2179,7 +2562,7 @@ export async function POST(
         });
         if (classified === 'clarify') {
           const question =
-            'You attached more than one image — which are bug screenshots to fix, and which should I place on the page? Reply briefly (e.g. "first is the bug, second is the hero photo").';
+            'You attached more than one image — which are bug screenshots to fix, which should I place on the page, and which are design references to match (e.g. "make the footer look like this")? Reply briefly.';
           const userEntry: Record<string, unknown> = { role: 'user', content: prompt };
           if (Array.isArray(image_urls) && image_urls.length > 0) userEntry.image_urls = image_urls;
           const updatedConversation = [
@@ -2199,6 +2582,7 @@ export async function POST(
           return;
         }
         const assets = classified.filter((c) => c.role === 'content_asset').map((c) => c.url);
+        designReferenceUrls = classified.filter((c) => c.role === 'design_reference').map((c) => c.url);
         routingImageUrls = effectiveImageUrls;
         embedImageUrls = assets.length > 0 ? assets : [];
         imageRolesClassified = true;
@@ -2243,15 +2627,24 @@ export async function POST(
               {
                 type: 'text' as const,
                 text:
+                  (designReferenceUrls.length > 0
+                    ? 'DESIGN REFERENCE image(s) attached — recreate the shown layout/structure/copy in real HTML for the targeted section(s). Do NOT embed these screenshot URL(s) as <img src> for the whole section:\n' +
+                      designReferenceUrls.map((u, i) => `${i + 1}. ${u}`).join('\n') +
+                      '\nLeaving the page unchanged is a failure.\n'
+                    : '') +
                   (embedImageUrls.length > 0 && embedImageUrls.length !== routingImageUrls.length
                     ? 'User-attached image(s): ONLY these URL(s) may be used in src attributes (content assets):\n' +
                       embedImageUrls.map((u, i) => `${i + 1}. ${u}`).join('\n') +
-                      '\nOther attached images are bug-reference screenshots — diagnose from them but NEVER put those URLs in src.\n'
-                    : embedImageUrls.length === 0 && routingImageUrls.length > 0
+                      '\nOther attached images that are bug-reference screenshots — diagnose from them but NEVER put those URLs in src.\n'
+                    : embedImageUrls.length === 0 &&
+                        routingImageUrls.length > 0 &&
+                        designReferenceUrls.length === 0
                       ? 'User-attached image(s) are bug-reference screenshots for diagnosis — do NOT embed their URLs in src attributes.\n'
-                      : 'User-attached image(s) — apply the "Attached images" rule from the system prompt to determine whether each is a bug reference screenshot or a content asset to embed. If embedding, you MUST use these EXACT URL strings verbatim in any src attribute — the image content below only shows you the pixels, not the URL:\n' +
-                        routingImageUrls.map((u, i) => `${i + 1}. ${u}`).join('\n') +
-                        '\n') +
+                      : embedImageUrls.length === 0 && designReferenceUrls.length > 0
+                        ? ''
+                        : 'User-attached image(s) — apply the "Attached images" rule from the system prompt to determine whether each is a bug reference screenshot, a design reference to match, or a content asset to embed. If embedding, you MUST use these EXACT URL strings verbatim in any src attribute — the image content below only shows you the pixels, not the URL:\n' +
+                          routingImageUrls.map((u, i) => `${i + 1}. ${u}`).join('\n') +
+                          '\n') +
                   (embedImageUrls.length > 0 && embedImageUrls.length === routingImageUrls.length
                     ? 'If embedding, you MUST use these EXACT URL strings verbatim in any src attribute:\n' +
                       embedImageUrls.map((u, i) => `${i + 1}. ${u}`).join('\n')
@@ -2501,6 +2894,43 @@ export async function POST(
       // Strip STATUS comments before upload
       finalHtml = finalHtml.replace(/<!--\s*STATUS:[^>]*-->/g, '');
 
+      // Fail-closed: content-reuse asks must leave the exact asset in targets.
+      if (finalHtml) {
+        const reuseFinal = detectContentReuseIntent(
+          prompt,
+          extractSlSections(finalHtml).map((s) => s.name),
+        );
+        if (reuseFinal && reuseFinal.targets.length > 0) {
+          if (reuseFinal.kind === 'logo') {
+            const workingLogo =
+              logoSwapAppliedUrl ??
+              extractPrimaryLogoUrlFromHtml(finalHtml) ??
+              extractPrimaryLogoUrlFromHtml(html);
+            if (workingLogo) {
+              finalHtml = forceEmbedLogoIntoSections(finalHtml, reuseFinal.targets, workingLogo, null);
+              // Prefer shipping a working logo somewhere over blocking the user
+              // with an error toast for a simple "put logo in footer" ask.
+              logoSwapAppliedUrl = workingLogo;
+            }
+          } else if (reuseFinal.kind === 'text') {
+            let text = reuseFinal.textPayload;
+            if (!text && reuseFinal.sourceSectionHint) {
+              const srcName = resolveSourceSectionName(
+                reuseFinal.sourceSectionHint,
+                extractSlSections(html).map((s) => s.name),
+              );
+              const srcSec = srcName
+                ? extractSlSections(html).find((s) => s.name === srcName)
+                : null;
+              text = srcSec ? extractPrimaryHeadlineFromHtml(srcSec.html) : null;
+            }
+            if (text) {
+              finalHtml = forcePlaceTextIntoSections(finalHtml, reuseFinal.targets, text);
+            }
+          }
+        }
+      }
+
       // No-op guard: if nothing actually changed (e.g. a patch matched no markers),
       // skip the upload and the UTM mapping/rule wipe — don't destroy the user's
       // personalization work for an edit that had no effect. Both sides are still
@@ -2517,10 +2947,13 @@ export async function POST(
       });
 
       if (htmlUnchanged) {
+        const designMatch =
+          designReferenceUrls.length > 0 || isDesignReferenceAsk(prompt);
         sendSSE(controller, {
           type: 'error',
-          message:
-            'No changes were applied to the page. Try rephrasing your request, or quote the exact text you want changed.',
+          message: designMatch
+            ? 'Could not match the attached design reference to the page. Try naming the section again (e.g. “make the footer look like this”) or attach a clearer crop of just that section.'
+            : 'No changes were applied to the page. Try rephrasing your request, or quote the exact text you want changed.',
         });
         closeSSE(controller);
         return;

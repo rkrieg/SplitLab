@@ -10,6 +10,7 @@ import { createSSEStream, sendSSE, closeSSE, SSE_HEADERS } from '@/lib/sse';
 import {
   injectBrandAssetsIntoSchema,
   forceEmbedLogoInHtml,
+  forceEmbedLogoIntoSections,
   forceEmbedFooterContactInHtml,
   materializeLogoUrl,
   type FooterContact,
@@ -184,12 +185,37 @@ export async function POST(request: NextRequest) {
       if (logoUrl || logoSvg) {
         const before = logoUrl ? html.includes(logoUrl) : false;
         html = forceEmbedLogoInHtml(html, logoUrl, logoUrl ? null : logoSvg);
+        // Create: put brand mark on every nav/footer-like SL section that exists.
+        const slNames = Array.from(html.matchAll(/<!--\s*SL:([a-z0-9_-]+)\s*-->/gi)).map((m) => m[1]);
+        const createTargets = Array.from(
+          new Set([
+            ...slNames.filter((n) => /^(nav|header)/i.test(n) || /nav|header/i.test(n)),
+            ...slNames.filter((n) => /footer/i.test(n)),
+            ...(/<footer\b/i.test(html) ? (['footer'] as string[]) : []),
+          ]),
+        );
+        if (createTargets.length === 0) createTargets.push('nav', 'footer');
+        html = forceEmbedLogoIntoSections(html, createTargets, logoUrl, logoUrl ? null : logoSvg);
+        const hasUrl = logoUrl ? html.includes(logoUrl) : /<svg\b/i.test(html);
         console.log('[pages/build] logo embed', {
           hadLogo: before,
-          hasLogoAfter: logoUrl ? html.includes(logoUrl) : /<svg\b/i.test(html),
+          hasLogoAfter: hasUrl,
+          createTargets,
           logoUrl: logoUrl ? logoUrl.slice(0, 120) : null,
           usedInlineSvgFallback: !logoUrl && !!logoSvg,
         });
+        // Only block Done if the real logo URL never appears anywhere —
+        // never error just because a oddly-named footer section was hard to hit.
+        if (logoUrl && !hasUrl) {
+          console.error('[pages/build] logo URL missing from HTML after embed attempts');
+          sendSSE(controller, {
+            type: 'error',
+            message:
+              "We couldn't place the real logo on the page cleanly. Try again, or attach the logo file directly.",
+          });
+          closeSSE(controller);
+          return;
+        }
       }
       if (footerContact) {
         html = forceEmbedFooterContactInHtml(html, footerContact);

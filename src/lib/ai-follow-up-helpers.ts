@@ -6,6 +6,7 @@
 
 import { askAI, type AIContent, type AIContentBlock } from '@/lib/ai-client';
 import type { UsageContext } from '@/lib/ai-usage';
+import { inferTargetSectionNames } from '@/lib/ai-content-placement';
 
 export interface PlanStep {
   /** Narrow instruction for this step only */
@@ -35,9 +36,46 @@ export function userWantsUsToDecide(prompt: string): boolean {
  */
 export function isScreenshotComplaint(prompt: string, hasUserImages: boolean): boolean {
   if (!hasUserImages) return false;
+  // Design-match asks ("keep the footer like this") are NOT complaints — they
+  // hand a reference to recreate, not a defect on the current page.
+  if (isDesignReferenceAsk(prompt)) return false;
   return /\b(look(s|ing)? (at )?(this|that|it)|can you (not )?see|this is (ridiculous|absurd|sloppy|wrong|broken|weird)|it looks|doesn'?t (even )?(blend|match|look)|fake logo|line breaks|dark around|background.*(wrong|weird|not)|not (even )?the same)\b/i.test(
     prompt,
   );
+}
+
+/**
+ * User attached (or will attach) an image as a style/layout/copy REFERENCE to
+ * match — e.g. "keep the footer like this", "make the nav match this screenshot".
+ * Distinct from bug screenshots (fix defect) and content assets (embed URL).
+ */
+export function isDesignReferenceAsk(prompt: string): boolean {
+  const t = prompt.trim();
+  if (!t) return false;
+  if (
+    /\b((keep|make|update|change|redo|rebuild|redesign|restyle|replace)\b.{0,80}\b(like this|like that|like the (image|screenshot|photo|reference)|to (match|look like) this)|(look|looks|looking) like this|match this|match that|same as this|exactly like this|copy this|based on this|use this as (a )?(reference|template|style|design)|style (it |this )?after this|from this (image|screenshot|photo|reference))\b/i.test(
+      t,
+    )
+  ) {
+    return true;
+  }
+  if (
+    /\b(footer|nav(?:bar)?|header|hero|logo|section|form|cta)\b/i.test(t) &&
+    /\b(like this|like that|match this|match that|same as (this|that)|as shown|as in (the )?(image|screenshot|photo))\b/i.test(
+      t,
+    )
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * When the prompt names a page part, map to existing SL section names so
+ * design-match edits can skip ambiguous routing.
+ */
+export function inferDesignMatchSectionNames(prompt: string, sectionNames: string[]): string[] {
+  return inferTargetSectionNames(prompt, sectionNames).slice(0, 3);
 }
 
 /**
@@ -176,8 +214,10 @@ export function verifyScopedPatchIntent(opts: {
   afterHtml: string;
   /** When true, require the new asset URL to be present */
   requiredSubstring?: string | null;
+  /** Design-reference OCR lines that must appear in the patched HTML */
+  requiredPhrases?: string[] | null;
 }): { ok: true } | { ok: false; reason: string } {
-  const { prompt, sectionName, beforeHtml, afterHtml, requiredSubstring } = opts;
+  const { prompt, sectionName, beforeHtml, afterHtml, requiredSubstring, requiredPhrases } = opts;
 
   if (requiredSubstring && !afterHtml.includes(requiredSubstring)) {
     return { ok: false, reason: `patched_${sectionName}_missing_required_asset` };
@@ -185,10 +225,30 @@ export function verifyScopedPatchIntent(opts: {
 
   // No visual/content change at all → caller usually catches htmlUnchanged at
   // page level; still flag section-level no-ops when quotes must land here.
+  // Design-reference asks MUST rewrite the section to match the screenshot —
+  // identical HTML is always a failure (not a soft pass).
   if (beforeHtml === afterHtml) {
     const quotes = extractVerifyQuotes(prompt);
-    if (quotes.length > 0 || requiredSubstring) {
+    if (
+      quotes.length > 0 ||
+      requiredSubstring ||
+      isDesignReferenceAsk(prompt) ||
+      (requiredPhrases && requiredPhrases.length > 0)
+    ) {
       return { ok: false, reason: `patched_${sectionName}_unchanged` };
+    }
+  }
+
+  const phrases = (requiredPhrases ?? []).map((p) => p.trim()).filter((p) => p.length >= 6);
+  if (phrases.length > 0) {
+    const hits = phrases.filter((p) => afterHtml.includes(p));
+    // Require a clear majority of OCR'd lines — partial visual match is not Done.
+    const need = Math.max(1, Math.ceil(phrases.length * 0.6));
+    if (hits.length < need) {
+      return {
+        ok: false,
+        reason: `patched_${sectionName}_missing_design_copy`,
+      };
     }
   }
 
@@ -341,17 +401,24 @@ export async function planMultiIntentEdit(opts: {
   }
 }
 
-export type AttachedImageRole = 'bug_reference' | 'content_asset';
+export type AttachedImageRole = 'bug_reference' | 'content_asset' | 'design_reference';
 
 export interface ClassifiedAttachedImage {
   url: string;
   role: AttachedImageRole;
 }
 
+function parseAttachedImageRole(raw: string | undefined): AttachedImageRole {
+  if (raw === 'content_asset') return 'content_asset';
+  if (raw === 'design_reference' || raw === 'style_reference') return 'design_reference';
+  return 'bug_reference';
+}
+
 /**
- * Label each user-attached image as a bug screenshot vs content to embed.
- * Fail-safe: single image + complaint language → bug; single image + place/use → asset;
- * ambiguous multi-image → return null so caller can clarify.
+ * Label each user-attached image: bug screenshot, content to embed, or design
+ * reference to recreate (layout/copy/style). Fail-safe: single image +
+ * like-this language → design; complaint → bug; place/use → asset;
+ * ambiguous multi-image → clarify.
  */
 export async function classifyAttachedImages(opts: {
   prompt: string;
@@ -362,6 +429,11 @@ export async function classifyAttachedImages(opts: {
   if (imageUrls.length === 0) return [];
 
   if (imageUrls.length === 1) {
+    // Design match before complaint/embed — "keep the footer like this" must
+    // never be treated as a non-actionable bug diagnosis.
+    if (isDesignReferenceAsk(prompt)) {
+      return [{ url: imageUrls[0], role: 'design_reference' }];
+    }
     if (isScreenshotComplaint(prompt, true)) {
       return [{ url: imageUrls[0], role: 'bug_reference' }];
     }
@@ -369,7 +441,7 @@ export async function classifyAttachedImages(opts: {
       return [{ url: imageUrls[0], role: 'content_asset' }];
     }
     // Default single attachment with edit language → treat as bug reference (safer than embedding)
-    if (/\b(fix|wrong|broken|sloppy|look|align|spacing|logo)\b/i.test(prompt)) {
+    if (/\b(fix|wrong|broken|sloppy|align|spacing|logo)\b/i.test(prompt)) {
       return [{ url: imageUrls[0], role: 'bug_reference' }];
     }
   }
@@ -378,9 +450,11 @@ export async function classifyAttachedImages(opts: {
     const text = await askAI({
       system:
         'Classify each attached image for a landing-page editor. Return JSON only:\n' +
-        '{"images":[{"index":0,"role":"bug_reference"|"content_asset"}]}\n' +
+        '{"images":[{"index":0,"role":"bug_reference"|"content_asset"|"design_reference"}]}\n' +
         'bug_reference = screenshot of a defect on the CURRENT page (do not embed in HTML).\n' +
-        'content_asset = photo/logo the user wants placed on the page.\n' +
+        'content_asset = photo/logo the user wants placed on the page (embed URL in src).\n' +
+        'design_reference = screenshot/mock of how a section SHOULD look (footer/nav/hero/etc) — recreate that layout and copy in HTML; do NOT embed the screenshot URL as an <img src>.\n' +
+        'Prefer design_reference when the instruction says "like this", "match this", "keep … like this", or "same as this" with a section screenshot.\n' +
         'Indexes are 0-based in attachment order. Classify every image.',
       messages: [
         {
@@ -407,18 +481,88 @@ export async function classifyAttachedImages(opts: {
       images?: Array<{ index?: number; role?: string }>;
     };
     if (!Array.isArray(parsed.images) || parsed.images.length === 0) {
-      return imageUrls.length > 1 ? 'clarify' : [{ url: imageUrls[0], role: 'bug_reference' }];
+      if (imageUrls.length > 1) return 'clarify';
+      return [
+        {
+          url: imageUrls[0],
+          role: isDesignReferenceAsk(prompt) ? 'design_reference' : 'bug_reference',
+        },
+      ];
     }
     const out: ClassifiedAttachedImage[] = [];
     for (let i = 0; i < imageUrls.length; i++) {
       const row = parsed.images.find((x) => x.index === i) ?? parsed.images[i];
-      const role = row?.role === 'content_asset' ? 'content_asset' : 'bug_reference';
+      let role = parseAttachedImageRole(row?.role);
+      // Prompt-level design ask wins over a timid bug_reference classification
+      if (imageUrls.length === 1 && isDesignReferenceAsk(prompt) && role === 'bug_reference') {
+        role = 'design_reference';
+      }
       out.push({ url: imageUrls[i], role });
     }
     return out;
   } catch (err) {
     console.error('[classifyAttachedImages] failed', err);
     if (imageUrls.length > 1) return 'clarify';
-    return [{ url: imageUrls[0], role: 'bug_reference' }];
+    return [
+      {
+        url: imageUrls[0],
+        role: isDesignReferenceAsk(prompt) ? 'design_reference' : 'bug_reference',
+      },
+    ];
+  }
+}
+
+/**
+ * Vision OCR of design-reference screenshot(s): return the main readable
+ * lines the patched section must include. Fail-closed → [] on error.
+ */
+export async function extractDesignReferenceCopy(opts: {
+  imageUrls: string[];
+  prompt: string;
+  usage?: UsageContext;
+}): Promise<string[]> {
+  const { imageUrls, prompt, usage } = opts;
+  if (imageUrls.length === 0) return [];
+  try {
+    const text = await askAI({
+      system:
+        'You read design-reference screenshots for a landing-page editor. Return JSON only:\n' +
+        '{"lines":["exact visible phrase 1","exact visible phrase 2",...]}\n' +
+        'Include every clear readable line of body/legal/contact/headline copy (not tiny UI chrome). ' +
+        'Preserve exact wording/capitalization. Max 12 lines. Skip pure logo wordmarks if they are image-only.',
+      messages: [
+        {
+          role: 'user',
+          content: [
+            ...imageUrls.slice(0, 3).map((url): AIContentBlock => ({ type: 'image', url })),
+            {
+              type: 'text',
+              text: `User instruction: ${prompt.slice(0, 500)}\n\nExtract the visible copy lines from the design reference image(s).`,
+            },
+          ],
+        },
+      ],
+      maxTokens: 1200,
+      label: 'follow-up:design-ref-ocr',
+      usage: usage ? { ...usage, operation: 'route' } : undefined,
+    });
+    let raw = text.trim();
+    if (raw.startsWith('```')) raw = raw.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
+    const start = raw.indexOf('{');
+    const end = raw.lastIndexOf('}');
+    if (start >= 0 && end > start) raw = raw.slice(start, end + 1);
+    const parsed = JSON.parse(raw) as { lines?: unknown };
+    if (!Array.isArray(parsed.lines)) return [];
+    const out: string[] = [];
+    for (const line of parsed.lines) {
+      if (typeof line !== 'string') continue;
+      const t = line.replace(/\s+/g, ' ').trim();
+      if (t.length >= 6 && t.length <= 280) out.push(t);
+      if (out.length >= 12) break;
+    }
+    return out;
+  } catch (err) {
+    console.error('[extractDesignReferenceCopy] failed', err);
+    return [];
   }
 }

@@ -6,6 +6,7 @@
 
 import { askAI } from '@/lib/ai-client';
 import { uploadImage } from '@/lib/storage';
+import { detectContentReuseIntent, inferTargetSectionNames } from '@/lib/ai-content-placement';
 
 /** User wants a custom/minimal page — not a full clone of the reference URL. */
 export function userWantsCustomOrMinimalPage(prompt: string): boolean {
@@ -224,10 +225,211 @@ function logoMarkupForEmbed(logoUrl: string | null, logoSvg: string | null): str
 }
 
 /**
+ * Prefer detectContentReuseIntent() — kept only for tests that check logo
+ * placement language without resolving full reuse intent.
+ */
+export function userWantsLogoPlacedInSection(prompt: string): boolean {
+  const intent = detectContentReuseIntent(prompt, ['nav', 'hero', 'footer', 'about']);
+  return intent?.kind === 'logo';
+}
+
+/** @deprecated Use inferTargetSectionNames from ai-content-placement. */
+export function inferLogoPlacementSectionNames(prompt: string, sectionNames: string[]): string[] {
+  return inferTargetSectionNames(prompt, sectionNames);
+}
+
+/**
+ * Prefer the working nav/header logo <img src> already on the page.
+ * Fail-closed: never invents a URL.
+ */
+export function extractPrimaryLogoUrlFromHtml(html: string): string | null {
+  const preferScopes: string[] = [];
+  const slNav = /<!--\s*SL:nav\s*-->([\s\S]*?)<!--\s*\/SL:nav\s*-->/i.exec(html);
+  if (slNav) preferScopes.push(slNav[1]);
+  const headerMatch = /<header\b[\s\S]*?<\/header>/i.exec(html);
+  const navMatch = /<nav\b[\s\S]*?<\/nav>/i.exec(html);
+  if (headerMatch) preferScopes.push(headerMatch[0]);
+  if (navMatch) preferScopes.push(navMatch[0]);
+  preferScopes.push(html.slice(0, 40_000));
+
+  const pickFrom = (scope: string): string | null => {
+    const imgs = Array.from(scope.matchAll(/<img\b[^>]*>/gi));
+    const ranked: { src: string; score: number }[] = [];
+    for (const m of imgs) {
+      const tag = m[0];
+      const srcM = /\bsrc=["']([^"']+)["']/i.exec(tag);
+      if (!srcM) continue;
+      const src = srcM[1].trim();
+      if (!/^https?:\/\//i.test(src)) continue;
+      if (/placeholder|spacer|pixel|1x1|blank\./i.test(src)) continue;
+      let score = 1;
+      if (/logo|brand|wordmark/i.test(tag) || /logo|brand|wordmark/i.test(src)) score += 5;
+      if (/supabase|storage|trysplitlab|focusedcapital/i.test(src)) score += 1;
+      ranked.push({ src, score });
+    }
+    if (ranked.length === 0) return null;
+    ranked.sort((a, b) => b.score - a.score);
+    return ranked[0].src;
+  };
+
+  for (const scope of preferScopes) {
+    const found = pickFrom(scope);
+    if (found) return found;
+  }
+  return null;
+}
+
+function sectionContainsLogoAsset(
+  sectionHtml: string,
+  logoUrl: string | null,
+  logoSvg: string | null,
+): boolean {
+  if (logoUrl && sectionHtml.includes(logoUrl)) return true;
+  if (logoSvg) {
+    const needle = logoSvg.slice(0, Math.min(80, logoSvg.length));
+    if (needle && sectionHtml.includes(needle)) return true;
+  }
+  return false;
+}
+
+/** True when a named SL section contains the working logo URL/SVG. */
+export function sectionHasLogoAsset(
+  html: string,
+  sectionName: string,
+  logoUrl: string | null,
+  logoSvg: string | null = null,
+): boolean {
+  const re = new RegExp(
+    `<!--\\s*SL:${sectionName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*-->([\\s\\S]*?)<!--\\s*\\/SL:${sectionName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*-->`,
+    'i',
+  );
+  const sl = re.exec(html);
+  if (sl) return sectionContainsLogoAsset(sl[1], logoUrl, logoSvg);
+  if (/footer/i.test(sectionName)) {
+    const fe = /<footer\b[^>]*>[\s\S]*?<\/footer>/i.exec(html);
+    if (fe) return sectionContainsLogoAsset(fe[0], logoUrl, logoSvg);
+  }
+  return false;
+}
+
+function injectLogoMarkupIntoBlock(inner: string, markup: string): string {
+  if (/<img\b/i.test(inner)) {
+    return inner.replace(/<img\b[^>]*>/i, markup);
+  }
+  if (/<svg\b[\s\S]*?<\/svg>/i.test(inner)) {
+    return inner.replace(/<svg\b[\s\S]*?<\/svg>/i, markup);
+  }
+  if (/<a\b[^>]*>/i.test(inner)) {
+    return inner.replace(/(<a\b[^>]*>)([\s\S]*?)(<\/a>)/i, `$1${markup}$3`);
+  }
+  return markup + inner;
+}
+
+/** Put the working logo into the footer section (or <footer> fallback). Internal — use forceEmbedLogoInSection / IntoSections. */
+function embedLogoInFooterBlock(
+  html: string,
+  logoUrl: string | null,
+  logoSvg: string | null = null,
+): string {
+  const markup = logoMarkupForEmbed(logoUrl, logoSvg);
+  if (!markup) return html;
+
+  const slRe = /<!--\s*SL:footer\s*-->([\s\S]*?)<!--\s*\/SL:footer\s*-->/i;
+  const footerSl = slRe.exec(html);
+  let withSl = html;
+  if (footerSl) {
+    if (!sectionContainsLogoAsset(footerSl[1], logoUrl, logoSvg)) {
+      const inner = injectLogoMarkupIntoBlock(footerSl[1], markup);
+      withSl =
+        html.slice(0, footerSl.index) +
+        `<!-- SL:footer -->${inner}<!-- /SL:footer -->` +
+        html.slice(footerSl.index + footerSl[0].length);
+    }
+  }
+
+  const checkSl = slRe.exec(withSl);
+  if (checkSl && sectionContainsLogoAsset(checkSl[1], logoUrl, logoSvg)) {
+    return withSl;
+  }
+
+  const footerEl = /<footer\b[^>]*>[\s\S]*?<\/footer>/i.exec(withSl);
+  if (footerEl) {
+    if (sectionContainsLogoAsset(footerEl[0], logoUrl, logoSvg)) return withSl;
+    let block = footerEl[0];
+    if (/<img\b/i.test(block)) {
+      block = block.replace(/<img\b[^>]*>/i, markup);
+    } else if (/<svg\b[\s\S]*?<\/svg>/i.test(block)) {
+      block = block.replace(/<svg\b[\s\S]*?<\/svg>/i, markup);
+    } else {
+      block = block.replace(/<footer\b[^>]*>/i, (open) => `${open}${markup}`);
+    }
+    return withSl.slice(0, footerEl.index) + block + withSl.slice(footerEl.index + footerEl[0].length);
+  }
+
+  return withSl;
+}
+
+/**
+ * Deterministic: ensure the real logo appears inside a named SL section.
+ * Only no-ops when THAT section already contains the asset — so a nav logo
+ * does not skip embedding into footer/hero/etc.
+ */
+export function forceEmbedLogoInSection(
+  html: string,
+  sectionName: string,
+  logoUrl: string | null,
+  logoSvg: string | null = null,
+): string {
+  const markup = logoMarkupForEmbed(logoUrl, logoSvg);
+  if (!markup) return html;
+
+  const re = new RegExp(
+    `<!--\\s*SL:${sectionName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*-->([\\s\\S]*?)<!--\\s*\\/SL:${sectionName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*-->`,
+    'i',
+  );
+  const sl = re.exec(html);
+  if (!sl) {
+    if (/footer/i.test(sectionName)) {
+      return embedLogoInFooterBlock(html, logoUrl, logoSvg);
+    }
+    return html;
+  }
+  if (sectionContainsLogoAsset(sl[1], logoUrl, logoSvg)) return html;
+
+  const inner = injectLogoMarkupIntoBlock(sl[1], markup);
+  return (
+    html.slice(0, sl.index) +
+    `<!-- SL:${sectionName} -->${inner}<!-- /SL:${sectionName} -->` +
+    html.slice(sl.index + sl[0].length)
+  );
+}
+
+/** Embed working logo into every listed SL section. Expands "footer" to all *footer* SL names. */
+export function forceEmbedLogoIntoSections(
+  html: string,
+  sectionNames: string[],
+  logoUrl: string | null,
+  logoSvg: string | null = null,
+): string {
+  let out = html;
+  const names = [...sectionNames];
+  if (names.some((n) => /footer/i.test(n))) {
+    for (const m of Array.from(out.matchAll(/<!--\s*SL:([a-z0-9_-]*footer[a-z0-9_-]*)\s*-->/gi))) {
+      if (!names.includes(m[1])) names.push(m[1]);
+    }
+  }
+  for (const name of names) {
+    out = forceEmbedLogoInSection(out, name, logoUrl, logoSvg);
+  }
+  return out;
+}
+
+/**
  * Deterministic: ensure the real logo appears in nav/header HTML.
  * Prefers hosted logoUrl; can inject inline SVG markup when upload was unavailable.
  *
  * No-op when neither URL nor SVG is available — we never invent a logo asset.
+ * Early-return only when nav/header already has the asset (not merely somewhere on the page).
  */
 export function forceEmbedLogoInHtml(
   html: string,
@@ -236,28 +438,17 @@ export function forceEmbedLogoInHtml(
 ): string {
   const markup = logoMarkupForEmbed(logoUrl, logoSvg);
   if (!markup) return html;
-  if (logoUrl && html.includes(logoUrl)) return html;
-  if (!logoUrl && logoSvg && html.includes('<svg') && html.includes(logoSvg.slice(0, Math.min(80, logoSvg.length)))) {
-    return html;
-  }
 
   const slNav = /<!--\s*SL:nav\s*-->([\s\S]*?)<!--\s*\/SL:nav\s*-->/i.exec(html);
   if (slNav) {
-    let inner = slNav[1];
-    if (/<img\b/i.test(inner)) {
-      inner = inner.replace(/<img\b[^>]*>/i, markup);
-    } else if (/<svg\b[\s\S]*?<\/svg>/i.test(inner)) {
-      inner = inner.replace(/<svg\b[\s\S]*?<\/svg>/i, markup);
-    } else if (/<a\b[^>]*>/i.test(inner)) {
-      inner = inner.replace(/(<a\b[^>]*>)([\s\S]*?)(<\/a>)/i, `$1${markup}$3`);
-    } else {
-      inner = markup + inner;
-    }
+    if (sectionContainsLogoAsset(slNav[1], logoUrl, logoSvg)) return html;
+    const inner = injectLogoMarkupIntoBlock(slNav[1], markup);
     return html.slice(0, slNav.index) + `<!-- SL:nav -->${inner}<!-- /SL:nav -->` + html.slice(slNav.index + slNav[0].length);
   }
 
   const headerOrNav = /<(header|nav)\b[^>]*>[\s\S]*?<\/\1>/i.exec(html);
   if (headerOrNav) {
+    if (sectionContainsLogoAsset(headerOrNav[0], logoUrl, logoSvg)) return html;
     let block = headerOrNav[0];
     if (/<img\b/i.test(block)) {
       block = block.replace(/<img\b[^>]*>/i, markup);

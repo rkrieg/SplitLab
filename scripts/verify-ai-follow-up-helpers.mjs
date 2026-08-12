@@ -15,11 +15,54 @@ function userWantsUsToDecide(prompt) {
   );
 }
 
+function isDesignReferenceAsk(prompt) {
+  const t = prompt.trim();
+  if (!t) return false;
+  if (
+    /\b((keep|make|update|change|redo|rebuild|redesign|restyle|replace)\b.{0,80}\b(like this|like that|like the (image|screenshot|photo|reference)|to (match|look like) this)|(look|looks|looking) like this|match this|match that|same as this|exactly like this|copy this|based on this|use this as (a )?(reference|template|style|design)|style (it |this )?after this|from this (image|screenshot|photo|reference))\b/i.test(
+      t,
+    )
+  ) {
+    return true;
+  }
+  if (
+    /\b(footer|nav(?:bar)?|header|hero|logo|section|form|cta)\b/i.test(t) &&
+    /\b(like this|like that|match this|match that|same as (this|that)|as shown|as in (the )?(image|screenshot|photo))\b/i.test(
+      t,
+    )
+  ) {
+    return true;
+  }
+  return false;
+}
+
 function isScreenshotComplaint(prompt, hasUserImages) {
   if (!hasUserImages) return false;
+  if (isDesignReferenceAsk(prompt)) return false;
   return /\b(look(s|ing)? (at )?(this|that|it)|can you (not )?see|this is (ridiculous|absurd|sloppy|wrong|broken|weird)|it looks|doesn'?t (even )?(blend|match|look)|fake logo|line breaks|dark around|background.*(wrong|weird|not)|not (even )?the same)\b/i.test(
     prompt,
   );
+}
+
+function inferDesignMatchSectionNames(prompt, sectionNames) {
+  const found = [];
+  const addMatching = (pred) => {
+    for (const name of sectionNames) {
+      if (pred(name.toLowerCase()) && !found.includes(name)) found.push(name);
+    }
+  };
+  if (/\bfooter\b/i.test(prompt)) addMatching((n) => n.includes('footer'));
+  if (/\b(nav(?:bar)?|header)\b/i.test(prompt)) {
+    addMatching((n) => n === 'nav' || n.startsWith('nav') || n.includes('header') || n === 'navbar');
+  }
+  if (/\bhero\b/i.test(prompt)) addMatching((n) => n.includes('hero'));
+  if (/\blogo\b/i.test(prompt) && found.length === 0) {
+    addMatching((n) => n === 'nav' || n.includes('header') || n.includes('logo') || n.includes('footer'));
+  }
+  if (/\b(form|cta)\b/i.test(prompt) && found.length === 0) {
+    addMatching((n) => /cta|form|popup|contact|lead/.test(n));
+  }
+  return found.slice(0, 3);
 }
 
 function uniqueSectionCount(t) {
@@ -154,9 +197,9 @@ function forceEmbedLogoInHtml(html, logoUrl, logoSvg = null) {
     markup = logoSvg;
   }
   if (!markup) return html;
-  if (logoUrl && html.includes(logoUrl)) return html;
   const slNav = /<!--\s*SL:nav\s*-->([\s\S]*?)<!--\s*\/SL:nav\s*-->/i.exec(html);
   if (slNav) {
+    if (logoUrl && slNav[1].includes(logoUrl)) return html;
     let inner = slNav[1];
     if (/<img\b/i.test(inner)) inner = inner.replace(/<img\b[^>]*>/i, markup);
     else if (/<svg\b[\s\S]*?<\/svg>/i.test(inner)) inner = inner.replace(/<svg\b[\s\S]*?<\/svg>/i, markup);
@@ -164,6 +207,89 @@ function forceEmbedLogoInHtml(html, logoUrl, logoSvg = null) {
     return html.slice(0, slNav.index) + `<!-- SL:nav -->${inner}<!-- /SL:nav -->` + html.slice(slNav.index + slNav[0].length);
   }
   return html;
+}
+
+function userWantsLogoPlacedInSection(prompt) {
+  if (!/\blogo\b/i.test(prompt)) return false;
+  const hasDest =
+    /\b(footer|hero|nav(?:bar)?|header|about|cta|sidebar|pricing|faq|section)\b/i.test(prompt) ||
+    /\beverywhere\b|\ball sections\b|\bnav and footer\b|\bfooter and nav\b/i.test(prompt);
+  if (!hasDest) return false;
+  return (
+    /\b(in (the )?|on (the )?|into (the )?|to (the )?|also|as well|too|same (one|logo)|everywhere|both)\b/i.test(
+      prompt,
+    ) ||
+    /\b(put|place|add|copy|show|keep|use)\b[\s\S]{0,50}\blogo\b[\s\S]{0,50}\b(footer|hero|nav|header|about|section)\b/i.test(
+      prompt,
+    ) ||
+    /\blogo\b[\s\S]{0,50}\b(in|on|into|to)\b[\s\S]{0,30}\b(footer|hero|nav|header|about|section)\b/i.test(
+      prompt,
+    )
+  );
+}
+
+function inferLogoPlacementSectionNames(prompt, sectionNames) {
+  const found = [];
+  const addMatching = (pred) => {
+    for (const name of sectionNames) {
+      if (pred(name.toLowerCase()) && !found.includes(name)) found.push(name);
+    }
+  };
+  const everywhere =
+    /\beverywhere\b|\ball sections\b|\bnav and footer\b|\bfooter and nav\b|\bboth (the )?(nav|footer)/i.test(
+      prompt,
+    );
+  if (everywhere || /\bfooter\b/i.test(prompt)) addMatching((n) => n.includes('footer'));
+  if (everywhere || /\b(nav(?:bar)?|header)\b/i.test(prompt)) {
+    addMatching((n) => n === 'nav' || n.startsWith('nav') || n.includes('header') || n === 'navbar');
+  }
+  if (/\bhero\b/i.test(prompt)) addMatching((n) => n.includes('hero'));
+  if (/\babout\b/i.test(prompt)) addMatching((n) => n.includes('about'));
+  return found.slice(0, 4);
+}
+
+function extractPrimaryLogoUrlFromHtml(html) {
+  const slNav = /<!--\s*SL:nav\s*-->([\s\S]*?)<!--\s*\/SL:nav\s*-->/i.exec(html);
+  const scope = slNav ? slNav[1] : html;
+  const imgs = [...scope.matchAll(/<img\b[^>]*>/gi)];
+  for (const m of imgs) {
+    const srcM = /\bsrc=["']([^"']+)["']/i.exec(m[0]);
+    if (srcM && /^https?:\/\//i.test(srcM[1])) return srcM[1];
+  }
+  return null;
+}
+
+function forceEmbedLogoInFooterHtml(html, logoUrl) {
+  if (!logoUrl) return html;
+  const markup = `<img src="${logoUrl}" alt="logo" style="height:40px;width:auto;display:block;background:transparent;" />`;
+  const sl = /<!--\s*SL:footer\s*-->([\s\S]*?)<!--\s*\/SL:footer\s*-->/i.exec(html);
+  if (!sl) return html;
+  if (sl[1].includes(logoUrl)) return html;
+  let inner = sl[1];
+  if (/<img\b/i.test(inner)) inner = inner.replace(/<img\b[^>]*>/i, markup);
+  else inner = markup + inner;
+  return html.slice(0, sl.index) + `<!-- SL:footer -->${inner}<!-- /SL:footer -->` + html.slice(sl.index + sl[0].length);
+}
+
+function forceEmbedLogoIntoSections(html, sectionNames, logoUrl) {
+  let out = html;
+  for (const name of sectionNames) {
+    if (name === 'footer') out = forceEmbedLogoInFooterHtml(out, logoUrl);
+    else {
+      const re = new RegExp(
+        `<!--\\s*SL:${name.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}\\s*-->([\\s\\S]*?)<!--\\s*\\/SL:${name.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}\\s*-->`,
+        'i',
+      );
+      const sl = re.exec(out);
+      if (!sl || sl[1].includes(logoUrl)) continue;
+      const markup = `<img src="${logoUrl}" alt="logo" />`;
+      let inner = sl[1];
+      if (/<img\b/i.test(inner)) inner = inner.replace(/<img\b[^>]*>/i, markup);
+      else inner = markup + inner;
+      out = out.slice(0, sl.index) + `<!-- SL:${name} -->${inner}<!-- /SL:${name} -->` + out.slice(sl.index + sl[0].length);
+    }
+  }
+  return out;
 }
 
 function userWantsCustomOrMinimalPage(prompt) {
@@ -205,6 +331,32 @@ assert(
     "Can you not see this? You pasted a logo with a background that's not even the same",
     true,
   ),
+);
+
+assert(
+  'keep footer like this → design reference ask',
+  isDesignReferenceAsk('keep the footer like this'),
+);
+assert(
+  'make nav match this → design reference ask',
+  isDesignReferenceAsk('make the nav match this screenshot'),
+);
+assert(
+  'design ask is NOT screenshot complaint',
+  !isScreenshotComplaint('keep the footer like this', true),
+);
+assert(
+  'real bug rant still complaint',
+  isScreenshotComplaint('Look at this, the logo is broken and sloppy', true),
+);
+assert(
+  'infer footer section from design ask',
+  inferDesignMatchSectionNames('keep the footer like this', ['nav', 'hero', 'footer']).join(',') ===
+    'footer',
+);
+assert(
+  'infer nav from match this nav',
+  inferDesignMatchSectionNames('make the nav look like this', ['nav', 'hero', 'footer']).includes('nav'),
 );
 
 assert(
@@ -295,6 +447,104 @@ assert(
   ).includes('https://cdn.example/logo.svg'),
 );
 
+assert(
+  'logo in footer ask → placement',
+  userWantsLogoPlacedInSection('use the new white logo in the footer as well'),
+);
+assert(
+  'logo in hero ask → placement',
+  userWantsLogoPlacedInSection('put the logo in the hero too'),
+);
+assert(
+  'fetch logo from URL only → not placement',
+  !userWantsLogoPlacedInSection('use the original logo of the website https://example.com'),
+);
+assert(
+  'infer footer + hero placement targets',
+  inferLogoPlacementSectionNames('put the logo in the hero and footer', ['nav', 'hero', 'footer']).join(',') ===
+    'footer,hero',
+);
+
+const pageNavHasLogo =
+  '<!-- SL:nav --><nav><img src="https://cdn.example.com/white-logo.png" alt="logo"></nav><!-- /SL:nav -->' +
+  '<!-- SL:footer --><footer><img src="https://broken.example/missing.png" alt="x"><p>© Co</p></footer><!-- /SL:footer -->' +
+  '<!-- SL:hero --><section><h1>Hi</h1></section><!-- /SL:hero -->';
+assert(
+  'extract logo from nav',
+  extractPrimaryLogoUrlFromHtml(pageNavHasLogo) === 'https://cdn.example.com/white-logo.png',
+);
+const placed = forceEmbedLogoIntoSections(pageNavHasLogo, ['footer', 'hero'], 'https://cdn.example.com/white-logo.png');
+assert(
+  'forceEmbed into footer replaces broken img even when nav already has logo',
+  /<!--\s*SL:footer\s*-->[\s\S]*white-logo\.png[\s\S]*<!--\s*\/SL:footer\s*-->/i.test(placed) &&
+    !/<!--\s*SL:footer\s*-->[\s\S]*broken\.example[\s\S]*<!--\s*\/SL:footer\s*-->/i.test(placed),
+);
+assert(
+  'forceEmbed into hero works too',
+  /<!--\s*SL:hero\s*-->[\s\S]*white-logo\.png[\s\S]*<!--\s*\/SL:hero\s*-->/i.test(placed),
+);
+
+// --- Content reuse (text) — mirrored from ai-content-placement.ts ---
+function detectContentReuseIntent(prompt, sectionNames) {
+  const t = prompt.trim();
+  if (!t) return null;
+  const targets = inferLogoPlacementSectionNames(t, sectionNames);
+  const quotes = [];
+  const re = /"([^"\n]{3,400})"|'([^'\n]{3,400})'|“([^”\n]{3,400})”/g;
+  let m;
+  while ((m = re.exec(t))) {
+    const q = (m[1] || m[2] || m[3] || '').replace(/\s+/g, ' ').trim();
+    if (q.length >= 3) quotes.push(q);
+  }
+  if (/\blogo\b/i.test(t) && targets.length > 0 && /\b(in |on |also|as well|too|put|place|copy|use)\b/i.test(t)) {
+    return { kind: 'logo', targets, textPayload: null, sourceSectionHint: null };
+  }
+  const textish = /\b(text|copy|headline|heading|title)\b/i.test(t) || quotes.length > 0;
+  const copyFromTo =
+    /\b(copy|move)\b/i.test(t) ||
+    /\b(same|that|this)\s+(text|headline|copy)\b/i.test(t) ||
+    (quotes.length > 0 && /\b(in|to|into)\b/i.test(t));
+  if (textish && copyFromTo) {
+    let sourceSectionHint = null;
+    const fromM = /\b(?:from|of)\s+(?:the\s+)?(footer|hero|nav|header|about)\b/i.exec(t) ||
+      /\b(footer|hero|nav|header|about)\s+(?:headline|heading|title|text|copy)\b/i.exec(t);
+    if (fromM) sourceSectionHint = fromM[1].toLowerCase();
+    let dests = targets;
+    const toM = /\b(?:to|into|in)\s+(?:the\s+)?(footer|hero|nav|header|about|cta)\b/i.exec(t);
+    if (toM) dests = inferLogoPlacementSectionNames(toM[1], sectionNames);
+    return { kind: 'text', targets: dests, textPayload: quotes[0] || null, sourceSectionHint };
+  }
+  return null;
+}
+function forcePlaceTextInSection(html, sectionName, text) {
+  const re = new RegExp(`<!--\\s*SL:${sectionName}\\s*-->([\\s\\S]*?)<!--\\s*\\/SL:${sectionName}\\s*-->`, 'i');
+  const sl = re.exec(html);
+  if (!sl || sl[1].includes(text)) return html;
+  let inner = sl[1];
+  if (/<h[1-3]\b/i.test(inner)) {
+    inner = inner.replace(/(<h[1-3]\b[^>]*>)([\s\S]*?)(<\/h[1-3]>)/i, `$1${text}$3`);
+  } else {
+    inner = `<p>${text}</p>` + inner;
+  }
+  return html.slice(0, sl.index) + `<!-- SL:${sectionName} -->${inner}<!-- /SL:${sectionName} -->` + html.slice(sl.index + sl[0].length);
+}
+
+assert(
+  'copy hero headline to footer → text reuse',
+  detectContentReuseIntent('copy the hero headline to the footer', ['nav', 'hero', 'footer'])?.kind === 'text',
+);
+assert(
+  'quoted text into about → text reuse',
+  detectContentReuseIntent('put "Accredited investors only" in the about section', ['about', 'hero'])?.kind ===
+    'text',
+);
+const textPlaced = forcePlaceTextInSection(
+  '<!-- SL:footer --><footer><h2>Old</h2></footer><!-- /SL:footer -->',
+  'footer',
+  'You Are Through',
+);
+assert('forcePlaceText replaces footer heading', textPlaced.includes('You Are Through') && !/<h2>Old<\/h2>/.test(textPlaced));
+
 const rennyPrompt =
   'The page should pretty much just look like this hero section, except it should say, "Your call is confirmed." Use the logo, use the same colors, flat background. There are no buttons. https://investor.focusedcapital.com/accredited';
 assert('renny prompt = minimal shape', userWantsCustomOrMinimalPage(rennyPrompt));
@@ -329,6 +579,15 @@ assert('helpers export userWantsUsToDecide', helpers.includes('export function u
 assert('helpers export looksLikeMultiIntent', helpers.includes('export function looksLikeMultiIntent'));
 assert('helpers soft and-the-section pattern', helpers.includes('(and|,)\\s+(the\\s+)?'));
 assert('helpers classifyAttachedImages', helpers.includes('export async function classifyAttachedImages'));
+assert('helpers design_reference role', helpers.includes("design_reference"));
+assert('helpers isDesignReferenceAsk', helpers.includes('export function isDesignReferenceAsk'));
+assert('helpers extractDesignReferenceCopy', helpers.includes('export async function extractDesignReferenceCopy'));
+assert('helpers requiredPhrases verify', helpers.includes('requiredPhrases'));
+assert('helpers inferDesignMatchSectionNames', helpers.includes('export function inferDesignMatchSectionNames'));
+assert('follow-up designReferenceUrls', follow.includes('designReferenceUrls'));
+assert('follow-up DESIGN REFERENCE', follow.includes('DESIGN REFERENCE'));
+assert('follow-up inferDesignMatchSectionNames', follow.includes('inferDesignMatchSectionNames'));
+assert('follow-up design match htmlUnchanged message', follow.includes('Could not match the attached design reference'));
 assert('helpers longer 2-section soft', helpers.includes('t.length > 120'));
 assert('helpers userWantsFullCompetitorRebuild', helpers.includes('export function userWantsFullCompetitorRebuild'));
 assert('helpers allowScopedDespiteCompetitorUrl', helpers.includes('export function allowScopedDespiteCompetitorUrl'));
@@ -381,7 +640,9 @@ assert('follow-up allowScopedDespiteCompetitorUrl wiring', follow.includes('allo
 assert('follow-up shouldScrapeCompetitor', follow.includes('shouldScrapeCompetitor'));
 assert('follow-up content image swap', follow.includes('isContentImageSwapAttempt'));
 assert('follow-up fetchContentImageAssets', follow.includes('fetchContentImageAssets'));
-assert('follow-up partial retry message', follow.includes('Still need a retry'));
+assert('follow-up multi-intent retry finish', follow.includes('multi-intent completed after retry'));
+assert('follow-up design-ref OCR', follow.includes('extractDesignReferenceCopy'));
+assert('follow-up REQUIRED visible copy', follow.includes('REQUIRED visible copy from the design reference'));
 assert('follow-up Retrying step', follow.includes('Retrying step'));
 
 assert('generate stripUnpromptedSocialProof', gen.includes('stripUnpromptedSocialProof'));
@@ -407,6 +668,23 @@ assert('scrape extractContentImageUrls', scrape.includes('export function extrac
 const brand = readFileSync(join(__dirname, '../src/lib/ai-brand-assets.ts'), 'utf8');
 assert('brand-assets module exists', brand.includes('forceEmbedLogoInHtml'));
 assert('brand extractInlineLogoSvg', brand.includes('export function extractInlineLogoSvg'));
+assert('brand forceEmbedLogoInFooterHtml', !brand.includes('export function forceEmbedLogoInFooterHtml'));
+assert('brand forceEmbedLogoIntoSections', brand.includes('export function forceEmbedLogoIntoSections'));
+assert('brand no userWantsLogoInFooter export', !brand.includes('export function userWantsLogoInFooter'));
+assert('brand extractPrimaryLogoUrlFromHtml', brand.includes('export function extractPrimaryLogoUrlFromHtml'));
+assert('brand userWantsLogoPlacedInSection', brand.includes('export function userWantsLogoPlacedInSection'));
+assert('brand inferLogoPlacementSectionNames', brand.includes('export function inferLogoPlacementSectionNames'));
+assert('follow-up logo placement path', follow.includes('content reuse: logo placed'));
+assert('follow-up text reuse path', follow.includes('content reuse: text placed'));
+assert('follow-up forceEmbedLogoIntoSections', follow.includes('forceEmbedLogoIntoSections'));
+assert('follow-up detectContentReuseIntent', follow.includes('detectContentReuseIntent'));
+assert('build logo fail-closed', build.includes('logo URL missing from HTML after embed'));
+assert('build forceEmbedLogoIntoSections', build.includes('forceEmbedLogoIntoSections'));
+
+const placement = readFileSync(join(__dirname, '../src/lib/ai-content-placement.ts'), 'utf8');
+assert('placement detectContentReuseIntent', placement.includes('export function detectContentReuseIntent'));
+assert('placement forcePlaceTextInSection', placement.includes('export function forcePlaceTextInSection'));
+assert('placement inferTargetSectionNames', placement.includes('export function inferTargetSectionNames'));
 assert('brand materializeLogoUrl', brand.includes('export async function materializeLogoUrl'));
 assert('brand classifyPageShapeIntent', brand.includes('export async function classifyPageShapeIntent'));
 assert('brand forceEmbed accepts logoSvg', brand.includes('logoSvg: string | null'));
