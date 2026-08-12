@@ -2,9 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
-import { uploadHtml, deleteHtmlFile, deletePageImages, fileNameFromUrl, downloadHtmlByPath } from '@/lib/storage';
+import { deleteHtmlFile, deletePageImages, fileNameFromUrl } from '@/lib/storage';
 import { resolveWorkspaceRole } from '@/lib/workspace-auth';
-import { isTestVariantPage, getLinkedVariant } from '@/lib/page-drafts';
+import { updatePageDraftOrLive, getPageWithContent } from '@/lib/services/pages';
 import { z } from 'zod';
 
 const updateSchema = z.object({
@@ -33,25 +33,12 @@ export async function GET(
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const { data, error } = await db
-    .from('pages')
-    .select('*')
-    .eq('id', params.id)
-    .single();
-
-  if (error || !data) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  const result = await getPageWithContent(params.id);
+  if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.status });
+  const data = result.data as { workspace_id: string };
 
   const wsRole = await resolveWorkspaceRole(data.workspace_id, session.user.id, session.user.role);
   if (!wsRole) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-
-  if (!data.html_content && data.html_url) {
-    const filePath = fileNameFromUrl(data.html_url);
-    if (filePath) {
-      try {
-        data.html_content = await downloadHtmlByPath(filePath);
-      } catch { /* fall through with html_content still null */ }
-    }
-  }
 
   return NextResponse.json(data);
 }
@@ -70,95 +57,11 @@ export async function PATCH(
 
   try {
     const body = await request.json();
-    const { draft, ...data } = updateSchema.parse(body);
+    const input = updateSchema.parse(body);
 
-    // Draft writes (WYSIWYG click-to-edit on a variant page) land in draft_*
-    // columns and never touch live HTML, live schema, storage, or UTM
-    // selectors/rules — those stay exactly as-is until the user explicitly
-    // replaces the live variant with their draft.
-    const isDraftWrite = draft === true && (await isTestVariantPage(params.id));
-
-    if (isDraftWrite) {
-      const draftPayload: Record<string, unknown> = {};
-      if (data.html_content !== undefined) draftPayload.draft_html_content = data.html_content;
-      if (data.schema_json !== undefined) draftPayload.draft_schema_json = data.schema_json;
-
-      const { data: updated, error } = await db
-        .from('pages')
-        .update(draftPayload)
-        .eq('id', params.id)
-        .select()
-        .single();
-
-      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-      return NextResponse.json(updated);
-    }
-
-    // If html_content is being updated, re-upload to storage
-    let storageUrl: string | undefined;
-    if (data.html_content) {
-      const existing = pageMeta;
-
-      if (existing?.html_url) {
-        const fileName = fileNameFromUrl(existing.html_url);
-        if (fileName) {
-          storageUrl = await uploadHtml(fileName, data.html_content);
-        }
-      }
-    }
-
-    // html_content = manual edit; html_url = AI rebuild that uploaded fresh HTML to storage.
-    // Either way the markup is replaced, so old selectors can't be trusted.
-    const htmlReplaced = Boolean(data.html_content || data.html_url);
-
-    // If HTML is being replaced by a caller that did NOT also send a matching
-    // schema_json (e.g. a manual raw-HTML edit), any existing schema is now
-    // out of sync with the actual markup — a later AI structural edit would
-    // silently rebuild from the stale schema and discard the manual change.
-    const schemaNowStale = htmlReplaced && data.schema_json === undefined && !!pageMeta?.schema_json;
-
-    const updatePayload = {
-      ...data,
-      ...(storageUrl ? { html_url: storageUrl } : {}),
-      // HTML changed → old injected #sl-f-xxx IDs are gone; clear mappings and rules
-      ...(htmlReplaced ? { field_selectors_json: null } : {}),
-      // A rebuild replaces the storage file only — stale html_content from an earlier
-      // inline edit would shadow the new HTML in preview/serve, so drop it
-      ...(data.html_url && !data.html_content ? { html_content: null } : {}),
-      ...(schemaNowStale ? { schema_json: null, conversation_json: [] } : {}),
-    };
-
-    // If HTML is being replaced, wipe personalization rules (selectors no longer valid)
-    // and prune this variant's cached scan — the elements it found no longer
-    // reflect the live page. Only runs on live writes (isDraftWrite returns above),
-    // since a draft hasn't reached /api/serve yet and the current scan is still accurate.
-    if (htmlReplaced) {
-      await db.from('personalization_rules').delete().eq('page_id', params.id);
-
-      const linkedVariant = await getLinkedVariant(params.id);
-      if (linkedVariant) {
-        const { data: testRow } = await db
-          .from('tests')
-          .select('scan_results')
-          .eq('id', linkedVariant.test_id)
-          .single();
-        const existingScans = testRow?.scan_results as { variants?: { variant_id: string }[] } | null;
-        if (existingScans?.variants?.some((v) => v.variant_id === linkedVariant.id)) {
-          const pruned = { variants: existingScans.variants.filter((v) => v.variant_id !== linkedVariant.id) };
-          await db.from('tests').update({ scan_results: pruned }).eq('id', linkedVariant.test_id);
-        }
-      }
-    }
-
-    const { data: updated, error } = await db
-      .from('pages')
-      .update(updatePayload)
-      .eq('id', params.id)
-      .select()
-      .single();
-
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-    return NextResponse.json(updated);
+    const result = await updatePageDraftOrLive(params.id, { html_url: pageMeta.html_url, schema_json: pageMeta.schema_json }, input);
+    if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.status });
+    return NextResponse.json(result.data);
   } catch (err) {
     if (err instanceof z.ZodError) {
       return NextResponse.json({ error: err.errors }, { status: 400 });
