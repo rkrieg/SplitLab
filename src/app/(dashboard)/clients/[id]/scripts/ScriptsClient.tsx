@@ -210,7 +210,7 @@ export default function ScriptsClient({
       </div>
 
       {/* Info banner */}
-      <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 mb-6 text-sm text-amber-300">
+      <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 mb-6 text-sm text-amber-700 dark:text-amber-300">
         When adding a script, choose its scope:{" "}
         <strong className="font-semibold text-amber-200">Workspace-level</strong>{" "}
         injects it into every page served for this client.{" "}
@@ -243,7 +243,7 @@ export default function ScriptsClient({
                 className={`card p-5 flex items-center gap-4 ${!script.is_active ? "opacity-50" : ""}`}
               >
                 <div className="w-9 h-9 rounded-lg bg-slate-100 dark:bg-slate-700 flex items-center justify-center flex-shrink-0">
-                  <Code2 size={15} className="text-indigo-400" />
+                  <Code2 size={15} className="text-indigo-600 dark:text-indigo-400" />
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-0.5 flex-wrap">
@@ -258,13 +258,13 @@ export default function ScriptsClient({
                     </span>
                     {scope ? (
                       <span
-                        className={`badge text-[10px] ${scope.isHosted ? "bg-amber-500/20 text-amber-400 border-amber-500/30" : "bg-blue-500/20 text-blue-400 border-blue-500/30"}`}
+                        className={`badge text-[10px] ${scope.isHosted ? "bg-amber-500/20 text-amber-600 dark:text-amber-400 border-amber-500/30" : "bg-blue-500/20 text-blue-600 dark:text-blue-400 border-blue-500/30"}`}
                       >
                         {scope.label}
                         {scope.isHosted && " (proxy)"}
                       </span>
                     ) : (
-                      <span className="badge text-[10px] bg-indigo-500/15 text-indigo-400 border-indigo-500/30">
+                      <span className="badge text-[10px] bg-indigo-500/15 text-indigo-600 dark:text-indigo-400 border-indigo-500/30">
                         Workspace
                       </span>
                     )}
@@ -287,14 +287,14 @@ export default function ScriptsClient({
                       {togglingId === script.id ? (
                         <Spinner size="md" />
                       ) : script.is_active ? (
-                        <ToggleRight size={22} className="text-green-400" />
+                        <ToggleRight size={22} className="text-green-600 dark:text-green-400" />
                       ) : (
                         <ToggleLeft size={22} />
                       )}
                     </button>
                     <button
                       onClick={() => setDeleteId(script.id)}
-                      className="text-slate-500 hover:text-red-400 transition-colors"
+                      className="text-slate-500 hover:text-red-700 dark:hover:text-red-400 transition-colors"
                     >
                       <Trash2 size={15} />
                     </button>
@@ -421,7 +421,7 @@ export default function ScriptsClient({
 
           {/* Fix 2 — Proxy warning note */}
           {showProxyWarning && (
-            <div className="flex items-start gap-2 rounded-lg bg-amber-500/10 border border-amber-500/30 px-3 py-2.5 text-xs text-amber-300">
+            <div className="flex items-start gap-2 rounded-lg bg-amber-500/10 border border-amber-500/30 px-3 py-2.5 text-xs text-amber-700 dark:text-amber-300">
               <Info size={13} className="mt-0.5 flex-shrink-0" />
               <span>
                 This page uses a hosted URL, so SplitLab can't add scripts to
@@ -437,7 +437,7 @@ export default function ScriptsClient({
           )}
 
           {createScriptError && (
-            <div className="rounded-lg bg-red-500/10 border border-red-500/30 px-3 py-2.5 text-sm text-red-400">
+            <div className="rounded-lg bg-red-500/10 border border-red-500/30 px-3 py-2.5 text-sm text-red-600 dark:text-red-400">
               {createScriptError}
             </div>
           )}

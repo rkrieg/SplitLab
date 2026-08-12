@@ -51,7 +51,7 @@ export default function AffiliateDashboard() {
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-950 flex items-center justify-center">
-        <Spinner className="text-indigo-400" />
+        <Spinner className="text-indigo-600 dark:text-indigo-400" />
       </div>
     );
   }
@@ -107,9 +107,9 @@ export default function AffiliateDashboard() {
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
           <h2 className="text-lg font-semibold mb-4">Referral breakdown</h2>
           <div className="grid grid-cols-3 gap-4">
-            <Breakdown icon={<Check size={16} className="text-green-400" />} label="Paying" value={rs.converted}
+            <Breakdown icon={<Check size={16} className="text-green-600 dark:text-green-400" />} label="Paying" value={rs.converted}
               hint="Currently on a paid plan — earning you commission." />
-            <Breakdown icon={<Clock size={16} className="text-amber-400" />} label="Free (pending)" value={rs.pending}
+            <Breakdown icon={<Clock size={16} className="text-amber-600 dark:text-amber-400" />} label="Free (pending)" value={rs.pending}
               hint="Signed up free. You earn when they upgrade." />
             <Breakdown icon={<Users size={16} className="text-slate-400" />} label="Churned" value={rs.churned}
               hint="Cancelled their paid plan. No further commission." />
@@ -130,7 +130,7 @@ export default function AffiliateDashboard() {
 function StatCard({ icon, label, value, accent }: { icon: React.ReactNode; label: string; value: string; accent?: boolean }) {
   return (
     <div className={`rounded-xl p-4 border ${accent ? 'bg-indigo-600/10 border-indigo-600/30' : 'bg-slate-900 border-slate-800'}`}>
-      <div className={`flex items-center gap-1.5 text-xs mb-2 ${accent ? 'text-indigo-300' : 'text-slate-400'}`}>
+      <div className={`flex items-center gap-1.5 text-xs mb-2 ${accent ? 'text-indigo-700 dark:text-indigo-300' : 'text-slate-400'}`}>
         {icon} {label}
       </div>
       <div className="text-2xl font-bold">{value}</div>

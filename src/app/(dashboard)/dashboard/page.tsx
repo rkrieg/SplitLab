@@ -92,7 +92,7 @@ export default async function DashboardPage() {
       label: 'Active Clients',
       value: clientCount,
       icon: Building2,
-      color: 'text-indigo-400',
+      color: 'text-indigo-600 dark:text-indigo-400',
       bg: 'bg-indigo-500/10',
       href: '/pages',
     },
@@ -100,7 +100,7 @@ export default async function DashboardPage() {
       label: 'Active Pages',
       value: activeTestCount,
       icon: FileCode2,
-      color: 'text-green-400',
+      color: 'text-green-600 dark:text-green-400',
       bg: 'bg-green-500/10',
       href: '/pages',
     },
@@ -108,7 +108,7 @@ export default async function DashboardPage() {
       label: 'Total Page Views',
       value: totalViews.toLocaleString(),
       icon: Eye,
-      color: 'text-blue-400',
+      color: 'text-blue-600 dark:text-blue-400',
       bg: 'bg-blue-500/10',
       href: null,
     },
@@ -116,7 +116,7 @@ export default async function DashboardPage() {
       label: 'Conversion Tracking',
       value: 'Live',
       icon: TrendingUp,
-      color: 'text-amber-400',
+      color: 'text-amber-600 dark:text-amber-400',
       bg: 'bg-amber-500/10',
       href: null,
     },
@@ -148,7 +148,7 @@ export default async function DashboardPage() {
               {stat.href && (
                 <Link
                   href={stat.href}
-                  className="text-xs text-indigo-400 hover:text-indigo-300 mt-3 inline-block"
+                  className="text-xs text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 mt-3 inline-block"
                 >
                   View all →
                 </Link>
@@ -161,7 +161,7 @@ export default async function DashboardPage() {
         <div>
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Active Pages</h2>
-            <Link href="/pages" className="text-sm text-indigo-400 hover:text-indigo-300">
+            <Link href="/pages" className="text-sm text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300">
               View all
             </Link>
           </div>
@@ -194,7 +194,7 @@ export default async function DashboardPage() {
                         <td className="px-5 py-3 text-slate-500 dark:text-slate-400">{ws?.clients?.name ?? '—'}</td>
                         <td className="px-5 py-3 text-slate-500 dark:text-slate-400 font-mono text-xs">{test.url_path as string}</td>
                         <td className="px-5 py-3">
-                          <span className="badge bg-green-500/20 text-green-400 border border-green-500/30">
+                          <span className="badge bg-green-500/20 text-green-600 dark:text-green-400 border border-green-500/30">
                             {test.status as string}
                           </span>
                         </td>

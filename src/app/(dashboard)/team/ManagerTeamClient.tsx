@@ -135,7 +135,7 @@ export default function ManagerTeamClient({ initialMembers, seatLimit, currentUs
         </p>
         <div className="flex items-center gap-3">
           {atLimit && (
-            <Link href="/billing" className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors">
+            <Link href="/billing" className="text-xs text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 transition-colors">
               Upgrade for more seats
             </Link>
           )}
@@ -195,7 +195,7 @@ export default function ManagerTeamClient({ initialMembers, seatLimit, currentUs
                     {member.id !== currentUserId && (
                       <button
                         onClick={() => setDeleteId(member.id)}
-                        className="text-slate-500 hover:text-red-400 transition-colors"
+                        className="text-slate-500 hover:text-red-700 dark:hover:text-red-400 transition-colors"
                       >
                         <Trash2 size={14} />
                       </button>
@@ -241,7 +241,7 @@ export default function ManagerTeamClient({ initialMembers, seatLimit, currentUs
         {atLimit ? (
           <div className="text-center py-4">
             <div className="w-12 h-12 rounded-full bg-amber-500/10 flex items-center justify-center mx-auto mb-4">
-              <AlertCircle size={22} className="text-amber-400" />
+              <AlertCircle size={22} className="text-amber-600 dark:text-amber-400" />
             </div>
             <h3 className="text-base font-semibold text-slate-800 dark:text-slate-200 mb-2">
               Team seat limit reached
@@ -277,12 +277,12 @@ export default function ManagerTeamClient({ initialMembers, seatLimit, currentUs
               They&apos;ll receive an email — to set a password if they&apos;re new, or to accept the invite if they already have a SplitLab account.
             </p>
             {inviteError && (
-              <div className="flex items-start gap-2 rounded-lg bg-red-500/10 border border-red-500/30 px-3 py-2.5 text-sm text-red-400">
+              <div className="flex items-start gap-2 rounded-lg bg-red-500/10 border border-red-500/30 px-3 py-2.5 text-sm text-red-600 dark:text-red-400">
                 <AlertCircle size={15} className="flex-shrink-0 mt-0.5" />
                 <span>
                   {inviteError.message}
                   {inviteError.isLimit && (
-                    <> · <a href="/billing" className="underline font-medium hover:text-red-300">Upgrade Plan</a></>
+                    <> · <a href="/billing" className="underline font-medium hover:text-red-800 dark:hover:text-red-300">Upgrade Plan</a></>
                   )}
                 </span>
               </div>

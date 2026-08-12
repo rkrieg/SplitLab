@@ -109,7 +109,7 @@ export default async function AllDomainsPage() {
                 <p className="text-xs text-slate-400 mt-0.5">Verified</p>
               </div>
               <div className="card p-4 text-center">
-                <p className="text-2xl font-bold text-amber-400 tabular-nums">{domains.length - verifiedCount}</p>
+                <p className="text-2xl font-bold text-amber-600 dark:text-amber-400 tabular-nums">{domains.length - verifiedCount}</p>
                 <p className="text-xs text-slate-400 mt-0.5">Pending</p>
               </div>
             </div>
@@ -119,14 +119,14 @@ export default async function AllDomainsPage() {
                 <div key={d.id} className="card p-5 flex items-center gap-4 hover:border-slate-300 dark:hover:border-slate-600 transition-colors">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1">
-                      <Globe size={15} className={d.verified ? 'text-green-400' : 'text-slate-400'} />
+                      <Globe size={15} className={d.verified ? 'text-green-600 dark:text-green-400' : 'text-slate-400'} />
                       <span className="font-medium text-slate-900 dark:text-slate-100">{d.domain}</span>
                       {d.verified ? (
-                        <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-green-500/15 text-green-400 border border-green-500/25">
+                        <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-green-500/15 text-green-600 dark:text-green-400 border border-green-500/25">
                           <CheckCircle size={11} /> Verified
                         </span>
                       ) : (
-                        <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/25">
+                        <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/25">
                           <Clock size={11} /> Pending DNS
                         </span>
                       )}

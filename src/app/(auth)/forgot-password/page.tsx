@@ -70,7 +70,7 @@ export default function ForgotPasswordPage() {
 
       <p className="text-center text-slate-500 dark:text-slate-400 text-sm mt-6">
         Remember your password?{' '}
-        <Link href="/login" className="text-indigo-500 hover:text-indigo-400 font-medium transition-colors">Sign in</Link>
+        <Link href="/login" className="text-indigo-500 hover:text-indigo-700 dark:hover:text-indigo-400 font-medium transition-colors">Sign in</Link>
       </p>
     </div>
   );

@@ -70,7 +70,7 @@ export default async function AllScriptsPage() {
                       <td className="px-5 py-3.5 font-medium text-slate-200">{script.name as string}</td>
                       <td className="px-5 py-3.5">
                         {ws && (
-                          <Link href={`/clients/${ws.client_id}/scripts`} className="text-slate-400 hover:text-indigo-400 text-xs">
+                          <Link href={`/clients/${ws.client_id}/scripts`} className="text-slate-400 hover:text-indigo-700 dark:hover:text-indigo-400 text-xs">
                             {ws.clients?.name ?? ws.name}
                           </Link>
                         )}
@@ -80,7 +80,7 @@ export default async function AllScriptsPage() {
                       </td>
                       <td className="px-5 py-3.5 text-slate-400 font-mono text-xs">{script.placement === 'head' ? '<head>' : '</body>'}</td>
                       <td className="px-5 py-3.5">
-                        <span className={`badge ${script.is_active ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'bg-slate-700 text-slate-400'}`}>
+                        <span className={`badge ${script.is_active ? 'bg-green-500/20 text-green-600 dark:text-green-400 border border-green-500/30' : 'bg-slate-700 text-slate-400'}`}>
                           {script.is_active ? 'Active' : 'Inactive'}
                         </span>
                       </td>

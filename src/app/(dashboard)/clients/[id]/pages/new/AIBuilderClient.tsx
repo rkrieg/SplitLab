@@ -105,7 +105,7 @@ function renderPromptWithHighlights(text: string) {
   const parts = text.split(/(\[[^\]]+\])/g);
   return parts.map((part, i) =>
     /^\[.+\]$/.test(part)
-      ? <strong key={i} className="text-indigo-400 font-semibold not-italic">{part}</strong>
+      ? <strong key={i} className="text-indigo-600 dark:text-indigo-400 font-semibold not-italic">{part}</strong>
       : <span key={i}>{part}</span>
   );
 }
@@ -123,7 +123,7 @@ function SamplePromptChip({ vertical, onUse }: { vertical: string; onUse: (promp
       <button
         type="button"
         onClick={() => onUse(samplePrompt)}
-        className="inline-flex items-center gap-1 text-[11px] text-indigo-400 hover:text-indigo-300 transition-colors"
+        className="inline-flex items-center gap-1 text-[11px] text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 transition-colors"
       >
         <Sparkles size={10} />
         Try an example
@@ -136,7 +136,7 @@ function SamplePromptChip({ vertical, onUse }: { vertical: string; onUse: (promp
           <div className="absolute bottom-full right-0 mb-2 w-72 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-50 overflow-hidden">
             <div className="flex items-center justify-between px-3 py-2 border-b border-slate-700">
               <span className="text-[10px] font-medium text-slate-400 uppercase tracking-wider">Sample prompt</span>
-              {/* <span className="text-[10px] text-indigo-400">Click to use</span> */}
+              {/* <span className="text-[10px] text-indigo-600 dark:text-indigo-400">Click to use</span> */}
             </div>
             <p className="px-3 py-2.5 text-[11px] text-slate-300 leading-relaxed whitespace-pre-wrap max-h-56 overflow-y-auto">
               {renderPromptWithHighlights(samplePrompt)}
@@ -153,6 +153,48 @@ function hasUnfilledPlaceholders(text: string): boolean {
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
+
+/**
+ * Compact AI-credit meter for the builder top bar — always visible so users
+ * know where their monthly allowance stands while editing (Unbounce-style).
+ * Small green bar that shifts amber→red as it fills. Hidden on plans with no
+ * AI credits. Polls lightly so it reflects credits spent during the session.
+ */
+function AiCreditsMeter() {
+  const [data, setData] = useState<{ creditsUsed: number; creditsIncluded: number; percentUsed: number } | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    const load = () => {
+      fetch('/api/ai-usage')
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => { if (active && d) setData(d); })
+        .catch(() => {});
+    };
+    load();
+    const id = setInterval(load, 20_000); // keep it roughly current as edits burn credits
+    return () => { active = false; clearInterval(id); };
+  }, []);
+
+  if (!data || data.creditsIncluded <= 0) return null;
+  const pct = Math.min(100, Math.round(data.percentUsed));
+  const bar = pct >= 100 ? 'bg-red-500' : pct >= 80 ? 'bg-amber-500' : 'bg-green-500';
+
+  return (
+    <div
+      className="flex items-center gap-2 px-2.5 py-1 rounded-md bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+      title={`${data.creditsUsed.toLocaleString()} of ${data.creditsIncluded.toLocaleString()} AI credits used this month`}
+    >
+      <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400 whitespace-nowrap">AI credits</span>
+      <div className="w-16 h-1.5 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
+        <div className={`h-full ${bar} rounded-full transition-all`} style={{ width: `${pct}%` }} />
+      </div>
+      <span className="text-[11px] font-semibold text-slate-700 dark:text-slate-200 tabular-nums whitespace-nowrap">
+        {data.creditsUsed.toLocaleString()}/{data.creditsIncluded.toLocaleString()}
+      </span>
+    </div>
+  );
+}
 
 export default function AIBuilderClient({ workspaceId, clientId, clientName, variantName, initialPage, backPath, canUseAI = true, isTestVariantPage = false, canPublish = true }: Props) {
   const router = useRouter();
@@ -235,7 +277,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   const [iframeSrc, setIframeSrc] = useState<string | null>(null);
   const [iframeLoaded, setIframeLoaded] = useState(false);
   const [schemaJson, setSchemaJson] = useState<unknown>(null);
-  const [conversationJson, setConversationJson] = useState<{ role: string; content: string; image_urls?: string[] }[]>([]);
+  const [conversationJson, setConversationJson] = useState<{ role: string; content: string; image_urls?: string[]; clarify?: boolean }[]>([]);
   const [publishedUrl, setPublishedUrl] = useState<string | null>(null);
   const [urlCopied, setUrlCopied] = useState(false);
   const [publishConfirmOpen, setPublishConfirmOpen] = useState(false);
@@ -266,6 +308,64 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   const [selectedSaveTestId, setSelectedSaveTestId] = useState('');
   const [saveVariantName, setSaveVariantName] = useState('');
   const [savingAsVariant, setSavingAsVariant] = useState(false);
+
+  // Out-of-credits upsell modal — opened when an edit is soft-capped (402 softCap).
+  // Lets the user turn on metered overage (auto-bill) with a spend cap + reminder
+  // threshold, then retries the blocked edit. Wired to PATCH /api/ai-usage.
+  const [outOfCredits, setOutOfCredits] = useState<{ creditsUsed: number; creditsIncluded: number; retry: () => void } | null>(null);
+  // Prepaid top-up amounts (cents) → credits, at $0.05/credit (keep in sync with
+  // TOPUP_CENTS_PER_CREDIT server-side). Labels avoid em dashes on purpose.
+  const TOPUP_OPTIONS = [
+    { cents: 5000, label: '$50 (1,000 credits)' },
+    { cents: 10000, label: '$100 (2,000 credits)' },
+    { cents: 20000, label: '$200 (4,000 credits)' },
+    { cents: 50000, label: '$500 (10,000 credits)' },
+  ];
+  const [ocAmountCents, setOcAmountCents] = useState(5000);
+  const [ocBuying, setOcBuying] = useState(false);  // redirecting to Stripe
+  const [ocSaving, setOcSaving] = useState(false);  // enabling auto-billing
+
+  // Prepaid: send them to Stripe to buy credits; the webhook grants them on success.
+  async function buyCredits() {
+    setOcBuying(true);
+    try {
+      const res = await fetch('/api/ai-usage/topup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amountCents: ocAmountCents, returnUrl: window.location.href }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (res.ok && d.url) { window.location.href = d.url; return; }
+      toast.error(d.error || 'Could not start checkout.');
+    } catch {
+      toast.error('Could not start checkout.');
+    } finally {
+      setOcBuying(false);
+    }
+  }
+
+  // Alternative: pay only for what you use. Turns on overage capped at the amount
+  // selected above, then retries the blocked edit.
+  async function enableOverageAndRetry() {
+    setOcSaving(true);
+    try {
+      const capCents = ocAmountCents;
+      const res = await fetch('/api/ai-usage', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: true, capCents, notifyCents: capCents }),
+      });
+      if (!res.ok) throw new Error();
+      const retry = outOfCredits?.retry;
+      setOutOfCredits(null);
+      toast.success(`You're all set. You can keep building up to $${(capCents / 100).toFixed(0)}.`);
+      retry?.();
+    } catch {
+      toast.error('Could not update billing settings. Please try again.');
+    } finally {
+      setOcSaving(false);
+    }
+  }
 
   // Chat image attachments (paste / file-picker / drag-and-drop)
   const [chatImages, setChatImages] = useState<{ file: File; preview: string }[]>([]);
@@ -305,10 +405,21 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   const imageInputRef = useRef<HTMLInputElement>(null);
 
   // Restore state from pre-created page
-  // Editing wipes UTM mappings/rules server-side — warn once when edit mode starts,
-  // in a toast the user can dismiss (stays up until they do)
+  // Editing wipes UTM mappings/rules server-side — warn ONCE the first time edit
+  // mode starts this session, not on every edit. (phase cycles editing→…→editing
+  // per edit, which used to re-fire this toast each time.) The Save confirm modal
+  // repeats the UTM-clear warning at replace time, so once here is enough.
+  const utmWarnedRef = useRef(false);
   useEffect(() => {
-    if (phase !== 'editing') return;
+    if (phase !== 'editing' || utmWarnedRef.current) return;
+    utmWarnedRef.current = true;
+    // Show it at most once per page — and remember across refreshes — so it stops
+    // nagging on every edit. The Save confirm modal repeats the warning at replace time.
+    const seenKey = `sl-utm-warned-${initialPage?.id ?? 'new'}`;
+    try {
+      if (localStorage.getItem(seenKey)) return;
+      localStorage.setItem(seenKey, '1');
+    } catch { /* ignore storage errors */ }
     toast(
       () => (
         <span className="text-xs">
@@ -332,9 +443,24 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         style: { background: 'rgb(254 243 199)', color: 'rgb(146 64 14)', maxWidth: '420px' },
       }
     );
-    return () => toast.dismiss('utm-wipe-warning');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase]);
+
+  // Dismiss the UTM warning only when leaving the builder — not on every phase
+  // change — so it stays put once (until the user closes it) instead of flashing.
+  useEffect(() => () => toast.dismiss('utm-wipe-warning'), []);
+
+  // Returning from a Stripe credit top-up: confirm and strip the query param so
+  // the meter (which polls /api/ai-usage) reflects the new balance on next tick.
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search);
+    const status = p.get('topup');
+    if (!status) return;
+    if (status === 'success') toast.success('Credits added. You can keep building.');
+    p.delete('topup');
+    const q = p.toString();
+    window.history.replaceState({}, '', window.location.pathname + (q ? `?${q}` : ''));
+  }, []);
 
   useEffect(() => {
     if (!initialPage) return;
@@ -994,8 +1120,13 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
           </span>
         ), { duration: 8000 });
       } else if (err.softCap) {
-        // Out of AI credits / over the overage spend cap — message points to Billing.
-        toast.error(message, { duration: 8000 });
+        // Out of AI credits / over the overage spend cap — open the upsell modal so
+        // they can turn on overage and continue; on confirm we retry this same edit.
+        setOutOfCredits({
+          creditsUsed: err.usage?.creditsUsed ?? 0,
+          creditsIncluded: err.usage?.creditsIncluded ?? 0,
+          retry: () => sendFollowUp(instruction, images, pid, true),
+        });
       } else {
         toast.error(message);
       }
@@ -1004,7 +1135,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       return;
     }
 
-    type FollowUpDone = { html_url: string; schema_json?: unknown; competitor_fetch_failed?: boolean; elapsed_ms?: number };
+    type FollowUpDone = { html_url: string; schema_json?: unknown; competitor_fetch_failed?: boolean; elapsed_ms?: number; partial_message?: string };
     let doneData: FollowUpDone | null = null;
     let followUpError = false;
     let clarifyMessage: string | null = null;
@@ -1017,6 +1148,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
           schema_json: event.schema_json,
           competitor_fetch_failed: event.competitor_fetch_failed,
           elapsed_ms: event.elapsed_ms,
+          partial_message: event.partial_message,
         };
       } else if (event.type === 'clarify') {
         clarifyMessage = event.message || 'Which part of the page should I edit?';
@@ -1040,7 +1172,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       setConversationJson(prev => [
         ...prev,
         { role: 'user', content: instruction },
-        { role: 'assistant', content: clarifyText },
+        { role: 'assistant', content: clarifyText, clarify: true },
       ]);
       setPhase('editing');
       return;
@@ -1060,7 +1192,13 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     if (isTestVariantPage) setHasDraft(true);
     // Server only emits `done` when HTML actually changed — never claim success otherwise.
     if (!silent) {
-      addMessage({ role: 'assistant', content: 'Done! The page has been updated.', elapsedMs: done.elapsed_ms });
+      addMessage({
+        role: 'assistant',
+        content: done.partial_message
+          ? `Partly done. ${done.partial_message}`
+          : 'Done! The page has been updated.',
+        elapsedMs: done.elapsed_ms,
+      });
     }
     setConversationJson(prev => [
       ...prev,
@@ -1384,7 +1522,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                   {/* Message actions */}
                   <div className="flex items-center gap-1.5 pl-8">
                     {typeof msg.elapsedMs === 'number' && (
-                      <span className="text-[11px] text-amber-400 dark:text-amber-500">
+                      <span className="text-[11px] text-amber-600 dark:text-amber-500">
                         {(msg.elapsedMs / 1000).toFixed(1)}s
                       </span>
                     )}
@@ -1504,13 +1642,13 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
               />
               <div className="flex items-center gap-1.5">
                 <span className="text-[11px] text-gray-500">Vertical:</span>
-                <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium bg-indigo-600/15 border border-indigo-600/30 text-indigo-400">
+                <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium bg-indigo-600/15 border border-indigo-600/30 text-indigo-600 dark:text-indigo-400">
                   {VERTICAL_LABELS[vertical] ?? vertical}
                 </span>
               </div>
               <SamplePromptChip vertical={vertical} onUse={p => setPrompt(p)} />
               {/https?:\/\/[^\s]+/i.test(prompt) && (
-                <div className="flex items-center gap-1.5 text-[11px] text-indigo-400">
+                <div className="flex items-center gap-1.5 text-[11px] text-indigo-600 dark:text-indigo-400">
                   <Globe size={11} />
                   <span>We&apos;ll reference that site for inspiration</span>
                 </div>
@@ -1723,6 +1861,8 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
             {showPreview && (
               <button
                 onClick={() => pageId && setIframeSrc(previewUrl(pageId))}
+                title="Reload preview"
+                aria-label="Reload preview"
                 className="p-1 text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
               >
                 <RefreshCw size={13} />
@@ -1732,6 +1872,8 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
 
           {/* Page actions */}
           <div className="flex items-center gap-2">
+            {/* Always-visible AI credit meter (Unbounce-style) */}
+            <AiCreditsMeter />
             {/* UTM Personalization button — links to dedicated picker page */}
             {phase === 'editing' && !!pageId && (
               <button
@@ -2073,6 +2215,56 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {outOfCredits && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => !ocSaving && setOutOfCredits(null)}>
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl p-6 w-full max-w-md mx-4 shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center gap-2.5 mb-3">
+              <div className="flex-shrink-0 w-8 h-8 rounded-full bg-amber-100 dark:bg-amber-500/15 flex items-center justify-center">
+                <Sparkles size={15} className="text-amber-600 dark:text-amber-400" />
+              </div>
+              <h3 className="text-slate-900 dark:text-slate-100 font-semibold text-base">You&apos;re out of AI credits</h3>
+            </div>
+            <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
+              You&apos;ve used {outOfCredits.creditsUsed.toLocaleString()} of {outOfCredits.creditsIncluded.toLocaleString()} credits this month. Add more credits to keep building, or wait for your credits to reset when your plan renews next month.
+            </p>
+
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Add credits</label>
+            <select value={ocAmountCents} onChange={(e) => setOcAmountCents(Number(e.target.value))} className="input-base w-full">
+              {TOPUP_OPTIONS.map((o) => (
+                <option key={o.cents} value={o.cents}>{o.label}</option>
+              ))}
+            </select>
+
+            <button
+              type="button"
+              onClick={buyCredits}
+              disabled={ocBuying || ocSaving}
+              className="mt-3 w-full flex items-center justify-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 disabled:cursor-not-allowed text-white text-sm px-4 py-2.5 rounded-xl font-medium transition-colors"
+            >
+              {ocBuying && <Loader2 size={14} className="animate-spin" />}
+              Add credits
+            </button>
+
+            <p className="text-center text-xs text-slate-500 dark:text-slate-400 mt-3">
+              Prefer to pay only for what you use?{' '}
+              <button
+                type="button"
+                onClick={enableOverageAndRetry}
+                disabled={ocSaving || ocBuying}
+                className="text-indigo-600 dark:text-indigo-400 hover:underline font-medium disabled:opacity-60"
+              >
+                {ocSaving ? 'Turning on…' : 'Turn on auto-billing'}
+              </button>
+            </p>
+
+            <div className="flex justify-between items-center gap-2 mt-5 pt-4 border-t border-slate-100 dark:border-slate-800">
+              <a href="/billing" className="text-xs text-slate-500 dark:text-slate-400 hover:text-indigo-500 underline">Or upgrade your plan</a>
+              <button type="button" onClick={() => setOutOfCredits(null)} disabled={ocBuying || ocSaving} className="btn-secondary text-sm rounded-xl">Not now</button>
+            </div>
           </div>
         </div>
       )}

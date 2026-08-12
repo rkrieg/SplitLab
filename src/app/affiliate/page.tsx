@@ -57,11 +57,11 @@ export default function AffiliatePage() {
       <div className="flex-1 grid lg:grid-cols-2 gap-12 max-w-6xl mx-auto w-full px-6 py-10 items-center">
         {/* Pitch */}
         <div>
-          <span className="inline-block text-xs font-semibold uppercase tracking-wide text-indigo-400 mb-3">
+          <span className="inline-block text-xs font-semibold uppercase tracking-wide text-indigo-600 dark:text-indigo-400 mb-3">
             SplitLab Affiliate Program
           </span>
           <h1 className="text-4xl font-bold mb-4 leading-tight">
-            Earn <span className="text-indigo-400">20% recurring</span> for every customer you refer.
+            Earn <span className="text-indigo-600 dark:text-indigo-400">20% recurring</span> for every customer you refer.
           </h1>
           <p className="text-slate-400 mb-8 text-lg">
             Share your link. When someone signs up and upgrades to a paid plan, you earn 20% of
@@ -70,7 +70,7 @@ export default function AffiliatePage() {
           <ul className="space-y-4">
             <li className="flex items-start gap-3">
               <div className="w-9 h-9 rounded-lg bg-indigo-500/15 flex items-center justify-center flex-shrink-0">
-                <Repeat size={18} className="text-indigo-400" />
+                <Repeat size={18} className="text-indigo-600 dark:text-indigo-400" />
               </div>
               <div>
                 <p className="font-medium">Recurring, not one-time</p>
@@ -79,7 +79,7 @@ export default function AffiliatePage() {
             </li>
             <li className="flex items-start gap-3">
               <div className="w-9 h-9 rounded-lg bg-indigo-500/15 flex items-center justify-center flex-shrink-0">
-                <Users size={18} className="text-indigo-400" />
+                <Users size={18} className="text-indigo-600 dark:text-indigo-400" />
               </div>
               <div>
                 <p className="font-medium">Free signups still count</p>
@@ -88,7 +88,7 @@ export default function AffiliatePage() {
             </li>
             <li className="flex items-start gap-3">
               <div className="w-9 h-9 rounded-lg bg-indigo-500/15 flex items-center justify-center flex-shrink-0">
-                <DollarSign size={18} className="text-indigo-400" />
+                <DollarSign size={18} className="text-indigo-600 dark:text-indigo-400" />
               </div>
               <div>
                 <p className="font-medium">Transparent dashboard</p>
@@ -164,7 +164,7 @@ export default function AffiliatePage() {
 
           <p className="text-xs text-slate-500 text-center mt-5">
             By joining you agree to our{' '}
-            <Link href="/terms" className="text-indigo-400 hover:text-indigo-300">Terms</Link>. Payouts are
+            <Link href="/terms" className="text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300">Terms</Link>. Payouts are
             issued manually once your balance reaches the minimum threshold.
           </p>
         </div>

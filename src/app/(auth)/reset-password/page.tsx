@@ -23,7 +23,7 @@ function ResetForm() {
         <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-8 text-center">
           <h1 className="text-xl font-semibold text-slate-900 dark:text-slate-100 mb-2">Invalid Reset Link</h1>
           <p className="text-slate-500 dark:text-slate-400 text-sm mb-6">This password reset link is invalid or has expired.</p>
-          <Link href="/forgot-password" className="text-indigo-500 hover:text-indigo-400 font-medium transition-colors">
+          <Link href="/forgot-password" className="text-indigo-500 hover:text-indigo-700 dark:hover:text-indigo-400 font-medium transition-colors">
             Request a new reset link
           </Link>
         </div>

@@ -352,13 +352,13 @@ export default function Sidebar() {
                   className={cn(
                     'w-full flex items-center gap-2 px-3 py-2 text-sm transition-colors',
                     !selectedClient
-                      ? 'text-indigo-400 bg-indigo-600/10'
+                      ? 'text-indigo-600 dark:text-indigo-400 bg-indigo-600/10'
                       : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
                   )}
                 >
                   <LayoutDashboard size={13} className="flex-shrink-0" />
                   <span className="flex-1 text-left">{isAdmin ? 'All Clients' : 'My Clients'}</span>
-                  {!selectedClient && <Check size={13} className="text-indigo-400" />}
+                  {!selectedClient && <Check size={13} className="text-indigo-600 dark:text-indigo-400" />}
                 </button>
 
                 {/* Divider */}
@@ -372,7 +372,7 @@ export default function Sidebar() {
                       className={cn(
                         'group w-full flex items-center transition-colors',
                         selectedClientId === client.id
-                          ? 'text-indigo-400 bg-indigo-600/10'
+                          ? 'text-indigo-600 dark:text-indigo-400 bg-indigo-600/10'
                           : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
                       )}
                     >
@@ -387,7 +387,7 @@ export default function Sidebar() {
                             Invited
                           </span>
                         )}
-                        {selectedClientId === client.id && <Check size={13} className="text-indigo-400 flex-shrink-0" />}
+                        {selectedClientId === client.id && <Check size={13} className="text-indigo-600 dark:text-indigo-400 flex-shrink-0" />}
                       </button>
                       {/* Delete only for owned clients (admins treat null owner_id as manageable) */}
                       {(isAdmin || client.owner_id === session?.user?.id) && (
@@ -411,7 +411,7 @@ export default function Sidebar() {
                       if (isViewer) setClaimModalOpen(true);
                       else setCreateModalOpen(true);
                     }}
-                    className="w-full flex items-center gap-2 px-3 py-2 text-sm text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                    className="w-full flex items-center gap-2 px-3 py-2 text-sm text-indigo-600 dark:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
                   >
                     <Plus size={13} />
                     New Client
@@ -472,7 +472,7 @@ export default function Sidebar() {
                 'flex items-center rounded-lg text-sm font-medium transition-colors',
                 collapsed ? 'px-2 py-2 justify-center' : 'gap-3 px-3 py-2',
                 isActive(href)
-                  ? 'bg-indigo-600/20 text-indigo-400 border border-indigo-600/30'
+                  ? 'bg-indigo-600/20 text-indigo-600 dark:text-indigo-400 border border-indigo-600/30'
                   : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
               )}
             >
@@ -519,7 +519,7 @@ export default function Sidebar() {
             {isViewer && (
               <button
                 onClick={() => { setClaimModalOpen(true); setUserMenuOpen(false); }}
-                className="w-full px-3 py-2.5 text-left text-xs font-medium text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors border-b border-slate-100 dark:border-slate-700"
+                className="w-full px-3 py-2.5 text-left text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors border-b border-slate-100 dark:border-slate-700"
               >
                 Need your own workspace? Set up your account
               </button>
@@ -534,7 +534,7 @@ export default function Sidebar() {
                   <Link
                     href="/billing"
                     onClick={() => setUserMenuOpen(false)}
-                    className="text-xs font-medium text-indigo-400 hover:text-indigo-300 transition-colors"
+                    className="text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 transition-colors"
                   >
                     {userPlan === 'free' ? 'Upgrade' : 'Manage plan'}
                   </Link>
@@ -580,10 +580,10 @@ export default function Sidebar() {
                 />
               </div>
               {createClientError && (
-                <div className="rounded-lg bg-red-500/10 border border-red-500/20 px-3 py-2.5 text-sm text-red-400">
+                <div className="rounded-lg bg-red-500/10 border border-red-500/20 px-3 py-2.5 text-sm text-red-600 dark:text-red-400">
                   {createClientError.message}
                   {createClientError.isLimit && (
-                    <a href="/billing" className="block mt-1 text-indigo-400 underline underline-offset-2 text-xs font-medium">Upgrade Plan</a>
+                    <a href="/billing" className="block mt-1 text-indigo-600 dark:text-indigo-400 underline underline-offset-2 text-xs font-medium">Upgrade Plan</a>
                   )}
                 </div>
               )}
@@ -617,7 +617,7 @@ export default function Sidebar() {
             <p className="text-sm text-slate-600 dark:text-slate-400 mb-1">
               Are you sure you want to delete <span className="font-medium text-slate-900 dark:text-slate-100">{clientToDelete.name}</span>?
             </p>
-            <p className="text-sm text-red-400 mb-5">
+            <p className="text-sm text-red-600 dark:text-red-400 mb-5">
               This permanently removes all workspaces, pages, tests, and data for this client. This cannot be undone.
             </p>
             <div className="flex justify-end gap-3">

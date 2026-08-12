@@ -55,16 +55,7 @@ interface AiUsageResponse {
   overage: { enabled: boolean; capCents: number };
 }
 
-/**
- * AI credit meter + overage controls, powered by /api/ai-usage.
- *
- * TEMPORARILY DISABLED FOR PRODUCTION DEPLOY — the credits/overage-buying
- * flow is still being finished on a separate branch. Only the UI render
- * below is commented out (see `<AiCreditsCard />` usage further down); this
- * function body is left intact so it's a one-line uncomment once that work
- * lands, rather than a re-write.
- */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
+/** AI credit meter + overage controls, powered by /api/ai-usage. */
 function AiCreditsCard() {
   const [data, setData] = useState<AiUsageResponse | null>(null);
   const [saving, setSaving] = useState(false);
@@ -323,10 +314,10 @@ export default function BillingClient({
       {/* ── Admin notice ── */}
       {isAdmin && (
         <div className="flex items-center gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3">
-          <ShieldCheck size={16} className="text-amber-400 flex-shrink-0" />
-          <p className="text-sm text-amber-300">
+          <ShieldCheck size={16} className="text-amber-600 dark:text-amber-400 flex-shrink-0" />
+          <p className="text-sm text-amber-700 dark:text-amber-300">
             You are signed in as an{" "}
-            <strong className="text-amber-200">Admin</strong>. You have full
+            <strong className="text-amber-800 dark:text-amber-200">Admin</strong>. You have full
             access to all permissions.
           </p>
         </div>
@@ -432,7 +423,7 @@ export default function BillingClient({
         {!isFree && currentPeriodEnd && (
           <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-4">
             <div className="flex items-center gap-2">
-              <CalendarClock size={14} className="text-indigo-400 flex-shrink-0" />
+              <CalendarClock size={14} className="text-indigo-600 dark:text-indigo-400 flex-shrink-0" />
               <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
                 Next billing date
               </span>
@@ -451,11 +442,8 @@ export default function BillingClient({
         )}
       </div>
 
-      {/* ── AI credits ──
-          Hidden for production deploy — credits/overage-buying feature is
-          incomplete, being finished on a separate branch. Uncomment when ready.
+      {/* ── AI credits ── */}
       <AiCreditsCard />
-      */}
 
       {/* ── Usage meters ── */}
       {usage && (
@@ -524,11 +512,11 @@ export default function BillingClient({
                       </p>
                     </div>
                     {isCurrent ? (
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-green-500/20 text-green-400 whitespace-nowrap">
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-green-500/20 text-green-700 dark:text-green-400 whitespace-nowrap">
                         Current
                       </span>
                     ) : featured ? (
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-400 whitespace-nowrap uppercase tracking-wide">
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-700 dark:text-indigo-400 whitespace-nowrap uppercase tracking-wide">
                         Popular
                       </span>
                     ) : null}

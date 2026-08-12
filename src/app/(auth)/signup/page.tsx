@@ -202,7 +202,7 @@ function SignupFlow() {
             </button>
             <p className="text-xs text-slate-400">
               Already have an account?{' '}
-              <Link href="/login" className="text-indigo-500 hover:text-indigo-400 font-medium">Sign in</Link>
+              <Link href="/login" className="text-indigo-500 hover:text-indigo-700 dark:hover:text-indigo-400 font-medium">Sign in</Link>
             </p>
           </div>
         </>
@@ -267,13 +267,13 @@ function SignupFlow() {
 
             <p className="text-center text-slate-400 text-xs mt-5">
               Want more features?{' '}
-              <button onClick={() => setStep('plan')} className="text-indigo-500 hover:text-indigo-400 font-medium">See paid plans</button>
+              <button onClick={() => setStep('plan')} className="text-indigo-500 hover:text-indigo-700 dark:hover:text-indigo-400 font-medium">See paid plans</button>
             </p>
           </div>
 
           <p className="text-center text-slate-500 dark:text-slate-400 text-sm mt-6">
             Already have an account?{' '}
-            <Link href="/login" className="text-indigo-500 hover:text-indigo-400 font-medium transition-colors">Sign in</Link>
+            <Link href="/login" className="text-indigo-500 hover:text-indigo-700 dark:hover:text-indigo-400 font-medium transition-colors">Sign in</Link>
           </p>
         </div>
       )}

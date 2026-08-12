@@ -144,7 +144,11 @@ export async function POST(request: NextRequest) {
         name: data.name,
         slug,
         logo_url: data.logo_url,
-        owner_id: session.user.role === 'manager' ? session.user.id : null,
+        // Every client needs a billing owner so AI usage can be metered/attributed.
+        // Previously admins created ownerless clients (owner_id null), which made
+        // their AI usage unattributable (recordAiUsage no-ops) and invisible on the
+        // credits meter. The creator owns the client regardless of role.
+        owner_id: session.user.id,
       })
       .select()
       .single();
