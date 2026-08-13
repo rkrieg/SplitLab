@@ -13,6 +13,7 @@ import {
   listWorkspaceTests, getTestDetail, updateTest, duplicateVariant, duplicateTest, deleteTest,
   createVariant, createTest, promoteToChampion, getTestAnalytics, getTestDailyStats, TestMeta,
 } from '@/lib/services/tests';
+import { listDomains, addDomain, verifyDomain, deleteDomain, buildDnsInstructions } from '@/lib/services/domains';
 import { resolveWorkspaceRole, resolveOwnerPlan, resolveTestWorkspaceRole } from '@/lib/workspace-auth';
 import { getLinkedVariant } from '@/lib/page-drafts';
 import { PLAN_LIMITS } from '@/lib/plans';
@@ -498,6 +499,62 @@ const TOOLS = [
         slug: { type: 'string', description: 'Lowercase letters, numbers, and hyphens only, e.g. "spring-sale"' },
       },
       required: ['page_id', 'slug'],
+      additionalProperties: false,
+    },
+  },
+
+  // Phase 3 (continued): domain management. Unlike assign_domain (never
+  // built — no page->domain link exists in the schema), domains themselves
+  // are a real, existing, workspace-scoped feature (Vercel integration,
+  // src/app/api/workspaces/[id]/domains/route.ts) — these tools wrap it
+  // directly, same pattern as everything else in this file. update_domain
+  // (swap the domain string) is intentionally NOT exposed here — it
+  // removes+re-adds the domain in Vercel and resets verification, the
+  // riskiest of the four operations; use the SplitLab dashboard for that.
+  {
+    name: 'list_domains',
+    description: 'Lists the custom domains configured for a workspace, each with its verification status. Each entry includes dns_instructions.primary — the CNAME record that must be added at the registrar for traffic to actually route to SplitLab, required for every domain, verified or not. For a root/apex domain only (e.g. "example.com", not "offers.example.com"), dns_instructions.root_domain_alternative is also present — an A record that is an ALTERNATIVE to the CNAME, not an addition to it (some registrars reject a CNAME on the root domain; add ONE of the two, never both — a name can\'t have both record types at once). Separately, vercel_verification (when present) is a TXT record Vercel additionally needs to confirm domain ownership — that is NOT a substitute for dns_instructions. If a user asks "what do I still need to add" for an already-registered domain, use this tool and answer from dns_instructions (plus vercel_verification if set), not from memory of an earlier add_domain response.',
+    inputSchema: {
+      type: 'object',
+      properties: { workspace_id: { type: 'string', description: 'Workspace UUID from list_clients' } },
+      required: ['workspace_id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'add_domain',
+    description: 'Registers a new custom domain on a workspace with Vercel and creates its SplitLab record. Returns dns_instructions.primary — a CNAME record that must ALWAYS be added at the registrar for the domain to route traffic to SplitLab at all — show this to the user verbatim every time, it is not optional. If this is a root/apex domain (e.g. "example.com", not "offers.example.com"), dns_instructions.root_domain_alternative is also returned: an A record the user should add INSTEAD OF the CNAME if their registrar doesn\'t support a CNAME on the root domain — never tell the user to add both, a name can only have one or the other. Separately (and independently of the above), vercel_verification may also be returned — an extra TXT record Vercel sometimes needs for ownership proof; adding only that TXT record without the CNAME/A record leaves the domain "misconfigured" even though ownership looks fine, which is a common mistake — always give the user the CNAME/A instructions too, not the TXT alone. Then call verify_domain once they confirm the records are in place. Subject to the workspace owner\'s plan domain limit.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workspace_id: { type: 'string' },
+        domain: { type: 'string', description: 'The domain or subdomain, e.g. "example.com" or "offers.example.com"' },
+      },
+      required: ['workspace_id', 'domain'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'verify_domain',
+    description: 'Checks whether a domain\'s DNS has been correctly pointed at SplitLab and marks it verified if so. This calls Vercel\'s verification API, which is rate-limited to 50 checks/hour per project across ALL of SplitLab\'s workspaces — do not call this in a retry loop; call it once per user request ("check if my domain is verified now"), and if it reports still-pending, tell the user DNS propagation can take a few minutes and to ask again later rather than re-checking immediately yourself. On a still-not-verified result, re-share dns_instructions from this response (dns_instructions.primary CNAME, or for a root domain dns_instructions.root_domain_alternative A record used INSTEAD of the CNAME, never both) rather than re-sending only status.vercel_verification\'s TXT record — a misconfigured result very often means the CNAME/A record itself was never added, which the TXT record alone will not fix.',
+    inputSchema: {
+      type: 'object',
+      properties: { workspace_id: { type: 'string' }, domain_id: { type: 'string', description: 'Domain UUID from list_domains' } },
+      required: ['workspace_id', 'domain_id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'delete_domain',
+    description: 'Permanently removes a domain from the workspace and from Vercel. Any test currently serving traffic on this domain will stop resolving for visitors. Not reversible through this tool — the domain would need to be re-added and re-verified from scratch.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workspace_id: { type: 'string' },
+        domain_id: { type: 'string', description: 'Domain UUID from list_domains' },
+        confirm: { type: 'boolean', description: 'Must be true — safety check against accidental deletion' },
+      },
+      required: ['workspace_id', 'domain_id', 'confirm'],
       additionalProperties: false,
     },
   },
@@ -1033,6 +1090,77 @@ export async function POST(request: NextRequest) {
         if (result.data.old_slug) revalidatePath(`/pages/${result.data.old_slug}`);
         revalidatePath(`/pages/${result.data.slug}`);
 
+        return succeed(result.data);
+      }
+
+      if (toolName === 'list_domains') {
+        const workspaceId = args.workspace_id as string | undefined;
+        if (!workspaceId) return denyOrFail('workspace_id is required');
+
+        const access = await requireWorkspaceAccess(principal, workspaceId, { write: false });
+        if (!access.ok) return denyOrFail(access.error);
+
+        const result = await listDomains(workspaceId);
+        if (!result.ok) return denyOrFail(result.error);
+        // dns_instructions is computed here, not stored on the row (see
+        // buildDnsInstructions's doc comment) — always attach it so a
+        // troubleshooting call ("what record do I still need?") on an
+        // already-added domain gets the same routing instructions add_domain
+        // returns up front, not just the conditional ownership TXT.
+        // root_domain_alternative is an ALTERNATIVE to primary, not an
+        // addition — never present both as "add these."
+        const withInstructions = (result.data as { domain: string; cname_target: string | null }[]).map((d) => ({
+          ...d, dns_instructions: buildDnsInstructions(d.domain, d.cname_target),
+        }));
+        return succeed(withInstructions);
+      }
+
+      if (toolName === 'add_domain') {
+        const workspaceId = args.workspace_id as string | undefined;
+        const domain = args.domain as string | undefined;
+        if (!workspaceId || !domain) return denyOrFail('workspace_id and domain are required');
+
+        const access = await requireWorkspaceAccess(principal, workspaceId, { write: true });
+        if (!access.ok) return denyOrFail(access.error);
+
+        const result = await addDomain(workspaceId, domain, principal.role);
+        if (!result.ok) return denyOrFail(result.error);
+        const created = result.data as { domain: string; cname_target: string | null };
+        // dns_instructions.primary (CNAME) always routes traffic and is
+        // always required; root_domain_alternative (A record), when present,
+        // is an alternative to primary for root domains, not an addition —
+        // see buildDnsInstructions's doc comment. Distinct from
+        // vercel_verification's TXT record, which only appears when Vercel
+        // needs separate ownership proof.
+        return succeed({ ...created, dns_instructions: buildDnsInstructions(created.domain, created.cname_target) });
+      }
+
+      if (toolName === 'verify_domain') {
+        const workspaceId = args.workspace_id as string | undefined;
+        const domainId = args.domain_id as string | undefined;
+        if (!workspaceId || !domainId) return denyOrFail('workspace_id and domain_id are required');
+
+        const access = await requireWorkspaceAccess(principal, workspaceId, { write: true });
+        if (!access.ok) return denyOrFail(access.error);
+
+        const result = await verifyDomain(workspaceId, domainId);
+        if (!result.ok) return denyOrFail(result.error);
+        const verifyData = result.data as { domain: string; verified: boolean };
+        return succeed({ ...verifyData, dns_instructions: buildDnsInstructions(verifyData.domain, null) });
+      }
+
+      if (toolName === 'delete_domain') {
+        const workspaceId = args.workspace_id as string | undefined;
+        const domainId = args.domain_id as string | undefined;
+        const confirm = args.confirm as boolean | undefined;
+        if (!workspaceId || !domainId) return denyOrFail('workspace_id and domain_id are required');
+        if (confirm !== true) return denyOrFail('confirm must be true to delete a domain — this is irreversible through this tool');
+
+        const access = await requireWorkspaceAccess(principal, workspaceId, { write: true });
+        if (!access.ok) return denyOrFail(access.error);
+
+        const result = await deleteDomain(workspaceId, domainId);
+        if (!result.ok) return denyOrFail(result.error);
         return succeed(result.data);
       }
 
