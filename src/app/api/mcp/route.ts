@@ -1196,6 +1196,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(rpcError(id, -32601, `Unknown tool: ${toolName}`));
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';
+      console.error('[MCP]', toolName, err);
       await logMcpAction(principal, toolName ?? 'unknown', { status: 'error', errorMessage: message });
       return NextResponse.json(rpcResult(id, toolContent({ error: 'Tool execution failed' }, true)));
     }
