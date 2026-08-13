@@ -3404,7 +3404,7 @@ export async function POST(
       if (isVariant) {
         const linkedVariant = await getLinkedVariant(params.id);
         if (linkedVariant) {
-          await rescanVariantHtml(linkedVariant.test_id, linkedVariant.id, linkedVariant.name, finalHtmlReal);
+          await rescanVariantHtml(linkedVariant.test_id, linkedVariant.id, linkedVariant.name, finalHtmlPersisted);
         }
       }
 
