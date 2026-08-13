@@ -3,6 +3,7 @@ import { PLAN_LIMITS } from '@/lib/plans';
 import { uploadHtml, downloadHtml, inlineDataUrisToStorage } from '@/lib/storage';
 import { confidencePercent, findWinner } from '@/lib/stats';
 import { getLinkedVariant } from '@/lib/page-drafts';
+import { rescanVariantHtml } from './scan';
 import { ok, fail, ServiceResult } from './types';
 
 export function fullTestSelect() {
@@ -309,9 +310,6 @@ export async function duplicateVariant(
   workspaceId: string,
   userRole: string
 ): Promise<ServiceResult<unknown>> {
-  interface ScanElement { type: string; id: string | null; text: string | null; selector?: string | null }
-  interface VariantScan { variant_id: string; variant_name: string; scanned_at: string; elements: ScanElement[] }
-
   const { data: source, error: sourceErr } = await db
     .from('test_variants')
     .select('id, name, page_id, redirect_url, proxy_mode, pages(html_content, html_url)')
@@ -353,6 +351,7 @@ export async function duplicateVariant(
   const sourcePage = Array.isArray(sourcePages) ? sourcePages[0] : sourcePages;
 
   let newPageId: string | null = null;
+  let duplicatedHtml: string | null = null;
 
   if (source.page_id) {
     let sourceHtml: string | null = sourcePage?.html_content ?? null;
@@ -364,6 +363,7 @@ export async function duplicateVariant(
       }
     }
     if (!sourceHtml) return fail(400, 'This variant has no HTML content to duplicate');
+    duplicatedHtml = sourceHtml;
 
     const fileName = `${workspaceId}/${crypto.randomUUID()}.html`;
     const htmlUrl = await uploadHtml(fileName, sourceHtml);
@@ -401,14 +401,11 @@ export async function duplicateVariant(
 
   if (varErr) return fail(500, varErr.message);
 
-  const { data: testRow } = await db.from('tests').select('scan_results').eq('id', testId).single();
-  const existingScans = testRow?.scan_results as { variants?: VariantScan[] } | null;
-  const sourceScan = existingScans?.variants?.find((v) => v.variant_id === variantId);
-
-  if (sourceScan) {
-    const clonedScan: VariantScan = { ...sourceScan, variant_id: newVariant.id, variant_name: newName };
-    const updatedVariantsScan = [...(existingScans?.variants ?? []), clonedScan];
-    await db.from('tests').update({ scan_results: { variants: updatedVariantsScan } }).eq('id', testId);
+  // Regenerate from the actual duplicated HTML rather than copying the
+  // source variant's old scan — the two pages are separate rows from this
+  // point on and can drift independently.
+  if (duplicatedHtml) {
+    await rescanVariantHtml(testId, newVariant.id, newName, duplicatedHtml);
   }
 
   const { data: fullTest, error: fetchErr } = await db
@@ -535,8 +532,23 @@ export async function createTest(input: CreateTestInput, actorId: string, actorR
     is_control: i === 0 || v.is_control || false,
   }));
 
-  const { error: varError } = await db.from('test_variants').insert(variantRows as never);
+  const { data: newVariants, error: varError } = await db.from('test_variants').insert(variantRows as never).select('id, name, page_id');
   if (varError) return fail(500, varError.message);
+
+  // First time each linked page becomes scannable — like attachPageAsVariant,
+  // the HTML itself isn't changing here, but nothing could have scanned it
+  // before now since it wasn't part of a test yet.
+  for (const nv of (newVariants ?? []) as { id: string; name: string; page_id: string | null }[]) {
+    if (!nv.page_id) continue;
+    const { data: pageRow } = await db.from('pages').select('html_content, html_url').eq('id', nv.page_id).single();
+    let scanHtml: string | null = pageRow?.html_content ?? null;
+    if (!scanHtml && pageRow?.html_url) {
+      try { scanHtml = await downloadHtml(pageRow.html_url); } catch { scanHtml = null; }
+    }
+    if (scanHtml) {
+      await rescanVariantHtml(test.id, nv.id, nv.name, scanHtml);
+    }
+  }
 
   if (input.goals && input.goals.length > 0) {
     const goalRows = input.goals.map((g) => ({
@@ -605,6 +617,7 @@ export async function duplicateTest(
   const variantIdMap = new Map<string, string>();
   for (const v of srcVariants ?? []) {
     let newPageId: string | null = null;
+    let duplicatedHtml: string | null = null;
     if (v.page_id) {
       const { data: srcPage } = await db
         .from('pages')
@@ -625,6 +638,7 @@ export async function duplicateTest(
           .select('id')
           .single();
         newPageId = newPage?.id ?? null;
+        duplicatedHtml = srcPage.html_content;
       }
     }
 
@@ -641,7 +655,12 @@ export async function duplicateTest(
       } as never)
       .select('id')
       .single();
-    if (newVariant) variantIdMap.set(v.id, newVariant.id);
+    if (newVariant) {
+      variantIdMap.set(v.id, newVariant.id);
+      if (duplicatedHtml) {
+        await rescanVariantHtml(newTest.id, newVariant.id, v.name, duplicatedHtml);
+      }
+    }
   }
 
   const { data: srcGoals } = await db
@@ -739,6 +758,7 @@ export async function createVariant(
   }
 
   let pageId: string | null = null;
+  let scanHtml: string | null = null;
   if (input.html_content) {
     const newPageId = crypto.randomUUID();
     const convertedHtml = await inlineDataUrisToStorage(input.html_content, newPageId);
@@ -752,9 +772,10 @@ export async function createVariant(
       .single();
     if (pageErr) return fail(500, pageErr.message);
     pageId = page.id;
+    scanHtml = convertedHtml;
   }
 
-  const { error: varErr } = await db.from('test_variants').insert({
+  const { data: newVariant, error: varErr } = await db.from('test_variants').insert({
     test_id: testId,
     name: input.name,
     redirect_url: pageId ? null : (input.redirect_url || null),
@@ -762,8 +783,12 @@ export async function createVariant(
     proxy_mode: pageId ? false : (input.proxy_mode ?? true),
     traffic_weight: input.traffic_weight,
     is_control: false,
-  });
+  }).select('id').single();
   if (varErr) return fail(500, varErr.message);
+
+  if (scanHtml && newVariant) {
+    await rescanVariantHtml(testId, newVariant.id, input.name, scanHtml);
+  }
 
   const { data: allVariants } = await db
     .from('test_variants')

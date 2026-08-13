@@ -19,6 +19,19 @@ import { PLAN_LIMITS } from '@/lib/plans';
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://www.trysplitlab.com';
 
+// Matches AnalyticsClient.tsx's nameSlug/testUrl construction exactly — the
+// [slug] path segment in src/app/[slug]/[testId]/route.ts is never actually
+// read (only testId is), so this is cosmetic, but it must still be built the
+// same way the dashboard's own "test link" does for consistency. This is the
+// ONLY link that runs through the real /api/serve pipeline (weighted variant
+// assignment, sticky cookies, tracker.js injection) without needing a custom
+// domain configured — unlike a page's preview_url, which is an
+// authenticated, untracked raw-HTML view for a logged-in human only.
+function buildTestUrl(test: { id: string; name: string; url_path: string }): string {
+  const nameSlug = test.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  return `${APP_URL}/${nameSlug}/${test.id}${test.url_path === '/' ? '' : test.url_path}`;
+}
+
 // Hand-rolled JSON-RPC 2.0 / MCP "stateless streamable HTTP" transport,
 // rather than depending on @modelcontextprotocol/sdk. That SDK's server
 // transports (StreamableHTTPServerTransport, SSEServerTransport) are built
@@ -152,7 +165,7 @@ const TOOLS = [
         workspace_id: { type: 'string', description: 'Workspace UUID from list_clients' },
         name: { type: 'string', description: 'Internal name for the page (shown in the dashboard, not on the page itself)' },
         vertical: { type: 'string', description: 'Short category label, e.g. "SaaS", "Ecommerce", "Local Services"' },
-        html_content: { type: 'string', description: 'Full HTML document for the page' },
+        html_content: { type: 'string', description: 'Full HTML document for the page. If the user has attached image files, embed them directly: base64-encode each file and inline it as <img src="data:image/png;base64,...">. The server automatically detects any base64 data: image URIs in this HTML, uploads them to permanent storage, and rewrites the src to a real hosted URL — no separate upload tool needed.' },
         prompt: { type: 'string', description: 'Optional: the instruction/brief this page was built from, stored for reference' },
       },
       required: ['workspace_id', 'name', 'vertical', 'html_content'],
@@ -171,13 +184,13 @@ const TOOLS = [
   },
   {
     name: 'update_page',
-    description: 'Edits a page\'s HTML/name/prompt/tags/status. This NEVER writes directly to a live, published page: if the page backs an active A/B test variant, the edit is stored as a draft only (use publish_page or the dashboard\'s "Replace variant" to promote it); if the page is a standalone, unpublished draft, the edit updates that draft in place. html_content you send here must be the FULL replacement document, built on top of get_page\'s draft_html_content when one exists (not html_content) — otherwise this overwrites and loses any earlier unsaved draft edit. The response includes preview_url and draft_preview_url (draft_preview_url is set whenever this edit landed in draft) — always share the relevant one back with the user after editing (draft_preview_url if the page backs a test variant or otherwise has a draft, preview_url for a standalone page with no draft) so they can see exactly what they\'re now editing, whether it was an uploaded HTML page or an AI-generated one, before deciding to publish/replace it live. Requires the workspace owner to be on a plan with AI page features.',
+    description: 'Edits a page\'s HTML/name/prompt/tags/status. This NEVER writes directly to a live, published page: if the page backs an active A/B test variant, the edit is stored as a draft only (use publish_page or the dashboard\'s "Replace variant" to promote it); if the page is a standalone, unpublished draft, the edit updates that draft in place. html_content you send here must be the FULL replacement document, built on top of get_page\'s draft_html_content when one exists (not html_content) — otherwise this overwrites and loses any earlier unsaved draft edit. The response includes preview_url and draft_preview_url (draft_preview_url is set whenever this edit landed in draft) — always share the relevant one back with the user after editing (draft_preview_url if the page backs a test variant or otherwise has a draft, preview_url for a standalone page with no draft) so they can see exactly what they\'re now editing, whether it was an uploaded HTML page or an AI-generated one, before deciding to publish/replace it live. If this page backs a test variant, its scan_results are regenerated against the edited HTML on every save (draft or live) — call get_test for the linked test to read fresh, verified selectors before setting up a conversion goal. Requires the workspace owner to be on a plan with AI page features.',
     inputSchema: {
       type: 'object',
       properties: {
         page_id: { type: 'string' },
         name: { type: 'string' },
-        html_content: { type: 'string', description: 'Full replacement HTML document' },
+        html_content: { type: 'string', description: 'Full replacement HTML document. If the user has attached image files, embed them directly: base64-encode each file and inline it as <img src="data:image/png;base64,...">. The server automatically detects any base64 data: image URIs in this HTML, uploads them to permanent storage, and rewrites the src to a real hosted URL — no separate upload tool needed. Build this on top of get_page\'s draft_html_content when one exists, not html_content.' },
         prompt: { type: 'string' },
         tags: { type: 'array', items: { type: 'string' } },
         status: { type: 'string', enum: ['active', 'archived'] },
@@ -223,7 +236,7 @@ const TOOLS = [
   // close the page lifecycle create_page/update_page otherwise dead-end at.
   {
     name: 'list_tests',
-    description: 'Lists the A/B tests in a workspace, each with its variants (id, name, traffic_weight, is_control, archived, linked page_id) and conversion goals (id, name, type, is_primary). Call this before any variant/test tool that needs a test_id or variant_id — Claude cannot guess these.',
+    description: 'Lists the A/B tests in a workspace, each with its variants (id, name, traffic_weight, is_control, archived, linked page_id) and conversion goals (id, name, type, is_primary). Call this before any variant/test tool that needs a test_id or variant_id — Claude cannot guess these. Each test also includes test_url — the real, live-traffic link for that test (runs through actual weighted variant assignment, sticky cookies, and conversion tracking, no custom domain needed). This is what to give the user when they ask for "the test link" or want to click through and verify a goal actually fires — NOT a page\'s preview_url, which is an authenticated, untracked raw-HTML view for a logged-in human only and will never register a conversion.',
     inputSchema: {
       type: 'object',
       properties: { workspace_id: { type: 'string', description: 'Workspace UUID from list_clients' } },
@@ -233,7 +246,7 @@ const TOOLS = [
   },
   {
     name: 'get_test',
-    description: 'Fetches one test\'s full detail: status, url_path, every variant (with id, name, traffic_weight, is_control, archived_at, linked page id/name), and every conversion goal (with id). Goal and variant ids returned here must be reused verbatim by update_test_weights/update_test_goals — never invent or regenerate them.',
+    description: 'Fetches one test\'s full detail: status, url_path, every variant (with id, name, traffic_weight, is_control, archived_at, linked page id/name), and every conversion goal (with id). Goal and variant ids returned here must be reused verbatim by update_test_weights/update_test_goals — never invent or regenerate them. Also includes scan_results: { variants: [{ variant_id, elements: [{ type, id, text, selector }] }] } — a pre-verified list of clickable elements (forms/buttons/checkboxes/links) actually present in each HTML variant\'s markup, auto-generated whenever that variant\'s HTML is written. When setting up a conversion goal with update_test_goals or create_test, always take the selector from here for the matching variant_id rather than inventing one by reading HTML yourself — these are checked to actually match an element, a guessed selector is not. A variant with no scan_results entry (or a redirect-type variant, which has no HTML at all) has nothing verified yet — tell the user it needs to be scanned manually in the SplitLab dashboard (the "Scan Page" flow on a live URL) before you can set up a reliable goal for it. Also includes test_url — the real, trackable, live-traffic link for this test (weighted variant assignment, real conversion tracking). Hand this to the user when they want to click through and test a goal themselves, not a page\'s preview_url.',
     inputSchema: {
       type: 'object',
       properties: { test_id: { type: 'string' } },
@@ -243,7 +256,7 @@ const TOOLS = [
   },
   {
     name: 'create_test',
-    description: 'Creates a brand-new A/B test in a workspace, with one or more variants (e.g. an existing standalone page as the Control at 100% traffic, matching the dashboard\'s "Save as a New Test" action). Variant traffic_weights must sum to exactly 100. A page already linked to another test cannot be reused as a variant here. Fails if another ACTIVE test in the workspace already uses the same url_path.',
+    description: 'Creates a brand-new A/B test in a workspace, with one or more variants (e.g. an existing standalone page as the Control at 100% traffic, matching the dashboard\'s "Save as a New Test" action). Variant traffic_weights must sum to exactly 100. A page already linked to another test cannot be reused as a variant here. Fails if another ACTIVE test in the workspace already uses the same url_path. If you also want to set up goals here, each linked page gets auto-scanned the moment it\'s attached — call get_test right after this to read scan_results and pull verified selectors from there for update_test_goals, rather than guessing selectors up front in this call.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -289,7 +302,7 @@ const TOOLS = [
   },
   {
     name: 'save_page_as_variant',
-    description: 'Attaches an existing standalone page (e.g. one just created via create_page) onto a chosen test as a new variant, at 0% traffic. The page must already have built HTML. A page can only ever back one variant — this fails if it\'s already linked to one (use save_page_as_new to fork instead). Does not touch the test\'s existing traffic split.',
+    description: 'Attaches an existing standalone page (e.g. one just created via create_page) onto a chosen test as a new variant, at 0% traffic. The page must already have built HTML. A page can only ever back one variant — this fails if it\'s already linked to one (use save_page_as_new to fork instead). Does not touch the test\'s existing traffic split. The variant\'s clickable elements get auto-scanned the moment it\'s attached — call get_test afterward to read scan_results if you\'re about to set up a conversion goal on it.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -303,7 +316,7 @@ const TOOLS = [
   },
   {
     name: 'save_page_as_new',
-    description: 'Forks a variant-linked page\'s current draft (or live HTML if no draft) into a brand-new page and wires it into the SAME test as a new variant at 0% traffic. The original variant and every other variant\'s traffic are left untouched — this is the non-destructive alternative to replace_variant. Clears the original page\'s draft afterward.',
+    description: 'Forks a variant-linked page\'s current draft (or live HTML if no draft) into a brand-new page and wires it into the SAME test as a new variant at 0% traffic. The original variant and every other variant\'s traffic are left untouched — this is the non-destructive alternative to replace_variant. Clears the original page\'s draft afterward. The new variant\'s scan_results are regenerated automatically — call get_test afterward for fresh selectors before setting up goals on it.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -316,7 +329,7 @@ const TOOLS = [
   },
   {
     name: 'replace_variant',
-    description: 'DANGER — promotes a variant-linked page\'s draft onto LIVE immediately: this changes what real visitors see the moment it is called, with no separate confirmation step. Only use this when the user has clearly asked to publish/ship/go-live with the current edit to an existing test variant. For a safer non-destructive option, use save_page_as_new instead. Fails if the page has no pending draft.',
+    description: 'DANGER — promotes a variant-linked page\'s draft onto LIVE immediately: this changes what real visitors see the moment it is called, with no separate confirmation step. Only use this when the user has clearly asked to publish/ship/go-live with the current edit to an existing test variant. For a safer non-destructive option, use save_page_as_new instead. Fails if the page has no pending draft. scan_results for this variant are regenerated against the newly-live HTML — any goal selector set against the old content should be re-checked via get_test afterward, since the markup it pointed at may no longer exist.',
     inputSchema: {
       type: 'object',
       properties: { page_id: { type: 'string', description: 'Must already be linked to a test variant and have a pending draft' } },
@@ -326,7 +339,7 @@ const TOOLS = [
   },
   {
     name: 'duplicate_variant',
-    description: 'Clones a variant (its page\'s HTML, or its redirect/proxy config) into a new variant on the same test, at 0% traffic. Does not copy conversion goals or personalization rules. Use this for "make a copy of variant X to tweak."',
+    description: 'Clones a variant (its page\'s HTML, or its redirect/proxy config) into a new variant on the same test, at 0% traffic. Does not copy conversion goals or personalization rules. Use this for "make a copy of variant X to tweak." An HTML clone is freshly scanned under its own variant_id (not copied from the source) — call get_test to read its scan_results once you start editing it.',
     inputSchema: {
       type: 'object',
       properties: { test_id: { type: 'string' }, variant_id: { type: 'string' } },
@@ -336,7 +349,7 @@ const TOOLS = [
   },
   {
     name: 'create_variant',
-    description: 'Adds a fresh (blank, not cloned) variant to an existing test — either HTML you write yourself, or a redirect URL, or proxy mode. Existing variants\' weights are automatically equalized across the new total.',
+    description: 'Adds a fresh (blank, not cloned) variant to an existing test — either HTML you write yourself, or a redirect URL, or proxy mode. Existing variants\' weights are automatically equalized across the new total. An HTML variant gets scanned automatically on creation — call get_test to read its scan_results before setting up a conversion goal on it. A redirect/proxy variant has no HTML, so it never gets scan_results — goals on it need a manual scan in the dashboard first.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -441,7 +454,7 @@ const TOOLS = [
   },
   {
     name: 'update_test_goals',
-    description: 'Replaces a test\'s conversion goals by full diff. To edit or keep an existing goal, pass its id back exactly as returned by get_test/list_tests — omitting a previously-listed goal\'s id here deletes it. Never invent a new id for an existing goal: doing so would orphan its historical event data. Goals with no id are created as new.',
+    description: 'Replaces a test\'s conversion goals by full diff. To edit or keep an existing goal, pass its id back exactly as returned by get_test/list_tests — omitting a previously-listed goal\'s id here deletes it. Never invent a new id for an existing goal: doing so would orphan its historical event data. Goals with no id are created as new. For form_submit/button_click/call_click goals, call get_test first and take the `selector` from its scan_results for the target variant_id (map scan element type → goal type: form→form_submit, button→button_click, call→call_click) — never write your own guessed selector, it will silently never fire if wrong. url_reached goals use url_pattern instead and don\'t need a selector. If scan_results has no entry for that variant (or it\'s a redirect-type variant with no HTML), tell the user to scan it manually in the dashboard first.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -742,7 +755,8 @@ export async function POST(request: NextRequest) {
 
         const result = await listWorkspaceTests(workspaceId);
         if (!result.ok) return denyOrFail(result.error);
-        return succeed(result.data);
+        const withUrls = (result.data as { id: string; name: string; url_path: string }[]).map((t) => ({ ...t, test_url: buildTestUrl(t) }));
+        return succeed(withUrls);
       }
 
       if (toolName === 'get_test') {
@@ -754,7 +768,8 @@ export async function POST(request: NextRequest) {
 
         const result = await getTestDetail(testId);
         if (!result.ok) return denyOrFail(result.error);
-        return succeed(result.data);
+        const test = result.data as { id: string; name: string; url_path: string };
+        return succeed({ ...test, test_url: buildTestUrl(test) });
       }
 
       if (toolName === 'create_test') {
