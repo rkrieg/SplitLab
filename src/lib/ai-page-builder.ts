@@ -524,6 +524,11 @@ export interface BuildHtmlOptions {
    */
   imagesAreDesignRefs?: boolean;
   /**
+   * Model-decided page shape from the schema pass: a minimal/custom page
+   * (confirmation, thank-you, hero-only) rather than a full reference clone.
+   */
+  minimalShape?: boolean;
+  /**
    * Pre-formatted style context string. When provided, skips the design brief
    * step entirely. Callers are responsible for formatting this.
    *
@@ -577,8 +582,10 @@ export async function buildHtmlFromSchema(
   // but must NOT be embedded as <img src>. Caller can set imagesAreDesignRefs,
   // or we infer from designReferenceCopy being populated.
   const imagesAreRefs = options.imagesAreDesignRefs === true || designReferenceCopy.length > 0;
-  const minimalShape =
-    typeof userPrompt === 'string' && userWantsCustomOrMinimalPage(userPrompt);
+  // Decided upstream by the model (generate's shape classification, forwarded
+  // through build). A keyword test here disagreed with that decision whenever
+  // the user phrased "just a confirmation page" in any unanticipated way.
+  const minimalShape = options.minimalShape === true;
 
   // Determine style reference:
   // 1. Caller-provided note (follow-up non-URL case) — use as-is, skip design brief

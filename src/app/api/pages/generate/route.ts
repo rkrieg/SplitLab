@@ -9,13 +9,11 @@ import { resolveWorkspaceRole, resolveOwnerPlan } from '@/lib/workspace-auth';
 import { PLAN_LIMITS } from '@/lib/plans';
 import { extractUrls, scrapeCompetitorUrl } from '@/lib/ai-competitor-scrape';
 import {
-  userWantsCustomOrMinimalPage,
   injectBrandAssetsIntoSchema,
   classifyPageShapeIntent,
   stripUnpromptedSocialProof,
 } from '@/lib/ai-brand-assets';
 import {
-  userAskedForSocialProof,
   extractDesignReferenceCopy,
 } from '@/lib/ai-follow-up-helpers';
 import type { AIContent, AIContentBlock, AIMessage } from '@/lib/ai-client';
@@ -192,11 +190,21 @@ export async function POST(request: NextRequest) {
     const competitorContext = urls.length > 0 ? await scrapeCompetitorUrl(urls[0]) : null;
     let minimalOrCustom = false;
     if (competitorContext) {
-      if (userWantsCustomOrMinimalPage(prompt)) {
-        minimalOrCustom = true;
-      } else {
-        minimalOrCustom = (await classifyPageShapeIntent(prompt)) === 'minimal_or_custom';
+      // Model-decided, with no keyword fallback either side of it. If the model
+      // can't answer, we report an outage — guessing here decides whether the
+      // whole page clones a reference site or stays a one-section confirmation,
+      // which is far too big a call to make from punctuation.
+      const shape = await classifyPageShapeIntent(prompt);
+      if (shape === null) {
+        return NextResponse.json(
+          {
+            error:
+              'The AI service didn’t respond properly just now — nothing was created. Please try again in a moment.',
+          },
+          { status: 503 },
+        );
       }
+      minimalOrCustom = shape === 'minimal_or_custom';
     }
     if (competitorContext) {
       console.log('[competitor] cssTokens:\n', competitorContext.cssTokens || '(empty)');
@@ -366,8 +374,14 @@ export async function POST(request: NextRequest) {
           footer: competitorContext.footerContact,
         });
       }
-      const keepProof =
-        userAskedForSocialProof(prompt) || (!!competitorContext && !minimalOrCustom);
+      // Whether the user asked for stats/testimonials/logo walls is a question
+      // about meaning, so the classifier answers it — not a keyword list.
+      // Stripping is the destructive action here, so when the classifier is
+      // unavailable we keep everything rather than delete sections based on a
+      // keyword guess about whether stats were wanted.
+      const keepProof = !createIntent
+        ? true
+        : createIntent.wantsSocialProof || (!!competitorContext && !minimalOrCustom);
       schema = stripUnpromptedSocialProof(schema, prompt, keepProof);
       parsed = { ...parsed, schema };
       const s = schema;
@@ -393,6 +407,11 @@ export async function POST(request: NextRequest) {
       // must not re-derive it from keywords and reach a different answer.
       ...(attachedImageUrls.length > 0
         ? { design_reference: designAsk, reuse_reference_copy: reuseReferenceWords }
+        : {}),
+      // Where the screenshot's copy belongs, decided by the model that read the
+      // request. Build places it ONLY here — no section named, no placement.
+      ...(designCopyLines.length > 0 && createIntent && createIntent.targetSections.length > 0
+        ? { design_copy_sections: createIntent.targetSections }
         : {}),
       ...(modelRequirements.length > 0 ? { requirements: modelRequirements } : {}),
     });

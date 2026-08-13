@@ -470,8 +470,12 @@ export function resolveSourceSectionName(
   sectionNames: string[],
 ): string | null {
   if (!hint) return null;
-  const mapped = inferTargetSectionNames(hint, sectionNames);
-  return mapped[0] ?? null;
+  // The hint already comes from the classifier, validated against the live
+  // section list — so this is a lookup, not a guess. Running the keyword mapper
+  // over an already-resolved name could only ever change a correct answer into
+  // a different one.
+  const exact = sectionNames.find((n) => n.toLowerCase() === hint.trim().toLowerCase());
+  return exact ?? null;
 }
 
 function escapeHtml(s: string): string {

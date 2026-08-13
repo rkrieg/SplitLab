@@ -109,10 +109,19 @@ export function findUnrequestedLosses(opts: {
   beforeHtml: string;
   afterHtml: string;
   prompt: string;
+  /**
+   * The classifier's read on whether the user is deliberately deleting
+   * something. Pass it and it decides; the keyword test below is only used when
+   * a caller has no classification available, because "is this a delete?" is a
+   * question about meaning, not about which words were typed.
+   */
+  removalIntent?: boolean;
 }): PageLosses {
-  const { beforeHtml, afterHtml, prompt } = opts;
+  const { beforeHtml, afterHtml, prompt, removalIntent } = opts;
   const empty: PageLosses = { images: [], sections: [], headings: [], editableFields: [] };
-  if (promptHasRemovalIntent(prompt)) return empty;
+  const isRemoval =
+    typeof removalIntent === 'boolean' ? removalIntent : promptHasRemovalIntent(prompt);
+  if (isRemoval) return empty;
 
   const before = snapshotPageFacts(beforeHtml);
   const after = snapshotPageFacts(afterHtml);

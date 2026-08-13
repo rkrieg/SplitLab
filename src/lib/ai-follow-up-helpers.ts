@@ -15,6 +15,13 @@ export interface PlanStep {
   target_sections: string[];
   /** Hint for routing — patch is the default */
   op: 'patch' | 'remove_section' | 'insert_section' | 'structural' | 'image_generate';
+  /**
+   * This step means "recreate this section to look like the attachment".
+   * Decided by the planner that read the message and saw the images — a keyword
+   * test here used to send "make the logo white" down the recreate-from-
+   * screenshot path and rebuild a section nobody asked to touch.
+   */
+  design_match: boolean;
 }
 
 export type EditPlan =
@@ -269,7 +276,12 @@ export function verifyScopedPatchIntent(opts: {
    * white everywhere it's used" (→ nav, footer) passed an identical-HTML patch
    * as "ok" because no literal "nav" or "footer" appeared in the prompt text.
    */
-  intentTargetSections?: string[] | null;
+  /**
+   * REQUIRED. The classifier's resolved sections for this ask — an empty array
+   * is a valid answer ("it could not tell"). Required rather than optional so
+   * there is no code path where this falls back to word-matching the prompt.
+   */
+  intentTargetSections: string[];
   /**
    * Classifier (or caller) already decided this step is a design-reference
    * match. When set, do not re-run isDesignReferenceAsk on the prompt — a
@@ -277,9 +289,11 @@ export function verifyScopedPatchIntent(opts: {
    * a design-match no-op.
    */
   designMatch?: boolean;
+  /** Classifier's read on whether the user is deliberately deleting content. */
+  removalIntent?: boolean;
 }): { ok: true } | { ok: false; reason: string; severity: 'hard' | 'soft' } {
   const { prompt, sectionName, beforeHtml, afterHtml, requiredSubstring, requiredPhrases, intentTargetSections } = opts;
-  const treatAsDesignMatch = opts.designMatch ?? isDesignReferenceAsk(prompt);
+  const treatAsDesignMatch = opts.designMatch ?? false;
 
   if (requiredSubstring && !afterHtml.includes(requiredSubstring)) {
     return {
@@ -297,13 +311,10 @@ export function verifyScopedPatchIntent(opts: {
     const quotes = extractVerifyQuotes(prompt);
     // The user naming this section ("make the navbar text bigger") is itself a
     // requirement: an identical section means the ask was not carried out, even
-    // for style-only edits with nothing quotable to check for. The classifier's
-    // resolved sections take priority — that's what actually routed this patch
-    // here — falling back to keyword inference only when it's unavailable.
-    const userNamedThisSection =
-      intentTargetSections && intentTargetSections.length > 0
-        ? intentTargetSections.includes(sectionName)
-        : inferTargetSectionNames(prompt, [sectionName]).length > 0;
+    // for style-only edits with nothing quotable to check for. The list is the
+    // classifier's — authoritative even when EMPTY, since "resolved no section"
+    // is an answer, not a reason to start keyword-guessing.
+    const userNamedThisSection = intentTargetSections.includes(sectionName);
     if (
       quotes.length > 0 ||
       requiredSubstring ||
@@ -320,7 +331,7 @@ export function verifyScopedPatchIntent(opts: {
   // the user's ability to edit that text by hand — invisible damage, and now
   // that soft misses are kept rather than discarded, nothing else would catch
   // it. Skipped when the user is deliberately removing content.
-  if (!/\b(remove|delete|get rid of|take (it|that|this|them) (out|off)|drop|strip|hide|without the)\b/i.test(prompt)) {
+  if (!opts.removalIntent) {
     const lostFields = dataFieldNames(beforeHtml).filter(
       (f) => !dataFieldNames(afterHtml).includes(f),
     );
@@ -361,8 +372,12 @@ export function verifyScopedPatchIntent(opts: {
   // when the quote was already present in this section before OR no other
   // section context — for multi-section patches we only enforce when the
   // before HTML already contained a similar phrase or the prompt names this section.
-  const namesThisSection = new RegExp(`\\b${escapeRegExp(sectionName)}\\b`, 'i').test(prompt);
-  const rewriteIntent = /\b(change|rewrite|replace|update|say|should say|make it say|use this|to:)\b/i.test(prompt);
+  // Classifier-resolved. No prompt-matching fallback exists any more.
+  const namesThisSection = intentTargetSections.includes(sectionName);
+  // A quoted phrase in the instruction is itself the rewrite signal — the verb
+  // list ("change", "rewrite", "say"…) added nothing but false negatives for
+  // any phrasing it hadn't anticipated.
+  const rewriteIntent = quotes.length > 0;
 
   if (rewriteIntent && quotes.length > 0) {
     const anyQuoteInAfter = quotes.some((q) => afterHtml.includes(q));
@@ -388,7 +403,9 @@ export function verifyScopedPatchIntent(opts: {
   // Remove intent: quoted or clearly named UI chrome must leave this section
   // when the prompt says remove/get rid and names this section or the string
   // was only in this section's before HTML.
-  const removeIntent = /\b(remove|delete|get rid of|take (out|off)|strip)\b/i.test(prompt);
+  // Classifier-decided; the keyword list here missed every phrasing it had not
+  // been taught ("kill the strip", "that shouldn't be there").
+  const removeIntent = opts.removalIntent === true;
   if (removeIntent && quotes.length > 0 && namesThisSection) {
     const stillPresent = quotes.filter((q) => afterHtml.includes(q) && beforeHtml.includes(q));
     if (stillPresent.length > 0 && stillPresent.length === quotes.length) {
@@ -435,7 +452,9 @@ function escapeRegExp(s: string): string {
 
 const PLANNER_SYSTEM = `You plan landing-page AI edits. Split a user message into ordered atomic edit steps when it contains multiple distinct intents. Return JSON only.
 
-{"mode":"execute"|"clarify"|"single","steps":[{"instruction":"...","target_sections":["hero"],"op":"patch"}],"clarifying_question":null}
+{"mode":"execute"|"clarify"|"single","steps":[{"instruction":"...","target_sections":["hero"],"op":"patch","design_match":false}],"clarifying_question":null}
+
+"design_match": true when THIS step means "make this section look like the attached screenshot" (recreate its layout/structure from the image). False for a targeted tweak that merely mentions something visible — recolouring or resizing a logo, changing a font, editing copy — where recreating the section from a screenshot would destroy work the user wants kept.
 
 Rules:
 - mode "single": one clear intent (or already atomic) — return mode single and empty steps. The product will use the fast existing path.
@@ -458,6 +477,8 @@ export async function planMultiIntentEdit(opts: {
   usage?: UsageContext;
   /** Classifier-split asks — prefer these over a second planner call. */
   seedAsks?: Array<{ instruction: string; sections: string[] }>;
+  /** Classifier's read on whether this message is a "look like this" ask. */
+  designMatch?: boolean;
 }): Promise<EditPlan> {
   const { prompt, sectionNames, sectionPreviews, imageUrls, forceDecide, usage } = opts;
 
@@ -465,21 +486,19 @@ export async function planMultiIntentEdit(opts: {
     .filter((a) => a && typeof a.instruction === 'string' && a.instruction.trim())
     .slice(0, 5)
     .map((a) => {
+      // Classifier-resolved sections only. An empty list is honest ("it could
+      // not tell") and the caller resolves it with another model call — a
+      // keyword guess here landed edits in whatever section a word matched.
       const named = (a.sections ?? []).filter((n) => sectionNames.includes(n));
-      const targets =
-        named.length > 0 ? named : inferTargetSectionNames(a.instruction, sectionNames);
       return {
         instruction: a.instruction.trim(),
-        target_sections: targets,
+        target_sections: named,
         op: 'patch' as const,
+        design_match: opts.designMatch ?? false,
       };
     });
   if (seeded.length >= 2) {
     return { mode: 'execute', steps: seeded };
-  }
-
-  if (forceDecide || userWantsUsToDecide(prompt)) {
-    // Still try to split if multi-intent; never return clarify.
   }
 
   try {
@@ -488,7 +507,7 @@ export async function planMultiIntentEdit(opts: {
       .join('\n');
     const textPart =
       `Available sections:\n${list}\n\nKnown names: ${sectionNames.join(', ')}\n\nUser instruction:\n${prompt}` +
-      (forceDecide || userWantsUsToDecide(prompt)
+      (forceDecide
         ? '\n\n(User deferred to you — mode must be execute or single, never clarify.)'
         : '') +
       (imageUrls.length > 0
@@ -518,12 +537,12 @@ export async function planMultiIntentEdit(opts: {
     if (jsonStart >= 0 && jsonEnd > jsonStart) raw = raw.slice(jsonStart, jsonEnd + 1);
     const parsed = JSON.parse(raw) as {
       mode?: string;
-      steps?: Array<{ instruction?: string; target_sections?: string[]; op?: string }>;
+      steps?: Array<{ instruction?: string; target_sections?: string[]; op?: string; design_match?: boolean }>;
       clarifying_question?: string | null;
     };
 
     if (parsed.mode === 'clarify') {
-      if (forceDecide || userWantsUsToDecide(prompt) || isScreenshotComplaint(prompt, imageUrls.length > 0)) {
+      if (forceDecide) {
         return { mode: 'single' };
       }
       const q =
@@ -546,9 +565,11 @@ export async function planMultiIntentEdit(opts: {
             : 'patch';
         steps.push({
           instruction: s.instruction.trim(),
-          target_sections:
-            targets.length > 0 ? targets : inferTargetSectionNames(s.instruction.trim(), sectionNames),
+          // Planner-resolved only. Empty means "it could not tell" — the caller
+          // asks the model again rather than keyword-matching a section here.
+          target_sections: targets,
           op,
+          design_match: s.design_match === true,
         });
       }
       if (steps.length >= 2) return { mode: 'execute', steps };

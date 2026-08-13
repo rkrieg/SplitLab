@@ -17,8 +17,6 @@ import { rescanVariantHtml } from '@/lib/services/scan';
 import { extractDataUris, restoreDataUris, restoreDataUrisInValue } from '@/lib/data-uri-strip';
 import {
   planMultiIntentEdit,
-  userWantsUsToDecide,
-  inferDesignMatchSectionNames,
   verifyScopedPatchIntent,
   extractDesignReferenceCopy,
 } from '@/lib/ai-follow-up-helpers';
@@ -38,10 +36,8 @@ import {
   forcePlaceTextIntoSections,
   resolveSourceSectionName,
   sectionHasText,
-  inferTargetSectionNames,
-  isLogoStyleAsk,
 } from '@/lib/ai-content-placement';
-import { classifyEditIntent, imageRolesFromIntent } from '@/lib/ai-edit-intent';
+import { classifyEditIntent, imageRolesFromIntent, resolveSectionsForAsk } from '@/lib/ai-edit-intent';
 import { ensureClickToEditFields } from '@/lib/ai-data-field-stamp';
 import { verifyAndRehostHtmlImages } from '@/lib/ai-asset-integrity';
 import {
@@ -49,7 +45,6 @@ import {
   hasLosses,
   describeLosses,
   sectionsContainingAsset,
-  promptHasIntentionalLogoReplace,
 } from '@/lib/ai-page-preservation';
 import {
   assetRequirements,
@@ -373,25 +368,11 @@ function tryDirectQuoteMatch(prompt: string, sections: SlSection[]): string | nu
   return matchedNames.size === 1 ? Array.from(matchedNames)[0] : null;
 }
 
-/** True when the prompt is a copy rewrite, not a layout/structure/image ask. */
-function isSimpleTextRewritePrompt(prompt: string): boolean {
-  const p = prompt.toLowerCase();
-  if (/\b(https?:\/\/|www\.)/i.test(prompt)) return false;
-  // "in this section" is a destination, not a structural redesign ask.
-  if (
-    /\b(redesign|rebuild|restructure|layout|spacing|padding|margin|font-size|color|colour|background|image|logo|photo|add a |remove |delete |reorder|move .+ (above|below|before|after)|button style|css|stylesheet)\b/i.test(
-      p,
-    )
-  ) {
-    return false;
-  }
-  return (
-    /\b(change|rewrite|rephrase|improve|update|better|alternative|nicer|polish|tighten|shorten|clarify|refine)\b/i.test(
-      p,
-    ) &&
-    /\b(text|copy|headline|heading|title|subhead|sub-head|tagline|wording|this|it)\b/i.test(p)
-  );
-}
+// isSimpleTextRewritePrompt (deleted): a keyword test that decided a request was
+// "just a copy rewrite" and took a shortcut path. It marked the edit applied
+// after handling only the text, so "change the headline to X and make it bigger"
+// silently shipped without the resize. The classifier decides this now — see
+// surgicalEligible at the call site.
 
 /**
  * True when the instruction explicitly asks for a visual/design change
@@ -441,7 +422,10 @@ async function trySurgicalTextEdit(
   prompt: string,
   sections: SlSection[],
 ): Promise<{ sectionName: string; html: string } | null> {
-  if (!isSimpleTextRewritePrompt(prompt)) return null;
+  // No keyword gate: the caller decides eligibility from the classifier. This
+  // path is self-limiting anyway — it only proceeds when the prompt contains
+  // copy that literally exists in exactly one section, which is a fact about
+  // the page rather than a guess about the wording.
   const candidates = extractCopyCandidates(prompt);
   let oldText: string | null = null;
   let section: SlSection | null = null;
@@ -572,19 +556,20 @@ function buildDefaultClarifyQuestion(routing: RoutingResult, sections: SlSection
  * FAQ while a form/cta section exists on the page.
  */
 function shouldForceClarifyFaqVsForm(
-  prompt: string,
   routing: RoutingResult,
   hasUserImages: boolean,
-  sections: SlSection[],
+  intentSections: string[],
 ): boolean {
   if (!hasUserImages) return false;
-  if (!/\b(question|questions|answer|answers|form|dropdown|select|investment range)\b/i.test(prompt)) {
-    return false;
-  }
   const targets = routing.target_sections ?? [];
   if (targets.length !== 1) return false;
+  // Section NAMES are facts about the page, not a guess about the user's words.
   if (!/^faq/i.test(targets[0])) return false;
-  return sections.some((s) => /cta|form|popup|contact|lead/i.test(s.name));
+  // The keyword list that used to sit here ("question", "form", "dropdown"…)
+  // is gone. The real signal is two model passes disagreeing about where this
+  // belongs: the router says FAQ, the classifier says somewhere else. That is
+  // genuine ambiguity, and worth one question.
+  return intentSections.length > 0 && !intentSections.includes(targets[0]);
 }
 
 async function tryRoutingCall(
@@ -1369,9 +1354,14 @@ export async function POST(
   const priorUserUrls = history
     .filter((h) => h.role === 'user' && typeof h.content === 'string')
     .flatMap((h) => extractUrls(h.content));
+  const intentSectionsSnapshot = extractSlSections(html);
   const intent = await classifyEditIntent({
     prompt,
-    sectionNames: extractSlSections(html).map((s) => s.name),
+    sectionNames: intentSectionsSnapshot.map((s) => s.name),
+    // What each section CONTAINS, not just its name — this is what lets
+    // "remove this" + a screenshot resolve to a real section instead of
+    // silently returning no target and changing nothing.
+    sectionOutline: intentSectionsSnapshot.map((s) => ({ name: s.name, text: s.text })),
     imageUrls: effectiveImageUrls,
     earlierUrls: priorUserUrls,
     embeddableAssetUrls: [
@@ -1395,35 +1385,24 @@ export async function POST(
       }
     : 'unavailable');
 
-  // Intent failed (timeout / truncate / bad JSON). Do NOT regex-route —
-  // that was the second brain. Ask once; if they already clarified or said
-  // decide, still ask with a decide hint rather than silent keyword routing.
+  // Intent failed (timeout / truncate / bad JSON). That is OUR outage, not a
+  // badly-worded request — so say so and let them retry, instead of asking the
+  // user to re-explain a perfectly clear message (and instead of regex-routing,
+  // which was the second brain this whole design removes). Nothing is written
+  // to the conversation: a system failure is not a turn in their chat.
   if (!intent) {
     const { stream, controller } = createSSEStream();
     const response = new Response(stream, { headers: SSE_HEADERS });
     void (async () => {
       try {
-        const question = lastAssistantWasClarify || userWantsUsToDecide(prompt)
-          ? 'I still couldn’t read that reliably. Name the section (footer, nav, hero, …) and the change — or send the ask in one short sentence.'
-          : 'I couldn’t reliably read that request. Tell me which part of the page to change (e.g. footer, nav, hero), or say “you decide” and I’ll pick the best interpretation.';
-        const userEntry: Record<string, unknown> = { role: 'user', content: prompt };
-        if (Array.isArray(image_urls) && image_urls.length > 0) userEntry.image_urls = image_urls;
-        const updatedConversation = [
-          ...history,
-          userEntry,
-          { role: 'assistant', content: question, clarify: true },
-        ];
-        await db
-          .from('pages')
-          .update({
-            conversation_json: updatedConversation,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', params.id);
-        console.log('[pages/follow-up] intent unavailable — asking user (no regex fallback)');
-        sendSSE(controller, { type: 'clarify', message: question });
+        console.error('[pages/follow-up] intent unavailable — reporting AI outage, no regex fallback');
+        sendSSE(controller, {
+          type: 'error',
+          message:
+            'The AI service didn’t respond properly just now — nothing on your page was changed. Please try that again in a moment.',
+        });
       } catch (err) {
-        console.error('[pages/follow-up] intent-clarify failed', err);
+        console.error('[pages/follow-up] intent-failure reporting failed', err);
         sendSSE(controller, { type: 'error', message: userFacingAIErrorMessage(err) });
       } finally {
         closeSSE(controller);
@@ -1484,8 +1463,13 @@ export async function POST(
     isLogoSwapAttempt || isScopedDespiteUrl || isContentImageSwapAttempt;
   let slSections =
     competitorUrls.length === 0 || allowScopedWithCompetitorUrl ? extractSlSections(html) : [];
+  // Exact-quote shortcut: the user quoted copy that exists in exactly one
+  // section. Counting matches is a fact, not a judgement — but it must never
+  // PRE-EMPT the model. When an image is attached, or the classifier resolved
+  // sections of its own, the model has context this lookup cannot see (the
+  // screenshot may point somewhere else entirely), so its answer wins.
   const quoteMatchSection =
-    competitorUrls.length === 0 || allowScopedWithCompetitorUrl
+    !hasUserImages && (competitorUrls.length === 0 || allowScopedWithCompetitorUrl)
       ? tryDirectQuoteMatch(prompt, slSections)
       : null;
 
@@ -1556,7 +1540,14 @@ export async function POST(
       // actually has SL section markers to scope to. See
       // docs/follow-up-input-scoping.md for the full design + guardrails.
       if (slSections.length > 0) {
-        let targetSections: string[] | null = quoteMatchSection ? [quoteMatchSection] : null;
+        // The classifier read the whole message; the quote lookup only counted
+        // string matches. When both have an answer, the model's wins.
+        let targetSections: string[] | null =
+          intentSections.length > 0
+            ? intentSections.slice(0, 3)
+            : quoteMatchSection
+              ? [quoteMatchSection]
+              : null;
         // Set only when the routing pass resolved this as a "generate a new
         // image and embed it in 1-3 existing sections" request — the scoped
         // patch call below embeds this URL instead of relying on the
@@ -1674,10 +1665,16 @@ export async function POST(
             if (place?.kind === 'logo') {
               const url = logoSwapAppliedUrl ?? realLogoUrl;
               const svg = url ? null : inlineSvgFallback;
-              const targets = (place.targets.length > 0
-                ? place.targets
-                : inferTargetSectionNames(prompt, slSections.map((s) => s.name))
-              ).filter((n) => n !== logoTargetName);
+              const placementTargets =
+                place.targets.length > 0
+                  ? place.targets
+                  : await resolveSectionsForAsk({
+                      instruction: prompt,
+                      sectionOutline: slSections.map((s) => ({ name: s.name, text: s.text })),
+                      usage: usageCtx,
+                      label: 'follow-up:resolve-logo-placement',
+                    });
+              const targets = placementTargets.filter((n) => n !== logoTargetName);
               if (targets.length > 0) {
                 finalHtml = forceEmbedLogoIntoSections(finalHtml, targets, url, svg);
                 const missing = targets.filter((n) => !sectionHasLogoAsset(finalHtml, n, url, svg));
@@ -1956,7 +1953,19 @@ export async function POST(
 
         // Surgical copy rewrite first — avoids full-section HTML regeneration
         // for "paste headline + change this text" prompts (no images / competitor).
-        if (!hasUserImages && !scopedApplied && !scopedFailureReason && isSimpleTextRewritePrompt(prompt)) {
+        //
+        // Gated on the CLASSIFIER, not a keyword test. A regex here decided the
+        // request was a plain text swap and marked the edit done — so "change the
+        // headline to X and make it bigger" silently shipped with only the text
+        // changed. One ask, no reuse/design/asset work, is the only safe case.
+        const surgicalEligible =
+          intent.asks.length <= 1 &&
+          !intent.designReference &&
+          !intent.bugReport &&
+          !intent.fullRebuild &&
+          !intent.contentReuse &&
+          !intent.assetSource;
+        if (!hasUserImages && !scopedApplied && !scopedFailureReason && surgicalEligible) {
           sendSSE(controller, { type: 'status', message: 'Updating text...' });
           const surgical = await trySurgicalTextEdit(prompt, slSections);
           if (surgical) {
@@ -2021,10 +2030,13 @@ export async function POST(
             const hinted =
               intentSections.length > 0
                 ? intentSections
-                : inferDesignMatchSectionNames(
-                    prompt,
-                    slSections.map((s) => s.name),
-                  );
+                : await resolveSectionsForAsk({
+                    instruction: prompt,
+                    sectionOutline: slSections.map((s) => ({ name: s.name, text: s.text })),
+                    imageUrls: routingImageUrls,
+                    usage: usageCtx,
+                    label: 'follow-up:resolve-design-sections',
+                  });
             if (hinted.length >= 1 && hinted.length <= 6) {
               targetSections = hinted;
               console.log('[pages/follow-up] design-reference section pin', {
@@ -2053,6 +2065,7 @@ export async function POST(
             forceDecide: forceDecidePlan,
             usage: usageCtx,
             seedAsks: intent && intent.asks.length >= 2 ? intent.asks : undefined,
+            designMatch: wantsDesignMatch,
           });
           console.log('[pages/follow-up] multi-intent plan', {
             promptPreview: prompt.slice(0, 300),
@@ -2101,9 +2114,14 @@ export async function POST(
               const liveSections = extractSlSections(workingHtml);
               let stepTargets = step.target_sections.filter((n) => liveSections.some((s) => s.name === n));
               if (stepTargets.length === 0) {
-                stepTargets = inferTargetSectionNames(
-                  step.instruction,
-                  liveSections.map((s) => s.name),
+                stepTargets = (
+                  await resolveSectionsForAsk({
+                    instruction: step.instruction,
+                    sectionOutline: liveSections.map((s) => ({ name: s.name, text: s.text })),
+                    imageUrls: routingImageUrls,
+                    usage: usageCtx,
+                    label: 'follow-up:resolve-step-sections',
+                  })
                 ).filter((n) => liveSections.some((s) => s.name === n));
               }
 
@@ -2167,9 +2185,10 @@ export async function POST(
               }
 
               const patched: Array<{ name: string; html: string }> = [];
-              const stepIsDesignMatch =
-                (wantsDesignMatch || designReferenceUrls.length > 0) &&
-                !isLogoStyleAsk(step.instruction);
+              // The planner saw the message AND the screenshots — it says
+              // whether THIS step means "recreate from the image". A keyword
+              // test here sent "make the logo white" down the recreate path.
+              const stepIsDesignMatch = step.design_match;
               const stepDesignNote = stepIsDesignMatch
                   ? `\n\n(DESIGN REFERENCE — CRITICAL: Attached images may show how this section should look. Recreate layout/structure/copy from the screenshot in real HTML. Do NOT leave unchanged. Do NOT embed design-reference screenshot URLs as <img src> for the whole section.)`
                   : '';
@@ -2211,6 +2230,7 @@ export async function POST(
                   beforeHtml: section.html,
                   afterHtml: patchResult.html,
                   intentTargetSections: stepTargets,
+                  removalIntent: intent.removalIntent,
                   designMatch: stepIsDesignMatch,
                 });
                 if (!verify.ok && verify.severity === 'hard') {
@@ -2261,9 +2281,14 @@ export async function POST(
                 const liveSections = extractSlSections(workingHtml);
                 let stepTargets = step.target_sections.filter((n) => liveSections.some((s) => s.name === n));
                 if (stepTargets.length === 0) {
-                  stepTargets = inferTargetSectionNames(
-                    step.instruction,
-                    liveSections.map((s) => s.name),
+                  stepTargets = (
+                    await resolveSectionsForAsk({
+                      instruction: step.instruction,
+                      sectionOutline: liveSections.map((s) => ({ name: s.name, text: s.text })),
+                      imageUrls: routingImageUrls,
+                      usage: usageCtx,
+                      label: 'follow-up:resolve-step-sections-retry',
+                    })
                   ).filter((n) => liveSections.some((s) => s.name === n));
                 }
                 if (stepTargets.length === 0) {
@@ -2286,9 +2311,8 @@ export async function POST(
                   retryFailures.push(`unrouted:${step.instruction.slice(0, 40)}`);
                   continue;
                 }
-                const stepIsDesignMatch =
-                (wantsDesignMatch || designReferenceUrls.length > 0) &&
-                !isLogoStyleAsk(step.instruction);
+                // Planner-decided, same as the first pass.
+                const stepIsDesignMatch = step.design_match;
                 const patched: Array<{ name: string; html: string }> = [];
                 for (const name of stepTargets) {
                   if (stepOks.includes(name)) continue;
@@ -2320,6 +2344,7 @@ export async function POST(
                     requiredPhrases:
                       designCopyLines.length > 0 && stepIsDesignMatch ? designCopyLines : null,
                     intentTargetSections: stepTargets,
+                    removalIntent: intent.removalIntent,
                     designMatch: stepIsDesignMatch,
                   });
                   if (!verify.ok && verify.severity === 'hard') {
@@ -2393,20 +2418,23 @@ export async function POST(
           // literally present in the instruction text, trust that
           // independent textual confirmation over Haiku's self-rating.
           // Classifier-resolved sections count the same as typing the name.
+          // Corroboration for a hedging router: the classifier independently
+          // resolved this same section. Was also matched against the raw prompt
+          // text by regex — dropped, since "the section name appears in your
+          // wording" is exactly the keyword reasoning being removed.
           const namesItsSingleSection = !!routing && basicShapeOk && routing.target_sections.length === 1 &&
-            (new RegExp(`\\b${routing.target_sections[0]}\\b`, 'i').test(prompt) ||
-              intentSections.includes(routing.target_sections[0]));
+            intentSections.includes(routing.target_sections[0]);
           // Declared early so forceDecide can relax confidence for proceed-anyway.
+          // The "soft copy polish" keyword pair that used to sit here is gone —
+          // the classifier already tells us when the user deferred to us
+          // (proceedAnyway) or handed us a reference, and a word like "better"
+          // was never evidence of anything.
           const forceDecideEarly =
             lastAssistantWasClarify ||
             wantsUsToDecide ||
             wantsBugFix ||
             wantsDesignMatch ||
-            designReferenceUrls.length > 0 ||
-            // Soft copy polish ("make the text nicer") — decide a section and act,
-            // don't ask clarifying questions or error-toast for a normal edit.
-            (/\b(nicer|polish|improve|better|tighten|refine|clarify|shorten)\b/i.test(prompt) &&
-              /\b(text|copy|headline|heading|wording|this|here)\b/i.test(prompt));
+            designReferenceUrls.length > 0;
           const routingQualifies = basicShapeOk && (
             routing!.confidence === 'high' ||
             namesItsSingleSection ||
@@ -2458,7 +2486,7 @@ export async function POST(
           });
 
           const forceFaqVsFormClarify =
-            !!routing && shouldForceClarifyFaqVsForm(prompt, routing, hasUserImages, slSections);
+            !!routing && shouldForceClarifyFaqVsForm(routing, hasUserImages, intentSections);
 
           // Clarifying "which section?" only makes sense for ops that target
           // a specific, namable section — "structural"/"style" are broad,
@@ -2529,7 +2557,13 @@ export async function POST(
             const inferred =
               intentSections.length > 0
                 ? intentSections.slice(0, 6)
-                : inferTargetSectionNames(prompt, slSections.map((s) => s.name));
+                : await resolveSectionsForAsk({
+                    instruction: prompt,
+                    sectionOutline: slSections.map((s) => ({ name: s.name, text: s.text })),
+                    imageUrls: routingImageUrls,
+                    usage: usageCtx,
+                    label: 'follow-up:resolve-target-sections',
+                  });
             // Classifier / "everywhere" beats a style→head dump.
             targetSections = inferred.length > 0 ? inferred : routed;
             // If we skipped FAQ-vs-form clarify because forceDecide, prefer the form.
@@ -2693,6 +2727,7 @@ export async function POST(
               requiredSubstring: generatedImageUrl,
               requiredPhrases: designCopyLines.length > 0 ? designCopyLines : null,
               intentTargetSections: intentSections.length > 0 ? intentSections : targetSections,
+              removalIntent: intent.removalIntent,
               designMatch: wantsDesignMatch || designReferenceUrls.length > 0,
             });
             // Design-match miss: one forced rewrite with the missing OCR lines.
@@ -2724,6 +2759,7 @@ export async function POST(
                   requiredSubstring: generatedImageUrl,
                   requiredPhrases: designCopyLines,
                   intentTargetSections: intentSections.length > 0 ? intentSections : targetSections,
+                  removalIntent: intent.removalIntent,
                   designMatch: wantsDesignMatch || designReferenceUrls.length > 0,
                 });
               }
@@ -3159,7 +3195,51 @@ export async function POST(
       // skip the upload and the UTM mapping/rule wipe — don't destroy the user's
       // personalization work for an edit that had no effect. Both sides are still
       // placeholder'd here, so the comparison is unaffected by the swap.
-      const htmlUnchanged = finalHtml === html;
+      let htmlUnchanged = finalHtml === html;
+
+      // A silent no-op is not an answer. The model had the page and the ask and
+      // handed back byte-identical HTML — "remove this" with a screenshot died
+      // here twice in staging. Retry once against the section the classifier
+      // resolved, telling it plainly that its last attempt changed nothing.
+      // Only reachable now that the classifier receives the section outline and
+      // can actually resolve a demonstrative like "this strip" to a section.
+      if (htmlUnchanged) {
+        const retryTargets = Array.from(
+          new Set([...intent.targetSections, ...intent.asks.flatMap((a) => a.sections)]),
+        ).slice(0, 2);
+        if (retryTargets.length > 0) {
+          const liveSections = extractSlSections(html);
+          const patched: { name: string; html: string }[] = [];
+          for (const name of retryTargets) {
+            const section = liveSections.find((s) => s.name === name);
+            if (!section) continue;
+            const askText =
+              intent.asks.find((a) => a.sections.includes(name))?.instruction ?? prompt;
+            sendSSE(controller, { type: 'status', message: 'Retrying that change…' });
+            const retry = await runScopedPatchWithRetry(
+              section.html,
+              { [name]: (schema as Record<string, unknown> | null | undefined)?.[name] },
+              `${askText}\n\n(RETRY — your previous attempt returned this section completely unchanged, which means the edit was not applied. The user is pointing at something real in this section${hasUserImages ? ' (see the attached image)' : ''}. Identify it and apply the change now. Keep every data-field attribute so the text stays click-to-editable.)`,
+              routingImageUrls,
+              usageCtx,
+            );
+            if (retry.html && retry.html !== section.html) {
+              patched.push({ name, html: retry.html });
+            }
+          }
+          if (patched.length > 0) {
+            finalHtml = applyPatch(html, patched);
+            htmlUnchanged = finalHtml === html;
+            scopedApplied = true;
+            console.log('[pages/follow-up] no-op retry applied', {
+              sections: patched.map((p) => p.name),
+            });
+          } else {
+            console.warn('[pages/follow-up] no-op retry still produced no change', { retryTargets });
+          }
+        }
+      }
+
       // The single line that answers "did Done actually mean something changed" —
       // without this, a technically-successful AI call that didn't apply the
       // requested edit is indistinguishable in logs from one that did.
@@ -3173,22 +3253,31 @@ export async function POST(
       if (htmlUnchanged) {
         const designMatch =
           !hasMultipleAsks && (designReferenceUrls.length > 0 || wantsDesignMatch);
-        // "quote the exact text you want changed" is useless advice for a styling
-        // ask ("adjust the logo so the nav bar is the proper color") — there is no
-        // text involved. Point at the thing that actually unblocks each case.
-        const styleAsk =
-          /\b(colou?rs?|colou?red|background|bg|shade|tint|dark|light|white|black|size|bigger|smaller|spacing|padding|margin|align|center|centre|left|right|font|contrast|blend)\b/i.test(
-            prompt,
-          );
+        // Name EVERY ask that failed, not just the one whose wording happened to
+        // match a keyword. A two-part message that fails both used to get a
+        // single line worded for one of them, hiding the other failure entirely.
+        const failedAsks = intent.asks
+          .map((a) => a.instruction.trim())
+          .filter((s) => s.length > 0)
+          .slice(0, 4);
+        const askList =
+          failedAsks.length > 1
+            ? ` None of these applied: ${failedAsks.map((a, i) => `(${i + 1}) ${a}`).join(' ')}`
+            : '';
+        // Say what we DID understand — "rephrase" is useless when the real
+        // problem is that we couldn't tell which part of the page they meant.
+        const noTargetResolved =
+          intent.targetSections.length === 0 && intent.asks.every((a) => a.sections.length === 0);
+        const guidance = noTargetResolved
+          ? hasUserImages
+            ? 'I couldn’t tell which part of the page that image is showing. Name the section (nav, hero, footer, …) along with it and I’ll apply it.'
+            : 'I couldn’t tell which part of the page you meant. Name the section (nav, hero, footer, …) and what should change.'
+          : designMatch
+            ? 'Could not match the attached design reference to the page. Try attaching a clearer crop of just that section.'
+            : 'The edit came back identical to the current page. Give me the exact change you want — a value (“nav background #0f2540”) or the exact text to replace.';
         sendSSE(controller, {
           type: 'error',
-          message: hasMultipleAsks
-            ? 'Some of those edits did not apply. Try sending them one at a time, and name the part of the page for each.'
-            : designMatch
-            ? 'Could not match the attached design reference to the page. Try naming the section again (e.g. “make the footer look like this”) or attach a clearer crop of just that section.'
-            : styleAsk
-              ? 'I couldn’t apply that styling change — the edit came back identical to the current page. Name the part and the exact value you want (e.g. “make the nav bar background #0f2540 and the logo white”).'
-              : 'No changes were applied to the page. Try rephrasing your request, or quote the exact text you want changed.',
+          message: `I couldn’t apply that.${askList} ${guidance}`,
         });
         closeSSE(controller);
         return;
@@ -3263,6 +3352,7 @@ export async function POST(
         beforeHtml: originalHtmlForPreservation,
         afterHtml: finalHtmlPersisted,
         prompt,
+        removalIntent: intent.removalIntent,
       });
       if (hasLosses(losses)) {
         console.warn('[pages/follow-up] unrequested losses', {
@@ -3280,7 +3370,7 @@ export async function POST(
         // Don't undo an intentional swap ("nav logo same as footer") or a
         // reuse path that just embedded a different working URL.
         const skipLogoRestore =
-          promptHasIntentionalLogoReplace(prompt) ||
+          intent.intentionalAssetReplace ||
           (Boolean(logoSwapAppliedUrl) && lostLogo !== logoSwapAppliedUrl);
         if (lostLogo && !skipLogoRestore) {
           // Put it back where the user had it — assuming nav/footer would move
@@ -3315,6 +3405,7 @@ export async function POST(
           beforeHtml: originalHtmlForPreservation,
           afterHtml: finalHtmlPersisted,
           prompt,
+          removalIntent: intent.removalIntent,
         });
         const lossNote = describeLosses(remaining);
         if (lossNote) {

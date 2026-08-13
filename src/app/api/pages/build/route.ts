@@ -16,15 +16,12 @@ import {
   type FooterContact,
 } from '@/lib/ai-brand-assets';
 import { listSlSectionNames } from '@/lib/ai-visual-qa';
-import {
-  extractDesignReferenceCopy,
-  inferDesignMatchSectionNames,
-} from '@/lib/ai-follow-up-helpers';
+import { extractDesignReferenceCopy } from '@/lib/ai-follow-up-helpers';
 import { forceAppendMissingDesignCopy } from '@/lib/ai-content-placement';
 import { verifyAndRehostHtmlImages } from '@/lib/ai-asset-integrity';
 import { ensureClickToEditFields } from '@/lib/ai-data-field-stamp';
 import {
-  extractRequirements,
+  assetRequirements,
   enforceRequirements,
   checkRequirements,
   describeUnmet,
@@ -71,6 +68,8 @@ export async function POST(request: NextRequest) {
     design_copy_lines: unknown,
     reuse_reference_copy: unknown,
     design_reference: unknown,
+    design_copy_sections: unknown,
+    minimal_shape: unknown,
     model_requirements: unknown;
 
   try {
@@ -89,6 +88,8 @@ export async function POST(request: NextRequest) {
       design_copy_lines,
       reuse_reference_copy,
       design_reference,
+      design_copy_sections,
+      minimal_shape,
       requirements: model_requirements,
     } = await request.json());
   } catch {
@@ -212,6 +213,7 @@ export async function POST(request: NextRequest) {
           imageUrls: hasImages ? (image_urls as string[]) : [],
           designReferenceCopy: designCopyLines,
           imagesAreDesignRefs,
+          minimalShape: minimal_shape === true,
           callerLabel: 'build',
           onStreamRestart: () => {
             statusBuffer = '';
@@ -238,21 +240,27 @@ export async function POST(request: NextRequest) {
         return;
       }
 
-      // Soft prove-it: push missing OCR lines into named sections (~90% text feel, not pixel CSS).
+      // Soft prove-it: push missing OCR lines into the section the MODEL named.
+      //
+      // This used to pick the target with keyword inference and, when that found
+      // nothing, dump the screenshot's text into footer/nav/hero arbitrarily —
+      // which is how a block of a reference page's copy ("Thanks for confirming…",
+      // "You Are Through.") ended up appended to a hero nobody asked to change.
+      // No resolved section now means no placement at all: leaving the model's
+      // own layout alone is always better than stamping text somewhere random.
       if (designCopyLines.length > 0) {
         const slNames = Array.from(html.matchAll(/<!--\s*SL:([a-z0-9_-]+)\s*-->/gi)).map((m) => m[1]);
-        let targets = inferDesignMatchSectionNames(promptText, slNames);
-        if (targets.length === 0) {
-          targets = slNames.filter((n) => /footer/i.test(n));
-          if (targets.length === 0 && /<footer\b/i.test(html)) targets = ['footer'];
-          if (targets.length === 0) {
-            targets = slNames.filter((n) => /^(nav|header|hero)/i.test(n)).slice(0, 2);
-          }
-        }
+        const targets = (Array.isArray(design_copy_sections) ? design_copy_sections : [])
+          .filter((n): n is string => typeof n === 'string')
+          .filter((n) => slNames.includes(n));
         if (targets.length > 0) {
           html = forceAppendMissingDesignCopy(html, targets[0], designCopyLines);
           console.log('[pages/build] design-copy force place', {
             target: targets[0],
+            lines: designCopyLines.length,
+          });
+        } else {
+          console.log('[pages/build] design-copy not placed — no model-resolved target section', {
             lines: designCopyLines.length,
           });
         }
@@ -325,11 +333,11 @@ export async function POST(request: NextRequest) {
             ...(hasImages ? (image_urls as string[]) : []),
           ],
         }),
-        extractRequirements({
-          prompt: promptText,
-          assetUrls: logoUrl ? [logoUrl] : [],
-          designCopyLines,
-        }),
+        // Only the floor: an asset WE embedded must be present. The prompt-derived
+        // checks that used to live here (CTA-ban keywords, quoted-phrase scraping)
+        // guessed the user's meaning and invented requirements they never stated —
+        // the model's own checklist above covers real asks.
+        assetRequirements(logoUrl ? [logoUrl] : []),
       );
       if (requirements.length > 0) {
         const enforced = enforceRequirements(html, requirements);
