@@ -37,8 +37,10 @@ export function isLogoSwapFromUrlIntent(prompt: string, hasCompetitorUrl: boolea
  */
 export async function classifyPageShapeIntent(
   prompt: string,
-): Promise<'minimal_or_custom' | 'full_reference'> {
-  if (userWantsCustomOrMinimalPage(prompt)) return 'minimal_or_custom';
+): Promise<'minimal_or_custom' | 'full_reference' | null> {
+  // No keyword short-circuit and no keyword fallback. The model decides, or
+  // nobody does: null means "could not classify", and the caller reports an
+  // outage rather than guessing the page's entire shape from punctuation.
   try {
     const text = await askAI({
       system:
@@ -59,13 +61,12 @@ export async function classifyPageShapeIntent(
     if (parsed.shape === 'full_reference') return 'full_reference';
     if (parsed.shape === 'minimal_or_custom') return 'minimal_or_custom';
   } catch (err) {
-    console.error('[classifyPageShapeIntent] failed — defaulting carefully', err);
+    console.error('[classifyPageShapeIntent] failed — caller must report, not guess', err);
+    return null;
   }
-  // On classify failure: short URL-only / explicit clone phrasing → full; longer custom copy → minimal
-  if (/\b(look like|replicate|clone|same as|exactly like|copy (this|the) (site|page))\b/i.test(prompt)) {
-    return 'full_reference';
-  }
-  return /\bhttps?:\/\//i.test(prompt) && prompt.length > 100 ? 'minimal_or_custom' : 'full_reference';
+  // Reached only when the model answered with neither valid shape.
+  console.error('[classifyPageShapeIntent] unusable shape in response — caller must report');
+  return null;
 }
 
 export interface FooterContact {
@@ -578,11 +579,11 @@ export function stripUnpromptedSocialProof(
   prompt: string,
   userAskedForProof: boolean,
 ): Record<string, unknown> {
+  // userAskedForProof is the model's answer (intent.wantsSocialProof), and its
+  // definition already covers "numbers the user supplied themselves". The regex
+  // that used to double-check the prompt for digits here was a second opinion
+  // formed from punctuation.
   if (userAskedForProof) return schema;
-  // If the prompt itself contains concrete numbers the user supplied, keep stats
-  if (/\b\d{1,3}(?:,\d{3})*(?:\+)?\s*%|\b\d+\+?\s*(clients|customers|companies|reviews|stars)\b/i.test(prompt)) {
-    return schema;
-  }
   const copy = JSON.parse(JSON.stringify(schema)) as Record<string, unknown>;
   const dropTypes = new Set(['stats', 'logo_wall', 'as_seen_in', 'awards', 'social_proof_bar']);
   if (Array.isArray(copy.sections)) {

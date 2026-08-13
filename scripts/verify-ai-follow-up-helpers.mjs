@@ -665,7 +665,10 @@ assert('helpers requiredPhrases verify', helpers.includes('requiredPhrases'));
 assert('helpers inferDesignMatchSectionNames', helpers.includes('export function inferDesignMatchSectionNames'));
 assert('follow-up designReferenceUrls', follow.includes('designReferenceUrls'));
 assert('follow-up DESIGN REFERENCE', follow.includes('DESIGN REFERENCE'));
-assert('follow-up inferDesignMatchSectionNames', follow.includes('inferDesignMatchSectionNames'));
+// Was: asserted inferDesignMatchSectionNames (keyword) was wired in. Design-match
+// sections now come from the classifier, falling back to a focused model call.
+assert('follow-up resolves design-match sections via the model',
+  follow.includes("label: 'follow-up:resolve-design-sections'"));
 assert('follow-up design match htmlUnchanged message', follow.includes('Could not match the attached design reference'));
 assert('helpers longer 2-section soft', helpers.includes('t.length > 120'));
 assert('helpers userWantsFullCompetitorRebuild', helpers.includes('export function userWantsFullCompetitorRebuild'));
@@ -843,7 +846,12 @@ assert('preservation respects removal intent', preserve.includes('export functio
 assert('follow-up guards against losses', follow.includes('findUnrequestedLosses'));
 assert('follow-up restores a deleted logo', follow.includes('restored logo removed without request'));
 assert('follow-up reports unrepaired losses', follow.includes('describeLosses'));
-assert('build wires requirements', build.includes('extractRequirements') && build.includes('checkRequirements'));
+// Create path, same rule as the edit path: the model's checklist plus one
+// code-invented floor (an asset we embedded must be present). No prompt-derived
+// keyword requirements — those invented asks the user never made.
+assert('build wires requirements', build.includes('assetRequirements(') && build.includes('checkRequirements'));
+assert('build derives no requirements from prompt keywords',
+  !build.includes('extractRequirements('));
 assert('build reports unmet', build.includes('unmet_requirements'));
 // The checklist is the model's (seeded by the intent pass, refined by routing);
 // the only check code invents is "an asset we embedded is present".
@@ -862,8 +870,12 @@ assert('intent validates against live sections', intentSrc.includes('export func
 assert('intent never invents a source URL', intentSrc.includes('allowedUrls.includes(claimedUrl)'));
 assert('intent asks the model for the checklist too', intentSrc.includes('requirementInstruction'));
 assert('follow-up classifies intent first', follow.includes('await classifyEditIntent('));
-assert('intent failure asks the user instead of silent regex',
-  follow.includes('intent unavailable — asking user (no regex fallback)'));
+// A failed classification is OUR outage, not a badly-worded request: report it
+// and let them retry. It must not regex-route, and must not push a clarifying
+// question into their conversation asking them to re-explain a clear message.
+assert('intent failure reports an AI outage instead of interrogating the user',
+  follow.includes('intent unavailable — reporting AI outage, no regex fallback') &&
+    follow.includes('didn’t respond properly just now'));
 assert('no allowIntentKeywordFallback gate', !follow.includes('allowIntentKeywordFallback'));
 assert('edit-intent budget allows the checklist', intentSrc.includes('maxTokens: 8000'));
 assert('follow-up routes design match off the intent', follow.includes('const wantsDesignMatch = intent.designReference'));
@@ -892,8 +904,7 @@ assert('phrase match is text-level, not raw HTML',
 // Full sweep: every routing decision reads the classifier first, keyword
 // regex is fallback-only everywhere — not just the gates fixed first.
 assert('verify no-op check uses the classifier\'s resolved sections, not fresh keyword inference',
-  helpers.includes('intentTargetSections') &&
-    helpers.includes('intentTargetSections && intentTargetSections.length > 0'));
+  helpers.includes('const userNamedThisSection = intentTargetSections.includes(sectionName)'));
 assert('content-reuse (logo/text/image placement) comes from the classifier',
   intentSrc.includes('contentReuse: ContentReuseIntent | null') &&
     follow.includes('const resolveContentReuse ='));
@@ -901,8 +912,25 @@ assert('follow-up never calls detectContentReuseIntent',
   !follow.includes('detectContentReuseIntent'));
 assert('"proceed anyway" / "you decide" comes from the classifier',
   intentSrc.includes('proceedAnyway: boolean') && follow.includes('const wantsUsToDecide = intent.proceedAnyway'));
-assert('follow-up only uses userWantsUsToDecide in the intent-fail clarify path',
-  (follow.match(/userWantsUsToDecide\(prompt\)/g) || []).length === 1);
+// Strip comments first: tombstones naming a deleted helper are documentation,
+// not a call. Only real code counts.
+const followCode = follow
+  .split('\n')
+  .filter((l) => !l.trim().startsWith('//') && !l.trim().startsWith('*'))
+  .join('\n');
+assert('edit route references no keyword-decision helper at all',
+  !/\b(userWantsUsToDecide|isLogoStyleAsk|inferTargetSectionNames|inferDesignMatchSectionNames|promptHasIntentionalLogoReplace|promptHasRemovalIntent|looksLikeMultiIntent|detectContentReuseIntent|wantsReferenceCopy|isSimpleTextRewritePrompt)\s*\(/.test(followCode));
+assert('planner decides design-match per step, not a keyword test',
+  helpers.includes('design_match: boolean') && follow.includes('step.design_match'));
+assert('planner clarify override uses the caller\'s forceDecide only',
+  !/userWantsUsToDecide\(prompt\)/.test(helpers.split('PLANNER_SYSTEM')[1] ?? ''));
+assert('page shape is model-decided, no keyword pre-check',
+  !gen.includes('userWantsCustomOrMinimalPage(prompt)') &&
+    !brand.includes('if (userWantsCustomOrMinimalPage(prompt)) return'));
+const builderSrc = readFileSync(join(__dirname, '../src/lib/ai-page-builder.ts'), 'utf8');
+assert('builder takes the shape decision from upstream',
+  builderSrc.includes('options.minimalShape === true') &&
+    build.includes('minimalShape: minimal_shape === true'));
 assert('create path forwards its design-reference verdict to build, not just reuse-copy',
   gen.includes('design_reference: designAsk') &&
     build.includes("typeof design_reference === 'boolean'") &&
@@ -915,9 +943,13 @@ assert('create path\'s multi-ask note comes from the classifier',
 assert('build stamps data-field from schema', build.includes('ensureClickToEditFields(html, enrichedSchema)'));
 assert('follow-up stamps data-field after a successful edit',
   follow.includes('ensureClickToEditFields(finalHtmlPersisted'));
+// Recolour/resize must not be read as "copy the logo somewhere". This was a
+// regex that overruled the model AFTER it answered; it is now stated in the
+// classifier's own instructions, so the model answers correctly in one pass.
 assert('logo style asks are not treated as logo embed in intent normalize',
-  placement.includes('export function isLogoStyleAsk') &&
-    intentSrc.includes('isLogoStyleAsk(opts.prompt)'));
+  intentSrc.includes('NOT for recoloring') &&
+    intentSrc.includes('NOT for resizing') &&
+    !intentSrc.includes('isLogoStyleAsk(opts.prompt)'));
 assert('everywhere / all-logos expands past nav+footer',
   placement.includes('nav|header|footer|hero'));
 assert('multi-ask seeds the planner from classifier asks',
@@ -937,7 +969,38 @@ assert('multi-ask count is classifier asks only',
   follow.includes('const hasMultipleAsks = intent.asks.length > 1') &&
     !follow.includes('looksLikeMultiIntent(prompt)'));
 assert('multi-ask no-op does not use the design-reference-only toast',
-  follow.includes('Some of those edits did not apply'));
+  /const designMatch\s*=\s*\n?\s*!hasMultipleAsks\s*&&/.test(follow));
+// A failure must name every ask it dropped, not just the one whose wording
+// happened to match a keyword — that hid half of a two-part failure.
+assert('no-op failure enumerates every failed ask',
+  follow.includes('const failedAsks = intent.asks') && follow.includes('None of these applied:'));
+assert('no-op failure says which part of the page was unresolved',
+  follow.includes('const noTargetResolved =') &&
+    follow.includes('couldn’t tell which part of the page'));
+// A model that hands back byte-identical HTML gets one corrective retry before
+// the user is told "nothing changed" — "remove this" + a screenshot died here.
+assert('no-op gets one corrective retry against the resolved section',
+  follow.includes('no-op retry applied') &&
+    follow.includes('your previous attempt returned this section completely unchanged'));
+assert('retry keeps click-to-edit handles',
+  follow.includes('Keep every data-field attribute'));
+// The classifier must SEE the page, not just section names — without this,
+// "remove this"/"that strip" can never resolve to a section.
+assert('intent classifier receives a per-section outline',
+  intentSrc.includes('export function buildSectionOutline') &&
+    intentSrc.includes('sectionOutline?: SectionOutlineEntry[]') &&
+    follow.includes('sectionOutline: intentSectionsSnapshot.map('));
+assert('outline is capped so long pages cannot blow up the call',
+  intentSrc.includes('OUTLINE_CHARS_PER_SECTION') && intentSrc.includes('OUTLINE_MAX_SECTIONS'));
+// Screenshot copy lands only where the model said — never a keyword guess,
+// never an arbitrary footer/nav/hero dump.
+assert('design-copy placement uses model-resolved sections only',
+  build.includes('design_copy_sections') &&
+    !build.includes('inferDesignMatchSectionNames') &&
+    build.includes('no model-resolved target section'));
+assert('design-copy sections are forwarded create → build',
+  gen.includes('design_copy_sections: createIntent.targetSections') &&
+    client.includes('design_copy_sections: designCopySections'));
 assert('image roles come from intent when available',
   intentSrc.includes('export function imageRolesFromIntent') &&
     follow.includes('imageRolesFromIntent(intent'));
@@ -951,6 +1014,36 @@ assert('open page can stamp missing data-field',
     readFileSync(join(__dirname, '../src/app/api/pages/[id]/ensure-editable/route.ts'), 'utf8').includes('ensureClickToEditFields'));
 assert('structural stamp exists for screenshot copy',
   readFileSync(join(__dirname, '../src/lib/ai-data-field-stamp.ts'), 'utf8').includes('stampStructuralDataFields'));
+
+// ── Zero keyword-driven decisions left in the edit path ─────────────────────
+assert('no keyword shortcut forks routing',
+  !follow.includes('function isSimpleTextRewritePrompt'));
+assert('surgical text path is gated on the classifier',
+  follow.includes('const surgicalEligible =') && follow.includes('intent.asks.length <= 1'));
+assert('section fallbacks ask the model, never a regex',
+  !/inferTargetSectionNames\(/.test(follow) &&
+    follow.includes('resolveSectionsForAsk({'));
+assert('section resolver refuses to guess',
+  intentSrc.includes('export async function resolveSectionsForAsk') &&
+    intentSrc.includes('caller must not guess'));
+assert('removal intent comes from the classifier',
+  intentSrc.includes('removalIntent: boolean') &&
+    follow.includes('removalIntent: intent.removalIntent') &&
+    !/promptHasRemovalIntent\(/.test(follow));
+assert('intentional asset replace comes from the classifier',
+  intentSrc.includes('intentionalAssetReplace: boolean') &&
+    follow.includes('intent.intentionalAssetReplace') &&
+    !/promptHasIntentionalLogoReplace\(/.test(follow));
+assert('preservation accepts an explicit removal decision',
+  preserve.includes('removalIntent?: boolean'));
+// Stronger than the old runtime check: the parameter is REQUIRED, so no code
+// path can omit it and fall back to word-matching. TypeScript enforces it.
+assert('classifier sections are authoritative even when empty',
+  helpers.includes('intentTargetSections: string[];') &&
+    !helpers.includes('intentTargetSections?:') &&
+    !/namesThisSection = .*\.test\(prompt\)/.test(helpers));
+assert('failure messaging has no keyword style test',
+  !follow.includes('const styleAsk ='));
 
 // "the logo on nav is wrong" must not touch the footer's logo
 assert('logo swap targets the section the user named',
