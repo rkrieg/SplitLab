@@ -2,6 +2,7 @@ import { db } from '@/lib/supabase-server';
 import { uploadHtml, downloadHtmlByPath, fileNameFromUrl, inlineDataUrisToStorage } from '@/lib/storage';
 import { isTestVariantPage, getLinkedVariant } from '@/lib/page-drafts';
 import { PLAN_LIMITS } from '@/lib/plans';
+import { rescanVariantHtml } from './scan';
 import { ok, fail, ServiceResult } from './types';
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://www.trysplitlab.com';
@@ -133,6 +134,14 @@ export async function updatePageDraftOrLive(
       .single();
 
     if (error) return fail(500, error.message);
+
+    if (typeof data.html_content === 'string') {
+      const linkedVariant = await getLinkedVariant(pageId);
+      if (linkedVariant) {
+        await rescanVariantHtml(linkedVariant.test_id, linkedVariant.id, linkedVariant.name, data.html_content);
+      }
+    }
+
     return ok(updated);
   }
 
@@ -158,15 +167,31 @@ export async function updatePageDraftOrLive(
 
     const linkedVariant = await getLinkedVariant(pageId);
     if (linkedVariant) {
-      const { data: testRow } = await db
-        .from('tests')
-        .select('scan_results')
-        .eq('id', linkedVariant.test_id)
-        .single();
-      const existingScans = testRow?.scan_results as { variants?: { variant_id: string }[] } | null;
-      if (existingScans?.variants?.some((v) => v.variant_id === linkedVariant.id)) {
-        const pruned = { variants: existingScans.variants.filter((v) => v.variant_id !== linkedVariant.id) };
-        await db.from('tests').update({ scan_results: pruned }).eq('id', linkedVariant.test_id);
+      // Prefer rescanning against the actual new HTML; if this write only
+      // swapped html_url without content in hand, fall back to the old
+      // prune-only behavior (clears the stale entry, forces a manual
+      // rescan) rather than scanning against content we don't have.
+      let scanHtml: string | null = data.html_content ?? null;
+      if (!scanHtml && data.html_url) {
+        const filePath = fileNameFromUrl(data.html_url);
+        if (filePath) {
+          try { scanHtml = await downloadHtmlByPath(filePath); } catch { scanHtml = null; }
+        }
+      }
+
+      if (scanHtml) {
+        await rescanVariantHtml(linkedVariant.test_id, linkedVariant.id, linkedVariant.name, scanHtml);
+      } else {
+        const { data: testRow } = await db
+          .from('tests')
+          .select('scan_results')
+          .eq('id', linkedVariant.test_id)
+          .single();
+        const existingScans = testRow?.scan_results as { variants?: { variant_id: string }[] } | null;
+        if (existingScans?.variants?.some((v) => v.variant_id === linkedVariant.id)) {
+          const pruned = { variants: existingScans.variants.filter((v) => v.variant_id !== linkedVariant.id) };
+          await db.from('tests').update({ scan_results: pruned }).eq('id', linkedVariant.test_id);
+        }
       }
     }
   }
@@ -352,6 +377,20 @@ export async function attachPageAsVariant(
     .single();
   if (varErr) return fail(500, varErr.message);
 
+  // First time this HTML is scannable — it was never linked to a test
+  // before now, so nothing could have scanned it yet even though the
+  // markup itself isn't changing here.
+  let scanHtml: string | null = page.html_content;
+  if (!scanHtml && page.html_url) {
+    const filePath = fileNameFromUrl(page.html_url);
+    if (filePath) {
+      try { scanHtml = await downloadHtmlByPath(filePath); } catch { scanHtml = null; }
+    }
+  }
+  if (scanHtml) {
+    await rescanVariantHtml(testId, variant.id, variantName, scanHtml);
+  }
+
   return ok({ testId, variantId: variant.id });
 }
 
@@ -424,19 +463,23 @@ export async function forkPageAsNewVariant(
     .single();
   if (error) return fail(500, error.message);
 
-  const { error: varErr } = await db.from('test_variants').insert({
+  const { data: newVariant, error: varErr } = await db.from('test_variants').insert({
     test_id: linkedVariant.test_id,
     name: variantName,
     page_id: newPage.id,
     proxy_mode: false,
     traffic_weight: 0,
     is_control: false,
-  });
+  }).select('id').single();
   if (varErr) return fail(500, varErr.message);
 
   // The fork is "done" — clear the draft on the original so it shows a
   // clean, no-pending-changes state back on the test.
   await db.from('pages').update({ draft_html_content: null, draft_schema_json: null }).eq('id', pageId);
+
+  if (newVariant) {
+    await rescanVariantHtml(linkedVariant.test_id, newVariant.id, variantName, html);
+  }
 
   return ok({ pageId: newPage.id, testId: linkedVariant.test_id });
 }
@@ -472,14 +515,9 @@ export async function replaceVariantLive(
 
   await db.from('personalization_rules').delete().eq('page_id', pageId);
 
-  // Live markup replaced by the AI draft — this variant's cached scan no
-  // longer reflects the page.
-  const { data: testRow } = await db.from('tests').select('scan_results').eq('id', linkedVariant.test_id).single();
-  const existingScans = testRow?.scan_results as { variants?: { variant_id: string }[] } | null;
-  if (existingScans?.variants?.some((v) => v.variant_id === linkedVariant.id)) {
-    const pruned = { variants: existingScans.variants.filter((v) => v.variant_id !== linkedVariant.id) };
-    await db.from('tests').update({ scan_results: pruned }).eq('id', linkedVariant.test_id);
-  }
+  // Live markup replaced by the AI draft — regenerate this variant's scan
+  // against the HTML that's actually about to go live.
+  await rescanVariantHtml(linkedVariant.test_id, linkedVariant.id, linkedVariant.name, convertedDraftHtml);
 
   const { data: updated, error } = await db
     .from('pages')

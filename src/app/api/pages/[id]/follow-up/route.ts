@@ -12,7 +12,8 @@ import { reportAiOverageUsage } from '@/lib/ai-overage-billing';
 import { extractUrls, scrapeCompetitorUrl, fetchLogoAssets, fetchContentImageAssets } from '@/lib/ai-competitor-scrape';
 import { buildHtmlFromSchema } from '@/lib/ai-page-builder';
 import { createSSEStream, sendSSE, closeSSE, SSE_HEADERS, type SSEEvent } from '@/lib/sse';
-import { isTestVariantPage } from '@/lib/page-drafts';
+import { isTestVariantPage, getLinkedVariant } from '@/lib/page-drafts';
+import { rescanVariantHtml } from '@/lib/services/scan';
 import { extractDataUris, restoreDataUris, restoreDataUrisInValue } from '@/lib/data-uri-strip';
 import {
   planMultiIntentEdit,
@@ -3399,6 +3400,13 @@ export async function POST(
         await db.from('personalization_rules').delete().eq('page_id', params.id);
       }
       await db.from('pages').update(updatePayload).eq('id', params.id);
+
+      if (isVariant) {
+        const linkedVariant = await getLinkedVariant(params.id);
+        if (linkedVariant) {
+          await rescanVariantHtml(linkedVariant.test_id, linkedVariant.id, linkedVariant.name, finalHtmlReal);
+        }
+      }
 
       // Report any accrued overage to Stripe (no-op unless overage is enabled
       // and a metered price is configured). Fire-and-forget.

@@ -2,9 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
-import { addDomainToVercel, removeDomainFromVercel, getDomainStatus, getDomainDnsHealth } from '@/lib/vercel';
+import { addDomainToVercel, removeDomainFromVercel, getDomainDnsHealth } from '@/lib/vercel';
 import { resolveWorkspaceRole } from '@/lib/workspace-auth';
-import { PLAN_LIMITS } from '@/lib/plans';
+import { listDomains, addDomain, verifyDomain, deleteDomain } from '@/lib/services/domains';
 import { logEvent } from '@/lib/log';
 import { z } from 'zod';
 
@@ -34,13 +34,9 @@ export async function GET(
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
-  const { data, error } = await db
-    .from('domains')
-    .select('*')
-    .eq('workspace_id', params.id)
-    .order('created_at', { ascending: false });
-
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  const listResult = await listDomains(params.id);
+  if (!listResult.ok) return NextResponse.json({ error: listResult.error }, { status: listResult.status });
+  const data = listResult.data as { id: string; domain: string; verified: boolean }[];
 
   const syncDns = req.nextUrl.searchParams.get('syncDns') === '1';
   if (!syncDns || !data?.length) {
@@ -100,34 +96,9 @@ export async function POST(
   const verifyResult = verifySchema.safeParse(body);
   if (verifyResult.success) {
     const { domain_id } = verifyResult.data;
-    const { data: domain } = await db
-      .from('domains')
-      .select('domain')
-      .eq('id', domain_id)
-      .eq('workspace_id', params.id)
-      .single();
-
-    if (!domain) return NextResponse.json({ error: 'Domain not found' }, { status: 404 });
-
-    const status = await getDomainStatus(domain.domain);
-    if (status.verified) {
-      await db
-        .from('domains')
-        .update({ verified: true, verified_at: new Date().toISOString() })
-        .eq('id', domain_id);
-    } else {
-      const update: { verified: boolean; vercel_verification?: typeof status.vercel_verification } = {
-        verified: false,
-      };
-      if (status.vercel_verification?.length) {
-        update.vercel_verification = status.vercel_verification;
-      }
-      await db.from('domains').update(update).eq('id', domain_id);
-    }
-    await logEvent('domain_verification', status.verified ? 'info' : 'warn', 'verify attempted', {
-      domain: domain.domain, domainId: domain_id, workspaceId: params.id, verified: status.verified,
-    });
-    return NextResponse.json({ verified: status.verified, status });
+    const verifyResponse = await verifyDomain(params.id, domain_id);
+    if (!verifyResponse.ok) return NextResponse.json({ error: verifyResponse.error }, { status: verifyResponse.status });
+    return NextResponse.json(verifyResponse.data);
   }
 
   // Update action
@@ -169,58 +140,11 @@ export async function POST(
     return NextResponse.json({ error: addResult.error.errors }, { status: 400 });
   }
 
-  // Enforce domain limit per plan (admins bypass).
-  // Use workspace owner's plan — invited managers have plan:'free' on their own row.
-  if (session.user.role !== 'admin') {
-    const { data: wsData } = await db.from('workspaces').select('client_id').eq('id', params.id).single();
-    let planOwnerId = session.user.id;
-    if (wsData) {
-      const { data: clientData } = await db.from('clients').select('owner_id').eq('id', wsData.client_id).single();
-      if (clientData?.owner_id) planOwnerId = clientData.owner_id;
-    }
-
-    const { data: userRow } = await db.from('users').select('plan').eq('id', planOwnerId).single();
-    const plan = userRow?.plan ?? 'free';
-    const limit = PLAN_LIMITS[plan]?.domains ?? 0;
-
-    if (limit === 0) {
-      return NextResponse.json(
-        { error: 'Your plan does not include custom domains. Please upgrade to add a domain.', limitError: true },
-        { status: 403 }
-      );
-    }
-
-    if (isFinite(limit)) {
-      const { count } = await db
-        .from('domains')
-        .select('*', { count: 'exact', head: true })
-        .eq('workspace_id', params.id);
-
-      if ((count ?? 0) >= limit) {
-        return NextResponse.json(
-          { error: `You have reached the domain limit (${limit}) for your plan . Please upgrade to add more domains.`, limitError: true },
-          { status: 403 }
-        );
-      }
-    }
+  const addResponse = await addDomain(params.id, addResult.data.domain, session.user.role);
+  if (!addResponse.ok) {
+    return NextResponse.json({ error: addResponse.error, ...(addResponse.limitError ? { limitError: true } : {}) }, { status: addResponse.status });
   }
-
-  const { domain } = addResult.data;
-  const vercelResult = await addDomainToVercel(domain);
-
-  const { data: created, error } = await db
-    .from('domains')
-    .insert({
-      workspace_id: params.id,
-      domain,
-      cname_target: null,
-      vercel_verification: vercelResult.verification?.length ? vercelResult.verification : null,
-    })
-    .select()
-    .single();
-
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json(created, { status: 201 });
+  return NextResponse.json(addResponse.data, { status: 201 });
 }
 
 export async function DELETE(
@@ -238,18 +162,7 @@ export async function DELETE(
   const { domain_id } = await request.json();
   if (!domain_id) return NextResponse.json({ error: 'domain_id required' }, { status: 400 });
 
-  const { data: domain } = await db
-    .from('domains')
-    .select('domain')
-    .eq('id', domain_id)
-    .eq('workspace_id', params.id)
-    .single();
-
-  if (!domain) return NextResponse.json({ error: 'Domain not found' }, { status: 404 });
-
-  await removeDomainFromVercel(domain.domain);
-
-  const { error } = await db.from('domains').delete().eq('id', domain_id);
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  const deleteResponse = await deleteDomain(params.id, domain_id);
+  if (!deleteResponse.ok) return NextResponse.json({ error: deleteResponse.error }, { status: deleteResponse.status });
   return NextResponse.json({ ok: true });
 }

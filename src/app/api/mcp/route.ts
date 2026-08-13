@@ -13,11 +13,25 @@ import {
   listWorkspaceTests, getTestDetail, updateTest, duplicateVariant, duplicateTest, deleteTest,
   createVariant, createTest, promoteToChampion, getTestAnalytics, getTestDailyStats, TestMeta,
 } from '@/lib/services/tests';
+import { listDomains, addDomain, verifyDomain, deleteDomain, buildDnsInstructions } from '@/lib/services/domains';
 import { resolveWorkspaceRole, resolveOwnerPlan, resolveTestWorkspaceRole } from '@/lib/workspace-auth';
 import { getLinkedVariant } from '@/lib/page-drafts';
 import { PLAN_LIMITS } from '@/lib/plans';
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://www.trysplitlab.com';
+
+// Matches AnalyticsClient.tsx's nameSlug/testUrl construction exactly — the
+// [slug] path segment in src/app/[slug]/[testId]/route.ts is never actually
+// read (only testId is), so this is cosmetic, but it must still be built the
+// same way the dashboard's own "test link" does for consistency. This is the
+// ONLY link that runs through the real /api/serve pipeline (weighted variant
+// assignment, sticky cookies, tracker.js injection) without needing a custom
+// domain configured — unlike a page's preview_url, which is an
+// authenticated, untracked raw-HTML view for a logged-in human only.
+function buildTestUrl(test: { id: string; name: string; url_path: string }): string {
+  const nameSlug = test.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  return `${APP_URL}/${nameSlug}/${test.id}${test.url_path === '/' ? '' : test.url_path}`;
+}
 
 // Hand-rolled JSON-RPC 2.0 / MCP "stateless streamable HTTP" transport,
 // rather than depending on @modelcontextprotocol/sdk. That SDK's server
@@ -152,7 +166,7 @@ const TOOLS = [
         workspace_id: { type: 'string', description: 'Workspace UUID from list_clients' },
         name: { type: 'string', description: 'Internal name for the page (shown in the dashboard, not on the page itself)' },
         vertical: { type: 'string', description: 'Short category label, e.g. "SaaS", "Ecommerce", "Local Services"' },
-        html_content: { type: 'string', description: 'Full HTML document for the page' },
+        html_content: { type: 'string', description: 'Full HTML document for the page. If the user has attached image files, embed them directly: base64-encode each file and inline it as <img src="data:image/png;base64,...">. The server automatically detects any base64 data: image URIs in this HTML, uploads them to permanent storage, and rewrites the src to a real hosted URL — no separate upload tool needed.' },
         prompt: { type: 'string', description: 'Optional: the instruction/brief this page was built from, stored for reference' },
       },
       required: ['workspace_id', 'name', 'vertical', 'html_content'],
@@ -171,13 +185,13 @@ const TOOLS = [
   },
   {
     name: 'update_page',
-    description: 'Edits a page\'s HTML/name/prompt/tags/status. This NEVER writes directly to a live, published page: if the page backs an active A/B test variant, the edit is stored as a draft only (use publish_page or the dashboard\'s "Replace variant" to promote it); if the page is a standalone, unpublished draft, the edit updates that draft in place. html_content you send here must be the FULL replacement document, built on top of get_page\'s draft_html_content when one exists (not html_content) — otherwise this overwrites and loses any earlier unsaved draft edit. The response includes preview_url and draft_preview_url (draft_preview_url is set whenever this edit landed in draft) — always share the relevant one back with the user after editing (draft_preview_url if the page backs a test variant or otherwise has a draft, preview_url for a standalone page with no draft) so they can see exactly what they\'re now editing, whether it was an uploaded HTML page or an AI-generated one, before deciding to publish/replace it live. Requires the workspace owner to be on a plan with AI page features.',
+    description: 'Edits a page\'s HTML/name/prompt/tags/status. This NEVER writes directly to a live, published page: if the page backs an active A/B test variant, the edit is stored as a draft only (use publish_page or the dashboard\'s "Replace variant" to promote it); if the page is a standalone, unpublished draft, the edit updates that draft in place. html_content you send here must be the FULL replacement document, built on top of get_page\'s draft_html_content when one exists (not html_content) — otherwise this overwrites and loses any earlier unsaved draft edit. The response includes preview_url and draft_preview_url (draft_preview_url is set whenever this edit landed in draft) — always share the relevant one back with the user after editing (draft_preview_url if the page backs a test variant or otherwise has a draft, preview_url for a standalone page with no draft) so they can see exactly what they\'re now editing, whether it was an uploaded HTML page or an AI-generated one, before deciding to publish/replace it live. If this page backs a test variant, its scan_results are regenerated against the edited HTML on every save (draft or live) — call get_test for the linked test to read fresh, verified selectors before setting up a conversion goal. Requires the workspace owner to be on a plan with AI page features.',
     inputSchema: {
       type: 'object',
       properties: {
         page_id: { type: 'string' },
         name: { type: 'string' },
-        html_content: { type: 'string', description: 'Full replacement HTML document' },
+        html_content: { type: 'string', description: 'Full replacement HTML document. If the user has attached image files, embed them directly: base64-encode each file and inline it as <img src="data:image/png;base64,...">. The server automatically detects any base64 data: image URIs in this HTML, uploads them to permanent storage, and rewrites the src to a real hosted URL — no separate upload tool needed. Build this on top of get_page\'s draft_html_content when one exists, not html_content.' },
         prompt: { type: 'string' },
         tags: { type: 'array', items: { type: 'string' } },
         status: { type: 'string', enum: ['active', 'archived'] },
@@ -223,7 +237,7 @@ const TOOLS = [
   // close the page lifecycle create_page/update_page otherwise dead-end at.
   {
     name: 'list_tests',
-    description: 'Lists the A/B tests in a workspace, each with its variants (id, name, traffic_weight, is_control, archived, linked page_id) and conversion goals (id, name, type, is_primary). Call this before any variant/test tool that needs a test_id or variant_id — Claude cannot guess these.',
+    description: 'Lists the A/B tests in a workspace, each with its variants (id, name, traffic_weight, is_control, archived, linked page_id) and conversion goals (id, name, type, is_primary). Call this before any variant/test tool that needs a test_id or variant_id — Claude cannot guess these. Each test also includes test_url — the real, live-traffic link for that test (runs through actual weighted variant assignment, sticky cookies, and conversion tracking, no custom domain needed). This is what to give the user when they ask for "the test link" or want to click through and verify a goal actually fires — NOT a page\'s preview_url, which is an authenticated, untracked raw-HTML view for a logged-in human only and will never register a conversion.',
     inputSchema: {
       type: 'object',
       properties: { workspace_id: { type: 'string', description: 'Workspace UUID from list_clients' } },
@@ -233,7 +247,7 @@ const TOOLS = [
   },
   {
     name: 'get_test',
-    description: 'Fetches one test\'s full detail: status, url_path, every variant (with id, name, traffic_weight, is_control, archived_at, linked page id/name), and every conversion goal (with id). Goal and variant ids returned here must be reused verbatim by update_test_weights/update_test_goals — never invent or regenerate them.',
+    description: 'Fetches one test\'s full detail: status, url_path, every variant (with id, name, traffic_weight, is_control, archived_at, linked page id/name), and every conversion goal (with id). Goal and variant ids returned here must be reused verbatim by update_test_weights/update_test_goals — never invent or regenerate them. Also includes scan_results: { variants: [{ variant_id, elements: [{ type, id, text, selector }] }] } — a pre-verified list of clickable elements (forms/buttons/checkboxes/links) actually present in each HTML variant\'s markup, auto-generated whenever that variant\'s HTML is written. When setting up a conversion goal with update_test_goals or create_test, always take the selector from here for the matching variant_id rather than inventing one by reading HTML yourself — these are checked to actually match an element, a guessed selector is not. A variant with no scan_results entry (or a redirect-type variant, which has no HTML at all) has nothing verified yet — tell the user it needs to be scanned manually in the SplitLab dashboard (the "Scan Page" flow on a live URL) before you can set up a reliable goal for it. Also includes test_url — the real, trackable, live-traffic link for this test (weighted variant assignment, real conversion tracking). Hand this to the user when they want to click through and test a goal themselves, not a page\'s preview_url.',
     inputSchema: {
       type: 'object',
       properties: { test_id: { type: 'string' } },
@@ -243,7 +257,7 @@ const TOOLS = [
   },
   {
     name: 'create_test',
-    description: 'Creates a brand-new A/B test in a workspace, with one or more variants (e.g. an existing standalone page as the Control at 100% traffic, matching the dashboard\'s "Save as a New Test" action). Variant traffic_weights must sum to exactly 100. A page already linked to another test cannot be reused as a variant here. Fails if another ACTIVE test in the workspace already uses the same url_path.',
+    description: 'Creates a brand-new A/B test in a workspace, with one or more variants (e.g. an existing standalone page as the Control at 100% traffic, matching the dashboard\'s "Save as a New Test" action). Variant traffic_weights must sum to exactly 100. A page already linked to another test cannot be reused as a variant here. Fails if another ACTIVE test in the workspace already uses the same url_path. If you also want to set up goals here, each linked page gets auto-scanned the moment it\'s attached — call get_test right after this to read scan_results and pull verified selectors from there for update_test_goals, rather than guessing selectors up front in this call.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -289,7 +303,7 @@ const TOOLS = [
   },
   {
     name: 'save_page_as_variant',
-    description: 'Attaches an existing standalone page (e.g. one just created via create_page) onto a chosen test as a new variant, at 0% traffic. The page must already have built HTML. A page can only ever back one variant — this fails if it\'s already linked to one (use save_page_as_new to fork instead). Does not touch the test\'s existing traffic split.',
+    description: 'Attaches an existing standalone page (e.g. one just created via create_page) onto a chosen test as a new variant, at 0% traffic. The page must already have built HTML. A page can only ever back one variant — this fails if it\'s already linked to one (use save_page_as_new to fork instead). Does not touch the test\'s existing traffic split. The variant\'s clickable elements get auto-scanned the moment it\'s attached — call get_test afterward to read scan_results if you\'re about to set up a conversion goal on it.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -303,7 +317,7 @@ const TOOLS = [
   },
   {
     name: 'save_page_as_new',
-    description: 'Forks a variant-linked page\'s current draft (or live HTML if no draft) into a brand-new page and wires it into the SAME test as a new variant at 0% traffic. The original variant and every other variant\'s traffic are left untouched — this is the non-destructive alternative to replace_variant. Clears the original page\'s draft afterward.',
+    description: 'Forks a variant-linked page\'s current draft (or live HTML if no draft) into a brand-new page and wires it into the SAME test as a new variant at 0% traffic. The original variant and every other variant\'s traffic are left untouched — this is the non-destructive alternative to replace_variant. Clears the original page\'s draft afterward. The new variant\'s scan_results are regenerated automatically — call get_test afterward for fresh selectors before setting up goals on it.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -316,7 +330,7 @@ const TOOLS = [
   },
   {
     name: 'replace_variant',
-    description: 'DANGER — promotes a variant-linked page\'s draft onto LIVE immediately: this changes what real visitors see the moment it is called, with no separate confirmation step. Only use this when the user has clearly asked to publish/ship/go-live with the current edit to an existing test variant. For a safer non-destructive option, use save_page_as_new instead. Fails if the page has no pending draft.',
+    description: 'DANGER — promotes a variant-linked page\'s draft onto LIVE immediately: this changes what real visitors see the moment it is called, with no separate confirmation step. Only use this when the user has clearly asked to publish/ship/go-live with the current edit to an existing test variant. For a safer non-destructive option, use save_page_as_new instead. Fails if the page has no pending draft. scan_results for this variant are regenerated against the newly-live HTML — any goal selector set against the old content should be re-checked via get_test afterward, since the markup it pointed at may no longer exist.',
     inputSchema: {
       type: 'object',
       properties: { page_id: { type: 'string', description: 'Must already be linked to a test variant and have a pending draft' } },
@@ -326,7 +340,7 @@ const TOOLS = [
   },
   {
     name: 'duplicate_variant',
-    description: 'Clones a variant (its page\'s HTML, or its redirect/proxy config) into a new variant on the same test, at 0% traffic. Does not copy conversion goals or personalization rules. Use this for "make a copy of variant X to tweak."',
+    description: 'Clones a variant (its page\'s HTML, or its redirect/proxy config) into a new variant on the same test, at 0% traffic. Does not copy conversion goals or personalization rules. Use this for "make a copy of variant X to tweak." An HTML clone is freshly scanned under its own variant_id (not copied from the source) — call get_test to read its scan_results once you start editing it.',
     inputSchema: {
       type: 'object',
       properties: { test_id: { type: 'string' }, variant_id: { type: 'string' } },
@@ -336,7 +350,7 @@ const TOOLS = [
   },
   {
     name: 'create_variant',
-    description: 'Adds a fresh (blank, not cloned) variant to an existing test — either HTML you write yourself, or a redirect URL, or proxy mode. Existing variants\' weights are automatically equalized across the new total.',
+    description: 'Adds a fresh (blank, not cloned) variant to an existing test — either HTML you write yourself, or a redirect URL, or proxy mode. Existing variants\' weights are automatically equalized across the new total. An HTML variant gets scanned automatically on creation — call get_test to read its scan_results before setting up a conversion goal on it. A redirect/proxy variant has no HTML, so it never gets scan_results — goals on it need a manual scan in the dashboard first.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -441,7 +455,7 @@ const TOOLS = [
   },
   {
     name: 'update_test_goals',
-    description: 'Replaces a test\'s conversion goals by full diff. To edit or keep an existing goal, pass its id back exactly as returned by get_test/list_tests — omitting a previously-listed goal\'s id here deletes it. Never invent a new id for an existing goal: doing so would orphan its historical event data. Goals with no id are created as new.',
+    description: 'Replaces a test\'s conversion goals by full diff. To edit or keep an existing goal, pass its id back exactly as returned by get_test/list_tests — omitting a previously-listed goal\'s id here deletes it. Never invent a new id for an existing goal: doing so would orphan its historical event data. Goals with no id are created as new. For form_submit/button_click/call_click goals, call get_test first and take the `selector` from its scan_results for the target variant_id (map scan element type → goal type: form→form_submit, button→button_click, call→call_click) — never write your own guessed selector, it will silently never fire if wrong. url_reached goals use url_pattern instead and don\'t need a selector. If scan_results has no entry for that variant (or it\'s a redirect-type variant with no HTML), tell the user to scan it manually in the dashboard first.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -485,6 +499,62 @@ const TOOLS = [
         slug: { type: 'string', description: 'Lowercase letters, numbers, and hyphens only, e.g. "spring-sale"' },
       },
       required: ['page_id', 'slug'],
+      additionalProperties: false,
+    },
+  },
+
+  // Phase 3 (continued): domain management. Unlike assign_domain (never
+  // built — no page->domain link exists in the schema), domains themselves
+  // are a real, existing, workspace-scoped feature (Vercel integration,
+  // src/app/api/workspaces/[id]/domains/route.ts) — these tools wrap it
+  // directly, same pattern as everything else in this file. update_domain
+  // (swap the domain string) is intentionally NOT exposed here — it
+  // removes+re-adds the domain in Vercel and resets verification, the
+  // riskiest of the four operations; use the SplitLab dashboard for that.
+  {
+    name: 'list_domains',
+    description: 'Lists the custom domains configured for a workspace, each with its verification status. Each entry includes dns_instructions.primary — the CNAME record that must be added at the registrar for traffic to actually route to SplitLab, required for every domain, verified or not. For a root/apex domain only (e.g. "example.com", not "offers.example.com"), dns_instructions.root_domain_alternative is also present — an A record that is an ALTERNATIVE to the CNAME, not an addition to it (some registrars reject a CNAME on the root domain; add ONE of the two, never both — a name can\'t have both record types at once). Separately, vercel_verification (when present) is a TXT record Vercel additionally needs to confirm domain ownership — that is NOT a substitute for dns_instructions. If a user asks "what do I still need to add" for an already-registered domain, use this tool and answer from dns_instructions (plus vercel_verification if set), not from memory of an earlier add_domain response.',
+    inputSchema: {
+      type: 'object',
+      properties: { workspace_id: { type: 'string', description: 'Workspace UUID from list_clients' } },
+      required: ['workspace_id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'add_domain',
+    description: 'Registers a new custom domain on a workspace with Vercel and creates its SplitLab record. Returns dns_instructions.primary — a CNAME record that must ALWAYS be added at the registrar for the domain to route traffic to SplitLab at all — show this to the user verbatim every time, it is not optional. If this is a root/apex domain (e.g. "example.com", not "offers.example.com"), dns_instructions.root_domain_alternative is also returned: an A record the user should add INSTEAD OF the CNAME if their registrar doesn\'t support a CNAME on the root domain — never tell the user to add both, a name can only have one or the other. Separately (and independently of the above), vercel_verification may also be returned — an extra TXT record Vercel sometimes needs for ownership proof; adding only that TXT record without the CNAME/A record leaves the domain "misconfigured" even though ownership looks fine, which is a common mistake — always give the user the CNAME/A instructions too, not the TXT alone. Then call verify_domain once they confirm the records are in place. Subject to the workspace owner\'s plan domain limit.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workspace_id: { type: 'string' },
+        domain: { type: 'string', description: 'The domain or subdomain, e.g. "example.com" or "offers.example.com"' },
+      },
+      required: ['workspace_id', 'domain'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'verify_domain',
+    description: 'Checks whether a domain\'s DNS has been correctly pointed at SplitLab and marks it verified if so. This calls Vercel\'s verification API, which is rate-limited to 50 checks/hour per project across ALL of SplitLab\'s workspaces — do not call this in a retry loop; call it once per user request ("check if my domain is verified now"), and if it reports still-pending, tell the user DNS propagation can take a few minutes and to ask again later rather than re-checking immediately yourself. On a still-not-verified result, re-share dns_instructions from this response (dns_instructions.primary CNAME, or for a root domain dns_instructions.root_domain_alternative A record used INSTEAD of the CNAME, never both) rather than re-sending only status.vercel_verification\'s TXT record — a misconfigured result very often means the CNAME/A record itself was never added, which the TXT record alone will not fix.',
+    inputSchema: {
+      type: 'object',
+      properties: { workspace_id: { type: 'string' }, domain_id: { type: 'string', description: 'Domain UUID from list_domains' } },
+      required: ['workspace_id', 'domain_id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'delete_domain',
+    description: 'Permanently removes a domain from the workspace and from Vercel. Any test currently serving traffic on this domain will stop resolving for visitors. Not reversible through this tool — the domain would need to be re-added and re-verified from scratch.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workspace_id: { type: 'string' },
+        domain_id: { type: 'string', description: 'Domain UUID from list_domains' },
+        confirm: { type: 'boolean', description: 'Must be true — safety check against accidental deletion' },
+      },
+      required: ['workspace_id', 'domain_id', 'confirm'],
       additionalProperties: false,
     },
   },
@@ -742,7 +812,8 @@ export async function POST(request: NextRequest) {
 
         const result = await listWorkspaceTests(workspaceId);
         if (!result.ok) return denyOrFail(result.error);
-        return succeed(result.data);
+        const withUrls = (result.data as { id: string; name: string; url_path: string }[]).map((t) => ({ ...t, test_url: buildTestUrl(t) }));
+        return succeed(withUrls);
       }
 
       if (toolName === 'get_test') {
@@ -754,7 +825,8 @@ export async function POST(request: NextRequest) {
 
         const result = await getTestDetail(testId);
         if (!result.ok) return denyOrFail(result.error);
-        return succeed(result.data);
+        const test = result.data as { id: string; name: string; url_path: string };
+        return succeed({ ...test, test_url: buildTestUrl(test) });
       }
 
       if (toolName === 'create_test') {
@@ -1018,6 +1090,77 @@ export async function POST(request: NextRequest) {
         if (result.data.old_slug) revalidatePath(`/pages/${result.data.old_slug}`);
         revalidatePath(`/pages/${result.data.slug}`);
 
+        return succeed(result.data);
+      }
+
+      if (toolName === 'list_domains') {
+        const workspaceId = args.workspace_id as string | undefined;
+        if (!workspaceId) return denyOrFail('workspace_id is required');
+
+        const access = await requireWorkspaceAccess(principal, workspaceId, { write: false });
+        if (!access.ok) return denyOrFail(access.error);
+
+        const result = await listDomains(workspaceId);
+        if (!result.ok) return denyOrFail(result.error);
+        // dns_instructions is computed here, not stored on the row (see
+        // buildDnsInstructions's doc comment) — always attach it so a
+        // troubleshooting call ("what record do I still need?") on an
+        // already-added domain gets the same routing instructions add_domain
+        // returns up front, not just the conditional ownership TXT.
+        // root_domain_alternative is an ALTERNATIVE to primary, not an
+        // addition — never present both as "add these."
+        const withInstructions = (result.data as { domain: string; cname_target: string | null }[]).map((d) => ({
+          ...d, dns_instructions: buildDnsInstructions(d.domain, d.cname_target),
+        }));
+        return succeed(withInstructions);
+      }
+
+      if (toolName === 'add_domain') {
+        const workspaceId = args.workspace_id as string | undefined;
+        const domain = args.domain as string | undefined;
+        if (!workspaceId || !domain) return denyOrFail('workspace_id and domain are required');
+
+        const access = await requireWorkspaceAccess(principal, workspaceId, { write: true });
+        if (!access.ok) return denyOrFail(access.error);
+
+        const result = await addDomain(workspaceId, domain, principal.role);
+        if (!result.ok) return denyOrFail(result.error);
+        const created = result.data as { domain: string; cname_target: string | null };
+        // dns_instructions.primary (CNAME) always routes traffic and is
+        // always required; root_domain_alternative (A record), when present,
+        // is an alternative to primary for root domains, not an addition —
+        // see buildDnsInstructions's doc comment. Distinct from
+        // vercel_verification's TXT record, which only appears when Vercel
+        // needs separate ownership proof.
+        return succeed({ ...created, dns_instructions: buildDnsInstructions(created.domain, created.cname_target) });
+      }
+
+      if (toolName === 'verify_domain') {
+        const workspaceId = args.workspace_id as string | undefined;
+        const domainId = args.domain_id as string | undefined;
+        if (!workspaceId || !domainId) return denyOrFail('workspace_id and domain_id are required');
+
+        const access = await requireWorkspaceAccess(principal, workspaceId, { write: true });
+        if (!access.ok) return denyOrFail(access.error);
+
+        const result = await verifyDomain(workspaceId, domainId);
+        if (!result.ok) return denyOrFail(result.error);
+        const verifyData = result.data as { domain: string; verified: boolean };
+        return succeed({ ...verifyData, dns_instructions: buildDnsInstructions(verifyData.domain, null) });
+      }
+
+      if (toolName === 'delete_domain') {
+        const workspaceId = args.workspace_id as string | undefined;
+        const domainId = args.domain_id as string | undefined;
+        const confirm = args.confirm as boolean | undefined;
+        if (!workspaceId || !domainId) return denyOrFail('workspace_id and domain_id are required');
+        if (confirm !== true) return denyOrFail('confirm must be true to delete a domain — this is irreversible through this tool');
+
+        const access = await requireWorkspaceAccess(principal, workspaceId, { write: true });
+        if (!access.ok) return denyOrFail(access.error);
+
+        const result = await deleteDomain(workspaceId, domainId);
+        if (!result.ok) return denyOrFail(result.error);
         return succeed(result.data);
       }
 
