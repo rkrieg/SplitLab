@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { uploadHtml, inlineDataUrisToStorage } from '@/lib/storage';
 import { resolveWorkspaceRole } from '@/lib/workspace-auth';
+import { rescanVariantHtml } from '@/lib/services/scan';
 
 export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -70,7 +71,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: testErr?.message ?? 'Failed to create test' }, { status: 500 });
     }
 
-    const { error: varErr } = await db.from('test_variants').insert({
+    const { data: newVariant, error: varErr } = await db.from('test_variants').insert({
       test_id: test.id,
       name: 'Control',
       page_id: pageId,
@@ -78,9 +79,13 @@ export async function POST(request: NextRequest) {
       proxy_mode: false,
       traffic_weight: 100,
       is_control: true,
-    });
+    }).select('id').single();
 
     if (varErr) return NextResponse.json({ error: varErr.message }, { status: 500 });
+
+    if (newVariant) {
+      await rescanVariantHtml(test.id, newVariant.id, 'Control', convertedHtml);
+    }
 
     const { data: fullTest } = await db
       .from('tests')

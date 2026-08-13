@@ -55,6 +55,7 @@ export async function middleware(request: NextRequest) {
   const APP_ROUTES = [
     '/login', '/dashboard', '/clients', '/api', '/tests', '/pages',
     '/scripts', '/team', '/settings', '/invite', '/_next', '/favicon.ico', '/static', '/tracker.js',
+    '/.well-known',
   ];
   const isAppRoute = APP_ROUTES.some((r) => pathname === r || pathname.startsWith(r + '/') || pathname.startsWith(r + '?'));
 

@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { slugify } from '@/lib/utils';
 import { PLAN_LIMITS } from '@/lib/plans';
+import { listClientsForUser } from '@/lib/services/clients';
 import { z } from 'zod';
 
 const createSchema = z.object({
@@ -12,83 +13,13 @@ const createSchema = z.object({
   logo_url: z.string().url().optional().nullable(),
 });
 
-const CLIENT_SELECT = `
-  *,
-  workspaces (
-    id, name, slug, status,
-    tests ( id, status )
-  )
-`;
-
-/** Client IDs the user can reach via workspace_members (owned or invited). */
-async function clientIdsFromMemberships(userId: string): Promise<string[]> {
-  const { data: memberships } = await db
-    .from('workspace_members')
-    .select('workspace_id')
-    .eq('user_id', userId);
-
-  const workspaceIds = memberships?.map((m) => m.workspace_id) ?? [];
-  if (workspaceIds.length === 0) return [];
-
-  const { data: workspaces } = await db
-    .from('workspaces')
-    .select('client_id')
-    .in('id', workspaceIds);
-
-  return Array.from(new Set(workspaces?.map((w) => w.client_id) ?? []));
-}
-
 export async function GET() {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const { id: userId, role } = session.user;
-
-  if (role === 'admin') {
-    const { data, error } = await db
-      .from('clients')
-      .select(CLIENT_SELECT)
-      .order('created_at', { ascending: false });
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-    return NextResponse.json(data);
-  }
-
-  if (role === 'manager') {
-    // Owned clients + clients reached via workspace invites (deduped —
-    // owners are also workspace_members on their own client from signup).
-    const { data: owned, error: ownedError } = await db
-      .from('clients')
-      .select('id')
-      .eq('owner_id', userId);
-    if (ownedError) return NextResponse.json({ error: ownedError.message }, { status: 500 });
-
-    const memberClientIds = await clientIdsFromMemberships(userId);
-    const clientIds = Array.from(
-      new Set([...(owned?.map((c) => c.id) ?? []), ...memberClientIds])
-    );
-    if (clientIds.length === 0) return NextResponse.json([]);
-
-    const { data, error } = await db
-      .from('clients')
-      .select(CLIENT_SELECT)
-      .in('id', clientIds)
-      .order('created_at', { ascending: false });
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-    return NextResponse.json(data);
-  }
-
-  // viewer: only clients they have workspace membership in
-  const clientIds = await clientIdsFromMemberships(userId);
-  if (clientIds.length === 0) return NextResponse.json([]);
-
-  const { data, error } = await db
-    .from('clients')
-    .select(CLIENT_SELECT)
-    .in('id', clientIds)
-    .order('created_at', { ascending: false });
-
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json(data);
+  const result = await listClientsForUser(session.user.id, session.user.role);
+  if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.status });
+  return NextResponse.json(result.data);
 }
 
 export async function POST(request: NextRequest) {
