@@ -16,12 +16,24 @@ export interface PlanStep {
   /** Hint for routing — patch is the default */
   op: 'patch' | 'remove_section' | 'insert_section' | 'structural' | 'image_generate';
   /**
+   * How many new sections an 'insert_section' step creates. The insert path
+   * built exactly one regardless of the request, so "add 2 sections like this"
+   * silently produced one and reported Done.
+   */
+  count?: number;
+  /**
    * This step means "recreate this section to look like the attachment".
    * Decided by the planner that read the message and saw the images — a keyword
    * test here used to send "make the logo white" down the recreate-from-
    * screenshot path and rebuild a section nobody asked to touch.
    */
   design_match: boolean;
+  /**
+   * Images that belong to THIS step. Undefined means "use whatever the caller
+   * would have used anyway" — every step used to receive every attachment, so
+   * a two-screenshot message handed both references to both steps.
+   */
+  image_urls?: string[];
 }
 
 export type EditPlan =
@@ -257,6 +269,172 @@ export function extractVerifyQuotes(prompt: string): string[] {
 }
 
 /**
+ * Did the edit actually DO what was asked?
+ *
+ * verifyScopedPatchIntent below can only check things code can measure: did the
+ * bytes change, is the required asset present, did click-to-edit survive. That
+ * leaves a real gap — "increase the footer logo size slightly" came back with
+ * different HTML and an unchanged logo, passed every deterministic check, and
+ * was reported to the user as Done. No regex can settle whether a logo got
+ * bigger, and the space of things users ask for is unbounded, so this is a
+ * model call: it sees the instruction and the before/after HTML and answers one
+ * question.
+ *
+ * It grades an edit it did not write, on a question with a checkable answer —
+ * not "is this good?" but "did this happen?". Anything other than a clear "no"
+ * is treated as applied: a flaky check must never throw away a real edit.
+ */
+export async function verifyAskApplied(opts: {
+  instruction: string;
+  sectionName: string;
+  beforeHtml: string;
+  afterHtml: string;
+  usage?: UsageContext;
+}): Promise<{ applied: boolean; reason: string | null }> {
+  const cap = (s: string) => (s.length > 6000 ? `${s.slice(0, 6000)}\n<!-- truncated -->` : s);
+  try {
+    const text = await askAI({
+      system:
+        'You check whether a requested edit was actually carried out on one section of a landing page. ' +
+        'You are given the instruction, the section BEFORE, and the section AFTER. ' +
+        'Return JSON only: {"applied":true|false,"reason":"<short reason when false>"}. ' +
+        'applied=true when the AFTER html reflects what was asked, even partially or imperfectly. ' +
+        'applied=false ONLY when the specific thing asked for plainly did not happen — e.g. the ask was ' +
+        'to make a logo bigger and no size/width/height/scale on the logo changed, or the ask was to ' +
+        'align items horizontally and the layout direction is unchanged. ' +
+        'Unrelated changes elsewhere in the section do not make it applied. ' +
+        'If you cannot tell, answer applied=true — a wrong "false" discards work the user wanted.',
+      messages: [
+        {
+          role: 'user',
+          content:
+            `INSTRUCTION:\n${opts.instruction}\n\n` +
+            `SECTION "${opts.sectionName}" BEFORE:\n${cap(opts.beforeHtml)}\n\n` +
+            `SECTION "${opts.sectionName}" AFTER:\n${cap(opts.afterHtml)}`,
+        },
+      ],
+      maxTokens: 300,
+      label: 'follow-up:verify-ask-applied',
+      usage: opts.usage ? { ...opts.usage, operation: 'route' } : undefined,
+    });
+    let raw = text.trim();
+    if (raw.startsWith('```')) raw = raw.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
+    const start = raw.indexOf('{');
+    const end = raw.lastIndexOf('}');
+    if (start < 0 || end <= start) return { applied: true, reason: null };
+    const parsed = JSON.parse(raw.slice(start, end + 1)) as { applied?: unknown; reason?: unknown };
+    if (parsed.applied === false) {
+      return {
+        applied: false,
+        reason: typeof parsed.reason === 'string' && parsed.reason.trim() ? parsed.reason.trim() : null,
+      };
+    }
+    return { applied: true, reason: null };
+  } catch (err) {
+    // Unavailable check ≠ failed edit. Log it and let the edit stand.
+    console.warn('[follow-up] verifyAskApplied unavailable — treating step as applied', err);
+    return { applied: true, reason: null };
+  }
+}
+
+/**
+ * Was what disappeared a fair consequence of the request, or collateral damage?
+ *
+ * Counting what vanished is arithmetic and code does it well. Deciding whether
+ * the user would MIND is a judgement, and the first version of this guard made
+ * that call by counting: fewer headings than before ⇒ destruction ⇒ throw the
+ * edit away. But "make the hero shorter and punchier" merging two headings into
+ * one and "the edit ate your headings" are identical to a counter. That guard
+ * would have reverted a good edit and told the user their page was left exactly
+ * as it was — code overruling a sensible model decision, which is the whole
+ * class of bug this system is meant to be rid of.
+ *
+ * So: code measures, the model judges. Anything other than a clear "this was
+ * not asked for" is treated as intended — a guard that fires on a good edit is
+ * worse than one that misses a bad one, because the user loses real work.
+ */
+export async function judgeUnrequestedLoss(opts: {
+  prompt: string;
+  losses: { images: string[]; sections: string[]; headings: string[]; editableFields: string[] };
+  /**
+   * Headings the page has NOW. Losses are computed by exact string match, so a
+   * heading that was merely REWORDED is reported as deleted — which is most
+   * copy edits. Without the current list the judge sees "the headline is gone"
+   * and cannot tell a rewrite from a deletion.
+   */
+  headingsAfter?: string[];
+  usage?: UsageContext;
+}): Promise<{ intended: boolean; summary: string | null }> {
+  const { losses } = opts;
+  const described = [
+    losses.images.length > 0 ? `${losses.images.length} image(s)` : null,
+    losses.sections.length > 0 ? `section(s): ${losses.sections.join(', ')}` : null,
+    losses.headings.length > 0
+      ? `heading text no longer present: ${losses.headings.slice(0, 8).map((h) => `"${h}"`).join(' | ')}`
+      : null,
+    losses.editableFields.length > 0
+      ? `${losses.editableFields.length} editable field(s): ${losses.editableFields.slice(0, 8).join(', ')}`
+      : null,
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  const nowNote =
+    losses.headings.length > 0 && (opts.headingsAfter ?? []).length > 0
+      ? `\n\nHEADINGS ON THE PAGE NOW:\n${(opts.headingsAfter ?? [])
+          .slice(0, 12)
+          .map((h) => `"${h}"`)
+          .join(' | ')}\n(Compare the two lists: a heading whose wording simply changed is a REWRITE, not a deletion.)`
+      : '';
+
+  try {
+    const text = await askAI({
+      system:
+        'A landing-page edit was carried out and some things are no longer on the page. ' +
+        'Decide whether their disappearance is a reasonable consequence of what the user asked for, ' +
+        'or damage they did not ask for and would object to. ' +
+        'Return JSON only: {"intended":true|false,"summary":"<what was lost, in plain words, when false>"}. ' +
+        'Losses are detected by exact text match, so a heading that was REWORDED is reported as missing ' +
+        'even though it is still there in new words — that is a rewrite, and rewrites are intended. ' +
+        'intended=true when the loss follows naturally from the request — rewriting or condensing copy ' +
+        'changes headings, a redesign replaces images, tightening a section merges elements, ' +
+        'an explicit removal deletes things. ' +
+        'intended=false ONLY when the loss is unrelated to what was asked — e.g. they asked to resize a logo ' +
+        'and unrelated photos and headings vanished from elsewhere. ' +
+        'When unsure, answer intended=true: wrongly calling a good edit "damage" throws away work the user wanted.',
+      messages: [
+        {
+          role: 'user',
+          content: `USER ASKED:\n${opts.prompt}\n\nNO LONGER ON THE PAGE:\n${described}${nowNote}`,
+        },
+      ],
+      maxTokens: 300,
+      label: 'follow-up:judge-loss',
+      usage: opts.usage ? { ...opts.usage, operation: 'route' } : undefined,
+    });
+    let raw = text.trim();
+    if (raw.startsWith('```')) raw = raw.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
+    const start = raw.indexOf('{');
+    const end = raw.lastIndexOf('}');
+    if (start < 0 || end <= start) return { intended: true, summary: null };
+    const parsed = JSON.parse(raw.slice(start, end + 1)) as { intended?: unknown; summary?: unknown };
+    if (parsed.intended === false) {
+      return {
+        intended: false,
+        summary:
+          typeof parsed.summary === 'string' && parsed.summary.trim() ? parsed.summary.trim() : null,
+      };
+    }
+    return { intended: true, summary: null };
+  } catch (err) {
+    // Can't ask ⇒ don't overrule. Keeping a possibly-imperfect edit beats
+    // silently reverting a good one.
+    console.warn('[follow-up] judgeUnrequestedLoss unavailable — treating loss as intended', err);
+    return { intended: true, summary: null };
+  }
+}
+
+/**
  * After a scoped patch: reject silent wrong-section / no-op style wins when
  * the instruction clearly required specific copy to appear (or disappear).
  */
@@ -452,16 +630,19 @@ function escapeRegExp(s: string): string {
 
 const PLANNER_SYSTEM = `You plan landing-page AI edits. Split a user message into ordered atomic edit steps when it contains multiple distinct intents. Return JSON only.
 
-{"mode":"execute"|"clarify"|"single","steps":[{"instruction":"...","target_sections":["hero"],"op":"patch","design_match":false}],"clarifying_question":null}
+{"mode":"execute"|"clarify"|"single","steps":[{"instruction":"...","target_sections":["hero"],"op":"patch","count":1,"design_match":false}],"clarifying_question":null}
 
-"design_match": true when THIS step means "make this section look like the attached screenshot" (recreate its layout/structure from the image). False for a targeted tweak that merely mentions something visible — recolouring or resizing a logo, changing a font, editing copy — where recreating the section from a screenshot would destroy work the user wants kept.
+"design_match": true when THIS step means "make this section look like the attached screenshot" (recreate its layout/structure from the image). False for a targeted tweak that merely mentions something visible — recolouring or resizing a logo, changing a font, editing copy — where recreating the section from a screenshot would destroy work the user wants kept. Judge each step on its own: in "make the footer logo slightly bigger and add a section like this image", only the ADD step is design_match true.
+
+"count": for op "insert_section", how many new sections this step creates ("add 2 sections like this" → 2). 1 otherwise.
 
 Rules:
 - mode "single": one clear intent (or already atomic) — return mode single and empty steps. The product will use the fast existing path.
 - mode "execute": 2+ distinct intents — fill steps in order. Each step's instruction must be self-contained (copy the relevant detail from the user message). target_sections use EXACT names from the provided list when obvious; else [].
 - mode "clarify": ONLY when you truly cannot proceed without knowing which section — and NEVER when the user said "you decide" / "feel free" / "just do it", NEVER when they attached a screenshot and are complaining about a visible defect (decide the fix yourself).
 - Prefer execute over clarify. Prefer single when one patch covering 1-3 sections is enough (e.g. "center everything in the footer").
-- op is usually "patch". Use "remove_section" only to delete a whole SL section. Use "structural" for "strip the page down to hero+footer" style trims. Use "image_generate" only for brand-new AI image creation.
+- op is usually "patch". Use "insert_section" when the step CREATES a section that is not on the page yet ("add a section like this image", "add an FAQ under the hero") — for that op "target_sections" is the ANCHOR it should sit next to, or [] if the user did not say where; never name a section just to fill the field, because naming one makes us edit that section and the new content ends up nested inside it. Use "remove_section" only to delete a whole SL section. Use "structural" for "strip the page down to hero+footer" style trims. Use "image_generate" only for brand-new AI image creation.
+- Constraints are not steps. "keep the dark theme", "don't touch the nav", "same fonts" describe HOW the other steps must be done — never emit a step whose only job is to leave something as it is. Such a step correctly changes nothing and is then reported to the user as a failed edit.
 - Max 5 steps. Do not invent work the user did not ask for.`;
 
 /**
@@ -476,13 +657,22 @@ export async function planMultiIntentEdit(opts: {
   forceDecide: boolean;
   usage?: UsageContext;
   /** Classifier-split asks — prefer these over a second planner call. */
-  seedAsks?: Array<{ instruction: string; sections: string[] }>;
+  seedAsks?: Array<{
+    instruction: string;
+    sections: string[];
+    op?: 'edit' | 'add' | 'remove' | 'reorder';
+    count?: number;
+    designMatch?: boolean;
+    imageIndexes?: number[];
+  }>;
+  /** Standing conditions that qualify every step ("keep the dark theme"). */
+  constraints?: string[];
   /** Classifier's read on whether this message is a "look like this" ask. */
   designMatch?: boolean;
 }): Promise<EditPlan> {
   const { prompt, sectionNames, sectionPreviews, imageUrls, forceDecide, usage } = opts;
 
-  const seeded = (opts.seedAsks ?? [])
+  const seeded: PlanStep[] = (opts.seedAsks ?? [])
     .filter((a) => a && typeof a.instruction === 'string' && a.instruction.trim())
     .slice(0, 5)
     .map((a) => {
@@ -490,14 +680,43 @@ export async function planMultiIntentEdit(opts: {
       // not tell") and the caller resolves it with another model call — a
       // keyword guess here landed edits in whatever section a word matched.
       const named = (a.sections ?? []).filter((n) => sectionNames.includes(n));
+      // The ask's own op, not a hardcoded 'patch'. Seeding every step as a
+      // patch meant that whenever the classifier split a message into 2+ asks,
+      // "add a section" could only ever be carried out as "edit a section" —
+      // the planner, the one component that can assign insert/remove/reorder,
+      // is skipped entirely on the seeded path.
+      const op: PlanStep['op'] =
+        a.op === 'add'
+          ? 'insert_section'
+          : a.op === 'remove'
+            ? 'remove_section'
+            : a.op === 'reorder'
+              ? 'structural'
+              : 'patch';
       return {
         instruction: a.instruction.trim(),
         target_sections: named,
-        op: 'patch' as const,
-        design_match: opts.designMatch ?? false,
+        op,
+        count: a.count ?? 1,
+        // Per-ask, never the message-level flag. Blanket-applying it told
+        // every step of a multi-ask edit to recreate its section from the
+        // attachment, which is how a "make the logo slightly bigger" step
+        // rebuilt a footer out of a property-gallery screenshot.
+        design_match: a.designMatch === true,
+        // Only this ask's own references. Undefined (not []) when the
+        // classifier didn't single any out, so the caller keeps today's
+        // behaviour of passing everything rather than passing nothing.
+        image_urls:
+          (a.imageIndexes ?? []).length > 0
+            ? (a.imageIndexes ?? []).map((i) => imageUrls[i]).filter((u): u is string => !!u)
+            : undefined,
       };
     });
-  if (seeded.length >= 2) {
+  // A single structural ask ("add a section like this image") also goes down
+  // the step executor, because that is the only path that can insert, remove or
+  // reorder. Returning 'single' for it sends it to the patch path, where the
+  // only available verb is "edit an existing section".
+  if (seeded.length >= 2 || (seeded.length === 1 && seeded[0].op !== 'patch')) {
     return { mode: 'execute', steps: seeded };
   }
 
@@ -507,6 +726,9 @@ export async function planMultiIntentEdit(opts: {
       .join('\n');
     const textPart =
       `Available sections:\n${list}\n\nKnown names: ${sectionNames.join(', ')}\n\nUser instruction:\n${prompt}` +
+      ((opts.constraints ?? []).length > 0
+        ? `\n\nStanding conditions on every step (these are NOT steps — do not emit a step for them):\n${(opts.constraints ?? []).map((c) => `- ${c}`).join('\n')}`
+        : '') +
       (forceDecide
         ? '\n\n(User deferred to you — mode must be execute or single, never clarify.)'
         : '') +
@@ -537,7 +759,7 @@ export async function planMultiIntentEdit(opts: {
     if (jsonStart >= 0 && jsonEnd > jsonStart) raw = raw.slice(jsonStart, jsonEnd + 1);
     const parsed = JSON.parse(raw) as {
       mode?: string;
-      steps?: Array<{ instruction?: string; target_sections?: string[]; op?: string; design_match?: boolean }>;
+      steps?: Array<{ instruction?: string; target_sections?: string[]; op?: string; design_match?: boolean; count?: number }>;
       clarifying_question?: string | null;
     };
 
@@ -569,6 +791,10 @@ export async function planMultiIntentEdit(opts: {
           // asks the model again rather than keyword-matching a section here.
           target_sections: targets,
           op,
+          count:
+            op === 'insert_section' && typeof s.count === 'number'
+              ? Math.min(Math.max(Math.floor(s.count), 1), 4)
+              : 1,
           design_match: s.design_match === true,
         });
       }

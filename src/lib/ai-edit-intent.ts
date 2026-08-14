@@ -28,11 +28,49 @@ import type { ContentReuseIntent } from '@/lib/ai-content-placement';
 /** What one attached image is for. Mirrors the roles the edit paths act on. */
 export type AttachmentRole = 'design_reference' | 'bug_report' | 'content_asset';
 
+/**
+ * What KIND of job one ask is. Without this every ask was assumed to be "edit
+ * an existing section", because that was the only shape the executor had — so
+ * "add a section like this image" was carried out as "edit the hero", and the
+ * new content was nested inside the hero's flex row instead of appended to the
+ * page. "add" is the ask that legitimately has no existing target.
+ */
+export type EditAskOp = 'edit' | 'add' | 'remove' | 'reorder';
+
 export interface EditAsk {
   /** Self-contained instruction for this one ask. */
   instruction: string;
   /** SL section names this ask targets; empty when unknown. */
   sections: string[];
+  /** The kind of job. Defaults to 'edit' — the safe, non-structural read. */
+  op: EditAskOp;
+  /**
+   * THIS ask means "make it look like the attachment" (recreate the section
+   * from the image). Per-ask on purpose: the message-level designReference flag
+   * used to be stamped onto every step of a multi-ask edit, so "increase the
+   * footer logo size slightly and add a section like this image" told the
+   * footer step to recreate itself from a property-photo screenshot. The footer
+   * lost 6 images, 4 headings and 14 click-to-edit fields, and the logo never
+   * got bigger. One ask referencing an image does not license rebuilding the
+   * sections the other asks touch.
+   */
+  designMatch: boolean;
+  /**
+   * How many NEW sections this ask creates. Only meaningful for op 'add'.
+   * "add 2 sections like this" is 2 — the insert path used to build exactly
+   * one no matter what was asked for, and silently dropped the rest.
+   */
+  count: number;
+  /**
+   * Which attachments belong to THIS ask, as 0-based indexes into the images
+   * the user sent. Empty means "all of them / none in particular".
+   *
+   * attachmentRoles says what each image IS (a design to copy, a bug report, an
+   * asset to embed) but never which ask it belongs TO, so every step was handed
+   * every image. "Make the footer like this and the nav like that" gave the
+   * footer step both screenshots and nothing to tell them apart.
+   */
+  imageIndexes: number[];
 }
 
 export interface EditIntent {
@@ -46,6 +84,15 @@ export interface EditIntent {
   attachmentRoles: AttachmentRole[];
   /** Distinct asks in the message — a multi-part request is where asks get dropped. */
   asks: EditAsk[];
+  /**
+   * Standing conditions on the OTHER asks — "keep the dark theme", "don't
+   * touch the nav", "same fonts". These are not work items. Treated as asks
+   * they produced a step that correctly changed nothing, which the verifier
+   * then reported as a failed edit; and, being absent from the other steps,
+   * a design-match step could rebuild a section from a light-themed
+   * screenshot and flip the very theme the user asked us to keep.
+   */
+  constraints: string[];
   /** Union of every ask's sections, resolved against the live page. */
   targetSections: string[];
   /** The ask needs a full-page rebuild (new sections, whole-page redesign). */
@@ -98,7 +145,8 @@ Respond with ONLY a JSON object. Begin with { and end with }. No prose, no markd
   "reuse_reference_copy": true|false,
   "bug_report": true|false,
   "attachment_roles": ["design_reference"|"bug_report"|"content_asset", ...],
-  "asks": [{ "instruction": "<one self-contained ask>", "sections": ["<sl section name>"] }],
+  "asks": [{ "instruction": "<one self-contained ask>", "sections": ["<sl section name>"], "op": "edit"|"add"|"remove"|"reorder", "count": 1, "design_match": true|false, "image_indexes": [1] }],
+  "constraints": ["<a condition on the other asks, not a job of its own>", ...],
   "full_rebuild": true|false,
   "uses_earlier_source": true|false,
   "source_url": "<url or null>",
@@ -117,6 +165,15 @@ Field meanings:
 - "bug_report": an attachment shows something broken/ugly on OUR OWN page (the user is complaining), rather than a design to copy. Both can be true when the user complains AND points at a reference.
 - "attachment_roles": one entry per attached image, in order. "content_asset" means the image itself belongs on the page (a logo, a photo to embed).
 - "asks": split the message into distinct asks. "make the footer like this and in nav increase the logo size" is TWO asks. Use section names EXACTLY as listed when you can map the user's words to them. "everywhere" / "all logos" / "the top bar" / "the bottom" ARE mappable — put the matching live names (nav, footer, hero, …) on that ask. Never leave "sections" empty just because the user did not type the internal name. Never invent a name that is not in the list.
+- "op" on each ask — what KIND of job it is. This decides whether we modify a section or build a new one, so it matters more than the wording:
+  - "edit": change something that already exists (restyle, recolour, resize, rewrite copy, fix spacing, align, replace an image). This is the default and covers most asks.
+  - "add": CREATE a section that is not on the page yet — "add a section like this image", "add an FAQ below the hero", "add 2 sections". An "add" ask has NO existing target, so for op "add" leaving "sections" EMPTY is correct and expected: put the section it should sit NEXT TO in "sections" if the user said where ("add an FAQ below the hero" → ["hero"]), and otherwise leave it empty. Never name a section just to fill the field on an "add" — naming one makes us edit that section instead of creating a new one, which nests the new content inside it and wrecks the layout.
+  - "remove": delete an existing whole section. Put that section in "sections".
+  - "reorder": move existing sections around.
+- "count" on each ask: how many NEW sections an "add" creates ("add 2 sections like this" → 2). 1 for everything else. Never 0.
+- "design_match" on each ask: true ONLY when THIS ask means "make it look like the attached image" — recreate that section's layout and structure from the picture. Judge each ask separately. In "increase the footer logo size slightly and add a section like this image", the ADD ask is design_match true and the footer ask is FALSE — the footer is a small resize, and rebuilding it from an unrelated screenshot would destroy it. A resize, recolour, spacing tweak or copy edit is design_match false even when the same message also contains a reference image.
+- "image_indexes" on each ask: which attached images that ask refers to, numbered from 1 in the order they were attached. "make the footer like this and the nav like that" with two screenshots is [1] on the footer ask and [2] on the nav ask. Leave it [] when the ask refers to no image, or when a single image applies to everything. Getting this right stops one ask's reference from being handed to an unrelated ask.
+- "constraints": standing conditions that qualify the OTHER asks rather than being work of their own — "keep the dark theme we have", "don't touch the nav", "same fonts", "keep it on one page". Put the condition here, NOT in "asks". A constraint is something that can already be true; an ask is something we must change. If the user's whole message is a constraint with nothing to change, then it IS the ask — do not empty "asks" to fill this. Copy the user's own words.
 - "full_rebuild": true only for whole-page work (redesign the page, clone another site, add several new sections).
 - "uses_earlier_source": the user refers to a SITE they gave earlier ("the website i gave you", "get the logo from that url") — NOT "the screenshot i gave you". A screenshot is an attachment, not a source URL.
 - "source_url": a site URL to take brand assets from — from this message, or the earlier one when uses_earlier_source is true and it is listed in the context below. Otherwise null.
@@ -342,6 +399,7 @@ export function normalizeIntent(
     return out;
   };
 
+  const imageCountForAsks = (opts.imageUrls ?? []).length;
   const asks: EditAsk[] = [];
   const rawAsks = Array.isArray(raw.asks) ? raw.asks : [];
   for (const entry of rawAsks) {
@@ -353,8 +411,41 @@ export function normalizeIntent(
     // an empty list must mean "could not tell" so the caller can re-ask the
     // model (resolveSectionsForAsk) or ask the user — not land the edit on
     // whichever section name happened to appear in their wording.
-    asks.push({ instruction, sections: resolveSections(rec.sections) });
+    const rawOp = typeof rec.op === 'string' ? rec.op.trim().toLowerCase() : '';
+    // 'edit' is the safe default: it modifies what is there rather than
+    // creating or deleting. An unrecognised op must never fall through to a
+    // structural change the user did not clearly ask for.
+    const op: EditAskOp =
+      rawOp === 'add' || rawOp === 'remove' || rawOp === 'reorder' ? rawOp : 'edit';
+    const rawCount = typeof rec.count === 'number' ? Math.floor(rec.count) : 1;
+    const count = op === 'add' ? Math.min(Math.max(rawCount, 1), 4) : 1;
+    asks.push({
+      instruction,
+      sections: resolveSections(rec.sections),
+      op,
+      count,
+      // Absent/garbled means false. "Recreate this section from the picture" is
+      // the most destructive thing a step can do — it must be asked for, never
+      // assumed from a missing field.
+      designMatch: truthy(rec.design_match),
+      // 1-based in the prompt (matching how attachments are described to the
+      // user), 0-based here. Out-of-range entries are dropped rather than
+      // clamped — pointing at an image that does not exist is not a near-miss.
+      imageIndexes: (Array.isArray(rec.image_indexes) ? rec.image_indexes : [])
+        .map((n) => (typeof n === 'number' ? Math.floor(n) - 1 : -1))
+        .filter((n, i, arr) => n >= 0 && n < imageCountForAsks && arr.indexOf(n) === i)
+        .slice(0, 3),
+    });
     if (asks.length >= 6) break;
+  }
+
+  const constraints: string[] = [];
+  const rawConstraints = Array.isArray(raw.constraints) ? raw.constraints : [];
+  for (const entry of rawConstraints) {
+    if (typeof entry !== 'string') continue;
+    const text = entry.trim();
+    if (text && !constraints.includes(text)) constraints.push(text);
+    if (constraints.length >= 6) break;
   }
 
   const imageCount = (opts.imageUrls ?? []).slice(0, 2).length;
@@ -410,7 +501,15 @@ export function normalizeIntent(
   //      returned none — re-introducing keyword section-guessing at the very
   //      heart of the design. An empty list is an honest "I could not tell";
   //      callers answer it with resolveSectionsForAsk() or by asking the user.
-  const targetSections = Array.from(new Set(asks.flatMap((a) => a.sections)));
+  //
+  // 'add' asks are excluded on purpose. Their "sections" is an ANCHOR — where
+  // the new section should sit — not something to edit. Folding anchors in here
+  // is what turned "add a section like this image" into "edit the hero": the
+  // union pinned hero as a patch target, the dispatcher was skipped, and the
+  // new content was written inside the hero instead of beside it.
+  const targetSections = Array.from(
+    new Set(asks.filter((a) => a.op !== 'add').flatMap((a) => a.sections)),
+  );
 
   return {
     designReference,
@@ -419,6 +518,7 @@ export function normalizeIntent(
     bugReport: truthy(raw.bug_report) || roles.includes('bug_report'),
     attachmentRoles: roles,
     asks,
+    constraints,
     targetSections: targetSections.slice(0, 6),
     fullRebuild: truthy(raw.full_rebuild),
     usesEarlierSource: truthy(raw.uses_earlier_source),

@@ -289,6 +289,18 @@ export async function POST(request: NextRequest) {
       ? `\n\nMULTI-PART REQUEST: Cover EVERY distinct ask in this prompt in one schema (all listed sections, copy, and constraints). Do not ask clarifying questions just to defer secondary asks — build now.\n`
       : '';
 
+    // Standing conditions ("keep it dark", "no buttons anywhere", "one page
+    // only") qualify the whole build. The classifier separates them from the
+    // asks so they never become work items; the create path has to actually
+    // receive them, or they are simply dropped on the floor here.
+    const createConstraints = createIntent?.constraints ?? [];
+    const constraintNote =
+      createConstraints.length > 0
+        ? `\n\nSTANDING CONDITIONS — these apply to the WHOLE page and must hold in the finished schema. They describe how to build, not extra sections to add:\n${createConstraints
+            .map((c) => `- ${c}`)
+            .join('\n')}\n`
+        : '';
+
     const designNote =
       designCopyLines.length > 0
         ? `\n\n## REQUIRED copy from attached design screenshot (use verbatim in matching sections)\n${designCopyLines.map((l, i) => `${i + 1}. ${l}`).join('\n')}\nPut these into footer/nav/hero (or the section the user named). Each line once — if several attachments are the same screenshot, do not repeat blocks. Do not invent substitute legal/contact lines when these are present.\n`
@@ -296,7 +308,7 @@ export async function POST(request: NextRequest) {
           ? `\n\nThe user attached ${attachedImageUrls.length} image(s) as design/content reference — read them and reflect visible layout/copy in the schema.\n`
           : '';
 
-    const finalUserText = prompt + competitorNote + multiNote + designNote;
+    const finalUserText = prompt + competitorNote + multiNote + constraintNote + designNote;
 
     const historyMessages: AIMessage[] = history.map((m) => ({
       role: m.role,

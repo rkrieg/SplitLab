@@ -1203,6 +1203,80 @@ assert('build accepts and merges the checklist',
 assert('client forwards the checklist to build',
   client.includes('createRequirementsRef') && client.includes('requirements: modelRequirements'));
 
+// ── A hint about WHERE must never decide WHAT ────────────────────────────────
+// The class of bug behind "add a section" being carried out as "edit the hero":
+// a value being already set caused a model decision to be skipped entirely.
+assert('classifier hint does not pre-empt the dispatcher',
+  /let pinnedSections: string\[\] \| null =/.test(follow) &&
+  /let targetSections: string\[\] \| null = null;/.test(follow));
+assert('the dispatcher is not gated on the classifier having named a section',
+  !/targetSections: string\[\] \| null =\s*\n?\s*intentSections\.length > 0/.test(follow));
+assert('an unusable routing result still honours the classifier hint',
+  follow.includes('routing unusable — patching classifier-named sections'));
+
+// ── Asks carry their own kind of job, and their own reference ────────────────
+assert('asks declare an op', /export type EditAskOp =/.test(intentSrc) &&
+  /op: EditAskOp;/.test(intentSrc));
+assert('add-asks are excluded from the patch target union',
+  /asks\.filter\(\(a\) => a\.op !== 'add'\)/.test(intentSrc));
+assert('an add ask may legitimately name no section',
+  intentSrc.includes('leaving "sections" EMPTY is correct and expected'));
+assert('asks carry a count so multi-section adds are not silently halved',
+  /count: number;/.test(intentSrc) && /count\?: number;/.test(helpers));
+assert('the insert path honours the requested count',
+  /const wanted = Math\.min\(Math\.max\(step\.count \?\? 1, 1\), 4\)/.test(follow));
+assert('planner seeds the ask op instead of hardcoding patch',
+  !/op: 'patch' as const,/.test(helpers) && /a\.op === 'add'\s*\?\s*'insert_section'/.test(helpers));
+assert('a lone structural ask still reaches the step executor',
+  /seeded\.length === 1 && seeded\[0\]\.op !== 'patch'/.test(helpers) &&
+  /hasMultipleAsks \|\| hasStructuralAsk/.test(follow));
+
+// ── One reference image must not license rebuilding every section ────────────
+assert('design match is decided per ask, not per message',
+  /designMatch: boolean;/.test(intentSrc) && /design_match: a\.designMatch === true/.test(helpers));
+assert('the message-level design flag is no longer stamped onto every step',
+  !/design_match: opts\.designMatch \?\? false/.test(helpers));
+assert('each step gets only the images its ask points at',
+  /imageIndexes: number\[\];/.test(intentSrc) && /const stepImages = step\.image_urls \?\? routingImageUrls/.test(follow));
+
+// ── Constraints are conditions, not work items ──────────────────────────────
+assert('constraints are classified separately from asks',
+  /constraints: string\[\];/.test(intentSrc) && intentSrc.includes('"constraints"'));
+assert('constraints reach every step', /const withConstraints = /.test(follow) &&
+  /withConstraints\(step\.instruction/.test(follow));
+assert('the planner is told not to emit a step for a constraint',
+  helpers.includes('Constraints are not steps'));
+
+// ── Destruction is rejected, not narrated ───────────────────────────────────
+assert('an edit that destroys unrequested content is rejected',
+  /let destructive = false;/.test(follow) &&
+  /rejecting destructive edit — restoring pre-edit page/.test(follow));
+assert('whether a loss was intended is judged by the model, not by counting',
+  /export async function judgeUnrequestedLoss/.test(helpers) &&
+  /await judgeUnrequestedLoss\(/.test(follow));
+assert('an unavailable loss judgement never reverts a good edit',
+  helpers.includes('treating loss as intended'));
+assert('click-to-edit is re-stamped before damage is measured, not after',
+  follow.indexOf('stamped missing data-field attributes before loss check') <
+    follow.indexOf('const losses = findUnrequestedLosses'));
+
+// ── "Done" must mean the ask happened ───────────────────────────────────────
+assert('there is an outcome check, not just a bytes-changed check',
+  /export async function verifyAskApplied/.test(helpers) &&
+  /not_applied:\$\{name\}/.test(follow));
+assert('an unavailable outcome check does not discard a real edit',
+  helpers.includes('treating step as applied'));
+
+// ── An attachment is a source; never go scrape a different one ──────────────
+assert('attached images count at the inherited-source guard',
+  /if \(competitorUrls\.length === 0 && !hasUserImages\)/.test(follow));
+
+// ── New sections can contain real images ────────────────────────────────────
+assert('the insert path can generate images', follow.includes('SL_IMG_1') &&
+  /image_prompts/.test(follow));
+assert('unfilled image slots never ship as a literal src',
+  /src=\["'\]SL_IMG_/.test(follow));
+
 if (failed > 0) {
   console.error(`\n${failed} assertion(s) failed`);
   process.exit(1);
