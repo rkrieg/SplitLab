@@ -21,7 +21,7 @@ import {
   REQUIREMENT_EXTRACTION_INSTRUCTION,
   parseModelRequirements,
 } from '@/lib/ai-page-requirements';
-import { classifyEditIntent } from '@/lib/ai-edit-intent';
+import { buildConversationContext, classifyEditIntent, MAX_ATTACHMENTS } from '@/lib/ai-edit-intent';
 
 const SECTION_TYPES_BLOCK = SECTION_VOCABULARY
   .map(s => `- ${s.schemaExample}\n  Use when: ${s.whenToUse}`)
@@ -53,8 +53,8 @@ You may ask more than one round only when still genuinely blocked (e.g. no busin
 ## Multi-part first prompts (mandatory)
 If the user lists MULTIPLE requirements in one message (numbered/bulleted list, "also", "and then", several section asks), satisfy ALL of them in a single schema. Do not drop secondary asks. Prefer building over asking questions when the brief already lists concrete requirements — clarifying rounds must not erase earlier asks.
 
-## Design / screenshot references
-When the user attaches a screenshot/design image and asks to match look/copy (footer, nav, hero, "like this"), read the image(s) and put the visible copy into the matching schema fields (especially footer/nav/hero). Prefer exact visible phrases over invented filler.
+## Attached images
+You can SEE every attached image. The instruction says what each one is for — a look to copy, a photo/logo to put on the page, a pointer, or mixed. Put a URL on schema image/logo fields ONLY when the user wants that file itself on the page. Never use a screenshot of a page as a logo or content photo. When they asked to match look/copy from a screenshot, read it and put the visible copy into the matching schema fields (especially footer/nav/hero). Prefer exact visible phrases over invented filler.
 
 ## Schema structure
 {
@@ -186,6 +186,15 @@ export async function POST(request: NextRequest) {
 
     // Scrape competitor site if the prompt contains a URL — must complete BEFORE schema generation
     // so the schema reflects the competitor's actual section count and order.
+    //
+    // LIVE GATE, and the last purely code-decided one on the create path: ANY
+    // URL in the brief is treated as a site to clone from. No model is asked
+    // whether that was the point. Someone linking their own site as background
+    // ("we're like example.com but for dentists"), a docs page, or a Figma
+    // link pays a scrape they did not want, and the scraped context then
+    // steers the schema and flips keepProof below. The classifier already
+    // returns intent for the create path — ask it whether the URL is a
+    // reference to copy before scraping.
     const urls = extractUrls(prompt);
     const competitorContext = urls.length > 0 ? await scrapeCompetitorUrl(urls[0]) : null;
     let minimalOrCustom = false;
@@ -245,7 +254,7 @@ export async function POST(request: NextRequest) {
       : '';
 
     const attachedImageUrls = Array.isArray(image_urls)
-      ? (image_urls as unknown[]).filter((u): u is string => typeof u === 'string' && u.trim().length > 0).slice(0, 3)
+      ? (image_urls as unknown[]).filter((u): u is string => typeof u === 'string' && u.trim().length > 0).slice(0, MAX_ATTACHMENTS)
       : [];
     // What is this person asking for? One model call, same as the edit path —
     // keyword matching decides nothing it can get wrong on its own here either.
@@ -257,6 +266,10 @@ export async function POST(request: NextRequest) {
           sectionNames: [],
           imageUrls: attachedImageUrls,
           requirementInstruction: REQUIREMENT_EXTRACTION_INSTRUCTION,
+          // The schema call below has always been given the history; this one
+          // never was. On a round-2 answer ("you decide", "make it blue") it
+          // was classifying a fragment with no idea what page was discussed.
+          conversation: buildConversationContext(history),
           label: 'generate:edit-intent',
         })
       : null;
@@ -268,20 +281,18 @@ export async function POST(request: NextRequest) {
         }
       : 'none (no attachments) or unavailable');
 
-    const designAsk = attachedImageUrls.length > 0 && !!createIntent?.designReference;
     const reuseReferenceWords = !!createIntent?.reuseReferenceCopy;
 
-    // A style reference is not a content source. Only read copy off the
-    // screenshot when the user actually asked for its words — otherwise the
-    // reference's headline gets stamped onto a page whose copy they replaced.
-    // No keyword guess when intent is missing — skip OCR rather than invent.
+    // Only read copy off a screenshot when the user actually asked for its
+    // words — otherwise a reference headline gets stamped onto a page whose
+    // copy they replaced. No keyword guess when intent is missing.
     let designCopyLines: string[] = [];
-    if (designAsk && reuseReferenceWords) {
+    if (attachedImageUrls.length > 0 && reuseReferenceWords) {
       designCopyLines = await extractDesignReferenceCopy({
         imageUrls: attachedImageUrls,
         prompt,
       });
-      console.log('[pages/generate] design-ref OCR', { lines: designCopyLines.length, designAsk });
+      console.log('[pages/generate] design-ref OCR', { lines: designCopyLines.length });
     }
 
     const hasMultipleAsks = (createIntent?.asks.length ?? 0) > 1;
@@ -301,12 +312,14 @@ export async function POST(request: NextRequest) {
             .join('\n')}\n`
         : '';
 
+    const attachedNote =
+      attachedImageUrls.length > 0
+        ? `\n\nThe user attached ${attachedImageUrls.length} image(s). You can SEE each one. The instruction says what they are for — a look to copy, a photo/logo to put on the page, or both. Put a URL on schema image/logo fields ONLY when the instruction wants that file ON the page. Never use a screenshot of a page as a logo or content photo.\n`
+        : '';
     const designNote =
       designCopyLines.length > 0
-        ? `\n\n## REQUIRED copy from attached design screenshot (use verbatim in matching sections)\n${designCopyLines.map((l, i) => `${i + 1}. ${l}`).join('\n')}\nPut these into footer/nav/hero (or the section the user named). Each line once — if several attachments are the same screenshot, do not repeat blocks. Do not invent substitute legal/contact lines when these are present.\n`
-        : attachedImageUrls.length > 0
-          ? `\n\nThe user attached ${attachedImageUrls.length} image(s) as design/content reference — read them and reflect visible layout/copy in the schema.\n`
-          : '';
+        ? `${attachedNote}\n## REQUIRED copy from attached screenshot (use verbatim in matching sections)\n${designCopyLines.map((l, i) => `${i + 1}. ${l}`).join('\n')}\nPut these into footer/nav/hero (or the section the user named). Each line once — if several attachments are the same screenshot, do not repeat blocks. Do not invent substitute legal/contact lines when these are present.\n`
+        : attachedNote;
 
     const finalUserText = prompt + competitorNote + multiNote + constraintNote + designNote;
 
@@ -415,11 +428,10 @@ export async function POST(request: NextRequest) {
         : {}),
       ...(minimalOrCustom ? { user_shape_intent: 'minimal_or_custom' } : {}),
       ...(designCopyLines.length > 0 ? { design_copy_lines: designCopyLines } : {}),
-      // Decided once, here, by the model that read the request — the build pass
-      // must not re-derive it from keywords and reach a different answer.
-      ...(attachedImageUrls.length > 0
-        ? { design_reference: designAsk, reuse_reference_copy: reuseReferenceWords }
-        : {}),
+      // Whether the screenshot's WORDS belong on the page — decided here, not
+      // re-guessed by build. Attachment role (look vs photo vs mixed) is NOT
+      // forwarded as a boolean; that was the embed-all / embed-none hurdle.
+      ...(attachedImageUrls.length > 0 ? { reuse_reference_copy: reuseReferenceWords } : {}),
       // Where the screenshot's copy belongs, decided by the model that read the
       // request. Build places it ONLY here — no section named, no placement.
       ...(designCopyLines.length > 0 && createIntent && createIntent.targetSections.length > 0

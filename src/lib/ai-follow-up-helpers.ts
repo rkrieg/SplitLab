@@ -7,6 +7,7 @@
 import { askAI, type AIContent, type AIContentBlock } from '@/lib/ai-client';
 import type { UsageContext } from '@/lib/ai-usage';
 import { inferTargetSectionNames, dedupeDesignCopyLines } from '@/lib/ai-content-placement';
+import { MAX_ATTACHMENTS } from '@/lib/ai-edit-intent';
 
 export interface PlanStep {
   /** Narrow instruction for this step only */
@@ -14,7 +15,7 @@ export interface PlanStep {
   /** Preferred SL section names (exact), empty if unknown */
   target_sections: string[];
   /** Hint for routing — patch is the default */
-  op: 'patch' | 'remove_section' | 'insert_section' | 'structural' | 'image_generate';
+  op: 'patch' | 'remove_section' | 'insert_section' | 'reorder_sections' | 'structural' | 'image_generate';
   /**
    * How many new sections an 'insert_section' step creates. The insert path
    * built exactly one regardless of the request, so "add 2 sections like this"
@@ -41,7 +42,17 @@ export type EditPlan =
   | { mode: 'clarify'; question: string }
   | { mode: 'execute'; steps: PlanStep[] };
 
-/** User is deferring judgment to the model — do not clarify; decide and act. */
+/**
+ * DEAD — no live callers. Kept only so the verify suites still compile.
+ *
+ * It existed to suppress a clarifying question when the user said "you decide".
+ * The clarify path itself is now unreachable (see the leftover-dispatcher note
+ * in follow-up/route.ts), so there is nothing left to suppress. Deleting it is
+ * safe; it is left in place only to make the sweep's history readable.
+ *
+ * Do NOT wire this back in. Whether to ask a question is the classifier's
+ * answer, not a regex's.
+ */
 export function userWantsUsToDecide(prompt: string): boolean {
   return /\b(you decide|your (call|choice|judgment)|feel free|up to you|i('m| am) (fine|ok|okay) (with )?whatever|surprise me|just (do|pick|choose|decide)|pick (one|for me)|whichever (you|makes)|don'?t ask|no (more )?questions)\b/i.test(
     prompt,
@@ -49,9 +60,15 @@ export function userWantsUsToDecide(prompt: string): boolean {
 }
 
 /**
+ * DEAD — no live callers. Kept only so the verify suites still compile.
+ *
  * Screenshot + complaint about something visibly wrong — the image is the
  * answer. Asking "did you mean the logo?" when they already ranted about the
  * logo is the over-clarify failure from production logs.
+ *
+ * Superseded twice over: the classifier now reads the screenshot itself, and
+ * the clarify path this guarded no longer runs. Do not revive — a regex
+ * deciding "is this a complaint" is the exact bug class the sweep removed.
  */
 export function isScreenshotComplaint(prompt: string, hasUserImages: boolean): boolean {
   if (!hasUserImages) return false;
@@ -90,9 +107,17 @@ export function referencesEarlierSource(prompt: string): boolean {
 }
 
 /**
- * User attached (or will attach) an image as a style/layout/copy REFERENCE to
- * match — e.g. "keep the footer like this", "make the nav match this screenshot".
- * Distinct from bug screenshots (fix defect) and content assets (embed URL).
+ * DEAD — its only remaining caller is isScreenshotComplaint above, which is
+ * itself dead. Nothing on a live request path reaches this.
+ *
+ * It used to answer "is this attachment a look to copy?" from wording, and that
+ * answer then switched the executor between embed-all and embed-none. That
+ * split is gone: every attachment is now shown to the model and the
+ * instruction decides which URLs land in src
+ * (`attachedImagesInstructionNote` in ai-edit-intent.ts).
+ *
+ * Do not revive. Reintroducing this reintroduces "my design screenshot became
+ * the logo" and its mirror, "the photo I attached was never placed".
  */
 export function isDesignReferenceAsk(prompt: string, hasAttachments = false): boolean {
   const t = prompt.trim();
@@ -136,16 +161,26 @@ export function isDesignReferenceAsk(prompt: string, hasAttachments = false): bo
 }
 
 /**
- * When the prompt names a page part, map to existing SL section names so
- * design-match edits can skip ambiguous routing.
+ * DEAD — no live callers.
+ *
+ * "Skip ambiguous routing" was the whole problem: a regex named the section,
+ * routing never ran, and the only verb left was patch. WHERE the edit belongs
+ * is now `resolveEditRegion`'s answer, and it is asked on every turn.
  */
 export function inferDesignMatchSectionNames(prompt: string, sectionNames: string[]): string[] {
   return inferTargetSectionNames(prompt, sectionNames).slice(0, 3);
 }
 
 /**
+ * DEAD — no live callers.
+ *
  * Cheap heuristic: multiple distinct edit intents in one message.
  * False → skip planner AI call (keep single-ask path fast).
+ *
+ * The planner it gated is itself unreachable now (see the leftover-dispatcher
+ * note in follow-up/route.ts) — the whole message goes to the region rewrite
+ * in one piece and the model reads all the parts itself. Counting asks is
+ * `intent.asks.length` when anything still needs it.
  */
 export function looksLikeMultiIntent(prompt: string): boolean {
   const t = prompt.trim();
@@ -363,11 +398,40 @@ export async function judgeUnrequestedLoss(opts: {
    * and cannot tell a rewrite from a deletion.
    */
   headingsAfter?: string[];
+  /**
+   * Which section each lost image was in before the edit.
+   *
+   * Without this the judge was handed the string "1 image(s)" and nothing else,
+   * and was expected to rule on it. It could not tell "the photo in the very
+   * section you asked me to change" from "a photo somewhere else on the page" —
+   * which is the whole question. It guessed, and a correct edit was thrown away.
+   * Facts the model needs to answer are not optional context.
+   */
+  imageSections?: Array<{ url: string; sections: string[] }>;
+  /**
+   * Sections this edit was about, per the classifier. A loss inside one of them
+   * is the normal shape of a successful edit; a loss outside them is the shape
+   * of collateral damage. Stating which is which is not a decision — the judge
+   * still rules.
+   */
+  requestedSections?: string[];
   usage?: UsageContext;
 }): Promise<{ intended: boolean; summary: string | null }> {
   const { losses } = opts;
+  const imageLine = (url: string): string => {
+    const where = opts.imageSections?.find((x) => x.url === url)?.sections ?? [];
+    const name = url.split('?')[0].split('/').pop() || url;
+    const wasIn = where.length > 0 ? ` — was in section: ${where.join(', ')}` : '';
+    const inScope =
+      where.length > 0 && (opts.requestedSections ?? []).some((s) => where.includes(s))
+        ? ' [INSIDE the section this edit was about]'
+        : '';
+    return `  - ${name}${wasIn}${inScope}`;
+  };
   const described = [
-    losses.images.length > 0 ? `${losses.images.length} image(s)` : null,
+    losses.images.length > 0
+      ? `${losses.images.length} image(s):\n${losses.images.slice(0, 8).map(imageLine).join('\n')}`
+      : null,
     losses.sections.length > 0 ? `section(s): ${losses.sections.join(', ')}` : null,
     losses.headings.length > 0
       ? `heading text no longer present: ${losses.headings.slice(0, 8).map((h) => `"${h}"`).join(' | ')}`
@@ -394,18 +458,32 @@ export async function judgeUnrequestedLoss(opts: {
         'Decide whether their disappearance is a reasonable consequence of what the user asked for, ' +
         'or damage they did not ask for and would object to. ' +
         'Return JSON only: {"intended":true|false,"summary":"<what was lost, in plain words, when false>"}. ' +
+        'The summary is shown to the user verbatim as a standalone sentence, so write ONE complete ' +
+        'sentence starting with a capital letter — it is not pasted into any other sentence. ' +
+        'Name things the way they appear on the page ("the team member photo", "the pricing headline"); ' +
+        'never quote internal identifiers like team.members.0.generated_image_url. ' +
         'Losses are detected by exact text match, so a heading that was REWORDED is reported as missing ' +
         'even though it is still there in new words — that is a rewrite, and rewrites are intended. ' +
         'intended=true when the loss follows naturally from the request — rewriting or condensing copy ' +
         'changes headings, a redesign replaces images, tightening a section merges elements, ' +
         'an explicit removal deletes things. ' +
+        'A lost image marked [INSIDE the section this edit was about] is almost always intended: ' +
+        'putting a picture somewhere that already had one replaces it, and that is what was asked for. ' +
+        'Swapping, replacing or re-using an image is a REPLACEMENT, not a deletion — the old one going ' +
+        'is the edit working, not the edit failing. Say intended=false there only if the user clearly ' +
+        'wanted BOTH pictures kept and only one survived. ' +
         'intended=false ONLY when the loss is unrelated to what was asked — e.g. they asked to resize a logo ' +
         'and unrelated photos and headings vanished from elsewhere. ' +
         'When unsure, answer intended=true: wrongly calling a good edit "damage" throws away work the user wanted.',
       messages: [
         {
           role: 'user',
-          content: `USER ASKED:\n${opts.prompt}\n\nNO LONGER ON THE PAGE:\n${described}${nowNote}`,
+          content:
+            `USER ASKED:\n${opts.prompt}\n\n` +
+            ((opts.requestedSections ?? []).length > 0
+              ? `THE EDIT WAS ABOUT THESE SECTIONS: ${opts.requestedSections!.join(', ')}\n\n`
+              : '') +
+            `NO LONGER ON THE PAGE:\n${described}${nowNote}`,
         },
       ],
       maxTokens: 300,
@@ -641,7 +719,7 @@ Rules:
 - mode "execute": 2+ distinct intents — fill steps in order. Each step's instruction must be self-contained (copy the relevant detail from the user message). target_sections use EXACT names from the provided list when obvious; else [].
 - mode "clarify": ONLY when you truly cannot proceed without knowing which section — and NEVER when the user said "you decide" / "feel free" / "just do it", NEVER when they attached a screenshot and are complaining about a visible defect (decide the fix yourself).
 - Prefer execute over clarify. Prefer single when one patch covering 1-3 sections is enough (e.g. "center everything in the footer").
-- op is usually "patch". Use "insert_section" when the step CREATES a section that is not on the page yet ("add a section like this image", "add an FAQ under the hero") — for that op "target_sections" is the ANCHOR it should sit next to, or [] if the user did not say where; never name a section just to fill the field, because naming one makes us edit that section and the new content ends up nested inside it. Use "remove_section" only to delete a whole SL section. Use "structural" for "strip the page down to hero+footer" style trims. Use "image_generate" only for brand-new AI image creation.
+- op is usually "patch". Use "insert_section" when the step CREATES a section that is not on the page yet ("add a section like this image", "add an FAQ under the hero") — for that op "target_sections" is the ANCHOR it should sit next to, or [] if the user did not say where; never name a section just to fill the field, because naming one makes us edit that section and the new content ends up nested inside it. Use "remove_section" only to delete a whole SL section. Use "reorder_sections" when the step MOVES existing sections without changing what is inside them ("footer should be at the bottom", "put testimonials above pricing") — moving a section is not something an edit to that section can do, so never describe a move as a "patch". Use "structural" for "strip the page down to hero+footer" style trims. Use "image_generate" only for brand-new AI image creation.
 - Constraints are not steps. "keep the dark theme", "don't touch the nav", "same fonts" describe HOW the other steps must be done — never emit a step whose only job is to leave something as it is. Such a step correctly changes nothing and is then reported to the user as a failed edit.
 - Max 5 steps. Do not invent work the user did not ask for.`;
 
@@ -691,7 +769,12 @@ export async function planMultiIntentEdit(opts: {
           : a.op === 'remove'
             ? 'remove_section'
             : a.op === 'reorder'
-              ? 'structural'
+              ? // Its own op, not 'structural'. A "structural" step whose target
+                // section resolves goes straight down the scoped-patch path, and
+                // rewriting a section's HTML can never move that section — which
+                // is how "footer should always be at the bottom" reported success
+                // with the footer still stuck in the middle of the page.
+                'reorder_sections'
               : 'patch';
       return {
         instruction: a.instruction.trim(),
@@ -782,7 +865,11 @@ export async function planMultiIntentEdit(opts: {
           ? s.target_sections.filter((n) => typeof n === 'string' && sectionNames.includes(n))
           : [];
         const op =
-          s.op === 'remove_section' || s.op === 'insert_section' || s.op === 'structural' || s.op === 'image_generate'
+          s.op === 'remove_section' ||
+          s.op === 'insert_section' ||
+          s.op === 'reorder_sections' ||
+          s.op === 'structural' ||
+          s.op === 'image_generate'
             ? s.op
             : 'patch';
         steps.push({
@@ -805,98 +892,6 @@ export async function planMultiIntentEdit(opts: {
   } catch (err) {
     console.error('[ai-follow-up-helpers] planMultiIntentEdit failed — treating as single', err);
     return { mode: 'single' };
-  }
-}
-
-export type AttachedImageRole = 'bug_reference' | 'content_asset' | 'design_reference';
-
-export interface ClassifiedAttachedImage {
-  url: string;
-  role: AttachedImageRole;
-}
-
-function parseAttachedImageRole(raw: string | undefined): AttachedImageRole {
-  if (raw === 'content_asset') return 'content_asset';
-  if (raw === 'design_reference' || raw === 'style_reference') return 'design_reference';
-  return 'bug_reference';
-}
-
-/**
- * Fallback when classifyEditIntent is unavailable. Always asks the model with
- * prompt + every attached image — no single-image regex short-circuit (that
- * used to see "logo" and force bug_reference while intent already said design).
- */
-export async function classifyAttachedImages(opts: {
-  prompt: string;
-  imageUrls: string[];
-  usage?: UsageContext;
-}): Promise<ClassifiedAttachedImage[] | 'clarify'> {
-  const { prompt, imageUrls, usage } = opts;
-  if (imageUrls.length === 0) return [];
-
-  try {
-    const text = await askAI({
-      system:
-        'Classify each attached image for a landing-page editor. Return JSON only:\n' +
-        '{"images":[{"index":0,"role":"bug_reference"|"content_asset"|"design_reference"}]}\n' +
-        'bug_reference = screenshot of a defect on the CURRENT page (do not embed in HTML).\n' +
-        'content_asset = photo/logo the user wants placed on the page (embed URL in src).\n' +
-        'design_reference = screenshot/mock of how a section SHOULD look (footer/nav/hero/etc) — recreate that layout and copy in HTML; do NOT embed the screenshot URL as an <img src>.\n' +
-        'Prefer design_reference when the instruction asks to make/match/similar-to a section like the screenshot — even if the same message also mentions logo color or size.\n' +
-        'If two attachments are the same screenshot (or near-duplicates), give them the same role — they are one reference, not two designs.\n' +
-        'Indexes are 0-based in attachment order. Classify every image. Look at the pixels and the full instruction.',
-      messages: [
-        {
-          role: 'user',
-          content: [
-            ...imageUrls.map((url): AIContentBlock => ({ type: 'image', url })),
-            {
-              type: 'text',
-              text: `Instruction: ${prompt}\n\nThere are ${imageUrls.length} attached image(s) in order.`,
-            },
-          ],
-        },
-      ],
-      maxTokens: 800,
-      label: 'follow-up:image-role-classify',
-      usage: usage ? { ...usage, operation: 'route' } : undefined,
-    });
-    let raw = text.trim();
-    if (raw.startsWith('```')) raw = raw.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
-    const start = raw.indexOf('{');
-    const end = raw.lastIndexOf('}');
-    if (start >= 0 && end > start) raw = raw.slice(start, end + 1);
-    const parsed = JSON.parse(raw) as {
-      images?: Array<{ index?: number; role?: string }>;
-    };
-    if (!Array.isArray(parsed.images) || parsed.images.length === 0) {
-      if (imageUrls.length > 1) return 'clarify';
-      return [
-        {
-          url: imageUrls[0],
-          role: isDesignReferenceAsk(prompt) ? 'design_reference' : 'bug_reference',
-        },
-      ];
-    }
-    const out: ClassifiedAttachedImage[] = [];
-    for (let i = 0; i < imageUrls.length; i++) {
-      const row = parsed.images.find((x) => x.index === i) ?? parsed.images[i];
-      let role = parseAttachedImageRole(row?.role);
-      if (isDesignReferenceAsk(prompt) && role === 'bug_reference') {
-        role = 'design_reference';
-      }
-      out.push({ url: imageUrls[i], role });
-    }
-    return out;
-  } catch (err) {
-    console.error('[classifyAttachedImages] failed', err);
-    if (imageUrls.length > 1) return 'clarify';
-    return [
-      {
-        url: imageUrls[0],
-        role: isDesignReferenceAsk(prompt) ? 'design_reference' : 'bug_reference',
-      },
-    ];
   }
 }
 
@@ -923,7 +918,7 @@ export async function extractDesignReferenceCopy(opts: {
         {
           role: 'user',
           content: [
-            ...imageUrls.slice(0, 3).map((url): AIContentBlock => ({ type: 'image', url })),
+            ...imageUrls.slice(0, MAX_ATTACHMENTS).map((url): AIContentBlock => ({ type: 'image', url })),
             {
               type: 'text',
               text: `User instruction: ${prompt.slice(0, 500)}\n\nExtract the visible copy lines from the design reference image(s).`,

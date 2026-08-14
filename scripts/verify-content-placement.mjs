@@ -229,6 +229,29 @@ assert(
   !reuse || !reuse.textPayload || !/^s\b/.test(reuse.textPayload),
 );
 
+// ── "the image of the hero section" means the hero's image ──────────────────
+// Reported from local testing. The image-reuse path had no section-scoped image
+// reader, so a named source fell back to the page's primary LOGO — a different
+// picture than the one the user pointed at.
+const imgPage = `
+<!-- SL:nav --><nav><img src="https://cdn.site.com/logo.svg" alt="logo"/></nav><!-- /SL:nav -->
+<!-- SL:hero --><section><img src="https://cdn.site.com/taimoor-hero.png" alt="portrait"/><h1>Crafting since 2021</h1></section><!-- /SL:hero -->
+<!-- SL:about --><section><h2>About me</h2></section><!-- /SL:about -->`;
+
+assert('the named section\'s own image is what gets copied',
+  C.extractPrimaryImageFromSection(imgPage, 'hero') === 'https://cdn.site.com/taimoor-hero.png');
+assert('a brand mark is not "the image of the section"',
+  C.extractPrimaryImageFromSection(imgPage, 'nav') === null);
+assert('a section with no image says so instead of guessing',
+  C.extractPrimaryImageFromSection(imgPage, 'about') === null);
+assert('an unknown section name never returns some other section\'s image',
+  C.extractPrimaryImageFromSection(imgPage, 'testimonials') === null);
+
+// A hero photo is as often CSS as it is an <img>.
+const cssHero = `<!-- SL:hero --><section style="background-image:url('https://cdn.site.com/bg.jpg')"><h1>Hi</h1></section><!-- /SL:hero -->`;
+assert('a CSS background image counts as the section\'s image',
+  C.extractPrimaryImageFromSection(cssHero, 'hero') === 'https://cdn.site.com/bg.jpg');
+
 rmSync(outDir, { recursive: true, force: true });
 
 if (failed > 0) {

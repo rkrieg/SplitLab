@@ -1,8 +1,13 @@
 import { askAI, askAIStream, type AIContent, type AIContentBlock } from '@/lib/ai-client';
 import { STYLE_EXEMPLARS, type StyleTag } from '@/lib/ai-page-exemplars';
+// DEAD IMPORT — never called in this file. Page shape arrives already decided
+// as `options.minimalShape`, forwarded from the schema pass. This used to
+// re-derive the same answer from keywords here and could contradict it.
+// Safe to delete along with the function itself.
 import { userWantsCustomOrMinimalPage } from '@/lib/ai-brand-assets';
 import { buildFontLibraryBlock } from '@/lib/ai-page-fonts';
 import { buildIconLibraryBlock } from '@/lib/ai-page-icons';
+import { attachedImagesInstructionNote } from '@/lib/ai-edit-intent';
 
 const DESIGN_BRIEF_SYSTEM_PROMPT = `You are a design-direction classifier for an AI landing page builder. Given a business schema and the user's original request, produce a short creative brief that will guide the HTML/CSS generation step that runs after you.
 
@@ -324,6 +329,9 @@ NEVER ignore a generated_image_url. NEVER use a CSS gradient fallback when a gen
 ## Image fallbacks
 If a schema field for an image is null or missing AND no generated_image_url is present, use a CSS gradient background instead. Never use placeholder image URLs.
 
+## Attached user images
+If the user message lists attached image URLs, you can SEE them. The instruction says what they are for. Use a URL in src ONLY when they asked to put that file on the page. Never embed a screenshot of a page as content. Schema generated_image_url values still MUST be used as specified above.
+
 ## Motion — safety is non-negotiable
 - Default to CSS-only motion: @keyframes/transition for entrance fades, hover states, and any continuous decorative loop (e.g. a floating shape or badge). This covers nearly every effect, including rotating/orbiting visuals.
 - Only reach for JS if CSS genuinely cannot do it (e.g. cycling through multiple distinct text/content values over time). If you are not fully confident the JS you'd write is safe, do NOT add it — a working CSS-only effect beats a risky JS one. Never crash the page.
@@ -519,11 +527,6 @@ export interface BuildHtmlOptions {
   /** OCR lines from a design-reference screenshot — must appear in matching sections. */
   designReferenceCopy?: string[];
   /**
-   * When true, imageUrls are design-reference screenshots (for vision/layout matching)
-   * and must NOT be embedded as <img src>. Prevents "screenshot became the logo" bug.
-   */
-  imagesAreDesignRefs?: boolean;
-  /**
    * Model-decided page shape from the schema pass: a minimal/custom page
    * (confirmation, thank-you, hero-only) rather than a full reference clone.
    */
@@ -578,10 +581,6 @@ export async function buildHtmlFromSchema(
     competitorScreenshots.length > 0 ||
     (typeof competitorCssTokens === 'string' && competitorCssTokens.length > 0);
   const hasImages = imageUrls.length > 0;
-  // Design-reference screenshots are for VISION (model sees the layout to match)
-  // but must NOT be embedded as <img src>. Caller can set imagesAreDesignRefs,
-  // or we infer from designReferenceCopy being populated.
-  const imagesAreRefs = options.imagesAreDesignRefs === true || designReferenceCopy.length > 0;
   // Decided upstream by the model (generate's shape classification, forwarded
   // through build). A keyword test here disagreed with that decision whenever
   // the user phrased "just a confirmation page" in any unanticipated way.
@@ -611,15 +610,9 @@ export async function buildHtmlFromSchema(
     }
   }
 
-  // Only instruct the model to embed images that are content assets (photos to place).
-  // Design-reference screenshots are shown to the model via vision so it can SEE
-  // the layout, but we never embed a screenshot URL as an <img src> — that's the
-  // "my design screenshot became the logo" bug.
-  const imageList = hasImages && !imagesAreRefs
-    ? `\n\nThe user has provided ${imageUrls.length} image(s). Embed them directly in the HTML using EXACTLY these URLs (do not use any other URLs):\n${imageUrls.map((u, i) => `Image ${i + 1}: ${u}`).join('\n')}`
-    : hasImages && imagesAreRefs
-      ? `\n\nAttached image(s) are DESIGN REFERENCES showing how the page should LOOK. Use them for layout/style matching only — do NOT embed these screenshot URLs as <img src> anywhere.`
-      : '';
+  // Instruction decides — never "embed every URL" or "embed none". Mixed
+  // screenshot-of-look + photo-to-place is a normal create ask.
+  const imageList = attachedImagesInstructionNote(hasImages ? imageUrls : []);
   const promptNote =
     typeof userPrompt === 'string' && userPrompt.trim()
       ? `\n\nOriginal user request: ${userPrompt}`
