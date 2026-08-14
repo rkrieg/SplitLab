@@ -123,11 +123,17 @@ export function assetRequirements(assetUrls: string[]): PageRequirement[] {
  * `knownSections` lets removal asks bind to real SL section names instead of
  * guessing; `assetUrls` are assets we intend to embed (already verified).
  *
+ * DEAD — no live callers. The "kept for the create path's CTA ban" note below
+ * is stale: generate/build now use the model's own `requirements` checklist and
+ * never call this. It survives only for the verify suites.
+ *
  * Prefer the model's checklist plus `assetRequirements` for new call sites: the
  * prompt-derived checks here guess intent from wording, which is how a design
  * screenshot's own headline became "required copy" on a page whose text the user
- * had explicitly replaced. Kept for the create path's CTA ban and for callers
- * that have no model checklist to fall back on.
+ * had explicitly replaced.
+ *
+ * Do not revive. A wrong requirement is worse than a missing one — it fails a
+ * correct edit and throws real work away.
  */
 export function extractRequirements(opts: {
   prompt: string;

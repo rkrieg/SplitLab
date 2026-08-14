@@ -649,7 +649,8 @@ assert('follow-up logo swap is intent assetSource only', follow.includes("intent
 assert('follow-up forceEmbed on structural', follow.includes('forceEmbedLogoInHtml'));
 assert('follow-up image roles from intent only', follow.includes('imageRolesFromIntent(intent'));
 assert('follow-up no classifyAttachedImages fallback', !follow.includes('classifyAttachedImages'));
-assert('follow-up embedImageUrls', follow.includes('embedImageUrls'));
+assert('follow-up does not keep a separate embed-url list from roles',
+  !follow.includes('embedImageUrls'));
 assert('follow-up materializeLogoUrl', follow.includes('materializeLogoUrl'));
 assert('follow-up fetchLogoAssets', follow.includes('fetchLogoAssets'));
 
@@ -657,8 +658,9 @@ const helpers = readFileSync(join(__dirname, '../src/lib/ai-follow-up-helpers.ts
 assert('helpers export userWantsUsToDecide', helpers.includes('export function userWantsUsToDecide'));
 assert('helpers export looksLikeMultiIntent', helpers.includes('export function looksLikeMultiIntent'));
 assert('helpers soft and-the-section pattern', helpers.includes('(and|,)\\s+(the\\s+)?'));
-assert('helpers classifyAttachedImages', helpers.includes('export async function classifyAttachedImages'));
-assert('helpers design_reference role', helpers.includes("design_reference"));
+// classifyAttachedImages / AttachedImageRole used to be asserted present here.
+// They were a second role vocabulary with nothing calling them — see the
+// "One role vocabulary, not two" check below, which now asserts they are gone.
 assert('helpers isDesignReferenceAsk', helpers.includes('export function isDesignReferenceAsk'));
 assert('helpers extractDesignReferenceCopy', helpers.includes('export async function extractDesignReferenceCopy'));
 assert('helpers requiredPhrases verify', helpers.includes('requiredPhrases'));
@@ -724,7 +726,7 @@ assert('follow-up content image swap', follow.includes('isContentImageSwapAttemp
 assert('follow-up fetchContentImageAssets', follow.includes('fetchContentImageAssets'));
 assert('follow-up multi-intent retry finish', follow.includes('multi-intent completed after retry'));
 assert('follow-up design-ref OCR', follow.includes('extractDesignReferenceCopy'));
-assert('follow-up REQUIRED visible copy', follow.includes('REQUIRED visible copy from the design reference'));
+assert('follow-up REQUIRED visible copy', follow.includes('REQUIRED visible copy from an attached screenshot'));
 assert('follow-up Retrying step', follow.includes('Retrying step'));
 
 assert('generate stripUnpromptedSocialProof', gen.includes('stripUnpromptedSocialProof'));
@@ -888,10 +890,8 @@ assert('create decision is forwarded, not re-guessed',
   gen.includes('reuse_reference_copy: reuseReferenceWords') &&
     build.includes("typeof reuse_reference_copy === 'boolean'") &&
     client.includes('reuse_reference_copy: reuseReferenceCopy'));
-assert('build does not keyword-guess design_reference when missing',
-  build.includes("typeof design_reference === 'boolean' ? design_reference : false"));
 assert('generate does not keyword-guess design ask when intent missing',
-  gen.includes('!!createIntent?.designReference'));
+  gen.includes('createIntent.designReference') && !gen.includes('isDesignReferenceAsk('));
 
 // A soft quality miss must never delete a real edit
 assert('verify reports severity', helpers.includes("severity: 'hard' | 'soft'"));
@@ -931,10 +931,15 @@ const builderSrc = readFileSync(join(__dirname, '../src/lib/ai-page-builder.ts')
 assert('builder takes the shape decision from upstream',
   builderSrc.includes('options.minimalShape === true') &&
     build.includes('minimalShape: minimal_shape === true'));
-assert('create path forwards its design-reference verdict to build, not just reuse-copy',
-  gen.includes('design_reference: designAsk') &&
-    build.includes("typeof design_reference === 'boolean'") &&
-    client.includes('design_reference: designReference'));
+assert('create/build do not switch embed-all vs embed-none on a design_reference boolean',
+  !gen.includes('design_reference: designAsk') &&
+    !build.includes('imagesAreDesignRefs') &&
+    !builderSrc.includes('imagesAreDesignRefs') &&
+    !client.includes('design_reference: designReference') &&
+    !builderSrc.includes('Embed them directly in the HTML using EXACTLY these URLs') &&
+    !builderSrc.includes('DESIGN REFERENCES showing how the page should LOOK') &&
+    builderSrc.includes('attachedImagesInstructionNote(') &&
+    gen.includes('The instruction says what they are for'));
 assert('create path classifies intent for plain text prompts too, not just attachments',
   gen.includes('const createIntent = prompt.trim()'));
 assert('create path\'s multi-ask note comes from the classifier',
@@ -1202,6 +1207,454 @@ assert('build accepts and merges the checklist',
   build.includes('parseModelRequirements(model_requirements') && build.includes('mergeRequirements('));
 assert('client forwards the checklist to build',
   client.includes('createRequirementsRef') && client.includes('requirements: modelRequirements'));
+
+// ── A hint about WHERE must never decide WHAT ────────────────────────────────
+// The class of bug behind "add a section" being carried out as "edit the hero":
+// a value being already set caused a model decision to be skipped entirely.
+assert('classifier hint does not pre-empt the dispatcher',
+  /let pinnedSections: string\[\] \| null =/.test(follow) &&
+  /let targetSections: string\[\] \| null = null;/.test(follow));
+assert('the dispatcher is not gated on the classifier having named a section',
+  !/targetSections: string\[\] \| null =\s*\n?\s*intentSections\.length > 0/.test(follow));
+assert('an unusable routing result still honours the classifier hint',
+  follow.includes('routing unusable — patching classifier-named sections'));
+
+// ── Asks carry their own kind of job, and their own reference ────────────────
+assert('asks declare an op', /export type EditAskOp =/.test(intentSrc) &&
+  /op: EditAskOp;/.test(intentSrc));
+assert('add-asks are excluded from the patch target union',
+  /asks\.filter\(\(a\) => a\.op !== 'add'\)/.test(intentSrc));
+assert('an add ask may legitimately name no section',
+  intentSrc.includes('leaving "sections" EMPTY is correct and expected'));
+assert('asks carry a count so multi-section adds are not silently halved',
+  /count: number;/.test(intentSrc) && /count\?: number;/.test(helpers));
+assert('the insert path honours the requested count',
+  /const wanted = Math\.min\(Math\.max\(step\.count \?\? 1, 1\), 4\)/.test(follow));
+assert('planner seeds the ask op instead of hardcoding patch',
+  !/op: 'patch' as const,/.test(helpers) && /a\.op === 'add'\s*\?\s*'insert_section'/.test(helpers));
+assert('a lone structural ask still reaches the step executor',
+  /seeded\.length === 1 && seeded\[0\]\.op !== 'patch'/.test(helpers) &&
+  /hasMultipleAsks \|\| hasStructuralAsk/.test(follow));
+
+// ── One reference image must not license rebuilding every section ────────────
+assert('design match is decided per ask, not per message',
+  /designMatch: boolean;/.test(intentSrc) && /design_match: a\.designMatch === true/.test(helpers));
+assert('the message-level design flag is no longer stamped onto every step',
+  !/design_match: opts\.designMatch \?\? false/.test(helpers));
+assert('each step gets only the images its ask points at',
+  /imageIndexes: number\[\];/.test(intentSrc) && /const stepImages = step\.image_urls \?\? routingImageUrls/.test(follow));
+
+// ── Constraints are conditions, not work items ──────────────────────────────
+assert('constraints are classified separately from asks',
+  /constraints: string\[\];/.test(intentSrc) && intentSrc.includes('"constraints"'));
+assert('constraints reach every step', /const withConstraints = /.test(follow) &&
+  /withConstraints\(step\.instruction/.test(follow));
+assert('the planner is told not to emit a step for a constraint',
+  helpers.includes('Constraints are not steps'));
+
+// ── Destruction is rejected, not narrated ───────────────────────────────────
+assert('an edit that destroys unrequested content is rejected',
+  /let destructive = false;/.test(follow) &&
+  /rejecting destructive edit — restoring pre-edit page/.test(follow));
+assert('whether a loss was intended is judged by the model, not by counting',
+  /export async function judgeUnrequestedLoss/.test(helpers) &&
+  /await judgeUnrequestedLoss\(/.test(follow));
+assert('an unavailable loss judgement never reverts a good edit',
+  helpers.includes('treating loss as intended'));
+assert('click-to-edit is re-stamped before damage is measured, not after',
+  follow.indexOf('stamped missing data-field attributes before loss check') <
+    follow.indexOf('const losses = findUnrequestedLosses'));
+
+// ── Repair the damage before throwing the user's edit away ──────────────────
+// Reverting everything makes the user pay for our mistake: they asked for one
+// change, got it, we broke something unrelated, and handed back their old page.
+assert('damage is repaired before an edit is rejected',
+  /export function restoreDamagedSections/.test(preserve) &&
+  /await restoreDamagedSections\(|restoreDamagedSections\(\{/.test(follow) &&
+  follow.indexOf('restoreDamagedSections({') <
+    follow.indexOf('rejecting destructive edit — restoring pre-edit page'));
+assert('a repair never silently undoes the section the user asked about',
+  /protectedSections: requestedSections/.test(follow) &&
+  /intent\.asks\.flatMap\(\(a\) => a\.sections\)/.test(follow) &&
+  preserve.includes('quietly undo the very thing that was asked for'));
+assert('what survives a repair is re-judged, not assumed',
+  /losses: afterRepair/.test(follow) && /stillDestructive/.test(follow));
+assert('the loss note reports the page as repaired, not as it was',
+  /const lossNote = describeLosses\(effectiveLosses\)/.test(follow));
+// Shipped to a real user: "That edit would also have removed An image and the
+// team.members.0.generated_image_url field were removed, even though ..., which
+// isn't part of what you asked for."
+assert('the judge sentence is not spliced into another sentence',
+  !/would also have removed \$\{lossSummary/.test(follow) &&
+  /const damage = lossSummary/.test(follow));
+assert('the judge is told its summary is shown verbatim',
+  helpers.includes('shown to the user verbatim as a standalone sentence'));
+assert('internal field names are kept out of user-facing damage reports',
+  helpers.includes('never quote internal identifiers'));
+
+// ── The general path is reachable from EVERY dead end ───────────────────────
+// A narrow verb failing means our vocabulary was too short, not that the ask was
+// impossible. Every one of these used to end the turn with an error.
+assert('there is one general fallback, declared once',
+  /const tryGeneralFallback = async \(reason: string, baseHtml: string\)/.test(follow) &&
+  follow.includes('The one general path, reachable from every narrow dead end'));
+assert('the general fallback runs the region rewrite, not a full-page rebuild',
+  follow.indexOf('const tryGeneralFallback') < follow.indexOf('applyRegionRewriteToHtml({') ||
+  /tryGeneralFallback[\s\S]{0,900}applyRegionRewriteToHtml\(\{/.test(follow));
+for (const site of [
+  'content_reuse_text_no_payload',
+  'content_reuse_text_failed',
+  'content_reuse_image_no_source',
+  'content_reuse_image_failed',
+  'full_page_too_long',
+  'full_page_invalid_json',
+  'full_page_invalid_patch',
+  'full_page_invalid_html',
+  'structural_rebuild_failed',
+  'html_unchanged',
+]) {
+  assert(`dead end "${site}" falls through to the general path`,
+    new RegExp(`tryGeneralFallback\\(\\s*\\n?\\s*'${site}'`).test(follow) ||
+    follow.includes(`tryGeneralFallback('${site}'`) ||
+    follow.includes(`? '${site}'`) || follow.includes(`: '${site}',`));
+}
+assert('a failed scoped op tries the general path before erroring',
+  /!\(await tryGeneralFallback\(scopedFailureReason, html\)\)/.test(follow));
+assert('"I couldn\'t apply that" is the last thing said, not the first',
+  follow.indexOf("tryGeneralFallback('html_unchanged'") <
+    follow.indexOf('I couldn’t apply that.'));
+assert('a recovered turn does not then re-run the full-page path',
+  /if \(scopedApplied\) \{[\s\S]{0,400}already recovered by region rewrite/.test(follow) &&
+  /if \(!structuralRecovered\) finalSchemaJson = enrichedSchema;/.test(follow));
+
+// ── One number for how many attachments a message carries ───────────────────
+// The route accepted 3, the classifier looked at 2, the role assigner labelled
+// 2 — so a third image arrived unseen and took the default role, which means
+// "rebuild that section from this picture".
+assert('the attachment cap is a single shared constant',
+  /export const MAX_ATTACHMENTS = 3;/.test(intentSrc) &&
+  /slice\(0, MAX_ATTACHMENTS\)/.test(intentSrc) &&
+  /slice\(0, MAX_ATTACHMENTS\)/.test(follow));
+assert('no attachment cap is hardcoded next to the shared one',
+  !/const images = \(opts\.imageUrls \?\? \[\]\)\.slice\(0, 2\)/.test(intentSrc));
+
+// ── One role vocabulary, not two ────────────────────────────────────────────
+// A second, older AttachedImageRole enum sat in the helpers with three values
+// and a default of bug_reference. Nothing called it.
+assert('the duplicate attachment-role classifier is gone',
+  !helpers.includes('classifyAttachedImages') &&
+  !helpers.includes('AttachedImageRole') &&
+  !follow.includes('classifyAttachedImages'));
+
+// ── A screenshot can say WHERE, not just how it should look ─────────────────
+// "pls put the image of the hero section here as well" + a screenshot of their
+// own About section. With no role for "this is the bit I mean", the picture was
+// read as a design to copy, the section was rebuilt from it, and the real team
+// photo it did not happen to show was destroyed.
+assert('an attachment can be a pointer instead of a design',
+  /'locator'/.test(intentSrc) &&
+  intentSrc.includes('"locator": it shows a part of OUR page purely to say WHICH part'));
+assert('a locator is never embedded and never rebuilt from',
+  intentSrc.includes('it is never embedded and never copied from'));
+assert('a locator survives the message-level design flag',
+  /const onlyLocators = /.test(intentSrc) &&
+  /truthy\(raw\.design_reference\) && !onlyLocators/.test(intentSrc));
+assert('a locator cannot carry design_match on its ask',
+  intentSrc.includes('is ALWAYS design_match false'));
+
+// ── Reuse copies what is already there, from where the user said ────────────
+assert('image reuse reads the source section the classifier resolved',
+  /content reuse: image from section/.test(follow) &&
+  /extractPrimaryImageFromSection\(html, srcName\)/.test(follow));
+assert('image reuse no longer starts from the page logo when a source was named',
+  !/const existingImg = extractPrimaryLogoUrlFromHtml\(html\);/.test(follow));
+assert('only a content_asset attachment may be embedded as the asset',
+  /imageRolesFromIntent\(intent, effectiveImageUrls\)\s*\n\s*\.filter\(\(r\) => r\.role === 'content_asset'\)/.test(follow) &&
+  /const imgUrl = existingImg \?\? attachedAssets\[0\]/.test(follow));
+assert('a named source with no image says so instead of pasting something else',
+  /I couldn't find an image in the \$\{imgSourceHint\} section to copy/.test(follow));
+
+// ── "Done" must mean the ask happened ───────────────────────────────────────
+assert('there is an outcome check, not just a bytes-changed check',
+  /export async function verifyAskApplied/.test(helpers) &&
+  /not_applied:\$\{name\}/.test(follow));
+assert('an unavailable outcome check does not discard a real edit',
+  helpers.includes('treating step as applied'));
+
+// ── An attachment is a source; never go scrape a different one ──────────────
+assert('attached images count at the inherited-source guard',
+  /if \(competitorUrls\.length === 0 && !hasUserImages\)/.test(follow));
+
+// ── New sections can contain real images ────────────────────────────────────
+assert('the insert path can generate images', follow.includes('SL_IMG_1') &&
+  /image_prompts/.test(follow));
+assert('unfilled image slots never ship as a literal src',
+  /src=\["'\]SL_IMG_/.test(follow));
+
+// ── Where a new section goes is decided, not defaulted ──────────────────────
+assert('insert placement is resolved by the model',
+  /export async function resolveInsertPlacement/.test(intentSrc) &&
+  /await resolveInsertPlacement\(/.test(follow));
+assert('an unplaced insert no longer anchors on the last section, after it',
+  !/liveSections\[liveSections\.length - 1\]\?\.name \?\?\s*\n?\s*null;/.test(follow));
+assert('the chosen position is honoured by the splice',
+  /insertSlSectionBlock\(workingHtml, anchorForNext, positionForNext, wrappedBlock\)/.test(follow));
+assert('a multi-section add stays on the near side of its anchor',
+  /positionForNext = 'after';/.test(follow));
+
+// ── Moving a section is not editing a section ───────────────────────────────
+assert('reorder survives as its own op instead of collapsing to structural',
+  /'reorder_sections'/.test(helpers) &&
+  !/a\.op === 'reorder'\s*\?\s*'structural'/.test(helpers));
+assert('the step executor can actually move sections',
+  /step\.op === 'reorder_sections'/.test(follow) &&
+  /await resolveSectionOrder\(/.test(follow) &&
+  /reorderSlSections\(workingHtml, newOrder\)/.test(follow));
+assert('a partial reorder is refused rather than half-applied',
+  intentSrc.includes('section order was not a clean permutation'));
+
+// ── There is a general hand, so a fixed verb list is not the ceiling ────────
+assert('the region a change needs is resolved by the model',
+  /export async function resolveEditRegion/.test(intentSrc) &&
+  /await resolveEditRegion\(/.test(follow));
+assert('a run of sections can be rewritten wholesale',
+  /async function runRegionRewrite/.test(follow) &&
+  /function findSlRegionBounds/.test(follow));
+// Adding, deleting, splitting, merging and reordering must all still be
+// sayable. The contract changed HOW a deletion is expressed (name it), never
+// whether it can be — taking the verb away would be the old bug in reverse.
+assert('the region rewrite may still return a different set of sections',
+  follow.includes('brand new ones (splitting or adding), or the whole run reordered') &&
+  follow.includes('listing the absorbed name in "deleted"'));
+assert('work the narrow verbs cannot express falls to the general one',
+  /stepTargets\.length === 0 \|\| step\.op === 'structural'/.test(follow) &&
+  /await applyRegionRewrite\(step\.instruction, stepImages\)/.test(follow));
+assert('a failed narrow verb falls through instead of dead-ending',
+  (follow.match(/await applyRegionRewrite\(/g) ?? []).length >= 4);
+assert('the region splice is checked before it counts as done',
+  follow.includes('region splice did not survive re-extraction'));
+// "Could not act" and "chose to ask" are separate outcomes, and neither may be
+// reported as success. The null checks are split now that a question is a third
+// return shape — both halves still have to return null.
+// A failure now carries WHY. All three used to collapse into null, and the user
+// got one sentence — "name the section" — which is only true for one of them.
+assert('a region rewrite that cannot act reports failure, never success',
+  /if \(result\.kind === 'failed'\) return result;/.test(follow) &&
+  /return \{ kind: 'failed', reason: 'unusable' \};/.test(follow));
+assert('the reason survives all the way to the user, per case',
+  follow.includes('function regionFailureMessage(reason: RegionFailReason)') &&
+  follow.includes("case 'too_long':") &&
+  follow.includes('message: regionFailureMessage(regionFailReason),'));
+assert('a too-large payload is named as such, never blamed on wording',
+  /isPromptTooLongError\(err\)/.test(follow) &&
+  follow.includes('too large to change several sections at once'));
+assert('both edit paths share one region rewrite, not two copies',
+  /async function applyRegionRewriteToHtml/.test(follow) &&
+  (follow.match(/applyRegionRewriteToHtml\(\{/g) ?? []).length >= 2);
+assert('a single unroutable instruction tries the region before a full rebuild',
+  follow.indexOf('Rewriting that part of the page') > 0 &&
+  follow.indexOf('routing did not qualify and no region resolved') > 0);
+assert('region results still pass through the damage guard',
+  follow.indexOf('const losses = findUnrequestedLosses') >
+    follow.indexOf('async function applyRegionRewriteToHtml'));
+
+// ── Region rewrite is the job, not a backup after a menu ────────────────────
+// Menus (op / attachment_roles / routing.type) must not pick the executor.
+// Sonnet already understands mixed prompts and images; code that forces a
+// nearest button is the hurdle. Fetch-from-URL stays (the model cannot download).
+assert('the region rewrite is the primary executor, not a fallback-only path',
+  follow.includes('primary region rewrite applied') &&
+  follow.includes('PRIMARY executor') &&
+  follow.includes('primary region rewrite could not act'));
+assert('a rewrite miss does not dispatch a menu',
+  follow.includes('primary region rewrite missed — not dispatching a menu'));
+assert('the rewrite model is not told to embed every attached URL',
+  !follow.includes('use these EXACT strings verbatim in any src attribute') &&
+  follow.includes('Embed an attached URL in src ONLY when the user wants that picture itself on the page'));
+assert('follow-up full-page does not dispatch attachments by role menu',
+  !follow.includes('ONLY these URL(s) may be used in src attributes (content assets)') &&
+  !follow.includes('User-attached image(s) are bug-reference screenshots for diagnosis') &&
+  !follow.includes('Image roles: ONLY embed these content-asset URL(s)'));
+assert('create, edit, and follow-up share one attached-image instruction note',
+  intentSrc.includes('export function attachedImagesInstructionNote') &&
+  follow.includes('attachedImagesInstructionNote(') &&
+  builderSrc.includes('attachedImagesInstructionNote('));
+// The editable set no longer has to be one contiguous strip — that single fact
+// cost a two-part message its second ask ("the footer's logo on the nav, and
+// the hero's image in the about section" sent only nav). A page that fits is
+// sent whole; a page too big is triaged, and there the classifier's sections
+// and the resolver's run are UNIONED so neither read can drop an ask alone.
+assert('the editable set may be scattered, and is never one strip',
+  follow.includes('Sections do not have to be neighbours') &&
+  /editableNames = Array\.from\(new Set\(\[\.\.\.focus, \.\.\.fromResolver\]\)\)/.test(follow));
+assert('a page that fits is sent whole rather than sliced',
+  /if \(bodyChars <= contextBudget\) \{/.test(follow) &&
+  follow.includes('editableNames = body.map((sec) => sec.name);'));
+assert('the classifier\'s sections actually reach the rewrite',
+  follow.includes('focusSections?: string[];') &&
+  (follow.match(/focusSections: intent\.targetSections,/g) || []).length >= 4);
+
+// ── The MODEL decides whether to ask, not the code ──────────────────────────
+// Clarifying questions used to live in two code-owned exits (the planner's
+// plan.mode==='clarify' and routing.clarifying_question), both of which decided
+// from confidence scores and keyword guards whether a human got asked anything.
+// Both are unreachable now. The rewrite itself judges it instead: it is shown
+// the page, the instruction and the attachments, so it is the only thing that
+// can tell "two real readings" from "vague taste I should just exercise".
+assert('the rewrite prompt gives the model a way to ask',
+  follow.includes('{"question":"...one short question, in plain language..."}') &&
+  follow.includes('This is YOUR call and yours alone'));
+assert('vague style is explicitly NOT a reason to ask',
+  follow.includes('Vague taste is your judgement to exercise, not an ambiguity'));
+assert('a question is a distinct outcome, never a failed rewrite',
+  /kind: 'question'; question: string/.test(follow) &&
+  follow.includes("if (result.kind === 'question') return result;"));
+assert('the question is checked before the no-sections failure',
+  follow.indexOf("kind: 'question', question }") <
+    follow.indexOf('region rewrite returned no sections'));
+assert('the model\'s question reaches the user verbatim',
+  follow.includes("sendSSE(controller, { type: 'clarify', message: result.question })"));
+assert('asking twice in a row is prevented by conversation fact, not by judging the ask',
+  follow.includes('noQuestions: lastAssistantWasClarify || wantsUsToDecide') &&
+  follow.includes('content: result.question, clarify: true'));
+assert('a mid-recovery and a mid-plan rewrite may not ask',
+  (follow.match(/noQuestions: true/g) || []).length >= 2);
+
+// "Nothing could place this ask" is handed to the rewrite as a fact, so that
+// call decides between doing it and asking. Widening the region is a mechanical
+// safety (show everything rather than the wrong slice), never a decision to
+// rewrite everything.
+assert('an unplaced ask travels as a fact, not as a decision to rebuild the page',
+  /regionUnresolved = editableNames\.length === 0;/.test(follow) &&
+  follow.includes('regionUnresolved,') &&
+  follow.includes('an earlier step could not work out which part of the page'));
+assert('the unplaced ask can still just be done, or asked about — both allowed',
+  follow.includes('change just those sections and say nothing about the others') &&
+  follow.includes('reply with {"question"} rather than guessing'));
+assert('the widened-region case is visible in the logs',
+  follow.includes('unresolved: regionUnresolved'));
+
+// ── A model asked to rule on something must be shown the thing ──────────────
+// Reported from client testing: "pls put the image of the hero section here as
+// well" + a crop of the About section. The rewrite did it — the About photo was
+// replaced by the hero photo, which is the ask — and the loss judge threw the
+// whole edit away. It had been handed the literal string "1 image(s)": no URL,
+// no section. It could not tell the replaced photo from an unrelated casualty,
+// so it guessed, and the user got their old page back.
+//
+// Withholding the facts a decision needs is the same disease as making the
+// decision in code. Every input to a judgement call has to carry its context.
+assert('the loss judge is told WHICH image and WHERE it was',
+  helpers.includes('imageSections?: Array<{ url: string; sections: string[] }>') &&
+  helpers.includes('was in section: ') &&
+  follow.includes('sections: sectionsContainingAsset(originalHtmlForPreservation, url)'));
+assert('the loss judge is told which sections the edit was about',
+  helpers.includes('requestedSections?: string[]') &&
+  helpers.includes('THE EDIT WAS ABOUT THESE SECTIONS:') &&
+  follow.includes('requestedSections,'));
+assert('a loss inside the edited section is flagged as such, and read as a replacement',
+  helpers.includes('[INSIDE the section this edit was about]') &&
+  helpers.includes('is a REPLACEMENT, not a deletion'));
+assert('both judge calls get the same facts — not just the first',
+  (follow.match(/imageSections:/g) || []).length >= 2 &&
+  (follow.match(/requestedSections,/g) || []).length >= 2);
+
+// ── Every model that must resolve "it" gets the conversation ────────────────
+// The route has held the full history since day one and handed it to exactly
+// ONE call: the full-page rebuild — the path that now almost never runs. The
+// classifier, the region resolver and the rewrite itself, which handle nearly
+// every edit, were each given a bare sentence and asked what it referred to.
+// "logo looks too small", "make it bigger", "do the same for the footer" are
+// unanswerable that way, so they returned "I cannot tell" or guessed — and both
+// look like a stupid model rather than a starved one.
+assert('there is one shared way to build conversation context',
+  intentSrc.includes('export function buildConversationContext'));
+// Stronger than "context only", because that was not strong enough. An older
+// "generate a logo and replace it everywhere" stayed live in the model's head:
+// the next message, "use the image already in the hero", was read as the next
+// step of the logo job, and the nav logo became a portrait. Old turns are
+// finished work, and an old "everywhere" belongs to the turn that said it.
+assert('history is framed as finished work, not a live to-do list',
+  intentSrc.includes('ALREADY DONE, NOT A TO-DO LIST') &&
+  intentSrc.includes('applied to THAT turn only') &&
+  intentSrc.includes('The new message is the only job.'));
+assert('and it warns against the opposite mistake — dragging an old topic forward',
+  intentSrc.includes('an older turn about a LOGO does not make a'));
+// Our own past turns used to be replayed as 400 chars of truncated schema JSON.
+assert('our own turns are replayed as what they changed, not as raw JSON',
+  intentSrc.includes('You: edited the ${changed.join') &&
+  intentSrc.includes("return 'You: edited the page.'") &&
+  follow.includes('sections: rewrittenRegion ?? intent.targetSections,'));
+assert('the edit classifier gets the conversation',
+  intentSrc.includes('conversation?: string;') &&
+  follow.includes('conversation: conversationContext,'));
+assert('the region resolver gets the conversation',
+  /conversation: opts\.conversation,/.test(follow) &&
+  intentSrc.includes("opts.conversation ?? ''"));
+assert('the rewrite itself gets the conversation',
+  /text: `\$\{opts\.conversation \? `\$\{opts\.conversation\}/.test(follow));
+assert('the create path classifier gets it too, not just its schema call',
+  gen.includes('conversation: buildConversationContext(history)'));
+assert('every rewrite call site passes it, not just the primary one',
+  (follow.match(/conversation: conversationContext,/g) || []).length >= 4);
+
+// ── Silence keeps. Only an explicit name deletes. ───────────────────────────
+// Reported live: "no, use the image that's already in the hero section". The
+// run was the whole page, the model sensibly returned only the sections it
+// changed, and the splice — which replaced the entire run with whatever came
+// back — destroyed the stats and gallery sections. The instruction telling it
+// to "return only the sections you actually changed" made that certain.
+//
+// A section must now leave the page only when the model NAMES it in "deleted".
+// Forgetting to mention something cannot delete it, and deletion is still
+// fully expressible, so nothing is taken away from the model.
+assert('the rewrite contract says omission keeps',
+  follow.includes('## Silence means KEEP') &&
+  follow.includes('is kept exactly as it is') &&
+  follow.includes('Never rely on omitting it'));
+assert('the destructive "only return what you changed" instruction is gone',
+  !follow.includes('return only the sections you actually changed'));
+assert('deletion is a named list, parsed separately from the rewrites',
+  follow.includes('deleted: string[];') &&
+  /const removed = new Set\(deleted\);/.test(follow));
+// Each section is spliced into its OWN byte range. The version before this one
+// replaced everything between the first and last marked section — safe only if
+// the page is nothing but marked sections, which a real page was not. On a page
+// with 3 of 10 sections marked, a nav+footer edit wiped the whole about section,
+// 4 images, 20 headings and 60 click-to-edit fields that sat unmarked in between.
+assert('each section is spliced into its own bounds, never a span',
+  follow.includes('const at = findSlBlockBounds(spliced, sec.name);') &&
+  follow.includes('edits.sort((a, b) => b.from - a.from);'));
+assert('content between sections is never inside an edit range',
+  follow.includes('Anything between sections — marked or not — is never'));
+assert('markers are written by code, so a rewrite cannot drop them',
+  follow.includes('const block = (name: string, htmlBody: string) =>') &&
+  follow.includes('text: block(sec.name, sec.html)'));
+assert('a delete-only turn is still a real edit',
+  follow.includes("if (deleted.length > 0) return { kind: 'sections', sections: [], deleted };"));
+// Reordering has to MOVE bytes, which no in-place replacement can express — so
+// it is only attempted when nothing unmarked sits between the sections.
+assert('reordering is attempted only when it cannot drag unmarked content along',
+  follow.includes('const looksLikeReorder =') &&
+  follow.includes('reorder skipped — unmarked content sits between sections'));
+assert('what was kept vs deleted is visible in the logs',
+  follow.includes('keptUntouched:'));
+
+// ── Reusing a picture needs to know the picture exists ──────────────────────
+// Same turn, the step before: "put the image of the hero section here as well"
+// with the run scoped to the about section. The hero's HTML was never in the
+// payload, so the hero's image URL did not exist for that call — the only URL
+// it could see was the user's attached screenshot, and it embedded that. The
+// page's own photo became a screenshot of the page.
+assert('the rewrite is told what images already exist elsewhere on the page',
+  follow.includes('outsideAssets?: string;') &&
+  follow.includes('Images already on the page, by section'));
+assert('and told to prefer those exact URLs over an attachment',
+  follow.includes('never substitute an attached screenshot for one'));
+
+// ── The retry must not turn a structural step into an edit ──────────────────
+assert('only patch steps are retried through the patch path',
+  /if \(s\.op !== 'patch'\) return false;/.test(follow));
 
 if (failed > 0) {
   console.error(`\n${failed} assertion(s) failed`);

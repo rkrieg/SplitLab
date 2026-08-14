@@ -287,8 +287,6 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   const createRequirementsRef = useRef<unknown[]>([]);
   /** Schema pass's verdict on whether the reference's words belong on the page. */
   const createReuseRefCopyRef = useRef<boolean | null>(null);
-  /** Schema pass's verdict on whether this is a style reference at all. */
-  const createDesignReferenceRef = useRef<boolean | null>(null);
   /** Sections the schema pass says the reference's copy belongs in. */
   const createDesignCopySectionsRef = useRef<string[]>([]);
   /** Schema pass's verdict: minimal/custom page rather than a full clone. */
@@ -957,13 +955,6 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         ? (data.reuse_reference_copy as boolean)
         : createReuseRefCopyRef.current;
     createReuseRefCopyRef.current = freshReuseReferenceCopy;
-    // Same for "is this a style reference at all" — decided once by the schema
-    // pass; the build pass must not re-derive a possibly different answer.
-    const freshDesignReference =
-      typeof data.design_reference === 'boolean'
-        ? (data.design_reference as boolean)
-        : createDesignReferenceRef.current;
-    createDesignReferenceRef.current = freshDesignReference;
     // Which sections the screenshot's copy belongs in — model-decided in the
     // schema pass. Build refuses to place that copy anywhere else.
     // Model-decided page shape from the schema pass; build must not re-derive it.
@@ -1002,7 +993,6 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       freshDesignCopyLines,
       freshRequirements,
       freshReuseReferenceCopy,
-      freshDesignReference,
       freshDesignCopySections,
       freshMinimalShape,
     );
@@ -1010,7 +1000,6 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     createDesignCopyRef.current = [];
     createRequirementsRef.current = [];
     createReuseRefCopyRef.current = null;
-    createDesignReferenceRef.current = null;
     createDesignCopySectionsRef.current = [];
     createMinimalShapeRef.current = false;
   }
@@ -1028,7 +1017,6 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     designCopyLines?: string[],
     modelRequirements?: unknown[],
     reuseReferenceCopy?: boolean | null,
-    designReference?: boolean | null,
     designCopySections?: string[],
     minimalShape?: boolean,
   ) {
@@ -1081,7 +1069,6 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         ...(image_urls.length > 0 ? { image_urls } : {}),
         ...(designCopyLines && designCopyLines.length > 0 ? { design_copy_lines: designCopyLines } : {}),
         ...(typeof reuseReferenceCopy === 'boolean' ? { reuse_reference_copy: reuseReferenceCopy } : {}),
-        ...(typeof designReference === 'boolean' ? { design_reference: designReference } : {}),
         ...(designCopySections && designCopySections.length > 0 ? { design_copy_sections: designCopySections } : {}),
         ...(minimalShape ? { minimal_shape: true } : {}),
         ...(modelRequirements && modelRequirements.length > 0 ? { requirements: modelRequirements } : {}),

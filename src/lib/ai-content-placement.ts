@@ -1,6 +1,26 @@
 /**
  * General “reuse existing content → put it in section X” — logo, text, or image.
  * Deterministic apply + fail-closed checks. Not one-off footer/logo helpers.
+ *
+ * ── READ THIS BEFORE CALLING ANYTHING HERE ─────────────────────────────────
+ * This file is split in two, and the halves have opposite status.
+ *
+ * DEAD (no live callers): every function that reads a PROMPT and returns a
+ * meaning — `inferTargetSectionNames`, `isLogoStyleAsk`, `isLogoColorStyleAsk`,
+ * `detectContentReuseIntent`, `wantsReferenceCopy`, and the SECTION_SYNONYMS
+ * table they share. These decided what the user meant from wording. The
+ * classifier (`classifyEditIntent`) and `resolveEditRegion` decide that now,
+ * and they are asked on every turn. The functions survive only because the
+ * verify suites import them to prove the old behaviour is gone.
+ *
+ * LIVE: every function that takes an ALREADY-DECIDED section name and does
+ * something mechanical to bytes — `getSlSectionInner`, `forcePlaceTextInSection`,
+ * `forceAppendMissingDesignCopy`, `extractPrimaryImageFromSection`,
+ * `dedupeDesignCopyLines`. Splicing HTML is what code is for.
+ *
+ * The line between the halves is the rule the whole sweep was about: code may
+ * own mechanics, never vocabulary. Do not add a new prompt-reading function
+ * here — put the question to the model instead.
  */
 
 import { extractQuotedSpans } from './ai-page-requirements';
@@ -40,7 +60,14 @@ function escapeRe(s: string): string {
 }
 
 /**
+ * DEAD — no live callers (see the file header). Kept for the verify suites.
+ *
  * Map what the user said → existing SL section names.
+ *
+ * Why it went: it answered WHERE from wording, and every downstream branch read
+ * "a section is known" as "this turn is claimed", which skipped the only call
+ * that could pick a verb other than patch. Knowing where something goes must
+ * never decide what we do to it. `resolveEditRegion` answers this now.
  *
  * Matches the live section list first (so any section the builder can emit is
  * addressable — "put the logo in the testimonials section" works without the
@@ -102,7 +129,13 @@ function placementLanguage(prompt: string): boolean {
   );
 }
 
-/** Recolor / restyle an existing logo — not "put the (white) logo in section X". */
+/**
+ * DEAD — no live callers (see the file header). Kept for the verify suites.
+ *
+ * Recolor / restyle an existing logo — not "put the (white) logo in section X".
+ * A regex separating "recolor the logo" from "place the logo" is exactly the
+ * distinction the model makes for free once it is shown the page and the ask.
+ */
 export function isLogoColorStyleAsk(prompt: string): boolean {
   const t = prompt.trim();
   if (!/\blogos?\b/i.test(t)) return false;
@@ -121,9 +154,15 @@ export function isLogoColorStyleAsk(prompt: string): boolean {
 }
 
 /**
+ * DEAD — no live callers (see the file header). Kept for the verify suites.
+ *
  * Logo color OR size/scale — scoped CSS/patch, never "embed logo into section".
  * "update the size of footer logo" was wrongly treated as content_reuse and
  * hard-failed with content_reuse_no_target.
+ *
+ * That bug is the argument against this function, not for it: every phrasing it
+ * failed to anticipate became a hard error the user could not word their way
+ * out of. The region rewrite simply resizes the logo.
  */
 export function isLogoStyleAsk(prompt: string): boolean {
   const t = prompt.trim();
@@ -147,8 +186,15 @@ export function isLogoStyleAsk(prompt: string): boolean {
 }
 
 /**
+ * DEAD — no live callers (see the file header). Kept for the verify suites.
+ *
  * Detect reuse/placement asks: put existing logo/text/image into named section(s).
  * Null when this is not a reuse ask (let normal edit paths handle it).
+ *
+ * Its `kind` was a three-value list — logo | text | image — so "use the hero's
+ * background in the about section" had no way to be said and was answered as
+ * the nearest of the three. Reuse is now just an instruction the region rewrite
+ * reads, with no menu to pick from.
  */
 export function detectContentReuseIntent(
   prompt: string,
@@ -304,6 +350,38 @@ export function extractPrimaryHeadlineFromHtml(sectionHtml: string): string | nu
   return null;
 }
 
+/**
+ * The main content image inside a named section — the picture answer to
+ * extractPrimaryHeadlineFromHtml.
+ *
+ * "Put the image of the hero section here as well" names a section as the
+ * SOURCE of a photo. The only section-scoped image reader that existed was
+ * extractLogoUrlFromSection, which is tuned to find a brand mark, so the image
+ * reuse path skipped it entirely and grabbed the page's primary LOGO instead —
+ * a different picture than the one the user pointed at.
+ *
+ * Icons and brand marks are skipped: nobody means the tiny logo when they say
+ * "the image of the hero".
+ */
+export function extractPrimaryImageFromSection(html: string, sectionName: string): string | null {
+  const scope = getSlSectionInner(html, sectionName)?.inner;
+  if (!scope) return null;
+
+  const candidates: string[] = [];
+  for (const m of Array.from(scope.matchAll(/<img\b[^>]*>/gi))) {
+    const tag = m[0];
+    const src = /\bsrc=["']([^"']+)["']/i.exec(tag)?.[1];
+    if (!src || !/^https?:\/\//i.test(src)) continue;
+    if (/\b(logo|wordmark|brand[-_]?mark|favicon|icon)\b/i.test(`${src} ${tag}`)) continue;
+    candidates.push(src);
+  }
+  if (candidates.length > 0) return candidates[0];
+
+  // Background images count — a hero's photo is often CSS, not an <img>.
+  const bg = /background(?:-image)?\s*:\s*[^;"']*url\(["']?(https?:\/\/[^"')]+)["']?\)/i.exec(scope);
+  return bg ? bg[1] : null;
+}
+
 function getSlSectionInner(html: string, sectionName: string): { full: string; inner: string; index: number } | null {
   const re = new RegExp(
     `<!--\\s*SL:${sectionName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*-->([\\s\\S]*?)<!--\\s*\\/SL:${sectionName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*-->`,
@@ -373,6 +451,10 @@ export function forcePlaceTextIntoSections(
  *
  * Defaults to NO on purpose: force-placing text is destructive and highly
  * visible, while skipping it just leaves the model's own copy in place.
+ *
+ * DEAD — no live callers (see the file header). Both routes now read
+ * `intent.reuseReferenceCopy`, the classifier's answer to the same question,
+ * decided once with the image actually in view rather than from wording.
  */
 export function wantsReferenceCopy(prompt: string): boolean {
   const t = prompt.trim();

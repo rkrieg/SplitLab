@@ -8,7 +8,16 @@ import { askAI } from '@/lib/ai-client';
 import { materializeAsset, materializeSvgMarkup } from '@/lib/ai-asset-integrity';
 import { detectContentReuseIntent, inferTargetSectionNames } from '@/lib/ai-content-placement';
 
-/** User wants a custom/minimal page — not a full clone of the reference URL. */
+/**
+ * DEAD — no live callers. `ai-page-builder.ts` still imports it but never calls
+ * it; the import is left as a marker and can be deleted with this function.
+ *
+ * Page shape is decided once by the schema pass (`minimal_shape`) and forwarded
+ * through build. This regex disagreed with that decision whenever the user
+ * phrased "just a confirmation page" in a way it had not been taught, and the
+ * later of the two answers won — so the same request built two different pages
+ * depending on which branch read it last.
+ */
 export function userWantsCustomOrMinimalPage(prompt: string): boolean {
   return /\b(pretty much just|just (look|be|the)|only (the )?(hero|footer)|hero (section )?only|thank[- ]?you|confirmation|confirmed|dead-?end|no buttons|no (calls? to action|ctas?)|nothing else|that'?s (pretty much|about) it|keep it (nice and )?simple|flat background|success page|receipt page|booked call)\b/i.test(
     prompt,
@@ -16,8 +25,17 @@ export function userWantsCustomOrMinimalPage(prompt: string): boolean {
 }
 
 /**
+ * DEAD, twice over. Its only callers live in `ai-visual-qa.ts`, and that whole
+ * module is switched off at `LIVE_VISUAL_QA_ENABLED = false`, with its call
+ * sites in build + follow-up commented out.
+ *
  * User wants the site's real logo asset from a URL / screenshot reference.
- * Broader than the old "real|actual logo" edit-only regex.
+ * Broader than the old "real|actual logo" edit-only regex — and still not broad
+ * enough, which is the point. `intent.assetSource` is the model's answer to the
+ * same question and needs no new alternation per phrasing.
+ *
+ * If visual QA is ever switched back on, wire those two call sites to
+ * `intent.assetSource === 'logo'` instead of reviving this.
  */
 export function userWantsLogoFromReference(prompt: string): boolean {
   return /\b((real|actual|exact|same|correct)\s+logo|use (the |their |this )?logo|logo from|with (the )?logo|keep (the )?logo|same logo|focused capital.*logo|logo.*from (this|the|that))\b/i.test(
@@ -25,7 +43,14 @@ export function userWantsLogoFromReference(prompt: string): boolean {
   );
 }
 
-/** Edit path: URL present + any logo-from-site intent (not only real/actual). */
+/**
+ * DEAD — no live callers. Replaced in follow-up/route.ts by
+ * `competitorUrls.length > 0 && intent.assetSource === 'logo'`.
+ *
+ * Note the `|| /\blogo\b/` below: with a URL anywhere in the message, merely
+ * saying the word "logo" committed the turn to scraping that site. That is the
+ * failure mode the classifier's `assetSource` exists to prevent.
+ */
 export function isLogoSwapFromUrlIntent(prompt: string, hasCompetitorUrl: boolean): boolean {
   if (!hasCompetitorUrl) return false;
   return userWantsLogoFromReference(prompt) || /\blogo\b/i.test(prompt);
@@ -250,15 +275,15 @@ function logoMarkupForEmbed(logoUrl: string | null, logoSvg: string | null): str
 }
 
 /**
- * Prefer detectContentReuseIntent() — kept only for tests that check logo
- * placement language without resolving full reuse intent.
+ * DEAD — no live callers, and it delegates to detectContentReuseIntent, which
+ * is itself dead. Kept only for tests that check logo placement language.
  */
 export function userWantsLogoPlacedInSection(prompt: string): boolean {
   const intent = detectContentReuseIntent(prompt, ['nav', 'hero', 'footer', 'about']);
   return intent?.kind === 'logo';
 }
 
-/** @deprecated Use inferTargetSectionNames from ai-content-placement. */
+/** DEAD — no live callers. Its delegate `inferTargetSectionNames` is dead too. */
 export function inferLogoPlacementSectionNames(prompt: string, sectionNames: string[]): string[] {
   return inferTargetSectionNames(prompt, sectionNames);
 }

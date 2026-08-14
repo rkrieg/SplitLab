@@ -12,6 +12,7 @@ import { extractDataUris, restoreDataUris, restoreDataUrisInValue } from '@/lib/
 import { createSSEStream, sendSSE, sendSSEPing, closeSSE, SSE_HEADERS } from '@/lib/sse';
 import { checkAiAllowance, type UsageContext } from '@/lib/ai-usage';
 import { reportAiOverageUsage } from '@/lib/ai-overage-billing';
+import { repairSlMarkers, markerCoverage } from '@/lib/ai-sl-markers';
 
 export const dynamic = 'force-dynamic';
 // The AI call returns a compact field/section list (not the full page), but
@@ -348,6 +349,44 @@ function annotateHtml(
     result = result.slice(0, edit.index) + edit.insert + result.slice(edit.index);
   }
 
+  // ── Nothing may be left unreachable ───────────────────────────────────────
+  //
+  // The pass above skips any section whose anchor it cannot match (see the
+  // 'section not matched, skipping' warn) and any block the model did not
+  // list at all — and uploaded HTML is whatever the customer had: div soup,
+  // table layouts, one giant wrapper, minified into a single line. Every
+  // block it misses renders perfectly and is invisible to every later edit,
+  // which is the exact failure this route was supposed to prevent.
+  //
+  // So the same structural repair the generated pages get runs here too, on
+  // what came out. It only ADDS markers, so a block the model DID place keeps
+  // its model-chosen name; the repair merely covers what was left behind.
+  const markerFix = repairSlMarkers(result, schemaJson);
+  if (markerFix.repaired.length > 0) {
+    console.warn('[schema-from-html] blocks the field-list pass left unmarked', {
+      repaired: markerFix.repaired,
+      structural: markerFix.structural,
+    });
+  }
+  result = markerFix.html;
+
+  const coverage = markerCoverage(result);
+  if (coverage.blocks === 0) {
+    // No recognisable top-level block at all. Not 'fully covered' — unreadable.
+    console.error('[schema-from-html] no addressable blocks found in this page');
+  } else if (coverage.unmarked.length > 0) {
+    console.error('[schema-from-html] page has blocks no edit can reach', {
+      blocks: coverage.blocks,
+      marked: coverage.marked,
+      unmarked: coverage.unmarked,
+    });
+  } else {
+    console.log('[schema-from-html] marker coverage', {
+      blocks: coverage.blocks,
+      marked: coverage.marked,
+    });
+  }
+
   return {
     annotatedHtml: result,
     schemaJson,
@@ -483,7 +522,7 @@ function mergeFieldLists(lists: FieldListResponse[]): FieldListResponse {
   const counts = new Map<string, number>();
   for (const f of fields) {
     if (!f?.tag || typeof f.match_text !== 'string') continue;
-    const key = `${f.tag.toLowerCase()} ${normalizeText(f.match_text)}`;
+    const key = `${f.tag.toLowerCase()}${normalizeText(f.match_text)}`;
     const n = counts.get(key) ?? 0;
     f.occurrence = n;
     counts.set(key, n + 1);

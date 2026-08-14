@@ -17,9 +17,11 @@ import {
 } from '@/lib/ai-brand-assets';
 import { listSlSectionNames } from '@/lib/ai-visual-qa';
 import { extractDesignReferenceCopy } from '@/lib/ai-follow-up-helpers';
+import { MAX_ATTACHMENTS } from '@/lib/ai-edit-intent';
 import { forceAppendMissingDesignCopy } from '@/lib/ai-content-placement';
 import { verifyAndRehostHtmlImages } from '@/lib/ai-asset-integrity';
 import { ensureClickToEditFields } from '@/lib/ai-data-field-stamp';
+import { repairSlMarkers, markerCoverage } from '@/lib/ai-sl-markers';
 import {
   assetRequirements,
   enforceRequirements,
@@ -67,7 +69,6 @@ export async function POST(request: NextRequest) {
     competitor_footer_contact: unknown,
     design_copy_lines: unknown,
     reuse_reference_copy: unknown,
-    design_reference: unknown,
     design_copy_sections: unknown,
     minimal_shape: unknown,
     model_requirements: unknown;
@@ -87,7 +88,6 @@ export async function POST(request: NextRequest) {
       competitor_footer_contact,
       design_copy_lines,
       reuse_reference_copy,
-      design_reference,
       design_copy_sections,
       minimal_shape,
       requirements: model_requirements,
@@ -173,7 +173,10 @@ export async function POST(request: NextRequest) {
 
       if (request.signal.aborted) { closeSSE(controller); return; }
 
-      const hasImages = Array.isArray(image_urls) && (image_urls as string[]).length > 0;
+      const attachedImageUrls = Array.isArray(image_urls)
+        ? (image_urls as string[]).filter((u) => typeof u === 'string' && u.trim().length > 0).slice(0, MAX_ATTACHMENTS)
+        : [];
+      const hasImages = attachedImageUrls.length > 0;
       const promptText = typeof user_prompt === 'string' ? user_prompt : '';
       // Only use explicit booleans from generate. Missing → false (no keyword guess).
       const reuseReferenceCopy =
@@ -185,15 +188,10 @@ export async function POST(request: NextRequest) {
             .slice(0, 12)
         : [];
 
-      // Schema/generate already decided design_reference. Do not re-guess.
-      const promptLooksLikeDesignRef =
-        typeof design_reference === 'boolean' ? design_reference : false;
-      const imagesAreDesignRefs = hasImages && promptLooksLikeDesignRef;
-
-      if (designCopyLines.length === 0 && imagesAreDesignRefs && reuseReferenceCopy) {
+      if (designCopyLines.length === 0 && hasImages && reuseReferenceCopy) {
         sendSSE(controller, { type: 'status', message: 'Reading design screenshot…' });
         designCopyLines = await extractDesignReferenceCopy({
-          imageUrls: (image_urls as string[]).slice(0, 3),
+          imageUrls: attachedImageUrls,
           prompt: promptText,
         });
         console.log('[pages/build] design-ref OCR', { lines: designCopyLines.length });
@@ -210,9 +208,8 @@ export async function POST(request: NextRequest) {
           competitorPageContent: typeof competitor_page_content === 'string' ? competitor_page_content : undefined,
           realLogoUrl: logoUrl ?? undefined,
           userPrompt: promptText || undefined,
-          imageUrls: hasImages ? (image_urls as string[]) : [],
+          imageUrls: attachedImageUrls,
           designReferenceCopy: designCopyLines,
-          imagesAreDesignRefs,
           minimalShape: minimal_shape === true,
           callerLabel: 'build',
           onStreamRestart: () => {
@@ -330,7 +327,7 @@ export async function POST(request: NextRequest) {
           // model's source URLs are re-hosted, so checking those never passes.
           embeddableAssetUrls: [
             ...(logoUrl ? [logoUrl] : []),
-            ...(hasImages ? (image_urls as string[]) : []),
+            ...(hasImages ? attachedImageUrls : []),
           ],
         }),
         // Only the floor: an asset WE embedded must be present. The prompt-derived
@@ -352,6 +349,40 @@ export async function POST(request: NextRequest) {
         console.warn('[pages/build] unmet requirements', {
           unmet,
           prompt: promptText.slice(0, 200),
+        });
+      }
+
+      // The builder TYPES its own <!-- SL:name --> markers — the requirement is
+      // prose in its prompt (see ai-page-builder.ts, "Section markers"), typed
+      // by hand while writing a 900-line document, and nothing verified it.
+      // A page shipped with 5 markers on 11 blocks: the six unmarked ones
+      // rendered perfectly and were invisible to every edit. Asked to change
+      // one, the product told the user to word it better. Checked here, in
+      // code, before the page is ever stored.
+      const markerFix = repairSlMarkers(html, enrichedSchema);
+      if (markerFix.repaired.length > 0 || markerFix.skipped.length > 0) {
+        console.warn('[pages/build] section markers repaired before save', {
+          repaired: markerFix.repaired,
+          structural: markerFix.structural,
+          skipped: markerFix.skipped,
+        });
+      }
+      html = markerFix.html;
+
+      // How much of the page is addressable. Nobody had this number, and its
+      // absence is why a two-thirds-invisible page shipped unnoticed: the only
+      // symptom is edits that quietly do nothing, weeks later.
+      const coverage = markerCoverage(html);
+      if (coverage.unmarked.length > 0) {
+        console.error('[pages/build] page has blocks no edit can reach', {
+          blocks: coverage.blocks,
+          marked: coverage.marked,
+          unmarked: coverage.unmarked,
+        });
+      } else {
+        console.log('[pages/build] marker coverage', {
+          blocks: coverage.blocks,
+          marked: coverage.marked,
         });
       }
 

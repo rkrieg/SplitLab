@@ -4,6 +4,8 @@ import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { jsonrepair } from 'jsonrepair';
 import { askAI, askAIStream, isRateLimited, generatePageImages, generateAndUploadImage, AIResponseTruncatedError, isPromptTooLongError, userFacingAIErrorMessage, type AIContent, type AIContentBlock } from '@/lib/ai-client';
+import { remainingInputChars } from '@/lib/ai-context-budget';
+import { repairSlMarkers, markerCoverage } from '@/lib/ai-sl-markers';
 import { uploadHtml, downloadHtmlByPath, fileNameFromUrl } from '@/lib/storage';
 import { resolveWorkspaceRole, resolveOwnerPlan, resolveWorkspaceOwner } from '@/lib/workspace-auth';
 import { PLAN_LIMITS } from '@/lib/plans';
@@ -18,6 +20,8 @@ import { extractDataUris, restoreDataUris, restoreDataUrisInValue } from '@/lib/
 import {
   planMultiIntentEdit,
   verifyScopedPatchIntent,
+  verifyAskApplied,
+  judgeUnrequestedLoss,
   extractDesignReferenceCopy,
 } from '@/lib/ai-follow-up-helpers';
 import {
@@ -33,18 +37,32 @@ import {
 } from '@/lib/ai-brand-assets';
 import {
   extractPrimaryHeadlineFromHtml,
+  extractPrimaryImageFromSection,
   forcePlaceTextIntoSections,
   resolveSourceSectionName,
   sectionHasText,
 } from '@/lib/ai-content-placement';
-import { classifyEditIntent, imageRolesFromIntent, resolveSectionsForAsk } from '@/lib/ai-edit-intent';
+import {
+  buildConversationContext,
+  classifyEditIntent,
+  imageRolesFromIntent,
+  MAX_ATTACHMENTS,
+  attachedImagesInstructionNote,
+  resolveEditRegion,
+  resolveInsertPlacement,
+  resolveSectionOrder,
+  resolveSectionsForAsk,
+} from '@/lib/ai-edit-intent';
 import { ensureClickToEditFields } from '@/lib/ai-data-field-stamp';
 import { verifyAndRehostHtmlImages } from '@/lib/ai-asset-integrity';
 import {
   findUnrequestedLosses,
   hasLosses,
   describeLosses,
+  restoreDamagedSections,
+  splitLossesByRegion,
   sectionsContainingAsset,
+  snapshotPageFacts,
 } from '@/lib/ai-page-preservation';
 import {
   assetRequirements,
@@ -655,14 +673,7 @@ async function runScopedPatch(
   usage?: UsageContext,
 ): Promise<string | null> {
   try {
-    // Callers that want design-match inject "DESIGN REFERENCE" into the prompt.
-    // Do not re-guess with keyword isDesignReferenceAsk here.
-    const isDesignMatchPrompt = /DESIGN REFERENCE/i.test(prompt);
-    const imageUrlsNote = (imageUrls ?? []).length > 0
-      ? isDesignMatchPrompt
-        ? `\n\nAttached image(s) are for VISION only (design/bug reference). Do NOT put these URL(s) into src attributes unless the instruction explicitly lists them as content-asset embed URLs:\n${(imageUrls ?? []).map((u, i) => `${i + 1}. ${u}`).join('\n')}`
-        : `\n\nAttached image URL(s) — use these EXACT strings verbatim in any src attribute, in the order attached:\n${(imageUrls ?? []).map((u, i) => `${i + 1}. ${u}`).join('\n')}`
-      : '';
+    const imageUrlsNote = attachedImagesInstructionNote(imageUrls ?? []);
     const correctionBlock = correctionNote ? `\n\n${correctionNote}` : '';
     const userContent: AIContent = [
       ...(imageUrls ?? []).map((url): AIContentBlock => ({ type: 'image', url })),
@@ -983,7 +994,7 @@ const SCOPED_INSERT_SYSTEM_PROMPT = `You are adding ONE brand-new section to an 
 
 IMPORTANT: Your entire response must be ONLY the JSON object below — begin your response with { and end it with }. Do NOT write any explanation, reasoning, preamble, or markdown code fences before or after the JSON. Any text outside the JSON object will break the parser.
 
-{"name":"kebab-case-section-name","html":"...complete new section HTML, a single top-level element..."}
+{"name":"kebab-case-section-name","html":"...complete new section HTML, a single top-level element...","image_prompts":[{"slot":"SL_IMG_1","prompt":"..."}]}
 
 Rules:
 - Match the page's existing visual design system as closely as possible — reuse existing CSS custom properties/:root variables, existing class names, and existing font/color choices where they fit, rather than inventing an unrelated new look.
@@ -993,6 +1004,9 @@ Rules:
 - "name" must be a short, unique, kebab-case identifier describing the section (e.g. "pricing-tiers", "faq"), and must not collide with any of the page's existing section names given below.
 - Never select or modify any element outside the new section.
 - Never add an external <script src> to a third-party domain.
+- IMAGES: if the section needs photos, do NOT leave empty boxes and do NOT invent an image URL. Put src="SL_IMG_1", src="SL_IMG_2", … on those <img> tags and add one entry per slot to "image_prompts" — the caller generates each image and swaps the real URL in. A section built from a reference screenshot of a photo gallery MUST use these slots; shipping captioned empty rectangles is a failure. Max 6 slots.
+- Each "prompt" is sent to an image model with NO other context, so it must stand alone and be fully specific (subject, setting, lighting, style). Never reference "the attached image" or "the same style as above".
+- Attached images are SHOWN to you so you can understand the ask. Embed an attached URL in src ONLY when the user wants that picture itself on the page. Never embed a screenshot of the page as content.
 - If any copy in your output contains a double-quote character, escape it as \\" — invalid JSON breaks the parser.`;
 
 async function runScopedInsert(
@@ -1001,6 +1015,8 @@ async function runScopedInsert(
   existingSectionNames: string[],
   prompt: string,
   imageUrls: string[] | undefined,
+  /** Storage prefix for any images this section needs generated. */
+  pageSlug: string | null,
 ): Promise<{ name: string; html: string } | null> {
   try {
     // Defensive cap — this is a small, scoped call (writing one section, not
@@ -1009,9 +1025,7 @@ async function runScopedInsert(
     const truncatedHead = headSectionHtml.length > 20_000
       ? `${headSectionHtml.slice(0, 20_000)}\n/* ...truncated... */`
       : headSectionHtml;
-    const imageUrlsNote = (imageUrls ?? []).length > 0
-      ? `\n\nAttached image URL(s) — use these EXACT strings verbatim in any src attribute, in the order attached:\n${(imageUrls ?? []).map((u, i) => `${i + 1}. ${u}`).join('\n')}`
-      : '';
+    const imageUrlsNote = attachedImagesInstructionNote(imageUrls ?? []);
     const userContent: AIContent = [
       ...(imageUrls ?? []).map((url): AIContentBlock => ({ type: 'image', url })),
       {
@@ -1030,7 +1044,7 @@ async function runScopedInsert(
     const jsonStart = raw.indexOf('{');
     const jsonEnd = raw.lastIndexOf('}');
     if (jsonStart >= 0 && jsonEnd > jsonStart) raw = raw.slice(jsonStart, jsonEnd + 1);
-    let parsed: { name?: string; html?: string };
+    let parsed: { name?: string; html?: string; image_prompts?: unknown };
     try {
       try {
         parsed = JSON.parse(raw);
@@ -1053,11 +1067,724 @@ async function runScopedInsert(
       console.error('[pages/follow-up] scoped insert returned an unusable name or html', { rawPreview: text.slice(0, 500) });
       return null;
     }
-    return { name: dedupeSectionName(safeName, existingSectionNames), html: parsed.html };
+    // Fill the SL_IMG_n slots with real generated images.
+    //
+    // Without this a new section could only ever contain empty image boxes: the
+    // full-page builder has always been able to say "generate a photo here",
+    // and this path never could. A user who asked for a section like a
+    // photo-gallery screenshot got six captioned blank rectangles, because the
+    // model correctly refused to paste the reference screenshot in as content
+    // and had no other way to produce a picture.
+    let html = parsed.html;
+    const slots = Array.isArray(parsed.image_prompts) ? parsed.image_prompts.slice(0, 6) : [];
+    if (slots.length > 0 && pageSlug) {
+      const generated = await Promise.all(
+        slots.map(async (entry) => {
+          const rec = entry as Record<string, unknown>;
+          const slot = typeof rec.slot === 'string' ? rec.slot.trim() : '';
+          const imagePrompt = typeof rec.prompt === 'string' ? rec.prompt.trim() : '';
+          if (!slot || !imagePrompt || !html.includes(slot)) return null;
+          const url = await generateAndUploadImage(imagePrompt, pageSlug, 'medium');
+          return url ? { slot, url } : null;
+        }),
+      );
+      for (const hit of generated) {
+        if (!hit) continue;
+        html = html.split(hit.slot).join(hit.url);
+      }
+      const unfilled = slots.filter((entry) => {
+        const slot = (entry as Record<string, unknown>).slot;
+        return typeof slot === 'string' && html.includes(slot);
+      }).length;
+      console.log('[pages/follow-up] scoped insert images', {
+        requested: slots.length,
+        filled: generated.filter(Boolean).length,
+        unfilled,
+      });
+      // Never ship a literal SL_IMG_1 as a src — drop those <img> tags so the
+      // section degrades to a clean layout instead of a broken-image icon.
+      if (unfilled > 0) {
+        html = html.replace(/<img\b[^>]*\bsrc=["']SL_IMG_\d+["'][^>]*>/gi, '');
+      }
+    }
+
+    return { name: dedupeSectionName(safeName, existingSectionNames), html };
   } catch (err) {
     console.error('[pages/follow-up] scoped insert generation failed, falling back to full-page path', err);
     return null;
   }
+}
+
+// ── Region rewrite — the general hand, for anything the fast verbs can't do ──
+//
+// Every other scoped operation here is a fixed verb: patch one section, insert
+// one, remove one, move some. The model's vocabulary is not fixed, so a request
+// outside that list ("swap these two", "split this section in half", "merge
+// these", "wrap these in a container", "turn these three into tabs") had
+// nowhere to go — and the executor did not stop, it degraded to the nearest
+// verb it owned, rewriting a single section in place and reporting success.
+//
+// This verb takes a contiguous RUN of sections and replaces it with whatever
+// the model returns for that run: any number of sections, in any order, with
+// any names. That expresses every structural change there is, so no new verb is
+// ever needed. It stays safe for the same reason the narrow verbs are safe —
+// everything outside the run is untouched byte-for-byte, and the caller's loss
+// checks still run over the result.
+/**
+ * Room reserved for the rewrite reply. Shared with the context budget below:
+ * whatever the answer may need, the question cannot also spend.
+ */
+const REGION_REWRITE_MAX_TOKENS = 128_000;
+
+const SCOPED_REGION_SYSTEM_PROMPT = `You are rewriting ONE CONTIGUOUS RUN of sections of an existing, already-designed landing page. You are given the page's global <style> block (for colors, fonts, spacing, existing CSS classes/variables) and the current HTML of every section in the run. Nothing outside the run exists for you — do not refer to it, do not return it.
+
+IMPORTANT: Your entire response must be ONLY the JSON object below — begin your response with { and end it with }. Do NOT write any explanation, reasoning, preamble, or markdown code fences before or after the JSON. Any text outside the JSON object will break the parser.
+
+{"sections":[{"name":"kebab-case-section-name","html":"...complete section HTML, a single top-level element..."}],"deleted":["section-name-to-remove"],"image_prompts":[{"slot":"SL_IMG_1","prompt":"..."}]}
+
+## Silence means KEEP
+Return in "sections" ONLY the sections you changed or added. Any section in the run you do not mention is kept exactly as it is — you do not need to repeat it, and leaving it out never removes it.
+
+To REMOVE a section, put its name in "deleted". That is the only way a section comes off the page. Never rely on omitting it.
+
+If you are reordering, list every section of the run in "sections" in the new order (unchanged ones can keep their current HTML verbatim) — order is only read from what you return.
+
+## When you genuinely cannot tell what was asked
+Instead of the object above, reply with ONLY:
+
+{"question":"...one short question, in plain language..."}
+
+This is YOUR call and yours alone — nothing else in this system decides whether the user gets asked. Use it when the instruction has two or more real readings and picking the wrong one would destroy or replace work the user did not want touched: "make this bigger" with three candidates in the run, "put it here" with no way to tell which element "it" is, an attached screenshot whose relevance you cannot place.
+
+Do NOT ask when:
+- you can see what is meant, even roughly — a reasonable edit beats a question
+- the ask is vague about STYLE rather than TARGET ("make it feel more premium", "cleaner", "more modern"). Vague taste is your judgement to exercise, not an ambiguity. Decide and build.
+- the user already answered a question of ours, told you to decide, or said not to ask
+- you would only be asking permission ("shall I change the heading too?") — just make the smallest correct edit
+
+Name real things from the page in the question ("the pricing heading, or the one above the form?"), never internal identifiers. One question, no preamble, no list of options longer than two or three.
+
+Rules for the sections object:
+- You may return sections rewritten, brand new ones (splitting or adding), or the whole run reordered. Merging two sections into one means returning the merged section AND listing the absorbed name in "deleted".
+- KEEP A SECTION'S EXISTING NAME whenever that section survives in recognisable form, even if you moved it or restyled it. Only invent a new kebab-case name for a section that genuinely did not exist before. Names must be unique.
+- Do NOT include <!-- SL:name --> markers yourself — the caller wraps each section you return.
+- Change ONLY what the instruction asks for. Every section in this run is being replaced by what you return, so anything you fail to carry across is destroyed: copy, images, links and layout you were not asked to touch must come back unchanged.
+- Preserve every data-field attribute on content you carry across — they drive the page's click-to-edit, and dropping one silently takes away the user's ability to edit that text. Give any genuinely new element a data-field too, using "<name>.<field>" dot-paths matching the section's name.
+- Match the page's existing visual design system — reuse the existing CSS custom properties/:root variables, class names, fonts and colors rather than inventing a new look. If new CSS is genuinely needed, add a small scoped <style> block inside the section itself; never modify the page's shared stylesheet.
+- Each section must be a single top-level element (e.g. one <section>...</section>).
+- Never add an external <script src> to a third-party domain.
+- IMAGES: keep existing page image URLs exactly as they are unless the instruction asks to change them. Attached images are SHOWN to you so you can understand the ask — a crop of the page ("this section", an arrow, "here"), a design to match, a bug, or a photo/logo to put ON the page. Read the instruction to tell which. Embed an attached URL in src ONLY when the user wants that picture itself on the page (a logo, a headshot, a product photo). Never embed a screenshot of the page, a mock, or a "this is the bit I mean" crop — those are pointers or looks to copy, not assets. If the instruction requires a NEW photo that does not exist yet, put src="SL_IMG_1" (etc) and add image_prompts; the caller generates those. Max 6 slots. Each prompt must stand alone and must never say "the attached image".
+- If any copy in your output contains a double-quote character, escape it as \\" — invalid JSON breaks the parser.`;
+
+/**
+ * Why a rewrite could not act.
+ *
+ * All three used to collapse into `null`, and the caller said the same thing
+ * every time: "Name the section and what should change." That is useful advice
+ * for exactly one of them. For a payload that was too large it is misleading —
+ * renaming sections does nothing — and for a provider blip it is wrong. Losing
+ * the reason turns a specific, fixable failure into a vague one.
+ */
+/**
+ * What the user is told, per reason.
+ *
+ * One message used to cover all three, and it was "Name the section and what
+ * should change." That is good advice for exactly one of them. Told to someone
+ * whose request was simply too large for one call, it sends them to rename
+ * sections that were never the problem — they retry the same thing, it fails
+ * the same way, and the product looks broken rather than busy.
+ */
+function regionFailureMessage(reason: RegionFailReason): string {
+  switch (reason) {
+    case 'too_long':
+      // Name the cause, not just the remedy. "Try one at a time" on its own
+      // reads like the request was badly worded, so people rephrase it and hit
+      // the same wall. Saying the page is long makes the retry obvious and
+      // makes it clear nothing about their wording was wrong.
+      return "This page is too large to change several sections at once. Ask for one change at a time and each will go through — your page hasn't been altered.";
+    case 'provider':
+      return 'Something went wrong while applying that — the AI service returned a bad response. Please try again.';
+    case 'unusable':
+      return "I couldn't work out what to change. Name the section (nav, hero, footer, …) and what should happen to it.";
+  }
+}
+
+type RegionFailReason =
+  /** The call exceeded the model's context window. Ask for less at once. */
+  | 'too_long'
+  /** The provider errored, or returned something unparseable. Retrying helps. */
+  | 'provider'
+  /** It ran fine and produced nothing usable. The instruction is the problem. */
+  | 'unusable';
+
+/** Byte range covering a whole run of sections, first marker to last marker. */
+function findSlRegionBounds(html: string, startName: string, endName: string): [number, number] | null {
+  const startBounds = findSlBlockBounds(html, startName);
+  const endBounds = findSlBlockBounds(html, endName);
+  if (!startBounds || !endBounds) return null;
+  const from = Math.min(startBounds[0], endBounds[0]);
+  const to = Math.max(startBounds[1], endBounds[1]);
+  return to > from ? [from, to] : null;
+}
+
+async function runRegionRewrite(opts: {
+  regionHtml: string;
+  headSectionHtml: string;
+  /** Section names elsewhere on the page — new names must not collide. */
+  outsideNames: string[];
+  /**
+   * Everything OUTSIDE the run — the rest of the page as read-only context,
+   * plus an index of the images it contains.
+   *
+   * "Put the image of the hero section here as well" is unanswerable without
+   * this: when the run is just the about section, the hero's HTML was never in
+   * the payload, so the hero's image URL did not exist as far as this call was
+   * concerned. The only URL it could see was the user's attached screenshot —
+   * so it embedded the screenshot, and a crop of the page became the photo.
+   *
+   * Showing the page is a fact, not a decision, and it is safe now: under
+   * "silence keeps" nothing here can be destroyed by being seen.
+   */
+  outsideAssets?: string;
+  prompt: string;
+  imageUrls?: string[];
+  pageSlug: string | null;
+  /**
+   * The user is answering a question we already asked, or told us to decide.
+   * Asking again would loop. This is the ONLY thing that suppresses a question,
+   * and it is a fact about the conversation, not a judgement about the ask.
+   */
+  noQuestions?: boolean;
+  /**
+   * The step that picks WHICH sections to send said it could not tell, so the
+   * whole page was sent instead. Passed on as a fact, not acted on here: this
+   * call can see the page and the ask, so it is the one that should decide
+   * whether that means "ask the user" or "I can see it, get on with it".
+   */
+  regionUnresolved?: boolean;
+  /** Recent turns — context only, never re-done. */
+  conversation?: string;
+}): Promise<
+  | {
+      kind: 'sections';
+      sections: Array<{ name: string; html: string }>;
+      /** Names the model explicitly asked to remove. Omission never deletes. */
+      deleted: string[];
+    }
+  | { kind: 'question'; question: string }
+  | { kind: 'failed'; reason: RegionFailReason }
+> {
+  try {
+    const truncatedHead = opts.headSectionHtml.length > 20_000
+      ? `${opts.headSectionHtml.slice(0, 20_000)}\n/* ...truncated... */`
+      : opts.headSectionHtml;
+    const imageUrlsNote = attachedImagesInstructionNote(opts.imageUrls ?? []);
+    const userContent: AIContent = [
+      ...(opts.imageUrls ?? []).map((url): AIContentBlock => ({ type: 'image', url })),
+      {
+        type: 'text' as const,
+        text: `${opts.conversation ? `${opts.conversation}\n\n` : ''}Section names used elsewhere on the page (any NEW name must not match these): ${opts.outsideNames.join(', ') || '(none)'}\n${opts.outsideAssets ? `\n${opts.outsideAssets}\n` : ''}\nPage's global styles:\n${truncatedHead}\n\nThe run of sections to rewrite, in page order, with their markers:\n${opts.regionHtml}\n\nInstruction: ${opts.prompt}${imageUrlsNote}${
+          opts.noQuestions
+            ? '\n\n(This message is the user answering a question we already asked, or telling us to decide for them. Do NOT reply with {"question"} — make your best call and rewrite the sections.)'
+            : opts.regionUnresolved
+              ? '\n\n(Note: an earlier step could not work out which part of the page this instruction is about, so you have been given EVERY section rather than a narrow run. If you can see what is meant, change just those sections and say nothing about the others — unmentioned sections are kept. If you also cannot tell which part they mean, reply with {"question"} rather than guessing.)'
+              : ''
+        }`,
+      },
+    ];
+    const text = await askAI({
+      system: SCOPED_REGION_SYSTEM_PROMPT,
+      messages: [{ role: 'user', content: userContent }],
+      maxTokens: REGION_REWRITE_MAX_TOKENS,
+      label: 'follow-up:region-rewrite',
+    });
+    let raw = text.trim();
+    if (raw.startsWith('```')) raw = raw.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
+    const jsonStart = raw.indexOf('{');
+    const jsonEnd = raw.lastIndexOf('}');
+    if (jsonStart >= 0 && jsonEnd > jsonStart) raw = raw.slice(jsonStart, jsonEnd + 1);
+    let parsed: {
+      sections?: unknown;
+      deleted?: unknown;
+      image_prompts?: unknown;
+      question?: unknown;
+    };
+    try {
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        parsed = JSON.parse(jsonrepair(raw));
+      }
+    } catch {
+      console.error('[pages/follow-up] region rewrite returned unparseable JSON', {
+        rawLength: text.length,
+        rawPreview: text.slice(0, 1500),
+      });
+      return { kind: 'failed', reason: 'provider' };
+    }
+    // The model chose to ask instead of guessing. Checked BEFORE the sections
+    // check so a question is never mistaken for a failed rewrite. Code does not
+    // second-guess it: if it asked, the user gets asked.
+    if (typeof parsed.question === 'string' && parsed.question.trim()) {
+      const question = parsed.question.trim().slice(0, 500);
+      console.log('[pages/follow-up] region rewrite asked the user a question', { question });
+      return { kind: 'question', question };
+    }
+    const deleted = Array.isArray(parsed.deleted)
+      ? parsed.deleted.filter((d): d is string => typeof d === 'string' && d.trim().length > 0)
+      : [];
+    if (!Array.isArray(parsed.sections) || parsed.sections.length === 0) {
+      // Deleting is a real edit on its own — "remove the pricing section" needs
+      // no rewritten HTML at all.
+      if (deleted.length > 0) return { kind: 'sections', sections: [], deleted };
+      console.error('[pages/follow-up] region rewrite returned no sections', { rawPreview: text.slice(0, 1500) });
+      return { kind: 'failed', reason: 'unusable' };
+    }
+
+    const taken = [...opts.outsideNames];
+    const out: Array<{ name: string; html: string }> = [];
+    for (const entry of parsed.sections.slice(0, 12)) {
+      const rec = entry as Record<string, unknown>;
+      const rawName = typeof rec.name === 'string' ? rec.name : '';
+      const sectionHtml = typeof rec.html === 'string' ? rec.html : '';
+      const safeName = rawName.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
+      if (!safeName || !sectionHtml.trim() || !outerTag(sectionHtml)) {
+        console.error('[pages/follow-up] region rewrite skipped an unusable section', { rawName });
+        continue;
+      }
+      const name = dedupeSectionName(safeName, taken);
+      taken.push(name);
+      out.push({ name, html: sectionHtml });
+    }
+    if (out.length === 0 && deleted.length === 0) {
+      console.error('[pages/follow-up] region rewrite produced nothing usable');
+      return { kind: 'failed', reason: 'unusable' };
+    }
+
+    // Same image-slot contract as the insert path, so a rewrite that genuinely
+    // needs a new photo can produce one instead of an empty box.
+    const slots = Array.isArray(parsed.image_prompts) ? parsed.image_prompts.slice(0, 6) : [];
+    if (slots.length > 0 && opts.pageSlug) {
+      const generated = await Promise.all(
+        slots.map(async (entry) => {
+          const rec = entry as Record<string, unknown>;
+          const slot = typeof rec.slot === 'string' ? rec.slot.trim() : '';
+          const imagePrompt = typeof rec.prompt === 'string' ? rec.prompt.trim() : '';
+          if (!slot || !imagePrompt || !out.some((s) => s.html.includes(slot))) return null;
+          const url = await generateAndUploadImage(imagePrompt, opts.pageSlug!, 'medium');
+          return url ? { slot, url } : null;
+        }),
+      );
+      for (const hit of generated) {
+        if (!hit) continue;
+        for (const s of out) s.html = s.html.split(hit.slot).join(hit.url);
+      }
+      const unfilled = slots.filter((entry) => {
+        const slot = (entry as Record<string, unknown>).slot;
+        return typeof slot === 'string' && out.some((s) => s.html.includes(slot));
+      }).length;
+      console.log('[pages/follow-up] region rewrite images', {
+        requested: slots.length,
+        filled: generated.filter(Boolean).length,
+        unfilled,
+      });
+      if (unfilled > 0) {
+        for (const s of out) {
+          s.html = s.html.replace(/<img\b[^>]*\bsrc=["']SL_IMG_\d+["'][^>]*>/gi, '');
+        }
+      }
+    }
+
+    return { kind: 'sections', sections: out, deleted };
+  } catch (err) {
+    const reason: RegionFailReason = isPromptTooLongError(err)
+      ? 'too_long'
+      : 'provider';
+    console.error('[pages/follow-up] region rewrite failed', { reason, err });
+    return { kind: 'failed', reason };
+  }
+}
+
+/**
+ * Resolve a region for one instruction, rewrite it, splice it back, and keep
+ * the schema in step. Shared by both edit paths — a single-instruction message
+ * and a multi-step plan get the same general hand, because "which path did the
+ * message take" says nothing about whether the change is expressible.
+ *
+ * Three outcomes, and they are not interchangeable:
+ *   • {kind:'applied'} — the edit landed.
+ *   • {kind:'question'} — the MODEL decided it needs to ask the user something.
+ *     Not a failure. Callers must surface the question, not retry around it.
+ *   • null — it could not act. Callers must record a failure; reporting success
+ *     for work that did not happen is the whole bug class.
+ */
+async function applyRegionRewriteToHtml(opts: {
+  html: string;
+  instruction: string;
+  imageUrls?: string[];
+  pageSlug: string | null;
+  schema: unknown;
+  usage?: UsageContext;
+  /** See runRegionRewrite — conversation fact, not a judgement about the ask. */
+  noQuestions?: boolean;
+  /** Recent turns, so the instruction's "it"/"that"/"also" can be resolved. */
+  conversation?: string;
+  /**
+   * Sections the classifier already worked out this message is about.
+   *
+   * It had the answer all along — "use the footer's logo in the nav, and the
+   * hero's image in the about section" classified cleanly as [nav, about] —
+   * and nothing passed it here, so the run was picked from the raw sentence
+   * and came back as just `nav`. The about section was never sent, and the
+   * model was blamed for skipping an ask it had never been shown.
+   */
+  focusSections?: string[];
+}): Promise<
+  | {
+      kind: 'applied';
+      html: string;
+      schema: Record<string, unknown>;
+      wrote: string[];
+      /**
+       * Every section name the rewrite OWNED this turn — the ones it was given
+       * plus the ones it produced. Bytes outside these are untouched by the
+       * splice, so the damage guard can tell provable damage from the model
+       * doing its job. See splitLossesByRegion.
+       */
+      region: string[];
+    }
+  | { kind: 'question'; question: string }
+  | { kind: 'failed'; reason: RegionFailReason }
+> {
+  const live = extractSlSections(opts.html);
+  const body = live.filter((s) => s.name !== 'head');
+  if (body.length === 0) return { kind: 'failed', reason: 'unusable' };
+
+  // ── Which sections does the model get to REWRITE? ────────────────────────
+  //
+  // This used to be one contiguous strip of the page, and that single fact
+  // caused the worst failure of the night: a message asking for two things in
+  // different parts of the page ("the footer's logo on the nav, and the hero's
+  // image in the about section") got a strip covering `nav` alone. The about
+  // section was never in the payload, so the second ask could not happen — and
+  // it looked like the model ignoring an instruction.
+  //
+  // Sections do not have to be neighbours. Each one has its own markers and is
+  // addressable on its own, so the editable set can be scattered. The strip was
+  // never a model limitation, only a consequence of splicing one byte range.
+  const bodyChars = body.reduce((n, sec) => n + sec.html.length, 0);
+  const contextBudget = remainingInputChars({
+    usedChars:
+      (live.find((sec) => sec.name === 'head')?.html.length ?? 0) +
+      (opts.conversation?.length ?? 0) +
+      opts.instruction.length,
+    reservedOutputTokens: REGION_REWRITE_MAX_TOKENS,
+    images: (opts.imageUrls ?? []).length,
+  });
+
+  // The classifier's answer first — it read the message and named the sections.
+  const focus = (opts.focusSections ?? []).filter((n) => body.some((sec) => sec.name === n));
+
+  // A page that fits gets sent whole: nothing is hidden, every ask is reachable,
+  // and we skip a round trip. A page that does not fit has to be triaged, and
+  // that is what the resolver is genuinely for.
+  let editableNames: string[];
+  let regionUnresolved = false;
+  if (bodyChars <= contextBudget) {
+    editableNames = body.map((sec) => sec.name);
+  } else {
+    const region = await resolveEditRegion({
+      instruction: opts.instruction,
+      sectionOutline: body.map((sec) => ({ name: sec.name, text: sec.text })),
+      imageUrls: opts.imageUrls,
+      conversation: opts.conversation,
+      usage: opts.usage,
+      label: 'follow-up:resolve-region',
+    });
+    const names = body.map((sec) => sec.name);
+    const startAt = region?.start ? names.indexOf(region.start) : -1;
+    const endAt = region?.end ? names.indexOf(region.end) : -1;
+    const fromResolver =
+      startAt >= 0 && endAt >= 0
+        ? names.slice(Math.min(startAt, endAt), Math.max(startAt, endAt) + 1)
+        : startAt >= 0
+          ? [names[startAt]]
+          : [];
+    // Union, not either-or: the classifier's sections and the resolver's run
+    // are two reads of the same message and dropping either one loses an ask.
+    editableNames = Array.from(new Set([...focus, ...fromResolver]));
+    // Nothing placed it and the page is too big to just send everything.
+    regionUnresolved = editableNames.length === 0;
+    if (editableNames.length === 0) editableNames = names;
+  }
+
+  // Page order, always — the model reads the run top to bottom.
+  const editableSet = new Set(editableNames);
+  const editableBlocks = body.filter((sec) => editableSet.has(sec.name));
+  const regionHtml = editableBlocks
+    .map((sec) => `<!-- SL:${sec.name} -->\n${sec.html.trim()}\n<!-- /SL:${sec.name} -->`)
+    .join('\n');
+  const insideNames = editableBlocks.map((sec) => sec.name);
+  console.log('[pages/follow-up] editable scope', {
+    editable: insideNames,
+    ofSections: body.length,
+    bodyChars,
+    budgetChars: contextBudget,
+    unresolved: regionUnresolved,
+  });
+
+  const outsideNames = live.map((s) => s.name).filter((n) => !insideNames.includes(n));
+
+  // What pictures already exist elsewhere on the page, so "use the image that
+  // is already in the hero" can be carried out with the real URL instead of
+  // whatever URL happens to be to hand.
+  const outsideAssetLines: string[] = [];
+  for (const sec of live) {
+    if (insideNames.includes(sec.name) || sec.name === 'head') continue;
+    const urls = new Set<string>();
+    for (const m of Array.from(sec.html.matchAll(/<img\b[^>]*\bsrc=["']([^"']+)["'][^>]*>/gi))) {
+      if (/^https?:\/\//i.test(m[1])) urls.add(m[1]);
+    }
+    for (const m of Array.from(
+      sec.html.matchAll(/background(?:-image)?\s*:\s*[^;"']*url\(["']?(https?:\/\/[^"')]+)["']?\)/gi),
+    )) {
+      urls.add(m[1]);
+    }
+    if (urls.size > 0) outsideAssetLines.push(`- ${sec.name}: ${Array.from(urls).slice(0, 4).join(', ')}`);
+  }
+  const assetInventory =
+    outsideAssetLines.length > 0
+      ? 'Images already on the page, by section (use one of these EXACT URLs when the instruction says to reuse a picture that is already on the page — never substitute an attached screenshot for one):\n' +
+        outsideAssetLines.slice(0, 12).join('\n')
+      : '';
+
+  // ── The rest of the page, as READ-ONLY context ────────────────────────────
+  //
+  // The rewrite used to receive its run and nothing else, so anything the
+  // instruction referred to elsewhere on the page simply did not exist for it.
+  // "Use the image that's already in the hero" was unanswerable while editing
+  // the about section, and it reached for the only URL it had — the user's
+  // attached screenshot — and embedded a picture of the page onto the page.
+  //
+  // Two things used to make sending more input a bad trade, and only one is
+  // still true:
+  //   • blast radius — GONE. Under "silence keeps", a section the model does
+  //     not mention is carried over as its original bytes, so showing it costs
+  //     nothing in risk. This was the real objection and it no longer holds.
+  //   • size — still real. Tokens cost money and an oversized call is the
+  //     `full_page_too_long` failure. So there is a budget, and past it the
+  //     sections degrade to their visible text rather than dropping out.
+  //
+  // Read-only is stated plainly below: this is here to be UNDERSTOOD, and the
+  // run remains the only thing that may be rewritten.
+  // The budget is arithmetic, not a guess: the window, minus the room the
+  // reply needs, minus everything this call already has to send. A fixed
+  // number would be a guess about somebody else's page — too small starves a
+  // small page of context it could easily have afforded, too large kills a
+  // big one.
+  const outsideSections = live.filter((s) => !insideNames.includes(s.name) && s.name !== 'head');
+  const fullSize = outsideSections.reduce((n, s) => n + s.html.length, 0);
+  const budget = remainingInputChars({
+    usedChars:
+      regionHtml.length +
+      (live.find((s) => s.name === 'head')?.html.length ?? 0) +
+      (opts.conversation?.length ?? 0) +
+      opts.instruction.length,
+    reservedOutputTokens: REGION_REWRITE_MAX_TOKENS,
+    images: (opts.imageUrls ?? []).length,
+  });
+  const withinBudget = fullSize <= budget;
+  const outsideBody = outsideSections
+    .map((s) =>
+      withinBudget
+        ? s.html
+        : `<!-- SL:${s.name} --> (summary) ${s.text.replace(/\s+/g, ' ').trim().slice(0, 300)}`,
+    )
+    .join('\n');
+  console.log('[pages/follow-up] region context', {
+    outsideSections: outsideSections.length,
+    outsideChars: fullSize,
+    budgetChars: budget,
+    mode: withinBudget ? 'full-html' : 'summarised',
+  });
+
+  const outsideAssets =
+    [
+      outsideSections.length > 0
+        ? `THE REST OF THE PAGE — READ ONLY. You are not rewriting any of this and must not return any of it. It is here so you can see what the page already has: existing images and their URLs, the copy, the classes and the styling to stay consistent with.${
+            withinBudget ? '' : ' (Shortened to visible text — this page is large.)'
+          }\n${outsideBody}`
+        : '',
+      assetInventory,
+    ]
+      .filter(Boolean)
+      .join('\n\n') || undefined;
+
+  const result = await runRegionRewrite({
+    regionHtml,
+    outsideAssets,
+    headSectionHtml: live.find((s) => s.name === 'head')?.html ?? '',
+    outsideNames,
+    prompt: opts.instruction,
+    imageUrls: opts.imageUrls,
+    pageSlug: opts.pageSlug,
+    noQuestions: opts.noQuestions,
+    regionUnresolved,
+    conversation: opts.conversation,
+  });
+  if (result.kind === 'failed') return result;
+  // Pass the model's question straight through. Wrapping it in a retry or
+  // downgrading it to null would be code overruling the one call that read
+  // both the page and the ask.
+  if (result.kind === 'question') return result;
+  const rewritten = result.sections;
+  const deleted = result.deleted;
+  if (rewritten.length === 0 && deleted.length === 0) return { kind: 'failed', reason: 'unusable' };
+
+  // ── Rebuild the run: silence keeps, only "deleted" removes ────────────────
+  //
+  // This used to replace the whole run with whatever came back, so a section
+  // the model simply did not mention was destroyed. Handed the whole page
+  // (which happens whenever nothing could place the ask), a model that
+  // sensibly returned just the two sections it changed wiped everything else —
+  // a user lost their stats and gallery sections that way, live.
+  //
+  // Now a section leaves the page only when the model NAMES it. Forgetting to
+  // mention something can no longer delete it, and deleting is still fully
+  // expressible. Order comes from what was returned, so reordering still works.
+  // ── Splice each section into its OWN byte range ───────────────────────────
+  //
+  // The version before this one replaced everything between the first and last
+  // marked section with the marked sections joined together. That is only safe
+  // if the page is nothing BUT marked sections — and it is not. A real page
+  // here had markers on three sections out of ten, so a nav+footer edit wiped
+  // every unmarked thing between them: the entire about section, 4 images, 20
+  // headings, 60 click-to-edit fields. The damage guard caught it and restored
+  // the page, but the turn was lost and the cause was this splice.
+  //
+  // Editing one section must touch that section's bytes and nothing else. So
+  // each change is applied to its own range, highest offset first so earlier
+  // offsets stay valid. Anything between sections — marked or not — is never
+  // in a range and therefore cannot be touched.
+  const rewrittenByName = new Map(rewritten.map((sec) => [sec.name, sec.html]));
+  const removed = new Set(deleted);
+  const block = (name: string, htmlBody: string) =>
+    `<!-- SL:${name} -->\n${htmlBody.trim()}\n<!-- /SL:${name} -->`;
+
+  let spliced = opts.html;
+
+  // Deletions and replacements, both keyed to a single section's own bounds.
+  const edits: Array<{ from: number; to: number; text: string }> = [];
+  for (const name of Array.from(removed)) {
+    const at = findSlBlockBounds(spliced, name);
+    if (at) edits.push({ from: at[0], to: at[1], text: '' });
+  }
+  for (const sec of rewritten) {
+    if (removed.has(sec.name)) continue;
+    const at = findSlBlockBounds(spliced, sec.name);
+    if (at) edits.push({ from: at[0], to: at[1], text: block(sec.name, sec.html) });
+  }
+  // Descending, so applying one edit cannot move the next one's offsets.
+  edits.sort((a, b) => b.from - a.from);
+  for (const e of edits) spliced = spliced.slice(0, e.from) + e.text + spliced.slice(e.to);
+
+  // Sections the page did not have go after the last one that survived.
+  const brandNew = rewritten.filter(
+    (sec) => !removed.has(sec.name) && !findSlBlockBounds(opts.html, sec.name),
+  );
+  if (brandNew.length > 0) {
+    const survivors = body.filter((sec) => !removed.has(sec.name)).map((sec) => sec.name);
+    const anchor = survivors.length > 0 ? survivors[survivors.length - 1] : null;
+    const at = anchor ? findSlBlockBounds(spliced, anchor) : null;
+    const addition = brandNew.map((sec) => block(sec.name, sec.html)).join('\n');
+    spliced = at
+      ? `${spliced.slice(0, at[1])}\n${addition}${spliced.slice(at[1])}`
+      : `${spliced}\n${addition}`;
+  }
+
+  // Reordering is a different operation: the bytes have to MOVE, which no
+  // in-place replacement can express. Only attempt it when the marked sections
+  // sit next to each other with nothing but whitespace between them — moving
+  // them otherwise would drag unmarked content out of position, which is the
+  // exact failure this splice was rewritten to stop.
+  const modelOrder = rewritten.map((sec) => sec.name);
+  const survivorNames = body.filter((sec) => !removed.has(sec.name)).map((sec) => sec.name);
+  const looksLikeReorder =
+    modelOrder.length > 1 &&
+    modelOrder.length === survivorNames.length &&
+    survivorNames.every((n) => modelOrder.includes(n)) &&
+    modelOrder.join('|') !== survivorNames.join('|');
+  let reordered = false;
+  if (looksLikeReorder) {
+    const span = findSlRegionBounds(spliced, survivorNames[0], survivorNames[survivorNames.length - 1]);
+    if (span) {
+      const inner = spliced.slice(span[0], span[1]);
+      const blocksOnly = survivorNames.reduce((acc, n) => {
+        const at = findSlBlockBounds(acc, n);
+        return at ? acc.slice(0, at[0]) + acc.slice(at[1]) : acc;
+      }, inner);
+      if (blocksOnly.trim() === '') {
+        const ordered = modelOrder
+          .map((n) => {
+            const at = findSlBlockBounds(spliced, n);
+            return at ? spliced.slice(at[0], at[1]) : null;
+          })
+          .filter((b): b is string => b !== null);
+        if (ordered.length === modelOrder.length) {
+          spliced = spliced.slice(0, span[0]) + ordered.join('\n') + spliced.slice(span[1]);
+          reordered = true;
+        }
+      } else {
+        console.warn('[pages/follow-up] reorder skipped — unmarked content sits between sections', {
+          order: modelOrder,
+        });
+      }
+    }
+  }
+
+  const kept = body.filter((sec) => !removed.has(sec.name) && !rewrittenByName.has(sec.name));
+  console.log('[pages/follow-up] section splice', {
+    changed: rewritten.map((sec) => sec.name),
+    keptUntouched: kept.map((sec) => sec.name),
+    added: brandNew.map((sec) => sec.name),
+    deleted,
+    reordered,
+  });
+
+  // The run has to come back out as the sections we just wrote. A splice that
+  // lost a marker would leave the page silently short of a section.
+  const wrote = rewritten.map((s) => s.name).filter((n) => !removed.has(n));
+  const afterNames = extractSlSections(spliced).map((s) => s.name);
+  if (!wrote.every((n) => afterNames.includes(n))) {
+    console.error('[pages/follow-up] region splice did not survive re-extraction', { wrote, afterNames });
+    return { kind: 'failed', reason: 'unusable' };
+  }
+
+  // Schema follows the sections: names that left the page lose their entry,
+  // names that arrived get one built from their own data-field attributes.
+  const schemaCopy = (opts.schema && typeof opts.schema === 'object'
+    ? JSON.parse(JSON.stringify(opts.schema))
+    : {}) as Record<string, unknown>;
+  for (const gone of insideNames.filter((n) => !wrote.includes(n))) delete schemaCopy[gone];
+  for (const s of rewritten) {
+    const fields = extractDataFieldsFromHtml(s.html);
+    if (Object.keys(fields).length > 0) schemaCopy[s.name] = fields;
+  }
+
+  console.log('[pages/follow-up] region rewritten', {
+    // unresolved:true means nothing placed the ask on a page too big to send
+    // whole. Rare is fine; common means the resolver prompt needs work.
+    unresolved: regionUnresolved,
+    editable: insideNames,
+    wrote,
+  });
+  return {
+    kind: 'applied',
+    html: spliced,
+    schema: schemaCopy,
+    wrote,
+    region: Array.from(new Set([...insideNames, ...wrote])),
+  };
 }
 
 // ── Structural diff+splice — content-only structural edits without a full rebuild ──
@@ -1294,6 +2021,39 @@ export async function POST(
   let html = current_html ?? baseHtml ?? (page.html_url ? await downloadHtmlByPath(fileNameFromUrl(page.html_url)) : null);
   if (!html) return NextResponse.json({ error: 'Could not load current HTML' }, { status: 400 });
 
+  // Put back any <!-- SL:name --> markers this page has lost, in memory,
+  // before anything reads it. A section without markers still renders and is
+  // entirely uneditable: asked to change it, the system answers "that section
+  // isn't part of what I can edit right now" — which is true, and which the
+  // user has no way to fix.
+  //
+  // Deliberately NOT saved on its own. It rides along with the edit and is
+  // stored only if that edit succeeds, so a mistaken repair can never land by
+  // itself on a page nobody asked us to touch.
+  {
+    const fix = repairSlMarkers(html, schema);
+    if (fix.repaired.length > 0 || fix.skipped.length > 0) {
+      console.log('[pages/follow-up] section markers repaired in memory', {
+        repaired: fix.repaired,
+        structural: fix.structural,
+        skipped: fix.skipped,
+      });
+    }
+    html = fix.html;
+
+    // If anything is STILL unreachable after repair, say so here rather than
+    // letting the turn end in "I couldn't work out what to change" — that
+    // message blamed the user's wording for a block we never showed the model.
+    const coverage = markerCoverage(html);
+    if (coverage.unmarked.length > 0) {
+      console.error('[pages/follow-up] blocks this edit cannot reach', {
+        blocks: coverage.blocks,
+        marked: coverage.marked,
+        unmarked: coverage.unmarked,
+      });
+    }
+  }
+
   // Every AI call below (routing, scoped patch/insert, and the full-page
   // fallback) reads `html`/`schema` — schema_json now stores REAL base64 for
   // image fields (so the editor shows real thumbnails), and a handful of
@@ -1344,13 +2104,20 @@ export async function POST(
   // Merge prompt-detected image URLs in with any client-attached ones so the
   // model can embed them exactly like an uploaded image attachment. Capped at
   // 3 total to match the existing image_urls validation above.
-  const effectiveImageUrls = [...(image_urls ?? []), ...promptImageUrls].slice(0, 3);
+  // Same cap the classifier uses, from the same constant — see MAX_ATTACHMENTS.
+  const effectiveImageUrls = [...(image_urls ?? []), ...promptImageUrls].slice(0, MAX_ATTACHMENTS);
   const hasUserImages = effectiveImageUrls.length > 0;
 
   // ── What is this person asking for? ───────────────────────────────────────
   // One model call decides routing. If it fails: ask the user once (no infinite
   // clarify loop). Keyword regex is only used when they said "you decide" or
   // this message answers our previous clarify.
+  // Everything the models below need in order to resolve what this message
+  // REFERS to. Held by the route since forever and handed to exactly one call
+  // (the full-page rebuild), while the path that runs on almost every edit was
+  // given the bare sentence. "make it bigger" is unanswerable without this.
+  const conversationContext = buildConversationContext(history);
+
   const priorUserUrls = history
     .filter((h) => h.role === 'user' && typeof h.content === 'string')
     .flatMap((h) => extractUrls(h.content));
@@ -1369,6 +2136,7 @@ export async function POST(
       ...effectiveImageUrls,
     ],
     requirementInstruction: REQUIREMENT_EXTRACTION_INSTRUCTION,
+    conversation: conversationContext,
     usage: usageCtx,
     label: 'follow-up:edit-intent',
   });
@@ -1434,8 +2202,47 @@ export async function POST(
   /** Proceed on the best guess instead of asking a clarifying question. */
   const wantsUsToDecide = intent.proceedAnyway;
 
+  /**
+   * Attach the message's standing conditions to one step's instruction.
+   *
+   * Steps are executed in isolation with only their own instruction, so
+   * "keep the dark theme we have" reached exactly one of them. A later step
+   * that recreates a section from a light-themed screenshot then had nothing
+   * telling it the theme was off limits. Conditions qualify every step.
+   */
+  const withConstraints = (instruction: string): string => {
+    const parts: string[] = [instruction];
+    if (intent.constraints.length > 0) {
+      parts.push(
+        `(Standing conditions from the user — these apply to this edit and must not be broken:\n${intent.constraints
+          .map((c) => `- ${c}`)
+          .join('\n')}\nThey describe what to PRESERVE; they are not new work.)`,
+      );
+    }
+    // A multi-part message is split into steps that each run alone, so a step
+    // like "align them horizontally" arrived with no antecedent for "them" —
+    // the thing it refers to was named in a DIFFERENT step. Carrying the
+    // original message as read-only context is not a decision, it is the
+    // information needed to read the instruction correctly.
+    if (intent.asks.length > 1 && instruction.trim() !== prompt.trim()) {
+      parts.push(
+        `(The user's full message, for CONTEXT ONLY — do not carry out its other parts here, a separate step handles each one. Use it to resolve what words like "them", "it" or "this" refer to:\n"""\n${prompt}\n"""\n)`,
+      );
+    }
+    return parts.join('\n\n');
+  };
+
   // "get the logo from the website i gave you" — only when intent says so.
-  if (competitorUrls.length === 0 && promptImageUrls.length === 0) {
+  //
+  // Guarded on hasUserImages, NOT promptImageUrls. promptImageUrls only counts
+  // image URLs TYPED INTO the message; an uploaded attachment lives in
+  // image_urls and used to score zero here. So "add those sections to the page"
+  // with a screenshot attached reached back into history, grabbed an old site
+  // URL, tried to scrape photos off it, and dead-ended the whole turn with
+  // "We couldn't find a usable headshot/product photo on that page" — about a
+  // site the user never mentioned. When they hand us an image, that image is
+  // the source; never go fetch a different one.
+  if (competitorUrls.length === 0 && !hasUserImages) {
     const inherited =
       intent.usesEarlierSource && (intent.assetSource || intent.fullRebuild)
         ? intent.sourceUrl
@@ -1447,6 +2254,15 @@ export async function POST(
   }
 
   // Logo / content-image / scoped-despite-URL: intent fields only.
+  //
+  // LIVE GATE — these three still pick a path and then execute it, and both
+  // scrape branches are fetch-or-die (a failed fetch ends the turn with an
+  // error and no edit). Note `competitorUrls` may hold a URL INHERITED from an
+  // earlier turn, so "make the logo bigger" with a link pasted three messages
+  // ago can trigger a scrape of a site this message never mentioned, and end
+  // in "We couldn't find a usable logo image on that page" with the page
+  // unchanged. If that shows up in the logs, the fix is to fall through to the
+  // region rewrite on a failed fetch, not to widen assetSource.
   const isLogoSwapAttempt = competitorUrls.length > 0 && intent.assetSource === 'logo';
   const isScopedDespiteUrl =
     competitorUrls.length > 0 && !isLogoSwapAttempt && !intent.fullRebuild;
@@ -1505,6 +2321,12 @@ export async function POST(
       let finalSchemaJson: unknown | undefined;
       let scopedApplied = false;
       let partialMessage: string | null = null;
+      /**
+       * Something is off with the PAGE, but everything asked for was done.
+       * Kept apart from partialMessage on purpose: only an unfinished ASK may
+       * say "Partly done", or the user re-sends work that already landed.
+       */
+      let assetWarning: string | null = null;
       // Set only when routing already qualified a request for a scoped op
       // (patch/insert/remove/reorder/image_generate) and OUR OWN code then
       // failed to execute it (parse failure, deterministic splice failure,
@@ -1522,10 +2344,9 @@ export async function POST(
       // always a 'patch' by construction, so this is set once up front and
       // only overwritten inside the fallback branch below.
       let resultType: 'structural' | 'style' | 'patch' = 'patch';
-      // Per-image roles (bug screenshot vs content asset vs design reference).
-      // Default = treat all as both vision + embed candidates; classification may narrow embed list.
+      // Per-image vision: every attachment is shown. Instruction decides
+      // whether a URL goes in src — code must not split embed-all vs embed-none.
       let routingImageUrls = effectiveImageUrls;
-      let embedImageUrls = effectiveImageUrls;
       let designReferenceUrls: string[] = [];
       let designCopyLines: string[] = [];
       let imageRolesClassified = false;
@@ -1533,6 +2354,112 @@ export async function POST(
       let logoSwapAppliedUrl: string | null = null;
       /** Logo already fetched+embedded this turn — don't scrape/swap again. */
       let logoSwapCompleted = false;
+      /**
+       * True once we handed the ask to the region rewrite as the PRIMARY
+       * executor. The menu dispatcher below must not then run — that is the
+       * hurdle. If the rewrite could not act, we tell the user so rather than
+       * pressing the nearest button and calling it Done.
+       */
+      let regionAttempted = false;
+      /**
+       * Sections a region rewrite owned this turn, or null if no rewrite ran.
+       *
+       * The damage guard uses this to stop policing the model's own work. A
+       * rewrite is GIVEN a run of sections and told to change them; losing an
+       * image there is usually the edit succeeding (a picture put where one
+       * already was replaces it). Outside the run, nothing was supposed to
+       * change at all, so a loss there is provable damage. Same guard, applied
+       * only where it can be right.
+       */
+      let rewrittenRegion: string[] | null = null;
+      /**
+       * Why the primary rewrite missed, if it did. Kept so the user is told
+       * the thing that is actually true of their turn rather than one generic
+       * sentence that fits only one of the three cases.
+       */
+      let regionFailReason: RegionFailReason = 'unusable';
+
+      /**
+       * The one general path, reachable from every narrow dead end.
+       *
+       * Everything above this line is a NARROW verb — copy a logo, place text,
+       * patch a named section, swap a photo. Each one can only express the
+       * meanings its own vocabulary covers, and each one used to answer "I can't
+       * express that" by sending the user an error and ending the turn. That is
+       * the code deciding the request is impossible when all that happened is
+       * that OUR list was too short.
+       *
+       * The region rewrite has no vocabulary: it takes the instruction as typed,
+       * picks a run of sections, and returns new HTML for that run. So a narrow
+       * verb failing is never a reason to stop — it is a reason to hand the ask
+       * to the general path. Only when the general path also declines does the
+       * user hear "no".
+       *
+       * Returns true when it applied something. Callers that get false should
+       * report the failure they already had.
+       *
+       * STATUS: mostly superseded. The region rewrite is now the PRIMARY
+       * executor (see the block below), so most of the eleven call sites this
+       * was wired into sit inside the leftover dispatcher and no longer run.
+       * The ones after that block — scopedFailureReason, the full-page
+       * recoveries, html_unchanged — are still live and still worth having.
+       *
+       * Keep this even as the dead call sites are removed: the fullRebuild and
+       * no-markers doors still reach code that can dead-end.
+       */
+      const tryGeneralFallback = async (reason: string, baseHtml: string): Promise<boolean> => {
+        console.warn('[pages/follow-up] narrow path could not act — handing to region rewrite', {
+          reason,
+          prompt: prompt.slice(0, 160),
+        });
+        sendSSE(controller, { type: 'status', message: 'Rewriting that part of the page...' });
+        let result: Awaited<ReturnType<typeof applyRegionRewriteToHtml>> | null = null;
+        try {
+          result = await applyRegionRewriteToHtml({
+            html: baseHtml,
+            instruction: withConstraints(prompt),
+            imageUrls: routingImageUrls.length > 0 ? routingImageUrls : undefined,
+            pageSlug: page.slug ?? null,
+            schema: finalSchemaJson ?? schema,
+            usage: usageCtx,
+            // This is already a recovery from a narrow path that failed. The
+            // user is owed either an edit or the error we already have — not a
+            // question arriving after we half-tried something else.
+            conversation: conversationContext,
+            // The classifier already named the sections this message is about.
+            // Not passing them here is how a two-part ask lost its second half.
+            focusSections: intent.targetSections,
+            noQuestions: true,
+          });
+        } catch (err) {
+          console.error('[pages/follow-up] region fallback threw', { reason, err });
+          return false;
+        }
+        if (!result || result.kind === 'failed') {
+          console.error('[pages/follow-up] region fallback could not act either', {
+            reason,
+            regionReason: result?.reason ?? 'threw',
+          });
+          return false;
+        }
+        if (result.kind === 'question') {
+          // noQuestions was set, so this should not happen. Treat it as "could
+          // not act" rather than dropping a question on the user mid-recovery.
+          console.warn('[pages/follow-up] region fallback asked despite noQuestions', { reason });
+          return false;
+        }
+        finalHtml = result.html;
+        finalSchemaJson = result.schema;
+        rewrittenRegion = result.region;
+        scopedApplied = true;
+        scopedFailureReason = null;
+        resultType = 'patch';
+        console.log('[pages/follow-up] region rewrite recovered a narrow failure', {
+          reason,
+          wrote: result.wrote,
+        });
+        return true;
+      };
 
       // ── Scoped-patch attempt (input-side token reduction) ─────────────────
       // Only attempted when there's no competitor URL (slSections/quoteMatchSection
@@ -1540,14 +2467,29 @@ export async function POST(
       // actually has SL section markers to scope to. See
       // docs/follow-up-input-scoping.md for the full design + guardrails.
       if (slSections.length > 0) {
-        // The classifier read the whole message; the quote lookup only counted
-        // string matches. When both have an answer, the model's wins.
-        let targetSections: string[] | null =
+        // WHERE the edit belongs, according to the classifier. The quote lookup
+        // only counted string matches, so when both have an answer the model's
+        // wins.
+        //
+        // This is a hint, not a decision. It used to initialise targetSections
+        // directly, and every downstream branch reads `!targetSections` as "no
+        // one has claimed this turn yet" — including the routing call, the ONLY
+        // place that can answer "add a section / remove one / reorder / generate
+        // an image" rather than "edit an existing one". So the moment the
+        // classifier could name a section (which it does for most messages, and
+        // is instructed to do), routing was skipped and the system had exactly
+        // one verb left: patch. "Add a section like this image" was executed as
+        // "edit the hero", and the new content landed nested inside the hero's
+        // flex row instead of beside it. Knowing where something goes must never
+        // decide what we do to it.
+        let pinnedSections: string[] | null =
           intentSections.length > 0
             ? intentSections.slice(0, 3)
             : quoteMatchSection
               ? [quoteMatchSection]
               : null;
+        /** Set only once an op has been decided — by routing, or by a scoped path. */
+        let targetSections: string[] | null = null;
         // Set only when the routing pass resolved this as a "generate a new
         // image and embed it in 1-3 existing sections" request — the scoped
         // patch call below embeds this URL instead of relying on the
@@ -1555,6 +2497,169 @@ export async function POST(
         // untouched for this path (see follow-up-input-scoping.md).
         let generatedImageUrl: string | null = null;
 
+        // PRIMARY executor. Sonnet already understands mixed prompts and
+        // images. Our job is to give it the instruction and splice what it
+        // returns — not to force a menu (op / attachment_roles / routing.type)
+        // and execute the nearest button. Fetch-from-URL is mechanics: the
+        // model cannot download a file, so we fetch first and hand it the URL.
+        if (!scopedApplied && !intent.fullRebuild) {
+          regionAttempted = true;
+          let rewriteInstruction = withConstraints(prompt);
+
+          if (isLogoSwapAttempt && !logoSwapCompleted) {
+            if (request.signal.aborted) { closeSSE(controller); return; }
+            sendSSE(controller, { type: 'status', message: 'Fetching logo...' });
+            const assets = await fetchLogoAssets(competitorUrls[0]);
+            const pageSlugForLogo = page.slug ?? crypto.randomUUID();
+            const realLogoUrl = await materializeLogoUrl({
+              pageSlug: pageSlugForLogo,
+              logoUrl: assets.logoUrl && (await isImageUrl(assets.logoUrl)) ? assets.logoUrl : null,
+              logoSvg: assets.logoSvgMarkup,
+            });
+            const inlineSvgFallback = !realLogoUrl ? assets.logoSvgMarkup : null;
+            if (!realLogoUrl && !inlineSvgFallback) {
+              sendSSE(controller, {
+                type: 'error',
+                message: "We couldn't find a usable logo image on that page. Try attaching the logo file directly instead.",
+              });
+              closeSSE(controller);
+              return;
+            }
+            if (realLogoUrl) {
+              routingImageUrls = Array.from(new Set([...routingImageUrls, realLogoUrl]));
+              logoSwapAppliedUrl = realLogoUrl;
+              rewriteInstruction += `\n\n(A logo file was fetched from the referenced site. Hosted URL:\n${realLogoUrl}\nUse this exact URL in src if the instruction is about a logo. Do not invent a different URL.)`;
+            } else if (inlineSvgFallback) {
+              rewriteInstruction +=
+                '\n\n(The referenced site\'s logo is inline SVG. Recreate that mark in the HTML if the instruction is about a logo; do not invent a raster URL.)';
+            }
+            logoSwapCompleted = true;
+          }
+
+          if (isContentImageSwapAttempt) {
+            if (request.signal.aborted) { closeSSE(controller); return; }
+            sendSSE(controller, { type: 'status', message: 'Fetching photo from site...' });
+            const photos = await fetchContentImageAssets(competitorUrls[0]);
+            if (photos.length === 0) {
+              sendSSE(controller, {
+                type: 'error',
+                message:
+                  "We couldn't find a usable headshot/product photo on that page. Try attaching the image file directly instead.",
+              });
+              closeSSE(controller);
+              return;
+            }
+            routingImageUrls = Array.from(new Set([...routingImageUrls, photos[0]]));
+            rewriteInstruction += `\n\n(A photo was fetched from the referenced site. Hosted URL:\n${photos[0]}\nUse this exact URL in src if the instruction is about placing that photo.)`;
+          }
+
+          if (request.signal.aborted) { closeSSE(controller); return; }
+          sendSSE(controller, { type: 'status', message: 'Rewriting that part of the page...' });
+          let result: Awaited<ReturnType<typeof applyRegionRewriteToHtml>> | null = null;
+          try {
+            result = await applyRegionRewriteToHtml({
+              html,
+              instruction: rewriteInstruction,
+              imageUrls: routingImageUrls.length > 0 ? routingImageUrls : undefined,
+              pageSlug: page.slug ?? null,
+              schema: finalSchemaJson ?? schema,
+              usage: usageCtx,
+              // The only suppressor, and it is a fact about the conversation:
+              // they are answering us, or they told us to decide. Whether the
+              // ask itself is clear enough is the model's call, never ours.
+              conversation: conversationContext,
+              // The classifier already named the sections this message is about.
+              // Not passing them here is how a two-part ask lost its second half.
+              focusSections: intent.targetSections,
+              noQuestions: lastAssistantWasClarify || wantsUsToDecide,
+            });
+          } catch (err) {
+            console.error('[pages/follow-up] primary region rewrite threw', err);
+          }
+          // The model decided it needs to ask. Surface it verbatim and stop —
+          // this is not a failure and must not be retried around.
+          if (result && result.kind === 'question') {
+            const userEntry: Record<string, unknown> = { role: 'user', content: prompt };
+            if (Array.isArray(image_urls) && image_urls.length > 0) userEntry.image_urls = image_urls;
+            await db
+              .from('pages')
+              .update({
+                conversation_json: [
+                  ...history,
+                  userEntry,
+                  // clarify:true is what makes the NEXT turn set noQuestions,
+                  // so the model cannot be asked to ask twice in a row.
+                  { role: 'assistant', content: result.question, clarify: true },
+                ],
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', params.id);
+            sendSSE(controller, { type: 'clarify', message: result.question });
+            closeSSE(controller);
+            return;
+          }
+          if (result && result.kind === 'applied') {
+            finalHtml = result.html;
+            finalSchemaJson = result.schema;
+            rewrittenRegion = result.region;
+            scopedApplied = true;
+            console.log('[pages/follow-up] primary region rewrite applied', { wrote: result.wrote });
+          } else {
+            // Carry WHY out to the message. A thrown call never reached the
+            // model at all, which is the same class of problem as a provider
+            // error, so it is reported as one.
+            regionFailReason = result?.kind === 'failed' ? result.reason : 'provider';
+            console.warn('[pages/follow-up] primary region rewrite could not act', {
+              reason: regionFailReason,
+            });
+          }
+        }
+
+        // ══ LEFTOVER MENU DISPATCHER — MOSTLY UNREACHABLE ══════════════════
+        //
+        // Everything from here to the matching close (~1700 lines, ending at
+        // the "end leftover menu dispatcher" marker) runs ONLY when
+        // `regionAttempted` is false. `regionAttempted` is set true directly
+        // above whenever `!scopedApplied && !intent.fullRebuild`, so in
+        // practice this block is reachable through exactly two doors:
+        //
+        //   1. `intent.fullRebuild === true` — the classifier says redo the
+        //      whole page, so there is no "region" to rewrite.
+        //   2. `slSections.length === 0` at the top of the enclosing block —
+        //      the page has no <!-- SL:name --> markers, so there is nothing
+        //      to resolve a region against. NOTE this is also reached when a
+        //      competitor URL is present and the turn is not a logo swap /
+        //      content-image swap / scoped-despite-URL edit: slSections is
+        //      forced to [] in that case. That second half is a code decision,
+        //      not a page property.
+        //
+        // A normal edit on a normal AI-built page reaches NONE of this. That
+        // is deliberate — the menu is the hurdle. But it means these features
+        // are effectively switched off, and nothing else re-implements them:
+        //
+        //   • the multi-step planner (planEditSteps + the retry loop)
+        //   • the two OLD clarifying-question exits (plan.mode === 'clarify'
+        //     and the routing pass's clarifying_question). Questions are NOT
+        //     lost: the region rewrite can now return {"question"} on its own
+        //     judgement and the primary path surfaces it. That is the right
+        //     shape — the call that read both the page and the ask is the one
+        //     that decides whether to ask. Do not revive these two.
+        //   • the content-reuse branches (logo/text/image) and the
+        //     source-section image reader
+        //   • the routing pass (routing.type) and its image_generate path
+        //   • every tryGeneralFallback wiring point except the ones after this
+        //     block. The contract assertions in
+        //     scripts/verify-ai-follow-up-helpers.mjs still pass because they
+        //     grep this file — grep cannot tell live code from dead code.
+        //
+        // Must not run after a rewrite MISS — that is how a nearest-button
+        // "Done" used to ship. On a miss we error out below instead.
+        //
+        // If you delete this block, delete these with it: routing/plan clarify
+        // handling, content_reuse.kind, and the dead helpers in
+        // ai-content-placement.ts / ai-follow-up-helpers.ts that only this
+        // path ever wanted.
+        if (!scopedApplied && !regionAttempted) {
         // ── Real-logo swap ────────────────────────────────────────────────
         // See isLogoSwapAttempt comment above for the intent match. This must
         // run before anything else in this block (and short-circuit on its
@@ -1830,14 +2935,21 @@ export async function POST(
                 text = src ? extractPrimaryHeadlineFromHtml(src.html) : null;
               }
               if (!text) {
-                sendSSE(controller, {
-                  type: 'error',
-                  message:
-                    'Quote the exact text to place, or say which section to copy from (e.g. "copy the hero headline to the footer").',
-                });
-                closeSSE(controller);
-                return;
+                // We could not find the copy to move — that is our reader being
+                // narrow, not the request being impossible. Let the general path
+                // read the page and do it.
+                if (!(await tryGeneralFallback('content_reuse_text_no_payload', html))) {
+                  sendSSE(controller, {
+                    type: 'error',
+                    message:
+                      'Quote the exact text to place, or say which section to copy from (e.g. "copy the hero headline to the footer").',
+                  });
+                  closeSSE(controller);
+                  return;
+                }
+                text = null;
               }
+              if (text) {
               sendSSE(controller, {
                 type: 'status',
                 message: `Placing text in ${targets.join(', ')}...`,
@@ -1851,21 +2963,77 @@ export async function POST(
                   targets,
                   textPreview: text.slice(0, 80),
                 });
-              } else {
+              } else if (!(await tryGeneralFallback('content_reuse_text_failed', html))) {
                 scopedFailureReason = 'content_reuse_text_failed';
               }
-            } else if (reuse.kind === 'image') {
-              const existingImg = extractPrimaryLogoUrlFromHtml(html);
-              if (!existingImg && effectiveImageUrls.length === 0) {
-                sendSSE(controller, {
-                  type: 'error',
-                  message:
-                    'Attach the image to place, or make sure a working image is already on the page.',
-                });
-                closeSSE(controller);
-                return;
               }
-              const imgUrl = effectiveImageUrls[0] ?? existingImg!;
+            } else if (reuse.kind === 'image') {
+              // Reuse means COPY WHAT IS ALREADY THERE. Two things were wrong
+              // here and they compounded into the worst possible result for
+              // "put the image of the hero section here as well":
+              //
+              // 1. sourceSectionHint was never read — unlike the logo branch
+              //    right above, which honours it. "the hero's image" fell back
+              //    to extractPrimaryLogoUrlFromHtml: the page LOGO, not the
+              //    photo the user pointed at.
+              // 2. An attachment outranked the page. But the attachment in that
+              //    message was a screenshot showing WHICH section they meant by
+              //    "here" — so we pasted a picture of their own page into their
+              //    page, and wiped the real photo that was there.
+              //
+              // The source is whatever the classifier says it is; an attachment
+              // is only the asset when the classifier called it a content_asset.
+              let existingImg: string | null = null;
+              let continueAfterImageReuse = false;
+              const imgSourceHint = reuse.sourceSectionHint;
+              if (imgSourceHint) {
+                const srcName = resolveSourceSectionName(
+                  imgSourceHint,
+                  slSections.map((s) => s.name),
+                );
+                if (srcName) {
+                  existingImg =
+                    extractPrimaryImageFromSection(html, srcName) ??
+                    extractLogoUrlFromSection(html, srcName);
+                  targets = targets.filter((n) => n !== srcName);
+                  console.log('[pages/follow-up] content reuse: image from section', {
+                    source: srcName,
+                    url: existingImg?.slice(0, 120) ?? null,
+                    targets,
+                  });
+                }
+              }
+              // Only an attachment the classifier called a content_asset is an
+              // asset. A design reference or a "this is the bit I mean"
+              // screenshot must never be embedded onto the page.
+              const attachedAssets = imageRolesFromIntent(intent, effectiveImageUrls)
+                .filter((r) => r.role === 'content_asset')
+                .map((r) => r.url);
+              if (!existingImg && !imgSourceHint) {
+                existingImg = extractPrimaryLogoUrlFromHtml(html);
+              }
+              if (targets.length === 0) {
+                console.warn('[pages/follow-up] content reuse: image has source but no dest — falling through', {
+                  sourceHint: imgSourceHint,
+                });
+                continueAfterImageReuse = true;
+              } else if (!existingImg && attachedAssets.length === 0) {
+                // Our image reader found nothing to copy. The general path reads
+                // the whole region and may well find it.
+                if (!(await tryGeneralFallback('content_reuse_image_no_source', html))) {
+                  sendSSE(controller, {
+                    type: 'error',
+                    message: imgSourceHint
+                      ? `I couldn't find an image in the ${imgSourceHint} section to copy. Attach the image you want placed, or name the section it's actually in.`
+                      : 'Attach the image to place, or make sure a working image is already on the page.',
+                  });
+                  closeSSE(controller);
+                  return;
+                }
+                continueAfterImageReuse = true;
+              }
+              if (!continueAfterImageReuse) {
+              const imgUrl = existingImg ?? attachedAssets[0];
               sendSSE(controller, {
                 type: 'status',
                 message: `Placing image in ${targets.join(', ')}...`,
@@ -1876,8 +3044,9 @@ export async function POST(
                 finalHtml = next;
                 scopedApplied = true;
                 console.log('[pages/follow-up] content reuse: image placed', { targets });
-              } else {
+              } else if (!(await tryGeneralFallback('content_reuse_image_failed', html))) {
                 scopedFailureReason = 'content_reuse_image_failed';
+              }
               }
             }
           }
@@ -1988,9 +3157,7 @@ export async function POST(
           const bugs = classified.filter((c) => c.role === 'bug_reference').map((c) => c.url);
           const assets = classified.filter((c) => c.role === 'content_asset').map((c) => c.url);
           designReferenceUrls = classified.filter((c) => c.role === 'design_reference').map((c) => c.url);
-          routingImageUrls = effectiveImageUrls; // vision for section targeting uses all
-          // Never embed bug or design-reference screenshots as <img src>
-          embedImageUrls = assets.length > 0 ? assets : [];
+          routingImageUrls = effectiveImageUrls;
           imageRolesClassified = true;
           console.log('[pages/follow-up] attached image roles', {
             bugs: bugs.length,
@@ -2002,9 +3169,8 @@ export async function POST(
           // reproduce. For a style-only reference those lines become "required
           // copy" that the page was never meant to contain, and a rewrite that
           // omits them gets thrown away.
-          if (wantsReferenceWords && (designReferenceUrls.length > 0 || wantsDesignMatch)) {
-            const ocrUrls =
-              designReferenceUrls.length > 0 ? designReferenceUrls : effectiveImageUrls.slice(0, 2);
+          if (wantsReferenceWords && hasUserImages) {
+            const ocrUrls = effectiveImageUrls.slice(0, MAX_ATTACHMENTS);
             sendSSE(controller, { type: 'status', message: 'Reading design reference…' });
             designCopyLines = await extractDesignReferenceCopy({
               imageUrls: ocrUrls,
@@ -2020,10 +3186,19 @@ export async function POST(
           // Classifier-resolved sections pin before routing so "everywhere" /
           // "the top bar" don't need the user to type the internal SL name.
           // Multi-ask leaves this unset so the planner can split targets.
+          //
+          // These write pinnedSections, NOT targetSections, and that distinction
+          // is the whole point. Setting targetSections here skipped the routing
+          // call below outright — and routing is the only place that can answer
+          // "is this an add / a removal / a reorder / an image to generate?".
+          // So attaching a screenshot silently reduced the system to one verb:
+          // edit an existing section. "Add a section like this image" had no
+          // route to adding, and was carried out as an edit of whichever section
+          // got pinned. A hint about WHERE must never decide WHAT.
           if (!targetSections && !hasMultipleAsks && intentSections.length > 0) {
-            targetSections = intentSections.slice(0, 6);
-            console.log('[pages/follow-up] intent section pin', {
-              targetSections,
+            pinnedSections = intentSections.slice(0, 6);
+            console.log('[pages/follow-up] intent section hint', {
+              pinnedSections,
               promptPreview: prompt.slice(0, 200),
             });
           } else if (!targetSections && (designReferenceUrls.length > 0 || wantsDesignMatch)) {
@@ -2038,8 +3213,8 @@ export async function POST(
                     label: 'follow-up:resolve-design-sections',
                   });
             if (hinted.length >= 1 && hinted.length <= 6) {
-              targetSections = hinted;
-              console.log('[pages/follow-up] design-reference section pin', {
+              pinnedSections = hinted;
+              console.log('[pages/follow-up] design-reference section hint', {
                 hinted,
                 promptPreview: prompt.slice(0, 200),
               });
@@ -2049,7 +3224,19 @@ export async function POST(
 
         // Multi-intent planner — only when the prompt looks like several
         // distinct asks. Single clear edits skip this (stay fast).
-        if (!scopedApplied && !scopedFailureReason && hasMultipleAsks) {
+        // Also entered for a SINGLE structural ask. The step executor is the
+        // only path that can create, delete or move a section; a lone "add a
+        // section like this image" that skipped it had nowhere to go but the
+        // patch path, which can only rewrite something that already exists.
+        const hasStructuralAsk = intent.asks.some((a) => a.op !== 'edit');
+        // UNREACHABLE on a normal edit — see the dispatcher banner above.
+        // The multi-step planner and its retry loop no longer run: the whole
+        // message goes to the region rewrite as one instruction and the model
+        // reads the parts itself. What is genuinely lost here is not
+        // comprehension but per-ask VERIFICATION — the planner checked each
+        // ask landed. Losing that is why "align them horizontally" could fail
+        // silently. Re-add per-ask checking after the rewrite, not here.
+        if (!scopedApplied && !scopedFailureReason && (hasMultipleAsks || hasStructuralAsk)) {
           const forceDecidePlan =
             lastAssistantWasClarify ||
             wantsUsToDecide ||
@@ -2065,6 +3252,7 @@ export async function POST(
             forceDecide: forceDecidePlan,
             usage: usageCtx,
             seedAsks: intent && intent.asks.length >= 2 ? intent.asks : undefined,
+            constraints: intent.constraints,
             designMatch: wantsDesignMatch,
           });
           console.log('[pages/follow-up] multi-intent plan', {
@@ -2075,6 +3263,12 @@ export async function POST(
                 : plan,
           });
 
+          // UNREACHABLE on a normal edit — this is the planner's clarify exit,
+          // inside the leftover dispatcher. It is no longer the only way a
+          // question reaches the user: the region rewrite can now return
+          // {"question"} itself, and the primary path surfaces it. See the
+          // "When you genuinely cannot tell what was asked" section of
+          // SCOPED_REGION_SYSTEM_PROMPT.
           if (plan.mode === 'clarify' && !forceDecidePlan) {
             const question = plan.question;
             const userEntry: Record<string, unknown> = { role: 'user', content: prompt };
@@ -2103,6 +3297,45 @@ export async function POST(
             /** Sections that were edited but fell short of the reference wording. */
             const softShortfalls: string[] = [];
 
+            /**
+             * The general hand. Anything the fast verbs cannot express goes
+             * here rather than degrading into "edit one section" — that silent
+             * downgrade is what made "move the footer to the bottom" come back
+             * done with the footer still in the middle of the page.
+             *
+             * Returns the section names it wrote, or null if it could not act
+             * (caller records a failure — it must never report success).
+             */
+            const applyRegionRewrite = async (
+              instruction: string,
+              images: string[] | undefined,
+            ): Promise<string[] | null> => {
+              const result = await applyRegionRewriteToHtml({
+                html: workingHtml,
+                instruction: withConstraints(instruction),
+                imageUrls: images,
+                pageSlug: page.slug ?? null,
+                schema: finalSchemaJson ?? schema,
+                usage: usageCtx,
+                // One step of a multi-step plan. Stopping the whole plan
+                // half-applied to ask about step 3 leaves the page in a state
+                // the user never asked for. The planner's own clarify exit
+                // runs before any step executes — that is where a question
+                // belongs on this path.
+                conversation: conversationContext,
+                // The classifier already named the sections this message is about.
+                // Not passing them here is how a two-part ask lost its second half.
+                focusSections: intent.targetSections,
+                noQuestions: true,
+              });
+              if (result.kind === 'question' || result.kind === 'failed') return null;
+              workingHtml = result.html;
+              finalSchemaJson = result.schema;
+              // Steps accumulate, so the owned set is the union across steps.
+              rewrittenRegion = Array.from(new Set([...(rewrittenRegion ?? []), ...result.region]));
+              return result.wrote;
+            };
+
             for (let i = 0; i < plan.steps.length; i++) {
               const step = plan.steps[i];
               if (request.signal.aborted) { closeSSE(controller); return; }
@@ -2112,13 +3345,191 @@ export async function POST(
               });
 
               const liveSections = extractSlSections(workingHtml);
+              // Only the references this ask actually points at. Handing every
+              // step every attachment is how "make the footer like this and the
+              // nav like that" showed the footer both screenshots.
+              const stepImages = step.image_urls ?? routingImageUrls;
+
+              // Creating sections is handled before any target resolution: an
+              // "add" step has no existing target, and resolving one would turn
+              // it back into a patch — which is exactly how "add a section like
+              // this image" ended up rewritten INTO the hero, nested inside its
+              // flex row. Anchor only; the new block goes beside it, not in it.
+              if (step.op === 'insert_section') {
+                // WHERE it goes is a decision, and the classifier is told to
+                // leave `sections` empty on an add — so most adds arrive here
+                // with no anchor. Taking one from code ("the last section,
+                // after it") put every unplaced addition BELOW the footer and
+                // pushed the footer into the middle of the page.
+                let anchorName =
+                  step.target_sections.find((n) => liveSections.some((s) => s.name === n)) ?? null;
+                let anchorPosition: 'before' | 'after' = 'after';
+                if (!anchorName) {
+                  const placement = await resolveInsertPlacement({
+                    instruction: step.instruction,
+                    sectionOutline: liveSections
+                      .filter((s) => s.name !== 'head')
+                      .map((s) => ({ name: s.name, text: s.text })),
+                    imageUrls: stepImages,
+                    usage: usageCtx,
+                    label: 'follow-up:resolve-insert-placement',
+                  });
+                  if (placement) {
+                    anchorName = placement.anchor;
+                    anchorPosition = placement.position;
+                  } else {
+                    // Decider unreachable — still place it, but before the
+                    // closing section rather than after it. Appending past the
+                    // last block is the one placement that is wrong on nearly
+                    // every page.
+                    anchorName = liveSections.filter((s) => s.name !== 'head').slice(-1)[0]?.name ?? null;
+                    anchorPosition = 'before';
+                    console.warn('[pages/follow-up] insert placement undecided — placing before the closing section', {
+                      anchor: anchorName,
+                    });
+                  }
+                }
+                if (!anchorName) {
+                  const wrote = await applyRegionRewrite(step.instruction, stepImages);
+                  if (wrote) {
+                    stepOks.push(...wrote.slice(0, 1));
+                  } else {
+                    stepFailures.push(`insert_no_anchor:${step.instruction.slice(0, 40)}`);
+                  }
+                  continue;
+                }
+                console.log('[pages/follow-up] insert placement', {
+                  anchor: anchorName,
+                  position: anchorPosition,
+                  fromStep: step.target_sections.length > 0,
+                });
+                // Honour the requested count. Building one and calling it done
+                // is how "add 2 sections" silently delivered half the ask.
+                const wanted = Math.min(Math.max(step.count ?? 1, 1), 4);
+                let addedHere = 0;
+                let anchorForNext: string = anchorName;
+                let positionForNext: 'before' | 'after' = anchorPosition;
+                for (let n = 0; n < wanted; n++) {
+                  if (request.signal.aborted) { closeSSE(controller); return; }
+                  if (wanted > 1) {
+                    sendSSE(controller, {
+                      type: 'status',
+                      message: `Writing new section ${n + 1}/${wanted}…`,
+                    });
+                  }
+                  const nowSections = extractSlSections(workingHtml);
+                  const anchorSection = nowSections.find((s) => s.name === anchorForNext);
+                  if (!anchorSection) break;
+                  const headSection = nowSections.find((s) => s.name === 'head');
+                  const inserted = await runScopedInsert(
+                    anchorSection.html,
+                    headSection?.html ?? '',
+                    nowSections.map((s) => s.name),
+                    withConstraints(
+                      wanted > 1
+                        ? `${step.instruction}\n\n(This is new section ${n + 1} of ${wanted}. Make it distinct from the ones already on the page — do not repeat a section that already exists.)`
+                        : step.instruction,
+                    ),
+                    stepImages,
+                    page.slug ?? null,
+                  );
+                  if (!inserted) break;
+                  const wrappedBlock = `<!-- SL:${inserted.name} -->\n${inserted.html.trim()}\n<!-- /SL:${inserted.name} -->`;
+                  const spliced = insertSlSectionBlock(workingHtml, anchorForNext, positionForNext, wrappedBlock);
+                  if (!spliced) break;
+                  workingHtml = spliced;
+                  addedHere++;
+                  // Stack the next one after this one so a multi-section add
+                  // reads top-to-bottom instead of in reverse — and so a group
+                  // placed "before the footer" stays before the footer.
+                  anchorForNext = inserted.name;
+                  positionForNext = 'after';
+                  const newFields = extractDataFieldsFromHtml(inserted.html);
+                  if (Object.keys(newFields).length > 0) {
+                    const schemaCopy = (finalSchemaJson && typeof finalSchemaJson === 'object'
+                      ? JSON.parse(JSON.stringify(finalSchemaJson))
+                      : schema && typeof schema === 'object'
+                        ? JSON.parse(JSON.stringify(schema))
+                        : {}) as Record<string, unknown>;
+                    schemaCopy[inserted.name] = newFields;
+                    finalSchemaJson = schemaCopy;
+                  }
+                  stepOks.push(inserted.name);
+                }
+                if (addedHere < wanted) {
+                  stepFailures.push(`insert_incomplete:${addedHere}/${wanted}`);
+                }
+                continue;
+              }
+
+              // Moving a section is also handled before target resolution. A
+              // reorder step whose target resolves would otherwise fall through
+              // to the scoped-patch loop and "apply" by rewriting that section's
+              // own HTML — which cannot move it. That is how "footer should
+              // always be at the bottom" came back done, with the footer still
+              // sitting in the middle of the page.
+              if (step.op === 'reorder_sections') {
+                const bodySections = liveSections.filter((s) => s.name !== 'head');
+                const newOrder = await resolveSectionOrder({
+                  instruction: step.instruction,
+                  sectionOutline: bodySections.map((s) => ({ name: s.name, text: s.text })),
+                  imageUrls: stepImages,
+                  usage: usageCtx,
+                  label: 'follow-up:resolve-section-order',
+                });
+                if (newOrder.length === 0) {
+                  const wrote = await applyRegionRewrite(step.instruction, stepImages);
+                  if (wrote) {
+                    stepOks.push(...wrote.slice(0, 1));
+                  } else {
+                    stepFailures.push(`reorder_undecided:${step.instruction.slice(0, 40)}`);
+                  }
+                  continue;
+                }
+                const currentOrder = bodySections.map((s) => s.name);
+                if (newOrder.join('>') === currentOrder.join('>')) {
+                  console.log('[pages/follow-up] reorder resolved to the existing order — nothing to move');
+                  stepOks.push(...newOrder.slice(0, 1));
+                  continue;
+                }
+                const reordered = reorderSlSections(workingHtml, newOrder);
+                if (!reordered) {
+                  const wrote = await applyRegionRewrite(step.instruction, stepImages);
+                  if (wrote) {
+                    stepOks.push(...wrote.slice(0, 1));
+                  } else {
+                    stepFailures.push(`reorder_failed:${step.instruction.slice(0, 40)}`);
+                  }
+                  continue;
+                }
+                // "Done" has to mean the sections moved. Re-read them from the
+                // spliced document and require the order we asked for — a
+                // splice that quietly dropped or misplaced a block must not be
+                // reported as a completed move.
+                const resultOrder = extractSlSections(reordered)
+                  .filter((s) => s.name !== 'head')
+                  .map((s) => s.name);
+                if (resultOrder.join('>') !== newOrder.join('>')) {
+                  console.error('[pages/follow-up] reorder splice did not produce the decided order', {
+                    wanted: newOrder,
+                    got: resultOrder,
+                  });
+                  stepFailures.push(`reorder_verify_failed:${step.instruction.slice(0, 40)}`);
+                  continue;
+                }
+                console.log('[pages/follow-up] sections reordered', { from: currentOrder, to: newOrder });
+                workingHtml = reordered;
+                stepOks.push(...newOrder.slice(0, 1));
+                continue;
+              }
+
               let stepTargets = step.target_sections.filter((n) => liveSections.some((s) => s.name === n));
               if (stepTargets.length === 0) {
                 stepTargets = (
                   await resolveSectionsForAsk({
                     instruction: step.instruction,
                     sectionOutline: liveSections.map((s) => ({ name: s.name, text: s.text })),
-                    imageUrls: routingImageUrls,
+                    imageUrls: stepImages,
                     usage: usageCtx,
                     label: 'follow-up:resolve-step-sections',
                   })
@@ -2148,7 +3559,7 @@ export async function POST(
                   step.instruction,
                   schema,
                   liveSections,
-                  routingImageUrls,
+                  stepImages,
                   usageCtx,
                 );
                 if (
@@ -2171,15 +3582,25 @@ export async function POST(
                     stepFailures.push(`remove ${stepRouting.target_sections[0]}`);
                   }
                   continue;
-                } else if (step.op === 'structural') {
-                  // Leave structural steps to the full-page path by aborting
-                  // the multi-step plan so we don't half-apply then rebuild.
-                  stepFailures.push('structural_needs_full_page');
-                  break;
                 }
               }
 
-              if (stepTargets.length === 0) {
+              // Nothing the narrow verbs could take. Hand it to the general
+              // one rather than dropping it or forcing it through the only
+              // remaining path ("edit one section"), which is how requests the
+              // model understood perfectly came back done but unchanged.
+              if (stepTargets.length === 0 || step.op === 'structural') {
+                const wrote = await applyRegionRewrite(step.instruction, stepImages);
+                if (wrote) {
+                  stepOks.push(...wrote.slice(0, 1));
+                  continue;
+                }
+                if (step.op === 'structural') {
+                  // Still unexpressible scoped — let the full-page path have it
+                  // rather than half-applying this plan and then rebuilding.
+                  stepFailures.push('structural_needs_full_page');
+                  break;
+                }
                 stepFailures.push(`unrouted:${step.instruction.slice(0, 40)}`);
                 continue;
               }
@@ -2202,8 +3623,8 @@ export async function POST(
                 let patchResult = await runScopedPatchWithRetry(
                   section.html,
                   schemaSlice,
-                  step.instruction + stepDesignNote,
-                  routingImageUrls,
+                  withConstraints(step.instruction + stepDesignNote),
+                  stepImages,
                   usageCtx,
                 );
                 // One automatic retry for flaky scoped patches before recording failure
@@ -2215,8 +3636,8 @@ export async function POST(
                   patchResult = await runScopedPatchWithRetry(
                     section.html,
                     schemaSlice,
-                    step.instruction,
-                    routingImageUrls,
+                    withConstraints(step.instruction),
+                    stepImages,
                     usageCtx,
                   );
                 }
@@ -2249,6 +3670,27 @@ export async function POST(
                   });
                   softShortfalls.push(name);
                 }
+                // The deterministic checks above only prove the HTML moved.
+                // "Make the footer logo slightly bigger" changed bytes, left the
+                // logo the same size, and was reported as Done — so ask whether
+                // the thing requested actually happened. A "no" routes into the
+                // existing retry rather than being announced as success.
+                const outcome = await verifyAskApplied({
+                  instruction: step.instruction,
+                  sectionName: name,
+                  beforeHtml: section.html,
+                  afterHtml: patchResult.html,
+                  usage: usageCtx,
+                });
+                if (!outcome.applied) {
+                  console.warn('[pages/follow-up] step did not apply the ask', {
+                    name,
+                    reason: outcome.reason,
+                    instruction: step.instruction.slice(0, 120),
+                  });
+                  stepFailures.push(`not_applied:${name}`);
+                  continue;
+                }
                 patched.push({ name, html: patchResult.html });
               }
 
@@ -2272,6 +3714,15 @@ export async function POST(
               // Auto-retry failed steps before accepting a partial outcome.
               sendSSE(controller, { type: 'status', message: 'Finishing remaining edits…' });
               const failedInstructions = plan.steps.filter((s) => {
+                // Only a patch step can be retried through the patch path.
+                // An insert/remove/reorder step names no target it "owns"
+                // (an insert's new section did not exist when the plan was
+                // written), so the target test below counts every one of them
+                // as failed — even the ones that worked — and re-runs them as
+                // edits. That turns "add a section like this image" into
+                // "rewrite the hero to look like this image", which is exactly
+                // how new content ended up nested inside the hero.
+                if (s.op !== 'patch') return false;
                 const targets = s.target_sections;
                 if (targets.length === 0) return true;
                 return targets.some((t) => !stepOks.includes(t));
@@ -2279,13 +3730,14 @@ export async function POST(
               const retryFailures: string[] = [];
               for (const step of failedInstructions) {
                 const liveSections = extractSlSections(workingHtml);
+                const stepImages = step.image_urls ?? routingImageUrls;
                 let stepTargets = step.target_sections.filter((n) => liveSections.some((s) => s.name === n));
                 if (stepTargets.length === 0) {
                   stepTargets = (
                     await resolveSectionsForAsk({
                       instruction: step.instruction,
                       sectionOutline: liveSections.map((s) => ({ name: s.name, text: s.text })),
-                      imageUrls: routingImageUrls,
+                      imageUrls: stepImages,
                       usage: usageCtx,
                       label: 'follow-up:resolve-step-sections-retry',
                     })
@@ -2296,7 +3748,7 @@ export async function POST(
                     step.instruction,
                     schema,
                     liveSections,
-                    routingImageUrls,
+                    stepImages,
                     usageCtx,
                   );
                   if (
@@ -2327,8 +3779,10 @@ export async function POST(
                   const patchResult = await runScopedPatchWithRetry(
                     section.html,
                     schemaSlice,
-                    step.instruction +
-                      '\n\n(RETRY — previous attempt failed. Apply this edit completely.)',
+                    withConstraints(
+                      step.instruction +
+                        '\n\n(RETRY — previous attempt failed. Apply this edit completely.)',
+                    ),
                     routingImageUrls,
                     usageCtx,
                   );
@@ -2514,6 +3968,9 @@ export async function POST(
             ((routing.confidence === 'low' && !namesItsSingleSection && !anyScopedPath) ||
               forceFaqVsFormClarify);
 
+          // UNREACHABLE on a normal edit — clarify exit #2 of 2. See exit #1
+          // at plan.mode === 'clarify' above for why, and for the fix if the
+          // product wants to ask questions again.
           if (routingUnsure) {
             const formLike = slSections
               .filter((s) => /cta|form|popup|contact|lead/i.test(s.name))
@@ -2610,7 +4067,7 @@ export async function POST(
             const anchorSection = slSections.find((s) => s.name === anchorName)!;
             const headSection = slSections.find((s) => s.name === 'head');
             const usedNames = slSections.map((s) => s.name);
-            const inserted = await runScopedInsert(anchorSection.html, headSection?.html ?? '', usedNames, prompt, routingImageUrls);
+            const inserted = await runScopedInsert(anchorSection.html, headSection?.html ?? '', usedNames, withConstraints(prompt), routingImageUrls, page.slug ?? null);
             if (inserted) {
               const wrappedBlock = `<!-- SL:${inserted.name} -->\n${inserted.html.trim()}\n<!-- /SL:${inserted.name} -->`;
               const spliced = insertSlSectionBlock(html, anchorName, routing!.position as 'before' | 'after', wrappedBlock);
@@ -2645,11 +4102,72 @@ export async function POST(
               console.error('[pages/follow-up] image_generate routing qualified but image generation failed — this is our own bug, not falling back to full-page', { routing });
               scopedFailureReason = 'image_generate_failed';
             }
-          } else {
-            console.log('[pages/follow-up] routing did not qualify for scoped patch, falling back to full-page path', {
-              routing,
-              knownSectionNames: slSections.map((s) => s.name),
+          } else if (pinnedSections && pinnedSections.length > 0 && !narrowScopedType) {
+            // Routing couldn't shape an op, but the classifier did read the
+            // message and name a place. Patch there rather than rebuilding the
+            // whole page — this is what the section hint is FOR ("the top bar",
+            // "everywhere"), now that it informs the decision instead of
+            // pre-empting it. Skipped when routing did name a narrow op, since
+            // that op (insert/remove/reorder) is a better answer than a patch.
+            targetSections = pinnedSections.slice(0, 6);
+            console.log('[pages/follow-up] routing unusable — patching classifier-named sections', {
+              targetSections,
+              routingType: routing?.type ?? null,
             });
+          } else {
+            // Before paying for a full-page rebuild, try the general hand.
+            // "Split this section in two", "swap these", "merge these" are
+            // single, plainly-worded instructions that no narrow verb can
+            // express — routing correctly declines them, and the only thing
+            // left used to be regenerating the whole page, which is the slow
+            // path that drops images and click-to-edit handles. A region
+            // rewrite expresses the same change without putting the rest of
+            // the page at risk.
+            sendSSE(controller, { type: 'status', message: 'Rewriting that part of the page...' });
+            const regionResult = await applyRegionRewriteToHtml({
+              html,
+              instruction: withConstraints(prompt),
+              imageUrls: routingImageUrls,
+              pageSlug: page.slug ?? null,
+              schema: finalSchemaJson ?? schema,
+              usage: usageCtx,
+              conversation: conversationContext,
+              // The classifier already named the sections this message is about.
+              // Not passing them here is how a two-part ask lost its second half.
+              focusSections: intent.targetSections,
+              noQuestions: lastAssistantWasClarify || wantsUsToDecide,
+            });
+            // Single-instruction turn, nothing applied yet — a question here is
+            // as legitimate as it is on the primary path.
+            if (regionResult && regionResult.kind === 'question') {
+              const userEntry: Record<string, unknown> = { role: 'user', content: prompt };
+              if (Array.isArray(image_urls) && image_urls.length > 0) userEntry.image_urls = image_urls;
+              await db
+                .from('pages')
+                .update({
+                  conversation_json: [
+                    ...history,
+                    userEntry,
+                    { role: 'assistant', content: regionResult.question, clarify: true },
+                  ],
+                  updated_at: new Date().toISOString(),
+                })
+                .eq('id', params.id);
+              sendSSE(controller, { type: 'clarify', message: regionResult.question });
+              closeSSE(controller);
+              return;
+            }
+            if (regionResult.kind === 'applied') {
+              finalHtml = regionResult.html;
+              finalSchemaJson = regionResult.schema;
+              rewrittenRegion = regionResult.region;
+              scopedApplied = true;
+            } else {
+              console.log('[pages/follow-up] routing did not qualify and no region resolved, falling back to full-page path', {
+                routing,
+                knownSectionNames: slSections.map((s) => s.name),
+              });
+            }
           }
         }
 
@@ -2661,23 +4179,16 @@ export async function POST(
             ? `${prompt}\n\n(A brand-new image has just been generated to satisfy this request — it is attached below, and it is the FINAL, intended replacement. Regardless of how the instruction above orders the words "replace/with/current/new" — real users often phrase this ambiguously (e.g. "create a new X and replace with the current one" is meant as "replace the current X with this new one", NOT "keep the current one" or "revert") — you must make this section visibly display the attached image in place of whatever currently represents it. If the current logo/element is an <img> tag, swap its src to the attached image URL. If it is instead built from inline <svg>/icon markup (common for hand-drawn logo icons), you MUST delete that entire inline SVG/icon markup and replace it with a single <img src="ATTACHED_IMAGE_URL" alt="logo" style="height:<match the icon's original rendered height>; width:auto;"> in its place — do not leave the old SVG/icon untouched alongside or instead of the new image. Do not leave the section unchanged and do not generate or invent a different image URL.)`
             : prompt;
           const designNote =
-            designReferenceUrls.length > 0 || wantsDesignMatch
-              ? `\n\n(DESIGN REFERENCE — CRITICAL: One or more attached images show how THIS section should look. Recreate the visible layout, structure, spacing, and readable copy from the screenshot in real HTML/CSS inside this section. OCR/transcribe visible text from the reference when present. If several attachments are the SAME screenshot (or near-duplicates), treat them as ONE reference — do not repeat headings, legal lines, or blocks. Do NOT leave the section unchanged even if it looks vaguely similar. Do NOT embed the design-reference screenshot URL as an <img src> for the whole section. Existing page logo <img> URLs already in the section may be kept if they match the brand mark; otherwise rebuild the mark with inline SVG or keep the closest existing logo asset. This overrides the usual "minimum surgical edit" bias — matching the reference is the job.)` +
-                (designCopyLines.length > 0
-                  ? `\n\nREQUIRED visible copy from the design reference — each of these strings MUST appear verbatim in the section HTML:\n` +
-                    designCopyLines.map((l, i) => `${i + 1}. ${l}`).join('\n')
-                  : '')
+            designCopyLines.length > 0
+              ? `\n\nREQUIRED visible copy from an attached screenshot — each of these strings MUST appear verbatim in the section HTML:\n` +
+                designCopyLines.map((l, i) => `${i + 1}. ${l}`).join('\n')
               : '';
-          const embedNote =
-            hasUserImages &&
-            (embedImageUrls.length !== routingImageUrls.length || designReferenceUrls.length > 0)
-              ? `\n\n(Image roles: ONLY embed these content-asset URL(s) into src attributes: ${embedImageUrls.length ? embedImageUrls.join(', ') : '(none)'}. Bug-reference images are for diagnosing defects — never put those URLs in src. Design-reference images are for matching layout/copy — recreate in HTML, never put those screenshot URLs in src.)`
-              : '';
+          const embedNote = attachedImagesInstructionNote(routingImageUrls);
           const scopedPromptFinal = scopedPrompt + designNote + embedNote;
-          // Vision: all images. URL list for embedding prefers assets; include generated URL last.
+          // Vision + URL list: every attachment. Instruction decides which go in src.
           const scopedImageUrls = generatedImageUrl
-            ? Array.from(new Set([...(embedImageUrls.length ? embedImageUrls : routingImageUrls), generatedImageUrl]))
-            : (embedImageUrls.length ? Array.from(new Set([...embedImageUrls, ...routingImageUrls])) : routingImageUrls);
+            ? Array.from(new Set([...routingImageUrls, generatedImageUrl]))
+            : routingImageUrls;
 
           const patchedSections: Array<{ name: string; html: string }> = [];
           let allOk = true;
@@ -2797,6 +4308,38 @@ export async function POST(
             });
           }
         }
+        } // ══ end leftover menu dispatcher (unreachable unless fullRebuild or
+          //    no SL markers — see the banner where this block opens) ════════
+
+      }
+
+      // Region rewrite was the job. It did not land. Do not press a menu
+      // button or regenerate the whole page — that is the hurdle.
+      //
+      // Trade-off recorded on purpose: this replaced a full-page-rebuild retry.
+      //
+      // Misses should be rare, and NOT because the model is unreliable at the
+      // task. ai-client already retries the transient failures itself
+      // (429/500/502/503/504/529, AI_TRANSIENT_MAX_ATTEMPTS), so overload and
+      // rate limiting never reach here. What is left:
+      //   • the reply hit maxTokens mid-JSON and jsonrepair could not save it —
+      //     the one real risk, and it scales with region size, so it is
+      //     coupled to the whole-body fallback in applyRegionRewriteToHtml
+      //   • the model renamed a section, so the splice-survival check rejects
+      //     an otherwise fine rewrite
+      // Both are edge cases. Telling the user to try again is the right answer
+      // for an edge case. If the logs say otherwise, retry
+      // applyRegionRewriteToHtml once here — do not reopen the dispatcher.
+      if (!scopedApplied && regionAttempted) {
+        console.error('[pages/follow-up] primary region rewrite missed — not dispatching a menu', {
+          reason: regionFailReason,
+        });
+        sendSSE(controller, {
+          type: 'error',
+          message: regionFailureMessage(regionFailReason),
+        });
+        closeSSE(controller);
+        return;
       }
 
       // A scoped op was already qualified (routing/quote-match confidently
@@ -2805,7 +4348,8 @@ export async function POST(
       // full-page rebuild that would misattribute the failure to vague
       // wording. See scopedFailureReason assignments above for the exact
       // failure site.
-      if (!scopedApplied && scopedFailureReason && !logoSwapCompleted) {
+      if (!scopedApplied && scopedFailureReason && !logoSwapCompleted &&
+          !(await tryGeneralFallback(scopedFailureReason, html))) {
         console.error(`[pages/follow-up] scoped op qualified but failed (${scopedFailureReason}) — not falling back to full-page`, {
           scopedFailureReason,
           promptLength: prompt.length,
@@ -2838,10 +4382,8 @@ export async function POST(
       // Classify attachments if we skipped the scoped path (e.g. competitor URL)
       if (hasUserImages && !imageRolesClassified) {
         const classified = imageRolesFromIntent(intent, effectiveImageUrls);
-        const assets = classified.filter((c) => c.role === 'content_asset').map((c) => c.url);
         designReferenceUrls = classified.filter((c) => c.role === 'design_reference').map((c) => c.url);
         routingImageUrls = effectiveImageUrls;
-        embedImageUrls = assets.length > 0 ? assets : [];
         imageRolesClassified = true;
       }
 
@@ -2884,29 +4426,7 @@ export async function POST(
           ? [
               {
                 type: 'text' as const,
-                text:
-                  (designReferenceUrls.length > 0
-                    ? 'DESIGN REFERENCE image(s) attached — recreate the shown layout/structure/copy in real HTML for the targeted section(s). Do NOT embed these screenshot URL(s) as <img src> for the whole section:\n' +
-                      designReferenceUrls.map((u, i) => `${i + 1}. ${u}`).join('\n') +
-                      '\nLeaving the page unchanged is a failure.\n'
-                    : '') +
-                  (embedImageUrls.length > 0 && embedImageUrls.length !== routingImageUrls.length
-                    ? 'User-attached image(s): ONLY these URL(s) may be used in src attributes (content assets):\n' +
-                      embedImageUrls.map((u, i) => `${i + 1}. ${u}`).join('\n') +
-                      '\nOther attached images that are bug-reference screenshots — diagnose from them but NEVER put those URLs in src.\n'
-                    : embedImageUrls.length === 0 &&
-                        routingImageUrls.length > 0 &&
-                        designReferenceUrls.length === 0
-                      ? 'User-attached image(s) are bug-reference screenshots for diagnosis — do NOT embed their URLs in src attributes.\n'
-                      : embedImageUrls.length === 0 && designReferenceUrls.length > 0
-                        ? ''
-                        : 'User-attached image(s) — apply the "Attached images" rule from the system prompt to determine whether each is a bug reference screenshot, a design reference to match, or a content asset to embed. If embedding, you MUST use these EXACT URL strings verbatim in any src attribute — the image content below only shows you the pixels, not the URL:\n' +
-                          routingImageUrls.map((u, i) => `${i + 1}. ${u}`).join('\n') +
-                          '\n') +
-                  (embedImageUrls.length > 0 && embedImageUrls.length === routingImageUrls.length
-                    ? 'If embedding, you MUST use these EXACT URL strings verbatim in any src attribute:\n' +
-                      embedImageUrls.map((u, i) => `${i + 1}. ${u}`).join('\n')
-                    : ''),
+                text: attachedImagesInstructionNote(routingImageUrls).trim(),
               },
               ...routingImageUrls.map((url): AIContentBlock => ({ type: 'image', url })),
             ]
@@ -2920,7 +4440,9 @@ export async function POST(
       let thinkingEmitted = false;
       const thinkingRegex = /"thinking"\s*:\s*"((?:[^"\\]|\\.)*)"/;
 
-      let pass1Text: string;
+      // Empty when the region rewrite recovered a too-long failure — the guard
+      // below skips every reader of it in that case.
+      let pass1Text = '';
       try {
         pass1Text = await askAIStream(
           {
@@ -2971,18 +4493,29 @@ export async function POST(
             historyEntries: history.length,
             hasCompetitorContext,
           });
-          sendSSE(controller, {
-            type: 'error',
-            message: hasCompetitorContext
-              ? "This page is too large to rebuild alongside a competitor reference in one pass. Try a more specific change, or split the request into smaller edits."
-              : 'This page is too large for a full-page edit. Try a more specific change (name the section or quote the text to change), or split the request into smaller edits.',
-          });
-          closeSSE(controller);
-          return;
-        }
+          // "Too big for one pass" is the one failure the region rewrite is
+          // structurally better at: it sends a run of sections, not the page.
+          // Telling the user to split the request themselves, while holding a
+          // path that already splits it, is the code being the hurdle.
+          if (!(await tryGeneralFallback('full_page_too_long', html))) {
+            sendSSE(controller, {
+              type: 'error',
+              message: hasCompetitorContext
+                ? "This page is too large to rebuild alongside a competitor reference in one pass. Try a more specific change, or split the request into smaller edits."
+                : 'This page is too large for a full-page edit. Try a more specific change (name the section or quote the text to change), or split the request into smaller edits.',
+            });
+            closeSSE(controller);
+            return;
+          }
+        } else {
         throw err;
+        }
       }
 
+      // The region rewrite already did the work for the too-long case above.
+      // Everything from here to the end of this block is the full-page attempt,
+      // and re-running it would undo what just succeeded.
+      if (!scopedApplied) {
       if (request.signal.aborted) { closeSSE(controller); return; }
 
       // Parse Pass 1 result
@@ -3012,14 +4545,23 @@ export async function POST(
           rawLength: pass1Text.length,
           rawPreview: pass1Text.slice(0, 1500),
         });
-        sendSSE(controller, { type: 'error', message: 'AI provider returned invalid JSON' });
-        closeSSE(controller);
-        return;
+        if (!(await tryGeneralFallback('full_page_invalid_json', html))) {
+          sendSSE(controller, { type: 'error', message: 'AI provider returned invalid JSON' });
+          closeSSE(controller);
+          return;
+        }
+        parsed = { type: 'patch', sections: [] };
       }
 
       resultType = parsed.type;
 
-      if (parsed.type === 'structural') {
+      let structuralRecovered = false;
+      if (scopedApplied) {
+        // The region rewrite already recovered this turn (unparseable pass-1
+        // output, above). Running a branch off the sentinel `parsed` would fire
+        // a second rewrite over the first one's result.
+        console.log('[pages/follow-up] full-page path already recovered by region rewrite');
+      } else if (parsed.type === 'structural') {
         if (!parsed.schema_json || typeof parsed.schema_json !== 'object') {
           sendSSE(controller, { type: 'error', message: 'AI provider returned invalid structural schema' });
           closeSSE(controller);
@@ -3086,6 +4628,7 @@ export async function POST(
             competitorPageContent: competitorContext?.pageContent ?? undefined,
             realLogoUrl: materializedLogoUrl ?? undefined,
             userPrompt: prompt,
+            imageUrls: routingImageUrls,
             styleReferenceNote,
             callerLabel: 'follow-up:structural',
             onChunk: (chunk) => {
@@ -3112,46 +4655,66 @@ export async function POST(
           }
           // Live pixel QA runs after upload (see below) — avoids double work here.
         } catch (err) {
-          if (isPromptTooLongError(err)) {
-            console.error('[pages/follow-up] structural rebuild exceeded model context limit', {
-              promptLength: prompt.length,
-              htmlLength: htmlForModel.length,
-              hasCompetitorContext,
-            });
+          const tooLong = isPromptTooLongError(err);
+          console.error(
+            tooLong
+              ? '[pages/follow-up] structural rebuild exceeded model context limit'
+              : '[pages/follow-up] structural rebuild failed',
+            { promptLength: prompt.length, htmlLength: htmlForModel.length, hasCompetitorContext, err },
+          );
+          // A full rebuild failing is not the ask failing. The region rewrite
+          // works on a run of sections, so it survives both the size limit and
+          // a rebuild that came back unusable.
+          if (
+            !(await tryGeneralFallback(
+              tooLong ? 'structural_rebuild_too_long' : 'structural_rebuild_failed',
+              html,
+            ))
+          ) {
             sendSSE(controller, {
               type: 'error',
-              message: hasCompetitorContext
-                ? "This page is too large to rebuild alongside a competitor reference in one pass. Try a more specific change, or split the request into smaller edits."
-                : 'This page is too large for a full-page edit. Try a more specific change (name the section or quote the text to change), or split the request into smaller edits.',
+              message: tooLong
+                ? hasCompetitorContext
+                  ? 'This page is too large to rebuild alongside a competitor reference in one pass. Try a more specific change, or split the request into smaller edits.'
+                  : 'This page is too large for a full-page edit. Try a more specific change (name the section or quote the text to change), or split the request into smaller edits.'
+                : 'AI provider returned invalid HTML',
             });
-          } else {
-            console.error('[pages/follow-up] structural rebuild failed', err);
-            sendSSE(controller, { type: 'error', message: 'AI provider returned invalid HTML' });
+            closeSSE(controller);
+            return;
           }
-          closeSSE(controller);
-          return;
+          structuralRecovered = true;
         }
         } // end full-rebuild fallback (diff+splice not eligible/failed)
 
-        finalSchemaJson = enrichedSchema;
+        // The region rewrite already produced a schema in step with the HTML it
+        // wrote. Overwriting it with the failed rebuild's schema would leave the
+        // page and its click-to-edit map describing different documents.
+        if (!structuralRecovered) finalSchemaJson = enrichedSchema;
       } else if (parsed.type === 'patch') {
         // Patch — apply changed sections onto stored HTML
         if (!parsed.sections || !Array.isArray(parsed.sections) || parsed.sections.length === 0) {
-          sendSSE(controller, { type: 'error', message: 'AI provider returned invalid patch' });
-          closeSSE(controller);
-          return;
-        }
+          if (!(await tryGeneralFallback('full_page_invalid_patch', html))) {
+            sendSSE(controller, { type: 'error', message: 'AI provider returned invalid patch' });
+            closeSSE(controller);
+            return;
+          }
+        } else {
         sendSSE(controller, { type: 'status', message: 'Applying patch...' });
         finalHtml = applyPatch(html, parsed.sections);
+        }
       } else {
         // Style — Claude returns complete HTML directly
         if (!parsed.html || (!parsed.html.startsWith('<!DOCTYPE') && !parsed.html.startsWith('<html'))) {
-          sendSSE(controller, { type: 'error', message: 'AI provider returned invalid HTML' });
-          closeSSE(controller);
-          return;
-        }
+          if (!(await tryGeneralFallback('full_page_invalid_html', html))) {
+            sendSSE(controller, { type: 'error', message: 'AI provider returned invalid HTML' });
+            closeSSE(controller);
+            return;
+          }
+        } else {
         finalHtml = parsed.html;
+        }
       }
+      } // end region-recovered guard
       } // end fallback full-page path (!scopedApplied)
 
       // Strip STATUS comments before upload
@@ -3250,6 +4813,14 @@ export async function POST(
         htmlUnchanged,
       });
 
+      // Last stop before telling the user no. Every path above ran and the page
+      // is byte-identical, which means nothing we tried could express the ask —
+      // exactly the case the general path exists for. Try it before giving up;
+      // "I couldn't apply that" should be the last thing we say, not the first.
+      if (htmlUnchanged && (await tryGeneralFallback('html_unchanged', html))) {
+        htmlUnchanged = finalHtml === html;
+      }
+
       if (htmlUnchanged) {
         const designMatch =
           !hasMultipleAsks && (designReferenceUrls.length > 0 || wantsDesignMatch);
@@ -3340,9 +4911,27 @@ export async function POST(
             : `Still not applied: ${unmet}.`;
         }
       }
+      // A URL that did not respond is a warning about the page, not a part of
+      // the request that failed. Gluing it onto partialMessage made a turn that
+      // did everything asked report "Partly done (not fully finished)" — the
+      // user reads that as "you ignored me" and re-sends work already done.
       if (assetScan.broken.length > 0) {
-        const note = `${assetScan.broken.length} image URL(s) could not be loaded and were left as-is.`;
-        partialMessage = partialMessage ? `${partialMessage} ${note}` : note;
+        assetWarning = `${assetScan.broken.length} image URL(s) on the page did not load and were left as they were.`;
+        console.warn('[pages/follow-up] broken image URLs', { count: assetScan.broken.length });
+      }
+
+      // Re-stamp click-to-edit BEFORE measuring damage. This used to run after
+      // the loss check, so a rewrite that dropped data-field attributes was
+      // reported to the user as "14 items stopped being click-to-edit" even
+      // when the very next line put them back — an alarming message about
+      // damage that no longer existed by the time the page was saved.
+      {
+        const schemaForEarlyStamp = finalSchemaJsonReal ?? (schema as Record<string, unknown> | null);
+        const beforeEarlyStamp = finalHtmlPersisted;
+        finalHtmlPersisted = ensureClickToEditFields(finalHtmlPersisted, schemaForEarlyStamp);
+        if (finalHtmlPersisted !== beforeEarlyStamp) {
+          console.log('[pages/follow-up] stamped missing data-field attributes before loss check');
+        }
       }
 
       // Collateral damage guard: an edit about colors has no business deleting
@@ -3401,13 +4990,198 @@ export async function POST(
         }
 
         // Anything we could not put back is reported rather than hidden.
-        const remaining = findUnrequestedLosses({
+        const allRemaining = findUnrequestedLosses({
           beforeHtml: originalHtmlForPreservation,
           afterHtml: finalHtmlPersisted,
           prompt,
           removalIntent: intent.removalIntent,
         });
-        const lossNote = describeLosses(remaining);
+
+        // ── The guard stops at the edge of the model's own work ─────────────
+        //
+        // A region rewrite is HANDED a run of sections and told to change them.
+        // Inside that run, a missing image is almost always the edit working:
+        // "put the hero image here as well" replaces the picture that was
+        // there. Reported from client testing — the rewrite did exactly that,
+        // the guard called the replaced photo damage, and the whole edit was
+        // thrown away in front of a client.
+        //
+        // Outside the run nothing was supposed to change at all: those bytes
+        // are copied across by the splice untouched. So a loss out there is
+        // provable damage and still worth stopping.
+        //
+        // Note what this is NOT: it does not ask whether a loss was reasonable,
+        // only WHERE it happened. That keeps the judgement with the model and
+        // the bookkeeping with the code. When no rewrite ran (full-page rebuild
+        // regenerates the whole document) there is no such edge, and the guard
+        // covers everything exactly as before.
+        const regionSplit = rewrittenRegion
+          ? splitLossesByRegion(allRemaining, originalHtmlForPreservation, rewrittenRegion)
+          : null;
+        const remaining = regionSplit ? regionSplit.outside : allRemaining;
+        if (regionSplit && hasLosses(regionSplit.inside)) {
+          console.log('[pages/follow-up] losses inside the rewritten region are the edit, not damage', {
+            region: rewrittenRegion,
+            images: regionSplit.inside.images.length,
+            headings: regionSplit.inside.headings.length,
+            sections: regionSplit.inside.sections,
+          });
+        }
+        // Destruction is rejected, not narrated.
+        //
+        // Until now this path only ever REPORTED what an edit destroyed and
+        // saved the page anyway, while the scoped path treats the same damage
+        // as a hard failure and throws the edit away. Same damage, two
+        // verdicts, and the one that shipped chose to keep it: a user asked to
+        // make a footer logo slightly bigger and got back a page missing 6
+        // images and 4 headings, with an apologetic note attached. A page the
+        // user did not ask us to gut is not a result worth keeping — restore
+        // the pre-edit HTML and say so plainly, so their work survives and they
+        // can retry.
+        //
+        // Code measured what vanished; the MODEL decides whether that is a fair
+        // consequence of the request. Counting was the first version of this
+        // guard and it was the same mistake in new clothing: "make the hero
+        // shorter and punchier" legitimately merges two headings into one, a
+        // counter sees a heading missing, and a good edit gets reverted with
+        // "I've left your page exactly as it was". A count cannot tell
+        // condensing from deleting; only reading the request can.
+        //
+        // The cheap, certain cases are still settled without a call: an
+        // explicit removal, a full rebuild, or a deliberate asset swap all make
+        // the loss intended by definition.
+        const assetLossIsIntended = intent.intentionalAssetReplace || !!logoSwapAppliedUrl;
+        const lossObviouslyIntended =
+          intent.removalIntent ||
+          intent.fullRebuild ||
+          (assetLossIsIntended &&
+            remaining.sections.length === 0 &&
+            remaining.headings.length === 0 &&
+            remaining.editableFields.length === 0);
+
+        // Sections this turn was about, and where each vanished image used to
+        // live. Both are plain facts we already hold, and the judge cannot
+        // answer without them: "a photo went missing" and "the photo in the
+        // section you told me to change went missing" are opposite verdicts.
+        const requestedSections = Array.from(
+          new Set([...intent.targetSections, ...intent.asks.flatMap((a) => a.sections)]),
+        );
+        const imageOrigins = remaining.images.slice(0, 8).map((url) => ({
+          url,
+          sections: sectionsContainingAsset(originalHtmlForPreservation, url),
+        }));
+
+        let destructive = false;
+        let lossSummary: string | null = null;
+        if (!lossObviouslyIntended) {
+          const judged = await judgeUnrequestedLoss({
+            prompt,
+            losses: remaining,
+            imageSections: imageOrigins,
+            requestedSections,
+            // What the page has NOW, so a reworded heading reads as a rewrite
+            // rather than a deletion. Losses are exact-string matches, so
+            // without this nearly every copy edit looks like destruction.
+            headingsAfter: snapshotPageFacts(finalHtmlPersisted).headings,
+            usage: usageCtx,
+          });
+          destructive = !judged.intended;
+          lossSummary = judged.summary;
+          console.log('[pages/follow-up] loss judgement', {
+            intended: judged.intended,
+            images: remaining.images.length,
+            headings: remaining.headings.length,
+            sections: remaining.sections,
+            editableFields: remaining.editableFields.length,
+          });
+        }
+
+        // Repair before revert.
+        //
+        // "Reject the whole edit" was the only answer here, and on its own it
+        // punishes the user for our mistake: they asked to put an image in the
+        // hero, we did it, dropped an unrelated team photo on the way past, and
+        // handed back their original page. The change they wanted is gone
+        // because of damage they never caused.
+        //
+        // The damaged sections have a known-good version one edit back. Splice
+        // it in and the requested change stands. Sections the request was ABOUT
+        // are never restored — that would undo the ask and still say Done.
+        let effectiveLosses = remaining;
+        if (destructive) {
+          const repair = restoreDamagedSections({
+            beforeHtml: originalHtmlForPreservation,
+            afterHtml: finalHtmlPersisted,
+            losses: remaining,
+            protectedSections: requestedSections,
+          });
+          if (repair.restored.length > 0) {
+            const afterRepair = findUnrequestedLosses({
+              beforeHtml: originalHtmlForPreservation,
+              afterHtml: repair.html,
+              prompt,
+              removalIntent: intent.removalIntent,
+            });
+            // Clean ⇒ keep. Still lossy ⇒ the judge decides again on what is
+            // actually left, not on the damage we already undid.
+            let stillDestructive = hasLosses(afterRepair);
+            if (stillDestructive) {
+              const rejudged = await judgeUnrequestedLoss({
+                prompt,
+                losses: afterRepair,
+                imageSections: afterRepair.images.slice(0, 8).map((url) => ({
+                  url,
+                  sections: sectionsContainingAsset(originalHtmlForPreservation, url),
+                })),
+                requestedSections,
+                headingsAfter: snapshotPageFacts(repair.html).headings,
+                usage: usageCtx,
+              });
+              stillDestructive = !rejudged.intended;
+              if (stillDestructive) lossSummary = rejudged.summary;
+            }
+            console.log('[pages/follow-up] collateral repair', {
+              restored: repair.restored,
+              protectedSections: requestedSections,
+              stillDestructive,
+            });
+            if (!stillDestructive) {
+              finalHtmlPersisted = repair.html;
+              effectiveLosses = afterRepair;
+              destructive = false;
+            }
+          }
+        }
+
+        if (destructive) {
+          console.error('[pages/follow-up] rejecting destructive edit — restoring pre-edit page', {
+            images: remaining.images.length,
+            headings: remaining.headings.length,
+            sections: remaining.sections,
+            editableFields: remaining.editableFields.length,
+            prompt: prompt.slice(0, 200),
+          });
+          // The judge's summary is a whole sentence ("the team photo was removed,
+          // even though the request was only to add a hero image"). Dropping it
+          // into the middle of another sentence shipped this to a real user:
+          // "That edit would also have removed An image and the team.members.0
+          // .generated_image_url field were removed, even though ..., which isn't
+          // part of what you asked for". Use it as the sentence it is.
+          const damage = lossSummary
+            ? lossSummary.trim().replace(/[.\s]*$/, '.')
+            : `That edit would also have removed ${describeLosses(remaining)}, ` +
+              `which isn't part of what you asked for.`;
+          sendSSE(controller, {
+            type: 'error',
+            message:
+              `${damage} I've left your page exactly as it was — try the change on its own, ` +
+              `or tell me it's fine to lose those and I'll go ahead.`,
+          });
+          closeSSE(controller);
+          return;
+        }
+
+        const lossNote = describeLosses(effectiveLosses);
         if (lossNote) {
           const note = `Heads up: ${lossNote}.`;
           partialMessage = partialMessage ? `${partialMessage} ${note}` : note;
@@ -3454,7 +5228,17 @@ export async function POST(
         // history.map above and AIBuilderClient, which never renders this raw), so it never
         // needed real image bytes. Storing the restored version here is what let each turn's
         // real base64 images compound in the prompt on every subsequent follow-up.
-        { role: 'assistant', content: JSON.stringify({ type: resultType, schema_json: finalSchemaJson ?? schema }) },
+        {
+          role: 'assistant',
+          content: JSON.stringify({ type: resultType, schema_json: finalSchemaJson ?? schema }),
+          // Which sections this turn actually touched. The next message is
+          // often a correction — "no, use the hero's image" — that names the
+          // WHAT but not the WHERE, because the where was settled a turn ago
+          // (sometimes by a screenshot that no longer exists). This is our own
+          // record of what we did, so the where survives without replaying old
+          // attachments at the model.
+          sections: rewrittenRegion ?? intent.targetSections,
+        },
       ];
 
       const updatePayload: Record<string, unknown> = {
@@ -3513,6 +5297,7 @@ export async function POST(
         ...(scrapeAttempted && !competitorContext ? { competitor_fetch_failed: true } : {}),
         elapsed_ms: Date.now() - startedAt,
         ...(partialMessage ? { partial_message: partialMessage } : {}),
+        ...(assetWarning ? { warning: assetWarning } : {}),
       };
       sendSSE(controller, doneEvent);
       closeSSE(controller);

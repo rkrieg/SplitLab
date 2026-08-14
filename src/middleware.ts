@@ -9,7 +9,8 @@ function isCustomDomain(host: string): boolean {
     !host.includes('localhost') &&
     !host.includes('127.0.0.1') &&
     !host.includes('.vercel.app') &&
-    !host.startsWith('192.168.')
+    !host.startsWith('192.168.') && 
+    !(process.env.NODE_ENV === 'development' && host.endsWith('.trycloudflare.com'))
   );
 }
 
