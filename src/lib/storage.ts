@@ -200,6 +200,83 @@ function decodedBytesMatchDeclaredType(buffer: Buffer, subtype: string): boolean
   }
 }
 
+// Attributes some page-builder exports (Unbounce, LeadPages, and similar)
+// use to stash the real image URL while `src` holds a tiny placeholder that
+// a client-side script swaps in once the DOM loads. Ordered highest-quality
+// first so desktop@3x wins over desktop@1x wins over a generic lazy-src.
+const LAZY_SRC_ATTRS = [
+  'data-src-desktop-3x',
+  'data-src-desktop-2x',
+  'data-src-desktop-1x',
+  'data-src-mobile-3x',
+  'data-src-mobile-2x',
+  'data-src-mobile-1x',
+  'data-original',
+  'data-lazy-src',
+  'data-src',
+];
+
+function getAttrValue(tag: string, name: string): string | null {
+  const match = tag.match(new RegExp(`${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, 'i'));
+  if (!match) return null;
+  return match[1] ?? match[2] ?? null;
+}
+
+// A `src` only counts as a placeholder worth replacing if it's a base64
+// image data URI AND small enough that inlineDataUrisToStorage would skip
+// it anyway (see MIN_CONVERTIBLE_IMAGE_BYTES) — a substantial embedded
+// image is real content, not a placeholder, even if a lazy-src attribute
+// happens to sit next to it.
+function isPlaceholderDataUri(src: string | null): boolean {
+  if (!src) return false;
+  const match = src.match(new RegExp(`^${DATA_IMAGE_URI_PATTERN}$`, 'i'));
+  if (!match) return false;
+  const [, subtypeRaw, base64] = match;
+  try {
+    const buffer = Buffer.from(base64, 'base64');
+    if (buffer.length >= MIN_CONVERTIBLE_IMAGE_BYTES) return false;
+    return decodedBytesMatchDeclaredType(buffer, subtypeRaw.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Some page exports leave `src` pointing at a tiny placeholder image (a 1x1
+ * spacer gif, typically) and stash the real image URL in a `data-src-*`
+ * style attribute for a client-side script to swap in later.
+ * inlineDataUrisToStorage only ever looks at `src`, so those pages would
+ * otherwise keep their placeholder forever — it's below the "worth
+ * uploading" size floor by design. This resolves the real URL into `src`
+ * first, so the normal pipeline picks up a real image instead of a spacer.
+ *
+ * Only touches <img> tags whose current `src` is actually a tiny data URI
+ * placeholder — an already-real `src` (or a substantial embedded image) is
+ * left completely untouched, lazy-src attributes and all.
+ */
+export function resolveLazyLoadImagePlaceholders(html: string): string {
+  return html.replace(/<img\b[^>]*>/gi, (tag) => {
+    if (!isPlaceholderDataUri(getAttrValue(tag, 'src'))) return tag;
+
+    let candidate: string | null = null;
+    for (const attr of LAZY_SRC_ATTRS) {
+      const value = getAttrValue(tag, attr);
+      if (value && /^https?:\/\//i.test(value)) {
+        candidate = value;
+        break;
+      }
+    }
+    if (!candidate) return tag;
+
+    // Deliberately leave the data-src-* attributes in place rather than
+    // stripping them: some page-builder runtimes (e.g. Unbounce's published
+    // bundle) rebuild `src`/`srcset` from these attributes on every page
+    // load regardless of whether `src` already has a value, so removing
+    // them would make the runtime blank out the src we just fixed.
+    return tag.replace(/\bsrc\s*=\s*(?:"[^"]*"|'[^']*')/i, `src="${candidate}"`);
+  });
+}
+
 /**
  * Finds every base64 data:image/... URI in html, uploads each unique one
  * (skipping anything under ~2KB) to the public ai-pages-images bucket, and
@@ -207,12 +284,17 @@ function decodedBytesMatchDeclaredType(buffer: Buffer, subtype: string): boolean
  * uploaded with embedded photos ends up with normal <img src> links instead
  * of multi-hundred-KB inline strings.
  *
+ * Runs resolveLazyLoadImagePlaceholders first so page-builder exports that
+ * hide a real image URL behind a placeholder `src` + lazy-src attribute
+ * (see that function) get the real URL instead of an untouched spacer gif.
+ *
  * Never partially applies: any failure for one image (decode, signature
  * mismatch, upload error) just leaves that one data URI exactly as it was.
  * A fresh RegExp is constructed per call (not a shared module-level one) so
  * concurrent requests in the same process never race on `lastIndex`.
  */
 export async function inlineDataUrisToStorage(html: string, pageId: string): Promise<string> {
+  html = resolveLazyLoadImagePlaceholders(html);
   const re = new RegExp(DATA_IMAGE_URI_PATTERN, 'gi');
   const matches = new Map<string, { subtype: string; base64: string }>();
   let m: RegExpExecArray | null;
