@@ -69,6 +69,7 @@ import {
   enforceRequirements,
   checkRequirements,
   describeUnmet,
+  retryInstructionFor,
   parseModelRequirements,
   mergeRequirements,
   REQUIREMENT_EXTRACTION_INSTRUCTION,
@@ -1135,6 +1136,14 @@ async function runScopedInsert(
  * whatever the answer may need, the question cannot also spend.
  */
 const REGION_REWRITE_MAX_TOKENS = 128_000;
+
+/**
+ * How many sections one requirement-retry pass may re-patch. Each is a
+ * sequential model call inside an already-open SSE response, so this is a
+ * latency budget, not a quality knob: better to fix the first few and name the
+ * rest than to hang the stream until a proxy kills it.
+ */
+const REQUIREMENT_RETRY_SECTION_CAP = 3;
 
 const SCOPED_REGION_SYSTEM_PROMPT = `You are rewriting ONE CONTIGUOUS RUN of sections of an existing, already-designed landing page. You are given the page's global <style> block (for colors, fonts, spacing, existing CSS classes/variables) and the current HTML of every section in the run. Nothing outside the run exists for you — do not refer to it, do not return it.
 
@@ -2320,13 +2329,25 @@ export async function POST(
       let finalHtml = '';
       let finalSchemaJson: unknown | undefined;
       let scopedApplied = false;
+      /**
+       * ONLY for an ask that is not on the finished page. The client turns this
+       * into "Partly done (not fully finished)" plus a retry toast.
+       */
       let partialMessage: string | null = null;
       /**
        * Something is off with the PAGE, but everything asked for was done.
        * Kept apart from partialMessage on purpose: only an unfinished ASK may
        * say "Partly done", or the user re-sends work that already landed.
+       *
+       * Everything here rides the `notes` field of the done event and keeps the
+       * "Done!" headline. This used to be emitted as `warning`, which was never
+       * in SSEEvent and never read by the client — the false "Partly done" was
+       * fixed and the real caveat was dropped on the floor with it.
        */
-      let assetWarning: string | null = null;
+      const pageNotes: string[] = [];
+      const addNote = (note: string) => {
+        if (!pageNotes.includes(note)) pageNotes.push(note);
+      };
       // Set only when routing already qualified a request for a scoped op
       // (patch/insert/remove/reorder/image_generate) and OUR OWN code then
       // failed to execute it (parse failure, deterministic splice failure,
@@ -3703,11 +3724,14 @@ export async function POST(
             if (stepOks.length > 0 && stepFailures.length === 0) {
               finalHtml = workingHtml;
               scopedApplied = true;
+              // Every step applied (stepFailures is empty here) — the only doubt
+              // is how closely the result matches a reference screenshot. That
+              // is a note, not an unfinished ask; routing it through
+              // partialMessage made a fully-applied plan announce itself as
+              // "Partly done" over a sentence that began "Applied, though…".
               if (softShortfalls.length > 0) {
                 const parts = Array.from(new Set(softShortfalls)).join(', ');
-                partialMessage = partialMessage
-                  ? `${partialMessage} The ${parts} may not match the screenshot exactly — tell me what's off.`
-                  : `Applied, though the ${parts} may not match the screenshot exactly — tell me what's off.`;
+                addNote(`The ${parts} may not match the screenshot exactly — tell me what's off.`);
               }
               console.log('[pages/follow-up] multi-intent plan applied', { stepOks, softShortfalls });
             } else if (stepOks.length > 0 && stepFailures.length > 0) {
@@ -4293,8 +4317,8 @@ export async function POST(
                 section: name,
                 reason: verify.reason,
               });
-              const note = `The ${name} was rewritten but may not match the screenshot's wording exactly.`;
-              partialMessage = partialMessage ? `${partialMessage} ${note}` : note;
+              // The rewrite IS on the page — a note, not an unfinished ask.
+              addNote(`The ${name} was rewritten but may not match the screenshot's wording exactly.`);
             }
             patchedSections.push({ name, html: updated });
           }
@@ -4899,11 +4923,136 @@ export async function POST(
         if (enforced.applied.length > 0) {
           console.log('[pages/follow-up] requirements enforced', enforced.applied);
         }
-        const unmet = describeUnmet(
-          checkRequirements(finalHtmlPersisted, requirements, {
-            beforeHtml: originalHtmlForPreservation,
-          }),
-        );
+        let results = checkRequirements(finalHtmlPersisted, requirements, {
+          beforeHtml: originalHtmlForPreservation,
+        });
+
+        // FIX IT, don't just announce it.
+        //
+        // This is the last and most reliable check in the turn: the model wrote
+        // its own checklist from the request, and this catches what every
+        // earlier retry missed (runScopedPatchWithRetry, the no-op retry, the
+        // multi-step retry pass). It was also the ONLY check with no retry at
+        // all — it printed "Still not applied: 2 skills removed from skills
+        // section" and gave up, and the user was told to re-ask for something we
+        // had already diagnosed precisely enough to describe in a sentence.
+        //
+        // retryInstructionFor() was written and unit-tested for exactly this and
+        // never called by any route — a safety net built and left unplugged.
+        //
+        // Safety, in order:
+        //  • one pass only, so a stubborn requirement cannot loop the turn
+        //  • the candidate is kept ONLY if it fixes something and breaks nothing
+        //    that was already passing (compared by index — same requirements
+        //    array both times, so labels can't collide)
+        //  • on any other outcome the pre-retry page stands and we report as
+        //    before, so this can never leave the page worse than not trying
+        //  • runs BEFORE the loss guard below, so anything it damages is still
+        //    caught, repaired, or rejected there
+        if (results.some((r) => !r.passed) && !request.signal.aborted) {
+          // Deleting is not a patch. It happens by splicing out the marker block
+          // (removeSlSection / the planner's remove op / the full-page `deleted`
+          // list) and normally succeeds, in which case section_absent PASSES and
+          // there is nothing to retry. Reaching here means the delete already
+          // failed — and a scoped patch cannot finish the job, because
+          // runScopedPatchWithRetry requires the outer tag back intact. So the
+          // call would be spent and discarded every time. Reported as unmet.
+          const retryable = results.filter((r) => !r.passed && r.requirement.kind !== 'section_absent');
+          const fixInstruction = retryInstructionFor(retryable);
+          const failedSections = Array.from(
+            new Set(retryable.flatMap((r) => r.requirement.sections ?? [])),
+          );
+          const availableSections = extractSlSections(finalHtmlPersisted);
+          // Requirements that name no section (a page-wide "no CTA", a verbatim
+          // string) fall back to what this turn was about — never the whole page.
+          // Capped: one model call per section, and mergeRequirements allows 16
+          // requirements, so an uncapped list is 16 sequential calls inside a
+          // streaming response — minutes of hang, then a proxy idle-timeout kills
+          // the turn and the user loses an edit that had already been applied.
+          const retryTargets = (failedSections.length > 0 ? failedSections : intent.targetSections)
+            .filter((name) => availableSections.some((s) => s.name === name))
+            .slice(0, REQUIREMENT_RETRY_SECTION_CAP);
+
+          if (fixInstruction && retryTargets.length > 0) {
+            sendSSE(controller, { type: 'status', message: 'Finishing what\'s left…' });
+            const retryPrompt =
+              `${prompt}\n\nCRITICAL — your previous attempt left these parts of the request undone. ` +
+              `Apply them now, and change NOTHING else in this section:\n${fixInstruction}\n\n` +
+              `Keep every data-field attribute so the text stays click-to-editable.`;
+            const repatched: Array<{ name: string; html: string }> = [];
+            for (const name of retryTargets) {
+              if (request.signal.aborted) break;
+              const section = availableSections.find((s) => s.name === name);
+              if (!section) continue;
+              // Real image bytes are back in the HTML by this point (line ~4875).
+              // Sending a base64 blob to the model would cost a fortune and can
+              // blow the context on its own — swap placeholders back in for the
+              // call, then put the bytes back into what comes out.
+              const { html: sectionForModel, map: sectionUris } = extractDataUris(section.html);
+              const schemaSlice = { [name]: (schema as Record<string, unknown> | null | undefined)?.[name] };
+              const attempt = await runScopedPatchWithRetry(
+                sectionForModel,
+                schemaSlice,
+                retryPrompt,
+                undefined,
+                usageCtx,
+              );
+              if (attempt.html && attempt.html !== sectionForModel) {
+                repatched.push({ name, html: restoreDataUris(attempt.html, sectionUris) });
+              }
+            }
+
+            if (repatched.length > 0) {
+              const candidate = applyPatch(finalHtmlPersisted, repatched);
+              const candidateResults = checkRequirements(candidate, requirements, {
+                beforeHtml: originalHtmlForPreservation,
+              });
+              const failedBefore = results.map((r) => !r.passed);
+              const failedAfter = candidateResults.map((r) => !r.passed);
+              const regressed = failedAfter.some((bad, i) => bad && !failedBefore[i]);
+              const fixed = failedBefore.filter((bad, i) => bad && !failedAfter[i]).length;
+              // verifyAndRehostHtmlImages already ran above, so any image URL the
+              // retry invents ships unverified and can 404 on the live page. The
+              // one URL a retry legitimately ADDS is the asset a requirement is
+              // demanding be present — anything else means it did more than it was
+              // told, and the whole candidate goes in the bin.
+              const allowedNewAssets = new Set(
+                requirements.map((r) => r.value).filter((v): v is string => !!v),
+              );
+              const externalImgSrcs = (h: string) =>
+                Array.from(h.matchAll(/<img\b[^>]*\bsrc\s*=\s*["'](https?:\/\/[^"']+)["']/gi)).map((m) => m[1]);
+              const knownAssets = new Set(externalImgSrcs(finalHtmlPersisted));
+              const inventedAssets = externalImgSrcs(candidate).filter(
+                (url) => !knownAssets.has(url) && !allowedNewAssets.has(url),
+              );
+              if (!regressed && fixed > 0 && inventedAssets.length === 0) {
+                finalHtmlPersisted = candidate;
+                results = candidateResults;
+                console.log('[pages/follow-up] requirement retry landed', {
+                  sections: repatched.map((r) => r.name),
+                  fixed,
+                  stillFailing: failedAfter.filter(Boolean).length,
+                });
+              } else {
+                console.warn('[pages/follow-up] requirement retry discarded — kept pre-retry page', {
+                  sections: repatched.map((r) => r.name),
+                  regressed,
+                  fixed,
+                  inventedAssets,
+                });
+              }
+            } else {
+              console.warn('[pages/follow-up] requirement retry produced no change', { retryTargets });
+            }
+          } else {
+            console.warn('[pages/follow-up] unmet requirements with nowhere to retry', {
+              failedSections,
+              targetSections: intent.targetSections,
+            });
+          }
+        }
+
+        const unmet = describeUnmet(results);
         if (unmet) {
           console.warn('[pages/follow-up] unmet requirements', { unmet, prompt: prompt.slice(0, 200) });
           partialMessage = partialMessage
@@ -4916,7 +5065,9 @@ export async function POST(
       // did everything asked report "Partly done (not fully finished)" — the
       // user reads that as "you ignored me" and re-sends work already done.
       if (assetScan.broken.length > 0) {
-        assetWarning = `${assetScan.broken.length} image URL(s) on the page did not load and were left as they were.`;
+        addNote(
+          `${assetScan.broken.length} image URL(s) on the page did not load and were left as they were.`,
+        );
         console.warn('[pages/follow-up] broken image URLs', { count: assetScan.broken.length });
       }
 
@@ -5181,10 +5332,29 @@ export async function POST(
           return;
         }
 
+        // Reaching this line means the loss was CLEARED — either the judge read
+        // the request and ruled the loss intended, or it was intended by
+        // definition (removal / rebuild / asset swap), or repair undid it. Every
+        // destructive outcome returned above.
+        //
+        // So this used to contradict itself out loud. "Change these headings to
+        // something better" reworded two headings; losses are exact-string
+        // matches, so the old strings counted as gone; the judge correctly said
+        // intended (which is why the edit was kept); and then this line reported
+        // "2 headings disappeared without being asked for" under a headline
+        // saying the work wasn't finished. The count was never corrected because
+        // effectiveLosses is only reassigned inside the repair branch — a
+        // straight "intended" verdict left the raw count to be printed verbatim.
+        //
+        // A cleared loss has nothing honest to say to the user. It stays in the
+        // logs, where the number is still worth having.
         const lossNote = describeLosses(effectiveLosses);
         if (lossNote) {
-          const note = `Heads up: ${lossNote}.`;
-          partialMessage = partialMessage ? `${partialMessage} ${note}` : note;
+          console.log('[pages/follow-up] losses cleared as intended — not reported', {
+            summary: lossNote,
+            judgedIntended: !lossObviouslyIntended,
+            obviouslyIntended: lossObviouslyIntended,
+          });
         } else if (restoredLogo) {
           console.log('[pages/follow-up] all unrequested losses repaired');
         }
@@ -5297,7 +5467,7 @@ export async function POST(
         ...(scrapeAttempted && !competitorContext ? { competitor_fetch_failed: true } : {}),
         elapsed_ms: Date.now() - startedAt,
         ...(partialMessage ? { partial_message: partialMessage } : {}),
-        ...(assetWarning ? { warning: assetWarning } : {}),
+        ...(pageNotes.length > 0 ? { notes: pageNotes.join(' ') } : {}),
       };
       sendSSE(controller, doneEvent);
       closeSSE(controller);

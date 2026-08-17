@@ -1147,19 +1147,23 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
 
     // Name what didn't land instead of a blanket "ready" — a page with a
     // banned CTA still on it is not what the user asked for.
-    const caveats: string[] = [];
-    if (unmetRequirements) caveats.push(unmetRequirements);
-    if (brokenAssets > 0) {
-      caveats.push(`${brokenAssets} image URL(s) couldn't be loaded`);
-    }
-    if (caveats.length > 0) {
+    // An image URL that didn't respond is a note about the page, not an ask we
+    // failed — it used to be listed alongside unmet asks under "not everything
+    // landed", which reads as "you ignored me" on a page that is in fact done.
+    const note = brokenAssets > 0
+      ? ` ${brokenAssets} image URL(s) couldn't be loaded and were left as they were.`
+      : '';
+    if (unmetRequirements) {
       toast('Built, but some asks need another pass.', { icon: '⚠️' });
       addMessage({
         role: 'assistant',
-        content: `Your page is built, but not everything landed — ${caveats.join('; ')}. Tell me to fix it and I'll take another pass.`,
+        content: `Your page is built, but not everything landed — ${unmetRequirements}. Tell me to fix it and I'll take another pass.${note}`,
       });
     } else {
-      addMessage({ role: 'assistant', content: 'Your page is ready! Click any text in the preview to edit it, or ask me to make changes.' });
+      addMessage({
+        role: 'assistant',
+        content: `Your page is ready! Click any text in the preview to edit it, or ask me to make changes.${note}`,
+      });
     }
   }
 
@@ -1384,7 +1388,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       return;
     }
 
-    type FollowUpDone = { html_url: string; schema_json?: unknown; competitor_fetch_failed?: boolean; elapsed_ms?: number; partial_message?: string };
+    type FollowUpDone = { html_url: string; schema_json?: unknown; competitor_fetch_failed?: boolean; elapsed_ms?: number; partial_message?: string; notes?: string };
     let doneData: FollowUpDone | null = null;
     let followUpError = false;
     let clarifyMessage: string | null = null;
@@ -1398,6 +1402,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
           competitor_fetch_failed: event.competitor_fetch_failed,
           elapsed_ms: event.elapsed_ms,
           partial_message: event.partial_message,
+          notes: event.notes,
         };
       } else if (event.type === 'clarify') {
         clarifyMessage = event.message || 'Which part of the page should I edit?';
@@ -1441,17 +1446,23 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     if (isTestVariantPage) setHasDraft(true);
     // Server only emits `done` when HTML actually changed — never claim success otherwise.
     if (!silent) {
+      // "Partly done" is reserved for an ASK that isn't on the page. A caveat
+      // about work that did land goes through `notes`, which keeps the "Done!"
+      // headline and raises no retry toast — a user told "Partly done" re-sends
+      // the request, and re-doing finished work is how good edits get undone.
       if (done.partial_message) {
         toast(`Partly done — some edits still need a retry.`, { icon: '⚠️' });
         addMessage({
           role: 'assistant',
-          content: `Partly done (not fully finished). ${done.partial_message}`,
+          content: `Partly done (not fully finished). ${done.partial_message}${done.notes ? ` ${done.notes}` : ''}`,
           elapsedMs: done.elapsed_ms,
         });
       } else {
         addMessage({
           role: 'assistant',
-          content: 'Done! The page has been updated.',
+          content: done.notes
+            ? `Done! The page has been updated. ${done.notes}`
+            : 'Done! The page has been updated.',
           elapsedMs: done.elapsed_ms,
         });
       }
