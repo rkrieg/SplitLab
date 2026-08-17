@@ -1279,7 +1279,7 @@ assert('a repair never silently undoes the section the user asked about',
   preserve.includes('quietly undo the very thing that was asked for'));
 assert('what survives a repair is re-judged, not assumed',
   /losses: afterRepair/.test(follow) && /stillDestructive/.test(follow));
-assert('the loss note reports the page as repaired, not as it was',
+assert('the loss summary is taken from the repaired page, not the page as it was',
   /const lossNote = describeLosses\(effectiveLosses\)/.test(follow));
 // Shipped to a real user: "That edit would also have removed An image and the
 // team.members.0.generated_image_url field were removed, even though ..., which
@@ -1655,6 +1655,102 @@ assert('and told to prefer those exact URLs over an attachment',
 // ── The retry must not turn a structural step into an edit ──────────────────
 assert('only patch steps are retried through the patch path',
   /if \(s\.op !== 'patch'\) return false;/.test(follow));
+
+// ── "Partly done" means an ASK is missing, and nothing else ─────────────────
+// Client feedback: "Change these headigns to something better" reworded two
+// headings, the loss judge ruled it intended (so the edit was kept), and the
+// turn still reported "Partly done (not fully finished). Heads up: 2 headings
+// disappeared without being asked for." Three of six writers to partialMessage
+// were firing on work that had fully landed.
+const sseSrc = readFileSync(join(__dirname, '../src/lib/sse.ts'), 'utf8');
+
+assert('there is a channel for "done, with a caveat"',
+  /notes\?: string;/.test(sseSrc));
+assert('the follow-up route emits notes on the done event',
+  /\.\.\.\(pageNotes\.length > 0 \? \{ notes: pageNotes\.join\(' '\) \} : \{\}\)/.test(follow));
+assert('the orphaned `warning` field is gone',
+  !/\{ warning: assetWarning \}/.test(follow) && !/let assetWarning/.test(follow));
+assert('a note keeps the Done headline and raises no retry toast',
+  /content: done\.notes\s*\n?\s*\? `Done! The page has been updated\. \$\{done\.notes\}`/.test(client));
+assert('a note is not lost when something else really is partial',
+  /\$\{done\.notes \? ` \$\{done\.notes\}` : ''\}/.test(client));
+
+// A cleared loss has nothing honest to say: every destructive outcome returns
+// before this point, so the only thing left to report would contradict the
+// judge that just approved the edit.
+assert('a loss the judge cleared is logged, not announced as partly done',
+  /losses cleared as intended — not reported/.test(follow) &&
+  !/Heads up: \$\{lossNote\}/.test(follow));
+assert('a fully-applied plan does not report a screenshot mismatch as unfinished',
+  /addNote\(`The \$\{parts\} may not match the screenshot exactly/.test(follow));
+assert('a section that was rewritten does not report itself as unfinished',
+  /addNote\(`The \$\{name\} was rewritten but may not match/.test(follow));
+assert('a broken image URL is a note about the page, not a failed ask',
+  /addNote\(\s*`\$\{assetScan\.broken\.length\} image URL\(s\)/.test(follow));
+assert('the create path does not list a broken image under "not everything landed"',
+  /const note = brokenAssets > 0/.test(client) &&
+  !/caveats\.push\(`\$\{brokenAssets\}/.test(client));
+
+// The three legitimate writers must survive — a genuinely missing ask still has
+// to say so, or this fix trades a false alarm for a silent failure.
+assert('a genuinely unmet requirement still reports partly done',
+  /partialMessage = partialMessage\s*\n?\s*\? `\$\{partialMessage\} Still not applied: \$\{unmet\}\.`/.test(follow));
+assert('a step still failing after its retry still reports partly done',
+  /Applied part of that request\. Some parts still need a follow-up/.test(follow));
+assert('a logo landing while other asks failed still reports partly done',
+  /Logo is in\. Some other parts of that request still need a follow-up\./.test(follow));
+
+// ── Detecting incomplete work means fixing it, not narrating it ─────────────
+// The last and most reliable check in the turn (the model's own checklist) was
+// the only one with no retry. retryInstructionFor() was written, unit-tested,
+// and called by nothing.
+assert('the requirement retry instruction is actually wired into the route',
+  /retryInstructionFor,/.test(follow) &&
+  /const fixInstruction = retryInstructionFor\(retryable\)/.test(follow));
+assert('the retry runs before the loss guard, so damage it causes is still caught',
+  follow.indexOf('const fixInstruction = retryInstructionFor(retryable)') <
+    follow.indexOf('const losses = findUnrequestedLosses'));
+assert('the retry is capped at one pass',
+  (follow.match(/const fixInstruction = retryInstructionFor/g) ?? []).length === 1);
+assert('the retry only targets sections that exist on the page',
+  /\.filter\(\(name\) => availableSections\.some\(\(s\) => s\.name === name\)\)/.test(follow));
+assert('a requirement naming no section falls back to the turn, never the whole page',
+  /failedSections\.length > 0 \? failedSections : intent\.targetSections/.test(follow));
+assert('the retry result is kept only if it fixes something and breaks nothing',
+  /const regressed = failedAfter\.some\(\(bad, i\) => bad && !failedBefore\[i\]\)/.test(follow) &&
+  /if \(!regressed && fixed > 0 && inventedAssets\.length === 0\)/.test(follow));
+assert('a discarded retry leaves the pre-retry page in place',
+  /requirement retry discarded — kept pre-retry page/.test(follow));
+assert('the retry re-checks against the same requirements array, so labels cannot collide',
+  /const candidateResults = checkRequirements\(candidate, requirements/.test(follow));
+assert('image bytes are stripped before the retry call and restored after',
+  /const \{ html: sectionForModel, map: sectionUris \} = extractDataUris\(section\.html\)/.test(follow) &&
+  /restoreDataUris\(attempt\.html, sectionUris\)/.test(follow));
+assert('an aborted request does not start a retry',
+  /results\.some\(\(r\) => !r\.passed\) && !request\.signal\.aborted/.test(follow));
+assert('a retry with nowhere to go is logged rather than silently skipped',
+  /unmet requirements with nowhere to retry/.test(follow));
+// Each target is a sequential model call inside an open SSE stream. 16
+// requirements uncapped is minutes of hang, then a proxy idle-timeout kills the
+// turn and the user loses an edit that had already been applied.
+assert('the retry cannot hang the stream with an unbounded number of calls',
+  /const REQUIREMENT_RETRY_SECTION_CAP = 3;/.test(follow) &&
+  /\.slice\(0, REQUIREMENT_RETRY_SECTION_CAP\)/.test(follow));
+assert('an abort mid-retry stops the remaining calls',
+  /for \(const name of retryTargets\) \{\s*\n\s*if \(request\.signal\.aborted\) break;/.test(follow));
+// Image verification already ran by this point, so a URL the retry invents would
+// ship unchecked and 404 on the live page.
+assert('a retry that invents an unverified image URL is discarded',
+  /const inventedAssets = externalImgSrcs\(candidate\)\.filter\(/.test(follow) &&
+  /inventedAssets\.length === 0/.test(follow));
+// A scoped patch must return the same outer tag, so it can never delete a
+// section — retrying one would burn a call every turn and always be discarded.
+assert('a delete-the-section requirement is not retried through the patch path',
+  /r\.requirement\.kind !== 'section_absent'/.test(follow) &&
+  /const fixInstruction = retryInstructionFor\(retryable\)/.test(follow));
+assert('but the asset a requirement demands is allowed to appear',
+  /const allowedNewAssets = new Set\(/.test(follow) &&
+  /!allowedNewAssets\.has\(url\)/.test(follow));
 
 if (failed > 0) {
   console.error(`\n${failed} assertion(s) failed`);

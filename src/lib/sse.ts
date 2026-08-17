@@ -13,7 +13,24 @@ export type SSEEvent =
       competitor_fetch_failed?: boolean;
       elapsed_ms?: number;
       already?: boolean;
+      /**
+       * Something the user ASKED FOR is not on the page. The client renders this
+       * as "Partly done", so nothing else may travel here — see `notes`.
+       */
       partial_message?: string;
+      /**
+       * The edit landed in full; here is something worth a look anyway (a
+       * screenshot match that isn't exact, an image URL that didn't respond).
+       *
+       * Exists because there was no way to say "done, with a caveat". Caveats
+       * were glued onto partial_message, so turns that did everything asked
+       * reported "Partly done (not fully finished)" and users re-sent work that
+       * had already landed. The follow-up route tried to fix this by emitting a
+       * `warning` field — which was never in this type and never read by the
+       * client, so the real warnings vanished instead. Spread properties skip
+       * excess-property checks, which is why tsc never caught it.
+       */
+      notes?: string;
       /** Asks from the prompt the finished page still doesn't satisfy. */
       unmet_requirements?: string;
       /** External images that failed verification and were left untouched. */
