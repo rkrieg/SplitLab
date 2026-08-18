@@ -61,6 +61,7 @@ import {
   hasLosses,
   describeLosses,
   restoreDamagedSections,
+  restoreLostImagesInPlace,
   splitLossesByRegion,
   sectionsContainingAsset,
   snapshotPageFacts,
@@ -5315,10 +5316,36 @@ export async function POST(
             losses: remaining,
             protectedSections: requestedSections,
           });
-          if (repair.restored.length > 0) {
+
+          // The section-level repair above only ever touches sections the
+          // request was NOT about (protectedSections), on purpose — reverting
+          // a section the model was legitimately rewriting would undo real
+          // work along with the damage. That leaves exactly the case the logo
+          // fix above exists for, generalized past "logo": an image dropped
+          // from a section the request WAS about. Put just that image back,
+          // at image granularity, rather than reverting the section around
+          // it. Runs on whatever restoreDamagedSections didn't already fix.
+          const stillMissingImages = remaining.images.filter((u) => !repair.html.includes(u));
+          const imageRepair =
+            stillMissingImages.length > 0
+              ? restoreLostImagesInPlace({
+                  beforeHtml: originalHtmlForPreservation,
+                  afterHtml: repair.html,
+                  images: stillMissingImages,
+                })
+              : { html: repair.html, restored: [] as string[] };
+          const repairedHtml =
+            imageRepair.restored.length > 0
+              ? ensureClickToEditFields(
+                  imageRepair.html,
+                  finalSchemaJsonReal ?? (schema as Record<string, unknown> | null),
+                )
+              : imageRepair.html;
+
+          if (repair.restored.length > 0 || imageRepair.restored.length > 0) {
             const afterRepair = findUnrequestedLosses({
               beforeHtml: originalHtmlForPreservation,
-              afterHtml: repair.html,
+              afterHtml: repairedHtml,
               prompt,
               removalIntent: intent.removalIntent,
             });
@@ -5334,19 +5361,20 @@ export async function POST(
                   sections: sectionsContainingAsset(originalHtmlForPreservation, url),
                 })),
                 requestedSections,
-                headingsAfter: snapshotPageFacts(repair.html).headings,
+                headingsAfter: snapshotPageFacts(repairedHtml).headings,
                 usage: usageCtx,
               });
               stillDestructive = !rejudged.intended;
               if (stillDestructive) lossSummary = rejudged.summary;
             }
             console.log('[pages/follow-up] collateral repair', {
-              restored: repair.restored,
+              restoredSections: repair.restored,
+              restoredImages: imageRepair.restored,
               protectedSections: requestedSections,
               stillDestructive,
             });
             if (!stillDestructive) {
-              finalHtmlPersisted = repair.html;
+              finalHtmlPersisted = repairedHtml;
               effectiveLosses = afterRepair;
               destructive = false;
             }

@@ -352,6 +352,74 @@ export function restoreDamagedSections(opts: {
   return { html, restored };
 }
 
+/** The exact `<img>` tag (verbatim — data-field, alt, style, everything) for a given src, if present. */
+function findImgTagForSrc(html: string, src: string): string | null {
+  for (const m of Array.from(html.matchAll(/<img\b[^>]*>/gi))) {
+    const srcMatch = /\bsrc\s*=\s*["']([^"']+)["']/i.exec(m[0]);
+    if (srcMatch && srcMatch[1].trim() === src) return m[0];
+  }
+  return null;
+}
+
+/**
+ * Put specific missing images back where they used to be, without touching
+ * anything else in those sections.
+ *
+ * restoreDamagedSections works at SECTION granularity and deliberately
+ * refuses to touch a section the request was about — reverting a whole
+ * section to undo one dropped photo would also undo whatever real change the
+ * model made there (a footer logo case is exactly this: the model correctly
+ * repadded the section AND silently dropped an unrelated image in the same
+ * output). This works at IMAGE granularity instead: it copies the exact
+ * `<img>` tag that section had before — data-field included, so it comes
+ * back click-to-edit, not just visible — and reinserts just that tag into
+ * the section's CURRENT html. A section already carrying the image, or a
+ * section that no longer exists at all (restoreDamagedSections' job), is
+ * left alone.
+ *
+ * Callers only reach this after a real judgement (the model, or an
+ * unambiguous removal/rebuild) already decided the loss was NOT what the
+ * user asked for — this never second-guesses that, it only decides HOW to
+ * put back what was already ruled to be unintended damage.
+ */
+export function restoreLostImagesInPlace(opts: {
+  beforeHtml: string;
+  afterHtml: string;
+  images: string[];
+}): { html: string; restored: string[] } {
+  let html = opts.afterHtml;
+  const restored: string[] = [];
+  const beforeBlocks = slBlocks(opts.beforeHtml);
+
+  for (const url of opts.images) {
+    const owners = beforeBlocks.filter((b) => b.inner.includes(url));
+    for (const owner of owners) {
+      const tag = findImgTagForSrc(owner.inner, url);
+      if (!tag) continue;
+
+      const liveBlock = slBlocks(html).find((b) => b.name === owner.name);
+      if (!liveBlock) continue; // section itself is gone — restoreDamagedSections' job
+      if (liveBlock.inner.includes(url)) continue; // already there — nothing to do
+
+      const container = /<(div|section|header|nav|footer|aside|main|ul)\b[^>]*>/i.exec(liveBlock.inner);
+      const at = container && container.index !== undefined ? container.index + container[0].length : 0;
+      const newInner = liveBlock.inner.slice(0, at) + tag + liveBlock.inner.slice(at);
+      const replacement = `<!-- SL:${owner.name} -->${newInner}<!-- /SL:${owner.name} -->`;
+      // Replacement passed as a function, not a string — landing-page copy
+      // routinely contains a literal "$500M"-style dollar figure, and
+      // String.replace treats $-digit sequences in a STRING replacement as
+      // capture-group references even when the search side is a plain
+      // string, silently mangling that copy. A function return value is
+      // inserted literally. restoreDamagedSections above already does this
+      // for the same reason.
+      html = html.replace(liveBlock.block, () => replacement);
+      if (!restored.includes(url)) restored.push(url);
+    }
+  }
+
+  return { html, restored };
+}
+
 export function hasLosses(losses: PageLosses): boolean {
   return (
     losses.images.length > 0 ||
