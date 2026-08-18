@@ -1539,7 +1539,7 @@ function externalStyleLinks(html: string): { html: string; families: string[] } 
 
 /**
  * The layout stylesheet. This is the whole of the new geometry — six rules,
- * no pixel positions, and a single breakpoint that stacks rows on small screens.
+ * no pixel positions, and a breakpoint that stacks rows on small screens.
  */
 function layoutCss(canvas: number): string {
   return `/* Layout: sections in normal flow, rows of proportional columns. */
@@ -1550,9 +1550,46 @@ function layoutCss(canvas: number): string {
 .sl-col > img, .sl-col > iframe, .sl-col img { max-width: 100%; height: auto; }
 .sl-col iframe { width: 100%; aspect-ratio: 16 / 9; height: auto; }
 ${Array.from({ length: GRID_UNITS }, (_, i) => `.sl-g${i + 1} { flex-grow: ${i + 1}; }`).join('\n')}
+/*
+ * Mobile: our own generic reset, not a reproduction of whatever (if
+ * anything) the source template did at small widths — that varies by
+ * exporter and would reintroduce per-template complexity the rebuild
+ * exists to get away from. Every geometry value the pipeline writes
+ * (a column's width, the real-pixel margin-left a lone off-center item
+ * gets, a button/input's rescued width) is an INLINE style, which beats
+ * a plain class rule regardless of media query — so this block has to
+ * win on importance, not specificity, to actually take effect.
+ */
 @media (max-width: 768px) {
-  .sl-row { flex-direction: column; }
-  .sl-col { width: 100%; }
+  .sl-row {
+    display: flex !important;
+    flex-direction: column !important;
+  }
+  .sl-col {
+    /* A .sl-col can carry a real "display: grid" (or another exotic
+       display) copied from the source element's own computed style —
+       a legitimate desktop fact, but a grid container with no explicit
+       track sizing lets its CHILDREN size to content instead of
+       stretching, so a child's own "width: 100%" resolves against a
+       content-sized box instead of the real, capped parent width and
+       the whole point of this reset is silently undone one level down.
+       .sl-col's job at mobile is "one stacked block, full width" — it
+       never needs to keep being a grid/flex container to do that. */
+    display: block !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin-left: 0 !important;
+    flex: 1 1 auto !important;
+  }
+  /* Caps any inline pixel width anywhere in the section — a button, an
+     input, a field — to its container, the same way img/iframe above
+     are capped rather than force-stretched. max-width does not fight an
+     element's own width, it clamps the result, so content narrower than
+     its container is left alone. */
+  .sl-band, .sl-band * {
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+  }
 }`;
 }
 
