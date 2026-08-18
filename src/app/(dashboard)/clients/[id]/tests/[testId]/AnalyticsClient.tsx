@@ -82,14 +82,26 @@ const GOAL_TYPES = [
   { value: "call_click", label: "Call Click" },
 ];
 
+/** Short date, e.g. "Aug 7, 2026". */
+function fmtDate(iso?: string | null): string {
+  if (!iso) return "";
+  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+/** Full date + time for tooltips, e.g. "Aug 7, 2026, 3:14 PM". */
+function fmtDateTime(iso?: string | null): string {
+  if (!iso) return "";
+  return new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+}
+
 interface Variant {
   id: string;
   name: string;
   is_control: boolean;
   traffic_weight: number;
+  created_at?: string | null;
   redirect_url?: string | null;
   proxy_mode?: boolean;
-  pages?: { id: string; name: string; draft_html_content?: string | null } | null;
+  pages?: { id: string; name: string; draft_html_content?: string | null; updated_at?: string | null } | null;
   tracking_verified?: boolean | null;
   duplicated_from_id?: string | null;
   archived_at?: string | null;
@@ -2970,6 +2982,13 @@ export default function AnalyticsClient({
                           (g.variant_id == null || g.variant_id === stat.variant.id),
                       );
 
+                      // Created date always; "Edited" only when the page was
+                      // updated meaningfully after creation (page-backed variants).
+                      const createdIso = stat.variant.created_at;
+                      const editedIso = stat.variant.pages?.updated_at;
+                      const showEdited = !!editedIso && !!createdIso &&
+                        new Date(editedIso).getTime() - new Date(createdIso).getTime() > 60_000;
+
                       return (
                         <Fragment key={stat.variant.id}>
                           <tr className={`group ${rowBg}`}>
@@ -2991,6 +3010,15 @@ export default function AnalyticsClient({
                                   />
                                 )}
                               </div>
+                              {createdIso && (
+                                <p
+                                  className="text-slate-400 dark:text-slate-500 text-[10px] mt-0.5"
+                                  title={showEdited ? `Last edited ${fmtDateTime(editedIso)}` : `Created ${fmtDateTime(createdIso)}`}
+                                >
+                                  Created {fmtDate(createdIso)}
+                                  {showEdited && <> · Edited {fmtDate(editedIso)}</>}
+                                </p>
+                              )}
                               {stat.variant.duplicated_from_id && (
                                 <p className="text-slate-400 dark:text-slate-500 text-[10px] flex items-center gap-1 mt-0.5">
                                   <Copy size={9} className="flex-shrink-0" />

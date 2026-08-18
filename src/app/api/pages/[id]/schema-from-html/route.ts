@@ -12,7 +12,8 @@ import { extractDataUris, restoreDataUris, restoreDataUrisInValue } from '@/lib/
 import { createSSEStream, sendSSE, sendSSEPing, closeSSE, SSE_HEADERS } from '@/lib/sse';
 import { checkAiAllowance, type UsageContext } from '@/lib/ai-usage';
 import { reportAiOverageUsage } from '@/lib/ai-overage-billing';
-import { repairSlMarkers, markerCoverage } from '@/lib/ai-sl-markers';
+import { repairSlMarkers, markerCoverage, markerQuality, dropEmptySectionMarkers, type MarkerQuality } from '@/lib/ai-sl-markers';
+import { analyzePageLayout, describePrepOutcome } from '@/lib/ai-page-layout';
 
 export const dynamic = 'force-dynamic';
 // The AI call returns a compact field/section list (not the full page), but
@@ -290,6 +291,10 @@ function annotateHtml(
   requestedCount: number;
   matchedSectionCount: number;
   requestedSectionCount: number;
+  /** Are the boxes we just drew usable — see markerQuality. */
+  quality: MarkerQuality;
+  /** Boxes whose markers were removed for holding nothing. */
+  droppedEmptyBoxes: string[];
 } {
   const fields = parsed.fields ?? [];
   const sections = parsed.sections ?? [];
@@ -387,6 +392,44 @@ function annotateHtml(
     });
   }
 
+  // ── And are the boxes any good? ──────────────────────────────────────────
+  //
+  // Coverage says every block is inside a box. It does NOT say the boxes hold
+  // anything. On an Unbounce upload 19 of 22 boxes were empty wrapper divs
+  // (~188 bytes each) and one held the entire 171KB page — coverage reported
+  // clean, and the router was then offered an empty box called "hero", picked
+  // it, and a whole new hero was written into a div that had nothing in it.
+  //
+  // The empty ones are dropped here — prep is the one place where re-cutting
+  // boxes is safe, because the page has no schema, no chat history and no
+  // click-to-edit field keyed to a section name yet. Dropping a pair does not
+  // touch the page itself: the div stays exactly where it was, it just stops
+  // being advertised as a place an edit could land.
+  const beforeDrop = markerQuality(result);
+  const drop = dropEmptySectionMarkers(result);
+  if (drop.dropped.length > 0) {
+    console.warn('[schema-from-html] dropped markers around boxes with no content', {
+      dropped: drop.dropped,
+    });
+    result = drop.html;
+  }
+  const quality = markerQuality(result);
+  if (!quality.ok) {
+    console.error('[schema-from-html] section map is still poor after repair', {
+      emptyBoxes: quality.empty,
+      dominant: quality.dominant,
+      boxes: quality.boxes
+        .filter((b) => !b.nested)
+        .map((b) => `${b.name}:${b.bytes}b/${b.textChars}c/${b.media}m`),
+    });
+  } else {
+    console.log('[schema-from-html] section map ok', {
+      boxes: quality.boxes.filter((b) => !b.nested).length,
+      droppedEmpty: drop.dropped.length,
+      emptyBefore: beforeDrop.empty.length,
+    });
+  }
+
   return {
     annotatedHtml: result,
     schemaJson,
@@ -394,6 +437,8 @@ function annotateHtml(
     requestedCount: fields.length,
     matchedSectionCount,
     requestedSectionCount: sections.length,
+    quality,
+    droppedEmptyBoxes: drop.dropped,
   };
 }
 
@@ -656,6 +701,42 @@ export async function POST(
       const { html: htmlNoDataUris, map: dataUriMap } = extractDataUris(html);
       const htmlForModel = minifyHtmlForModel(htmlNoDataUris);
 
+      // ── Ask about a rebuild BEFORE spending anything on prep ──────────────
+      //
+      // This verdict is pure arithmetic over the page's own stylesheet: no model,
+      // no network, milliseconds. It used to run at the END of prep, after the
+      // field-list model call — so a coordinate page sat for 496 seconds and a
+      // full AI charge, and only then got asked whether to rebuild. If the answer
+      // is yes, rebuild-flow derives its own schema from its own output and every
+      // second of that wait is thrown away; if the answer is no, the user leaves.
+      // Either way the work was pointless, so the question comes first.
+      const earlyLayout = analyzePageLayout(htmlNoDataUris);
+      if (earlyLayout.strategy === 'rebuild') {
+        const earlyOutcome = describePrepOutcome(earlyLayout, 0);
+        console.log('[schema-from-html] layout verdict (pre-prep)', {
+          kind: earlyLayout.kind,
+          strategy: earlyOutcome.strategy,
+          positioned: earlyLayout.positioned,
+          blocks: earlyLayout.blocks,
+          share: Number(earlyLayout.share.toFixed(2)),
+          containerHeightPx: earlyLayout.containerHeightPx,
+          reasons: earlyLayout.reasons,
+        });
+        // No schema is saved, which is what keeps the composer locked: the page
+        // cannot take a restructure yet, so there is nothing useful to type.
+        sendSSE(controller, {
+          type: 'done',
+          // Unchanged — the page was not touched, and the client reloads the
+          // preview from this. Sent because the event shape requires it.
+          html_url: page.html_url ?? '',
+          prep_strategy: earlyOutcome.strategy,
+          prep_note: earlyOutcome.message,
+          elapsed_ms: Date.now() - startedAt,
+        });
+        closeSSE(controller);
+        return;
+      }
+
       sendSSE(controller, { type: 'status', message: 'Analyzing structure…' });
 
       let parsed: FieldListResponse;
@@ -731,7 +812,33 @@ export async function POST(
         requestedCount,
         matchedSectionCount,
         requestedSectionCount,
+        quality,
+        droppedEmptyBoxes,
       } = annotateHtml(htmlNoDataUris, parsed);
+
+      // ── Can this page actually take a markup edit? ───────────────────────
+      //
+      // Measured on the page as uploaded, not on our annotated copy, since the
+      // answer is a property of the customer's HTML. A page whose layout lives
+      // in its markup gets patched in place, forever. A page whose layout is
+      // per-element pixel coordinates in a stylesheet cannot be restructured at
+      // all: new markup has no coordinates, so it lands on top of the original
+      // instead of flowing after it — which is exactly what happened to the
+      // Unbounce page that prompted all of this. See ai-page-layout.ts.
+      const layout = analyzePageLayout(htmlNoDataUris);
+      const outcome = describePrepOutcome(layout, droppedEmptyBoxes.length);
+      console.log('[schema-from-html] layout verdict', {
+        kind: layout.kind,
+        strategy: outcome.strategy,
+        positioned: layout.positioned,
+        candidates: layout.candidates,
+        blocks: layout.blocks,
+        blocksPositioned: layout.blocksPositioned,
+        share: Number(layout.share.toFixed(2)),
+        containerHeightPx: layout.containerHeightPx,
+        reasons: layout.reasons,
+        sectionMapOk: quality.ok,
+      });
 
       // Swap real image bytes back in now that positions/markers are locked in —
       // both in the saved HTML and in the schema values the editor reads to show
@@ -813,6 +920,10 @@ export async function POST(
           html_url: current?.html_url ?? '',
           schema_json: isVariant ? current?.draft_schema_json : current?.schema_json,
           elapsed_ms: Date.now() - startedAt,
+          // A concurrent call stored the annotation, but the layout verdict is a
+          // property of the page itself, so it is just as true here.
+          prep_strategy: outcome.strategy,
+          prep_note: outcome.message,
         });
         closeSSE(controller);
         return;
@@ -830,6 +941,8 @@ export async function POST(
         html_url: updated.html_url ?? '',
         schema_json: isVariant ? updated.draft_schema_json : updated.schema_json,
         elapsed_ms: Date.now() - startedAt,
+        prep_strategy: outcome.strategy,
+        prep_note: outcome.message,
       });
       closeSSE(controller);
     } catch (err) {

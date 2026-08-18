@@ -348,6 +348,187 @@ assert('no schema still runs the structural pass',
 assert('unbalanced markup does not throw',
   typeof M.repairSlMarkers('<body><section><div>oh dear this is broken', null).html === 'string');
 
+// ═══════════════════════════════════════════════════════════════════════════
+// markerQuality — are the boxes any good, not just present?
+//
+// The bug: an Unbounce upload passed markerCoverage cleanly and was still
+// unusable. 19 of its 22 boxes were empty wrapper divs (~188 bytes each), one
+// held the entire 171KB page, and one was the stylesheet. The router was then
+// offered a box called "hero" that had nothing in it, picked it (the only box
+// whose NAME matched "redesign the hero"), and a brand new hero was written into
+// an empty div and stacked on top of the real page.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const box = (name, inner) => `<!-- SL:${name} -->\n${inner}\n<!-- /SL:${name} -->`;
+// Markers removed and whitespace BETWEEN TAGS normalized. Dropping a marker
+// pair takes the newline it was written with; `strip` above only takes trailing
+// newlines, so the two disagree by one space where markers were nested.
+const bones = (h) => strip(h).replace(/>\s+</g, '><');
+
+const goodMap = `<body>
+${box('nav', '<nav><a href="/">Home</a><a href="/pricing">Pricing</a></nav>')}
+${box('hero', '<section><h1>Grow your business faster</h1><p>Real copy here.</p></section>')}
+${box('features', '<section><h2>What you get</h2><p>Three good reasons.</p></section>')}
+${box('footer', '<footer><p>© 2026 Some Company Ltd</p></footer>')}
+</body>`;
+const good = M.markerQuality(goodMap);
+assert('a page with four real boxes reads as ok', good.ok, JSON.stringify(good.empty));
+assert('and none of them is empty', good.empty.length === 0);
+assert('and none of them is hogging the page', good.dominant === null);
+// The false positive that a 15-character threshold produced: a real nav bar
+// ("Home", "Pricing") called empty, which would have dropped the markers off the
+// section users ask about most.
+assert('a nav bar with two short links is not an empty box',
+  !good.empty.includes('nav'));
+assert('a box holding nothing but whitespace and entities IS empty',
+  M.markerQuality(`<body>${box('pad', '<div>&nbsp; &nbsp;</div>')}${box('r', '<section><h1>Real headline here</h1></section>')}</body>`)
+    .empty.includes('pad'));
+
+// The real shape: empty wrapper boxes plus one box holding everything.
+const decoyMap = `<body>
+${box('head', '<style>body{color:#000}</style>')}
+${box('lp-positioned-content', '<div class="lp-positioned-content">' +
+  '<h1>Investors across the country are earning monthly income</h1>' +
+  '<p>' + 'Long real page copy. '.repeat(60) + '</p>' +
+  '<img src="/hero.jpg"><img src="/proof.jpg"><iframe src="/video"></iframe></div>')}
+${box('hero', '<div class="lp-element lp-pom-block" id="lp-pom-block-622"><div id="lp-pom-block-622-color-overlay"></div><div class="lp-pom-block-content"></div></div>')}
+${box('stats', '<div class="lp-element lp-pom-block" id="lp-pom-block-379"><div class="lp-pom-block-content"></div></div>')}
+${box('footer', '<div class="lp-element lp-pom-block" id="lp-pom-block-400"><div class="lp-pom-block-content"></div></div>')}
+</body>`;
+const decoy = M.markerQuality(decoyMap);
+assert('empty wrapper boxes are found', decoy.empty.length === 3 &&
+  ['hero', 'stats', 'footer'].every((n) => decoy.empty.includes(n)), JSON.stringify(decoy.empty));
+assert('the box holding the whole page is found',
+  decoy.dominant !== null && decoy.dominant.name === 'lp-positioned-content',
+  JSON.stringify(decoy.dominant));
+assert('so the map is reported as bad', !decoy.ok);
+assert('and the stylesheet box is never called empty', !decoy.empty.includes('head'));
+assert('nor counted when judging what hogs the page',
+  !decoy.boxes.find((b) => b.name === 'head')?.empty);
+
+// A box holding only a script, or only a comment, is empty.
+const scriptBox = `<body>${box('a', '<div><script>var x = 1;</script></div>')}${box('b', '<section><h1>Real content in here</h1></section>')}${box('c', '<div><!-- placeholder --></div>')}</body>`;
+const scriptQ = M.markerQuality(scriptBox);
+assert('a box holding only a <script> is empty', scriptQ.empty.includes('a'));
+assert('a box holding only a comment is empty', scriptQ.empty.includes('c'));
+assert('a box with real content is not', !scriptQ.empty.includes('b'));
+
+// Content that is not text still counts as content.
+const mediaBoxes = `<body>
+${box('logo-strip', '<div><img src="/a.png"><img src="/b.png"></div>')}
+${box('band', '<div style="background-image:url(/photo.jpg)"></div>')}
+${box('embed', '<div><iframe src="https://player.example/1"></iframe></div>')}
+${box('form', '<form><input name="email"><textarea name="msg"></textarea></form>')}
+</body>`;
+const media = M.markerQuality(mediaBoxes);
+assert('images, CSS backgrounds, iframes and form fields all count as content',
+  media.empty.length === 0, JSON.stringify(media.empty));
+
+// One- and two-box pages have nothing to spread content across.
+const oneBox = `<body>${box('page', '<section><h1>A single-block fragment</h1><p>' + 'copy '.repeat(50) + '</p></section>')}</body>`;
+assert('a one-box page is not accused of hogging itself', M.markerQuality(oneBox).ok);
+assert('a page with no markers at all is ok, not broken',
+  M.markerQuality('<body><section><h1>No markers here</h1></section></body>').ok);
+assert('empty html is ok', M.markerQuality('').ok);
+
+// Nested boxes: only the outer ones are offered to the router, but an empty box
+// hidden one level down still has to be found.
+const nestedBoxes = `<body>
+${box('outer', '<section><h1>Outer section with real copy in it</h1>' + box('inner-empty', '<div></div>') + '</section>')}
+${box('two', '<section><h2>Second real section</h2><p>More copy.</p></section>')}
+${box('three', '<section><h2>Third real section</h2><p>More copy.</p></section>')}
+</body>`;
+const nest = M.markerQuality(nestedBoxes);
+assert('an empty box nested inside a real one is still found', nest.empty.includes('inner-empty'));
+assert('and the nesting is recorded', nest.boxes.find((b) => b.name === 'inner-empty')?.nested === true);
+assert('while the outer box is not marked nested', nest.boxes.find((b) => b.name === 'outer')?.nested === false);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// dropEmptySectionMarkers — remove the decoys, change nothing else
+// ═══════════════════════════════════════════════════════════════════════════
+
+const dropped = M.dropEmptySectionMarkers(decoyMap);
+assert('the three empty boxes lose their markers', dropped.dropped.length === 3);
+assert('and are really gone from the html',
+  countMarkers(dropped.html, 'hero') === 0 &&
+  countMarkers(dropped.html, 'stats') === 0 &&
+  countMarkers(dropped.html, 'footer') === 0);
+assert('the boxes that hold something keep theirs',
+  countMarkers(dropped.html, 'lp-positioned-content') === 1 && countMarkers(dropped.html, 'head') === 1);
+assert('no half-pairs are left behind',
+  (dropped.html.match(/<!-- SL:/g) || []).length === (dropped.html.match(/<!-- \/SL:/g) || []).length);
+assert('the PAGE itself is untouched — same markup, byte for byte', bones(dropped.html) === bones(decoyMap));
+assert('and the empty divs are still on the page, just not addressable',
+  dropped.html.includes('id="lp-pom-block-622"') && dropped.html.includes('id="lp-pom-block-379"'));
+assert('running it again is a no-op', M.dropEmptySectionMarkers(dropped.html).dropped.length === 0);
+assert('what is left reads as having no empty boxes', M.markerQuality(dropped.html).empty.length === 0);
+
+// The one thing it must never do: leave a page with nothing to edit.
+const allEmpty = `<body>${box('a', '<div></div>')}${box('b', '<div></div>')}</body>`;
+const allE = M.dropEmptySectionMarkers(allEmpty);
+assert('a page whose every box is empty is left alone',
+  allE.dropped.length === 0 && allE.html === allEmpty);
+const onlyCss = `<body>${box('head', '<style>body{color:#000}</style>')}${box('a', '<div></div>')}</body>`;
+const onlyC = M.dropEmptySectionMarkers(onlyCss);
+assert('and so is one where only the stylesheet box would survive',
+  onlyC.dropped.length === 0 && onlyC.html === onlyCss);
+
+// Two empty boxes nested in each other — the case that breaks any
+// one-at-a-time rewrite, since editing the inner one shifts the outer's offsets.
+const nestedEmpty = `<body>${box('outer-empty', '<div>' + box('inner-empty', '<div></div>') + '</div>')}${box('real', '<section><h1>Something real to keep</h1></section>')}</body>`;
+const nestE = M.dropEmptySectionMarkers(nestedEmpty);
+assert('nested empty boxes are both dropped in one pass', nestE.dropped.length === 2);
+assert('and the result has no stray markers',
+  !/SL:outer-empty/.test(nestE.html) && !/SL:inner-empty/.test(nestE.html) &&
+  countMarkers(nestE.html, 'real') === 1);
+assert('and the page survives it', bones(nestE.html) === bones(nestedEmpty));
+
+// Minified input gets markers with no newlines — cutting must not eat markup.
+const minifiedBoxes = `<body><!-- SL:e --><div class="lp-pom-block"></div><!-- /SL:e --><!-- SL:r --><section><h1>Real headline right here</h1></section><!-- /SL:r --></body>`;
+const minD = M.dropEmptySectionMarkers(minifiedBoxes);
+assert('a minified page drops its empty box cleanly',
+  minD.dropped.length === 1 && bones(minD.html) === bones(minifiedBoxes) &&
+  minD.html.includes('<div class="lp-pom-block"></div>'));
+
+assert('empty html does not throw', M.dropEmptySectionMarkers('').html === '');
+assert('an unclosed marker is skipped, not guessed at',
+  M.dropEmptySectionMarkers('<body><!-- SL:x --><div></div></body>').dropped.length === 0);
+
+// Both of these run on every prepare, build and follow-up edit, on pages up to
+// half a megabyte — so they are timed, not just checked.
+{
+  const many = `<body>${Array.from({ length: 300 }, (_, i) =>
+    box(`s${i}`, `<section><h2>Section ${i}</h2><p>${'body copy '.repeat(40)}</p></section>`),
+  ).join('\n')}</body>`;
+  let t = Date.now();
+  const q = M.markerQuality(many);
+  const qms = Date.now() - t;
+  assert(`300 boxes on a ${(many.length / 1024) | 0}KB page measured in under 1500ms`, qms < 1500);
+  assert('and all 300 read as real content', q.empty.length === 0 && q.ok);
+
+  t = Date.now();
+  M.dropEmptySectionMarkers(many);
+  assert('dropping empties on the same page is under 1500ms', Date.now() - t < 1500);
+
+  // A long declaration that never reaches url() is the shape that makes a
+  // background-image scan backtrack.
+  const nastyBg = `<body>${box('a', `<div style="background:${'linear-gradient(red,blue),'.repeat(4000)}none"></div>`)}${box('b', '<section><h1>Real content here</h1></section>')}</body>`;
+  t = Date.now();
+  M.markerQuality(nastyBg);
+  assert('a 100KB background declaration with no url() is under 1500ms', Date.now() - t < 1500);
+}
+
+// A page we built ourselves must come out of both untouched.
+if (existsSync(templatePath)) {
+  const ours = readFileSync(templatePath, 'utf8');
+  const repaired = M.repairSlMarkers(ours, null).html;
+  const q = M.markerQuality(repaired);
+  assert('our own repaired page has no empty boxes', q.empty.length === 0, JSON.stringify(q.empty));
+  assert('and no box hogging it', q.dominant === null, JSON.stringify(q.dominant));
+  assert('so dropping empties is a no-op on it',
+    M.dropEmptySectionMarkers(repaired).html === repaired);
+}
+
 rmSync(outDir, { recursive: true, force: true });
 
 if (failed > 0) {

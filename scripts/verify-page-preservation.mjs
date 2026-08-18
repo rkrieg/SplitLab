@@ -341,6 +341,93 @@ assert('a section merged away inside the run is the edit, not damage',
   mergedSection.inside.sections.includes('about') &&
   mergedSection.outside.sections.length === 0);
 
+// ── restoreLostImagesInPlace: image-granularity repair, not section revert ──
+// The generalized fix: a broad "make the whole page responsive" rewrite can
+// legitimately repad a section AND silently drop an unrelated image in that
+// same output. restoreDamagedSections refuses to touch that section (it was
+// part of the request), so this is the only thing that can put the image
+// back without undoing the real padding change.
+const paddedSectionWithLogo = `
+<!-- SL:for-investors --><section style="padding:12px"><h2>For Investors</h2><img src="https://cdn.site.com/logo.png" data-field="for-investors.logo" alt="Titan Funding"/></section><!-- /SL:for-investors -->
+<!-- SL:footer --><footer><p>Contact us</p></footer><!-- /SL:footer -->`;
+
+// The model correctly widened the padding for the responsive ask, but the
+// logo tag silently vanished from the same section's output.
+const paddedSectionLogoDropped = `
+<!-- SL:for-investors --><section style="padding:32px"><h2>For Investors</h2></section><!-- /SL:for-investors -->
+<!-- SL:footer --><footer><p>Contact us</p></footer><!-- /SL:footer -->`;
+
+const imageRestore = P.restoreLostImagesInPlace({
+  beforeHtml: paddedSectionWithLogo,
+  afterHtml: paddedSectionLogoDropped,
+  images: ['https://cdn.site.com/logo.png'],
+});
+assert('the missing image is reported as restored', imageRestore.restored.join(',') === 'https://cdn.site.com/logo.png');
+assert('the image comes back with its original data-field intact',
+  imageRestore.html.includes('data-field="for-investors.logo"'));
+assert('the padding change the edit actually made survives the repair',
+  imageRestore.html.includes('padding:32px') && !imageRestore.html.includes('padding:12px'));
+assert('nothing else in the section is reverted (heading untouched, footer untouched)',
+  imageRestore.html.includes('<h2>For Investors</h2>') && imageRestore.html.includes('<p>Contact us</p>'));
+
+// Already present → no-op, not a second copy.
+const noOpRestore = P.restoreLostImagesInPlace({
+  beforeHtml: paddedSectionWithLogo,
+  afterHtml: paddedSectionWithLogo,
+  images: ['https://cdn.site.com/logo.png'],
+});
+assert('an image that is already present is left alone', noOpRestore.restored.length === 0);
+assert('no-op does not duplicate the tag',
+  (noOpRestore.html.match(/logo\.png/g) ?? []).length === 1);
+
+// The section itself is gone entirely — that is restoreDamagedSections' job,
+// not this one. Must not throw, must not invent a section.
+const sectionAlsoGone = `<!-- SL:footer --><footer><p>Contact us</p></footer><!-- /SL:footer -->`;
+const cannotPlace = P.restoreLostImagesInPlace({
+  beforeHtml: paddedSectionWithLogo,
+  afterHtml: sectionAlsoGone,
+  images: ['https://cdn.site.com/logo.png'],
+});
+assert('a vanished section is left to restoreDamagedSections, not guessed at',
+  cannotPlace.restored.length === 0 && cannotPlace.html === sectionAlsoGone);
+
+// Dollar-figure copy must survive byte-for-byte — String.replace() treats
+// "$1", "$&", "$50" etc. in a STRING replacement as capture-group syntax even
+// when the search side is a plain string, which would silently mangle a
+// dollar amount sitting in the same section as the restored image.
+const dollarSection = `
+<!-- SL:pricing --><section><h2>Get a check for $50 every month, up to $500M funded</h2><img src="https://cdn.site.com/badge.png" data-field="pricing.badge"/></section><!-- /SL:pricing -->`;
+const dollarDropped = `
+<!-- SL:pricing --><section><h2>Get a check for $50 every month, up to $500M funded</h2></section><!-- /SL:pricing -->`;
+const dollarRestore = P.restoreLostImagesInPlace({
+  beforeHtml: dollarSection,
+  afterHtml: dollarDropped,
+  images: ['https://cdn.site.com/badge.png'],
+});
+assert('a dollar figure next to the restored image is not mangled by $-replacement syntax',
+  dollarRestore.html.includes('$50 every month, up to $500M funded'));
+assert('the badge image is restored alongside the untouched dollar copy',
+  dollarRestore.html.includes('https://cdn.site.com/badge.png'));
+
+// Same image used in two places, lost from both — both come back, each with
+// its own original data-field (not a single guessed name copied twice).
+const twoSpots = `
+<!-- SL:nav --><nav><img src="https://cdn.site.com/logo.png" data-field="nav.logo"/></nav><!-- /SL:nav -->
+<!-- SL:footer --><footer><img src="https://cdn.site.com/logo.png" data-field="footer.logo"/></footer><!-- /SL:footer -->`;
+const twoSpotsDropped = `
+<!-- SL:nav --><nav></nav><!-- /SL:nav -->
+<!-- SL:footer --><footer></footer><!-- /SL:footer -->`;
+const twoSpotsRestore = P.restoreLostImagesInPlace({
+  beforeHtml: twoSpots,
+  afterHtml: twoSpotsDropped,
+  images: ['https://cdn.site.com/logo.png'],
+});
+assert('an image used in two sections is restored to both',
+  (twoSpotsRestore.html.match(/logo\.png/g) ?? []).length === 2);
+assert('each restored copy keeps ITS OWN original data-field name',
+  twoSpotsRestore.html.includes('data-field="nav.logo"') &&
+  twoSpotsRestore.html.includes('data-field="footer.logo"'));
+
 rmSync(outDir, { recursive: true, force: true });
 
 if (failed > 0) {

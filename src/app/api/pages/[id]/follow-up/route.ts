@@ -5,7 +5,8 @@ import { db } from '@/lib/supabase-server';
 import { jsonrepair } from 'jsonrepair';
 import { askAI, askAIStream, isRateLimited, generatePageImages, generateAndUploadImage, AIResponseTruncatedError, isPromptTooLongError, userFacingAIErrorMessage, type AIContent, type AIContentBlock } from '@/lib/ai-client';
 import { remainingInputChars } from '@/lib/ai-context-budget';
-import { repairSlMarkers, markerCoverage } from '@/lib/ai-sl-markers';
+import { repairSlMarkers, markerCoverage, markerQuality } from '@/lib/ai-sl-markers';
+import { analyzePageLayout, countLayoutElements } from '@/lib/ai-page-layout';
 import { uploadHtml, downloadHtmlByPath, fileNameFromUrl } from '@/lib/storage';
 import { resolveWorkspaceRole, resolveOwnerPlan, resolveWorkspaceOwner } from '@/lib/workspace-auth';
 import { PLAN_LIMITS } from '@/lib/plans';
@@ -60,6 +61,7 @@ import {
   hasLosses,
   describeLosses,
   restoreDamagedSections,
+  restoreLostImagesInPlace,
   splitLossesByRegion,
   sectionsContainingAsset,
   snapshotPageFacts,
@@ -1500,7 +1502,15 @@ async function applyRegionRewriteToHtml(opts: {
   let editableNames: string[];
   let regionUnresolved = false;
   if (bodyChars <= contextBudget) {
-    editableNames = body.map((sec) => sec.name);
+    // The page fits whole, but "fits" is not "wide open" — the classifier
+    // already named which sections this message is about (`focus`), and a
+    // narrow ask (align the footer) must not hand the model every other
+    // section as editable just because there was room to. Everything else
+    // still reaches the model as read-only context below, so nothing named
+    // by a later ask goes unseen — it just can't be silently rewritten.
+    // Fall back to the whole page only when the classifier found nothing to
+    // scope to, same as the over-budget branch below.
+    editableNames = focus.length > 0 ? focus : body.map((sec) => sec.name);
   } else {
     const region = await resolveEditRegion({
       instruction: opts.instruction,
@@ -2059,6 +2069,21 @@ export async function POST(
         blocks: coverage.blocks,
         marked: coverage.marked,
         unmarked: coverage.unmarked,
+      });
+    }
+
+    // Measured, never acted on here. Both of these describe how the page was
+    // PREPARED, and the fix for either one is to re-cut its boxes — which is
+    // safe only at prep, since the schema, every click-to-edit field and the
+    // whole chat history are keyed to the section names this page already has.
+    // Re-cutting them mid-conversation would break a page that is live on a
+    // test. Logged so a page that arrives here in a bad state is visible at the
+    // time of the edit rather than inferred from a screenshot days later.
+    const quality = markerQuality(html);
+    if (!quality.ok) {
+      console.error('[pages/follow-up] section map this edit has to work with is poor', {
+        emptyBoxes: quality.empty,
+        dominant: quality.dominant,
       });
     }
   }
@@ -5088,6 +5113,19 @@ export async function POST(
       // Collateral damage guard: an edit about colors has no business deleting
       // the logo. Compare against the pre-edit page and put back what vanished
       // without being asked for. Skipped entirely when the user said "remove".
+      //
+      // WHY this layer has to exist at all: when a rewrite covers several
+      // sections in one completion (a broad "make the whole page responsive"
+      // easily reaches 6+ sections, tens of thousands of output tokens,
+      // minutes of generation), the model has to faithfully reproduce every
+      // untouched element in that same output while also making the change it
+      // was actually asked for — and it can silently drop something small it
+      // wasn't focused on, like one unrelated <img>. That is a model
+      // limitation, not something narrower prompts or better instructions can
+      // guarantee away; smaller calls lower the odds, they don't zero them
+      // out. So the guarantee has to live here: we can't stop the model from
+      // occasionally dropping something, but we can make sure a drop never
+      // costs the user their whole edit.
       const losses = findUnrequestedLosses({
         beforeHtml: originalHtmlForPreservation,
         afterHtml: finalHtmlPersisted,
@@ -5126,7 +5164,19 @@ export async function POST(
           if (targets.length === 0) targets.push('nav', 'footer');
           const restored = forceEmbedLogoIntoSections(finalHtmlPersisted, targets, lostLogo, null);
           if (restored !== finalHtmlPersisted) {
-            finalHtmlPersisted = restored;
+            // forceEmbedLogoIntoSections writes a bare <img>, with no
+            // data-field — it has no idea what the schema called this leaf.
+            // Left alone, the very fix for "logo disappeared" turns into a
+            // NEW loss ("logo is no longer click-to-edit") that the guard
+            // below has no way to tell apart from real damage, and the whole
+            // edit — every section this turn legitimately touched — gets
+            // thrown away over an attribute our own repair forgot to carry.
+            // stampSchemaDataFields matches by exact URL, so it reattaches
+            // the logo's ORIGINAL path rather than inventing a new one.
+            finalHtmlPersisted = ensureClickToEditFields(
+              restored,
+              finalSchemaJsonReal ?? (schema as Record<string, unknown> | null),
+            );
             restoredLogo = true;
             console.log('[pages/follow-up] restored logo removed without request', {
               targets,
@@ -5266,10 +5316,36 @@ export async function POST(
             losses: remaining,
             protectedSections: requestedSections,
           });
-          if (repair.restored.length > 0) {
+
+          // The section-level repair above only ever touches sections the
+          // request was NOT about (protectedSections), on purpose — reverting
+          // a section the model was legitimately rewriting would undo real
+          // work along with the damage. That leaves exactly the case the logo
+          // fix above exists for, generalized past "logo": an image dropped
+          // from a section the request WAS about. Put just that image back,
+          // at image granularity, rather than reverting the section around
+          // it. Runs on whatever restoreDamagedSections didn't already fix.
+          const stillMissingImages = remaining.images.filter((u) => !repair.html.includes(u));
+          const imageRepair =
+            stillMissingImages.length > 0
+              ? restoreLostImagesInPlace({
+                  beforeHtml: originalHtmlForPreservation,
+                  afterHtml: repair.html,
+                  images: stillMissingImages,
+                })
+              : { html: repair.html, restored: [] as string[] };
+          const repairedHtml =
+            imageRepair.restored.length > 0
+              ? ensureClickToEditFields(
+                  imageRepair.html,
+                  finalSchemaJsonReal ?? (schema as Record<string, unknown> | null),
+                )
+              : imageRepair.html;
+
+          if (repair.restored.length > 0 || imageRepair.restored.length > 0) {
             const afterRepair = findUnrequestedLosses({
               beforeHtml: originalHtmlForPreservation,
-              afterHtml: repair.html,
+              afterHtml: repairedHtml,
               prompt,
               removalIntent: intent.removalIntent,
             });
@@ -5285,19 +5361,20 @@ export async function POST(
                   sections: sectionsContainingAsset(originalHtmlForPreservation, url),
                 })),
                 requestedSections,
-                headingsAfter: snapshotPageFacts(repair.html).headings,
+                headingsAfter: snapshotPageFacts(repairedHtml).headings,
                 usage: usageCtx,
               });
               stillDestructive = !rejudged.intended;
               if (stillDestructive) lossSummary = rejudged.summary;
             }
             console.log('[pages/follow-up] collateral repair', {
-              restored: repair.restored,
+              restoredSections: repair.restored,
+              restoredImages: imageRepair.restored,
               protectedSections: requestedSections,
               stillDestructive,
             });
             if (!stillDestructive) {
-              finalHtmlPersisted = repair.html;
+              finalHtmlPersisted = repairedHtml;
               effectiveLosses = afterRepair;
               destructive = false;
             }
@@ -5456,6 +5533,46 @@ export async function POST(
       // Report any accrued overage to Stripe (no-op unless overage is enabled
       // and a metered price is configured). Fire-and-forget.
       void reportAiOverageUsage(aiOwnerId);
+
+      // ── Did this edit add markup the page has nowhere to put? ─────────────
+      //
+      // On a coordinate-layout page every element is placed by a left/top rule
+      // in the head stylesheet, which no scoped edit can see or write. Anything
+      // NEW has no rule, so it does not flow after the existing content — it
+      // lands on top of it. That is how a redesigned hero ended up overlapping
+      // the hero it replaced while we reported "Done!" twice.
+      //
+      // Not blocked, because the edit is done and saved and blocking it here
+      // would throw away work the user asked for. Said out loud instead, on the
+      // `notes` channel — which keeps the "Done!" headline and adds the caveat,
+      // rather than the false "Partly done" that a partial_message would give.
+      // The real fix for these pages is upstream: prep now tells the user their
+      // page cannot be restructured BEFORE they type anything (see
+      // ai-page-layout.ts and schema-from-html).
+      const editedLayout = analyzePageLayout(originalHtmlForPreservation);
+      if (editedLayout.kind === 'coordinate') {
+        // Both sides have to be the same KIND of html to be counted against each
+        // other. `originalHtmlForPreservation` holds image placeholders and
+        // finalHtmlPersisted holds the real bytes back — and an inline
+        // `data:image/svg+xml,<svg…>` puts tags into the string on one side only,
+        // which would read as elements this edit had added. Restoring the
+        // original costs one string pass, and only on the rare coordinate page.
+        const added =
+          countLayoutElements(finalHtmlPersisted) -
+          countLayoutElements(restoreDataUris(originalHtmlForPreservation, dataUriMap));
+        console.log('[pages/follow-up] coordinate-layout page edited', {
+          addedLayoutElements: added,
+          reasons: editedLayout.reasons,
+        });
+        if (added > 0) {
+          addNote(
+            `Heads-up: this page positions every element at fixed pixel coordinates in its stylesheet, ` +
+            `and this edit added ${added} new element${added === 1 ? '' : 's'} that the stylesheet has no ` +
+            `position for — they may sit on top of the original content instead of flowing after it. ` +
+            `Check the preview. Restructuring a page like this isn't reliable; it needs rebuilding first.`,
+          );
+        }
+      }
 
       const doneEvent: SSEEvent = {
         type: 'done',

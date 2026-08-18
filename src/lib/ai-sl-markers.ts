@@ -594,3 +594,275 @@ export function markerCoverage(html: string): {
 
   return { blocks, marked, unmarked };
 }
+
+// ── Are the boxes any good? ─────────────────────────────────────────────────
+//
+// markerCoverage above answers "is every block INSIDE a box?" — and that turned
+// out to be the wrong question. An Unbounce upload passed it cleanly and was
+// still unusable, because Unbounce keeps its content in absolutely-positioned
+// siblings rather than inside its wrapper divs. The 22 markers we stamped were:
+//
+//   lp-positioned-content   171,515 bytes   ← the entire page, in one box
+//   head                     96,244 bytes   ← the stylesheet, as a "section"
+//   stats / qualify / cta / footer / lp-element … ~188 bytes each, 19 of them
+//                                           ← empty wrappers, no content at all
+//
+// Every block was inside a box, so coverage reported clean. Then the router was
+// offered a box called "hero" that was empty, picked it (reasonably — it is the
+// only box whose NAME matches "redesign the hero"), and the editing model, shown
+// an empty div and asked for a hero, wrote a brand new one. Nothing had told
+// anyone the box was a decoy.
+//
+// So this asks the two questions that actually matter, by counting — no AI, no
+// class-name sniffing, nothing specific to one builder:
+//
+//   1. Is any box empty?           → a decoy the router can be lured into
+//   2. Is one box hogging the page? → nothing else can be addressed separately
+//
+// `head` is exempt from both: prep deliberately marks the <style> block under
+// that name (see schema-from-html's SYSTEM_PROMPT) so global CSS can be edited,
+// and a stylesheet legitimately has no visible text.
+
+/** The name prep gives the <style> block. Never a content box. */
+const CSS_BOX_NAME = 'head';
+
+/**
+ * Below this a box has no text at all — not "not much text".
+ *
+ * Deliberately tiny. The first version used 15 characters and flagged a real
+ * navigation bar (`Home` + `Pricing` = 12 characters) as an empty decoy, which
+ * would have dropped the markers off the one section users ask about most. The
+ * boxes this is hunting have literally nothing in them:
+ *
+ *   <div class="lp-element lp-pom-block" id="lp-pom-block-622">
+ *     <div id="lp-pom-block-622-color-overlay"></div>
+ *     <div class="lp-pom-block-content"></div>
+ *   </div>
+ *
+ * Three characters, rather than zero, so a box holding a stray bullet, a
+ * non-breaking space or a lone period is still recognised as empty.
+ */
+const MIN_BOX_TEXT_CHARS = 3;
+
+/** Non-text content is worth roughly this much text when weighing a box. */
+const MEDIA_WEIGHT = 250;
+
+/** One box holding this much of the page means the rest cannot be reached. */
+const DOMINANT_SHARE = 0.7;
+
+/** Below this there is nothing for content to be spread ACROSS. */
+const MIN_BOXES_TO_JUDGE = 3;
+
+export interface SectionBox {
+  name: string;
+  /** Bytes between the markers. */
+  bytes: number;
+  /** Visible text characters, tags stripped and whitespace collapsed. */
+  textChars: number;
+  /** Images, video, iframes, form fields, CSS backgrounds — content that isn't text. */
+  media: number;
+  /** This box sits inside another box, so the router never offers it on its own. */
+  nested: boolean;
+  /** Nothing a user could see or edit. A decoy. */
+  empty: boolean;
+}
+
+export interface MarkerQuality {
+  boxes: SectionBox[];
+  /** Names of boxes with no content in them. */
+  empty: string[];
+  /** The one box holding most of the page, if there is one. */
+  dominant: { name: string; share: number } | null;
+  /** Nothing wrong found. A page with 0-2 boxes is always ok — see above. */
+  ok: boolean;
+}
+
+interface SectionSpan {
+  name: string;
+  /** Byte range of the whole thing, opening comment through closing comment. */
+  outerStart: number;
+  outerEnd: number;
+  /** Byte range between the comments. */
+  innerStart: number;
+  innerEnd: number;
+}
+
+/**
+ * Every <!-- SL:name --> pair on the page, nesting included.
+ *
+ * Pairs by NAME rather than by scanning forwards to the next close comment,
+ * because a box can legitimately contain another box, and the non-greedy regex
+ * the routes use for reading sections would then hand back the outer box only —
+ * fine for editing, useless for finding a decoy hidden one level down.
+ *
+ * Names are unique per page by construction (`uniqueName` here, `usedNames` in
+ * schema-from-html), so first-open/first-matching-close is unambiguous. An open
+ * marker with no close is skipped rather than guessed at.
+ */
+function sectionSpans(html: string): SectionSpan[] {
+  const spans: SectionSpan[] = [];
+  const openRe = /<!--\s*SL:([a-zA-Z0-9_-]+)\s*-->/g;
+  let m: RegExpExecArray | null;
+  while ((m = openRe.exec(html))) {
+    const name = m[1];
+    const closeRe = new RegExp(`<!--\\s*/SL:${name}\\s*-->`, 'g');
+    closeRe.lastIndex = m.index + m[0].length;
+    const close = closeRe.exec(html);
+    if (!close) continue;
+    spans.push({
+      name,
+      outerStart: m.index,
+      outerEnd: close.index + close[0].length,
+      innerStart: m.index + m[0].length,
+      innerEnd: close.index,
+    });
+  }
+  return spans;
+}
+
+/** Tags that put something on screen without contributing any text. */
+const MEDIA_RE = /<(?:img|iframe|video|audio|canvas|picture|source|input|select|textarea|svg)\b/gi;
+const CSS_BACKGROUND_RE = /background(?:-image)?\s*:\s*[^;"']*url\s*\(/gi;
+
+function countMatches(s: string, re: RegExp): number {
+  return (s.match(re) ?? []).length;
+}
+
+function visibleTextChars(inner: string): string {
+  return inner
+    // Opaque subtrees are not visible text — a box holding only a <script> is empty.
+    .replace(/<(script|style|noscript|template)\b[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    // Whitespace entities are whitespace. Padding a box with &nbsp; does not
+    // put anything in it, and counting each one as a visible character was
+    // enough to make a spacer div look like real content.
+    .replace(/&(nbsp|ensp|emsp|thinsp|zwnj|zwj|#160|#xa0|#xA0);/gi, ' ')
+    // Any other entity renders as one glyph — an arrow, a dash, a symbol.
+    .replace(/&[a-z#0-9]+;/gi, 'x')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Measure the boxes on a page: are any of them empty, is one of them the page?
+ *
+ * Pure counting. Logged everywhere markers are written (build, follow-up, prep)
+ * so a bad map is visible at the source, and acted on only at prep — the schema,
+ * the click-to-edit fields and the chat history are all keyed to section names,
+ * so re-cutting boxes mid-conversation would break a live page.
+ */
+export function markerQuality(html: string): MarkerQuality {
+  const spans = sectionSpans(html);
+  const boxes: SectionBox[] = spans.map((s) => {
+    const inner = html.slice(s.innerStart, s.innerEnd);
+    const text = visibleTextChars(inner);
+    const media =
+      countMatches(inner, MEDIA_RE) + countMatches(inner, CSS_BACKGROUND_RE);
+    const nested = spans.some(
+      (o) => o !== s && o.outerStart < s.outerStart && o.outerEnd > s.outerEnd,
+    );
+    return {
+      name: s.name,
+      bytes: s.innerEnd - s.innerStart,
+      textChars: text.length,
+      media,
+      nested,
+      empty:
+        s.name !== CSS_BOX_NAME && text.length < MIN_BOX_TEXT_CHARS && media === 0,
+    };
+  });
+
+  const empty = boxes.filter((b) => b.empty).map((b) => b.name);
+
+  // Dominance is judged on the boxes the router is actually offered: top-level
+  // ones, minus the stylesheet box.
+  const offered = boxes.filter((b) => !b.nested && b.name !== CSS_BOX_NAME);
+  const weight = (b: SectionBox) => b.textChars + b.media * MEDIA_WEIGHT;
+  const total = offered.reduce((sum, b) => sum + weight(b), 0);
+  let dominant: { name: string; share: number } | null = null;
+  if (offered.length >= MIN_BOXES_TO_JUDGE && total > 0) {
+    const top = offered.reduce((a, b) => (weight(b) > weight(a) ? b : a));
+    const share = weight(top) / total;
+    if (share >= DOMINANT_SHARE) dominant = { name: top.name, share };
+  }
+
+  // A one- or two-box page has nothing to spread content across, and an
+  // uploaded fragment legitimately IS one block. Not a fault.
+  const ok = offered.length < MIN_BOXES_TO_JUDGE
+    ? empty.length === 0
+    : empty.length === 0 && dominant === null;
+
+  return { boxes, empty, dominant, ok };
+}
+
+/**
+ * Remove the markers around boxes that hold nothing.
+ *
+ * This is the decoy fix, and it is deliberately the ONLY thing that rewrites a
+ * box — called from prep alone, before the page has a schema, a chat history, or
+ * any click-to-edit field keyed to a section name.
+ *
+ * Dropping a pair does not change the page: the element stays exactly where it
+ * was, byte for byte, it simply stops being offered as somewhere an edit could
+ * land. That is the whole point — an empty box is a name with nothing behind it,
+ * and the router picking one is how a hero got written into a 188-byte
+ * `<div class="lp-pom-block">` and stacked on top of the real page.
+ *
+ * Never drops everything: if the empty boxes are all there is, they are left
+ * alone so the page keeps at least one addressable section (a page with no
+ * markers at all forces every future edit into a full-page rewrite, which is a
+ * different and worse failure — see schema-from-html's no-sections guard).
+ */
+export function dropEmptySectionMarkers(html: string): { html: string; dropped: string[] } {
+  if (!html) return { html, dropped: [] };
+  const spans = sectionSpans(html);
+  if (spans.length === 0) return { html, dropped: [] };
+
+  const quality = markerQuality(html);
+  const emptyNames = new Set(quality.empty);
+  if (emptyNames.size === 0) return { html, dropped: [] };
+
+  // At least one box that isn't the stylesheet has to survive. Otherwise the
+  // page ends up with `head` as its only addressable section, and every future
+  // chat edit is forced into a full-page rewrite — slower, more expensive, and
+  // far more destructive than the empty boxes we were trying to remove.
+  const survivors = spans.filter(
+    (s) => !emptyNames.has(s.name) && s.name !== CSS_BOX_NAME,
+  );
+  if (survivors.length === 0) return { html, dropped: [] };
+
+  // Every byte range to delete, all computed against the ORIGINAL string, then
+  // merged and applied in one pass. Two empty boxes can be nested inside each
+  // other, so editing them one at a time would leave the outer box's offsets
+  // pointing into a string that had already shifted underneath it.
+  //
+  // The newline each marker was written with (see wrapAt) is swallowed along
+  // with it, so removing a pair leaves the source exactly as it was rather than
+  // a blank line — and only when it is actually there, since minified pages get
+  // markers with no newlines at all.
+  const cuts: Array<[number, number]> = [];
+  for (const s of spans) {
+    if (!emptyNames.has(s.name)) continue;
+    cuts.push([s.outerStart, html[s.innerStart] === '\n' ? s.innerStart + 1 : s.innerStart]);
+    cuts.push([html[s.innerEnd - 1] === '\n' ? s.innerEnd - 1 : s.innerEnd, s.outerEnd]);
+  }
+  cuts.sort((a, b) => a[0] - b[0]);
+
+  const merged: Array<[number, number]> = [];
+  for (const cut of cuts) {
+    const last = merged[merged.length - 1];
+    if (last && cut[0] <= last[1]) last[1] = Math.max(last[1], cut[1]);
+    else merged.push([cut[0], cut[1]]);
+  }
+
+  let out = '';
+  let at = 0;
+  for (const [start, end] of merged) {
+    out += html.slice(at, start);
+    at = end;
+  }
+  out += html.slice(at);
+
+  return { html: out, dropped: Array.from(emptyNames) };
+}
