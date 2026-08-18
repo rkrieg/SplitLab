@@ -5112,6 +5112,19 @@ export async function POST(
       // Collateral damage guard: an edit about colors has no business deleting
       // the logo. Compare against the pre-edit page and put back what vanished
       // without being asked for. Skipped entirely when the user said "remove".
+      //
+      // WHY this layer has to exist at all: when a rewrite covers several
+      // sections in one completion (a broad "make the whole page responsive"
+      // easily reaches 6+ sections, tens of thousands of output tokens,
+      // minutes of generation), the model has to faithfully reproduce every
+      // untouched element in that same output while also making the change it
+      // was actually asked for — and it can silently drop something small it
+      // wasn't focused on, like one unrelated <img>. That is a model
+      // limitation, not something narrower prompts or better instructions can
+      // guarantee away; smaller calls lower the odds, they don't zero them
+      // out. So the guarantee has to live here: we can't stop the model from
+      // occasionally dropping something, but we can make sure a drop never
+      // costs the user their whole edit.
       const losses = findUnrequestedLosses({
         beforeHtml: originalHtmlForPreservation,
         afterHtml: finalHtmlPersisted,
@@ -5150,7 +5163,19 @@ export async function POST(
           if (targets.length === 0) targets.push('nav', 'footer');
           const restored = forceEmbedLogoIntoSections(finalHtmlPersisted, targets, lostLogo, null);
           if (restored !== finalHtmlPersisted) {
-            finalHtmlPersisted = restored;
+            // forceEmbedLogoIntoSections writes a bare <img>, with no
+            // data-field — it has no idea what the schema called this leaf.
+            // Left alone, the very fix for "logo disappeared" turns into a
+            // NEW loss ("logo is no longer click-to-edit") that the guard
+            // below has no way to tell apart from real damage, and the whole
+            // edit — every section this turn legitimately touched — gets
+            // thrown away over an attribute our own repair forgot to carry.
+            // stampSchemaDataFields matches by exact URL, so it reattaches
+            // the logo's ORIGINAL path rather than inventing a new one.
+            finalHtmlPersisted = ensureClickToEditFields(
+              restored,
+              finalSchemaJsonReal ?? (schema as Record<string, unknown> | null),
+            );
             restoredLogo = true;
             console.log('[pages/follow-up] restored logo removed without request', {
               targets,
