@@ -5,7 +5,8 @@ import { db } from '@/lib/supabase-server';
 import { jsonrepair } from 'jsonrepair';
 import { askAI, askAIStream, isRateLimited, generatePageImages, generateAndUploadImage, AIResponseTruncatedError, isPromptTooLongError, userFacingAIErrorMessage, type AIContent, type AIContentBlock } from '@/lib/ai-client';
 import { remainingInputChars } from '@/lib/ai-context-budget';
-import { repairSlMarkers, markerCoverage } from '@/lib/ai-sl-markers';
+import { repairSlMarkers, markerCoverage, markerQuality } from '@/lib/ai-sl-markers';
+import { analyzePageLayout, countLayoutElements } from '@/lib/ai-page-layout';
 import { uploadHtml, downloadHtmlByPath, fileNameFromUrl } from '@/lib/storage';
 import { resolveWorkspaceRole, resolveOwnerPlan, resolveWorkspaceOwner } from '@/lib/workspace-auth';
 import { PLAN_LIMITS } from '@/lib/plans';
@@ -1500,7 +1501,15 @@ async function applyRegionRewriteToHtml(opts: {
   let editableNames: string[];
   let regionUnresolved = false;
   if (bodyChars <= contextBudget) {
-    editableNames = body.map((sec) => sec.name);
+    // The page fits whole, but "fits" is not "wide open" — the classifier
+    // already named which sections this message is about (`focus`), and a
+    // narrow ask (align the footer) must not hand the model every other
+    // section as editable just because there was room to. Everything else
+    // still reaches the model as read-only context below, so nothing named
+    // by a later ask goes unseen — it just can't be silently rewritten.
+    // Fall back to the whole page only when the classifier found nothing to
+    // scope to, same as the over-budget branch below.
+    editableNames = focus.length > 0 ? focus : body.map((sec) => sec.name);
   } else {
     const region = await resolveEditRegion({
       instruction: opts.instruction,
@@ -2059,6 +2068,21 @@ export async function POST(
         blocks: coverage.blocks,
         marked: coverage.marked,
         unmarked: coverage.unmarked,
+      });
+    }
+
+    // Measured, never acted on here. Both of these describe how the page was
+    // PREPARED, and the fix for either one is to re-cut its boxes — which is
+    // safe only at prep, since the schema, every click-to-edit field and the
+    // whole chat history are keyed to the section names this page already has.
+    // Re-cutting them mid-conversation would break a page that is live on a
+    // test. Logged so a page that arrives here in a bad state is visible at the
+    // time of the edit rather than inferred from a screenshot days later.
+    const quality = markerQuality(html);
+    if (!quality.ok) {
+      console.error('[pages/follow-up] section map this edit has to work with is poor', {
+        emptyBoxes: quality.empty,
+        dominant: quality.dominant,
       });
     }
   }
@@ -5456,6 +5480,46 @@ export async function POST(
       // Report any accrued overage to Stripe (no-op unless overage is enabled
       // and a metered price is configured). Fire-and-forget.
       void reportAiOverageUsage(aiOwnerId);
+
+      // ── Did this edit add markup the page has nowhere to put? ─────────────
+      //
+      // On a coordinate-layout page every element is placed by a left/top rule
+      // in the head stylesheet, which no scoped edit can see or write. Anything
+      // NEW has no rule, so it does not flow after the existing content — it
+      // lands on top of it. That is how a redesigned hero ended up overlapping
+      // the hero it replaced while we reported "Done!" twice.
+      //
+      // Not blocked, because the edit is done and saved and blocking it here
+      // would throw away work the user asked for. Said out loud instead, on the
+      // `notes` channel — which keeps the "Done!" headline and adds the caveat,
+      // rather than the false "Partly done" that a partial_message would give.
+      // The real fix for these pages is upstream: prep now tells the user their
+      // page cannot be restructured BEFORE they type anything (see
+      // ai-page-layout.ts and schema-from-html).
+      const editedLayout = analyzePageLayout(originalHtmlForPreservation);
+      if (editedLayout.kind === 'coordinate') {
+        // Both sides have to be the same KIND of html to be counted against each
+        // other. `originalHtmlForPreservation` holds image placeholders and
+        // finalHtmlPersisted holds the real bytes back — and an inline
+        // `data:image/svg+xml,<svg…>` puts tags into the string on one side only,
+        // which would read as elements this edit had added. Restoring the
+        // original costs one string pass, and only on the rare coordinate page.
+        const added =
+          countLayoutElements(finalHtmlPersisted) -
+          countLayoutElements(restoreDataUris(originalHtmlForPreservation, dataUriMap));
+        console.log('[pages/follow-up] coordinate-layout page edited', {
+          addedLayoutElements: added,
+          reasons: editedLayout.reasons,
+        });
+        if (added > 0) {
+          addNote(
+            `Heads-up: this page positions every element at fixed pixel coordinates in its stylesheet, ` +
+            `and this edit added ${added} new element${added === 1 ? '' : 's'} that the stylesheet has no ` +
+            `position for — they may sit on top of the original content instead of flowing after it. ` +
+            `Check the preview. Restructuring a page like this isn't reliable; it needs rebuilding first.`,
+          );
+        }
+      }
 
       const doneEvent: SSEEvent = {
         type: 'done',

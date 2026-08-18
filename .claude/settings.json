@@ -1,0 +1,40 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(PYTHONIOENCODING=utf-8 node -e ' *)",
+      "Bash(python -)",
+      "Bash(node -e ' *)",
+      "Bash(rm -rf .verify-tmp-ex)",
+      "Bash(node scripts/verify-page-extract.mjs)",
+      "Bash(cd \"d:/Paid Projects/SplitLab\" && ls -la *.html 2>/dev/null && echo \"---\" && ls -la ~/Downloads/*.html 2>/dev/null | head)",
+      "Read(//c/Users/Hambal/Downloads/**)",
+      "Bash(node \"C:/Users/Hambal/AppData/Local/Temp/claude/d--Paid-Projects-SplitLab/f144b99f-888f-42c7-9d63-4b1657ab2ce5/scratchpad/compare.mjs\")",
+      "Bash(node \"C:/Users/Hambal/AppData/Local/Temp/claude/d--Paid-Projects-SplitLab/f144b99f-888f-42c7-9d63-4b1657ab2ce5/scratchpad/compare2.mjs\")",
+      "Bash(node \"C:/Users/Hambal/AppData/Local/Temp/claude/d--Paid-Projects-SplitLab/f144b99f-888f-42c7-9d63-4b1657ab2ce5/scratchpad/probe.mjs\")",
+      "Bash(node \"C:/Users/Hambal/AppData/Local/Temp/claude/d--Paid-Projects-SplitLab/f144b99f-888f-42c7-9d63-4b1657ab2ce5/scratchpad/tp.mjs\")",
+      "Bash(node \"C:/Users/Hambal/AppData/Local/Temp/claude/d--Paid-Projects-SplitLab/f144b99f-888f-42c7-9d63-4b1657ab2ce5/scratchpad/why.mjs\")",
+      "Bash(perl -0pi -e 's/childItems\\\\\\(deepest\\\\.node, facts\\\\\\)/childItems\\(html, deepest.node, facts\\)/g' src/lib/ai-page-transpile.ts)",
+      "Bash(node scripts/verify-page-transpile.mjs)",
+      "Bash(grep -o \"[^{}]\\\\{0,120\\\\}d3dcf3[^}]\\\\{0,80\\\\}\" titan-template-original.html)",
+      "Bash(grep -o \"[^{};]\\\\{0,60\\\\}undefined[^;}]\\\\{0,40\\\\}\" titan-template-original.html)",
+      "Bash(grep -o \"[^{}]\\\\{0,200\\\\}{[^{}]\\\\{0,120\\\\}d3dcf3[^}]\\\\{0,80\\\\}}\" titan-template-original.html)",
+      "Bash(grep -n -o \".\\\\{0,80\\\\}--font-heading: 'Montserrat'\" titan-template-original.html)",
+      "Bash(grep -n -o \":root[^{]*{.\\\\{0,200\\\\}\" titan-template-original.html)",
+      "Bash(python -c ' *)",
+      "Bash(node \"C:/Users/Hambal/AppData/Local/Temp/claude/d--Paid-Projects-SplitLab/f144b99f-888f-42c7-9d63-4b1657ab2ce5/scratchpad/run-titan.mjs\")",
+      "Bash(grep -o \"<span[^>]\\\\{0,220\\\\}>We Loan Your\" titan-template-original.html)",
+      "Bash(grep -o \"[^{}]\\\\{0,90\\\\}{[^{}]\\\\{0,200\\\\}line-height:22px[^}]\\\\{0,60\\\\}}\" titan-template-original.html)",
+      "Bash(grep -o \".\\\\{0,160\\\\}line-height:22px.\\\\{0,40\\\\}\" titan-template-original.html)",
+      "Bash(grep -o \"[^{}]\\\\{0,80\\\\}{[^{}]\\\\{0,160\\\\}var\\(--font-heading\\)[^}]\\\\{0,120\\\\}}\" titan-template-original.html)",
+      "Bash(grep -o \"nlh[^{]\\\\{0,40\\\\}{[^}]\\\\{0,120\\\\}\" titan-template-original.html)",
+      "Bash(grep -o \"\\\\.tf-text[^{]\\\\{0,30\\\\}{[^}]\\\\{0,110\\\\}\" titan-template-original.html)",
+      "Bash(grep -o \"[^{}]\\\\{0,60\\\\}{[^{}]\\\\{0,120\\\\}94A3B8[^}]\\\\{0,60\\\\}\" titan-template-original.html)",
+      "Bash(cp src/lib/ai-page-layout.ts /tmp/l2.bak)",
+      "Bash(cp src/lib/ai-page-layout.ts /tmp/l3.bak)",
+      "Bash(cp src/lib/ai-page-transpile.ts /tmp/t3.bak)"
+    ],
+    "additionalDirectories": [
+      "\\tmp"
+    ]
+  }
+}

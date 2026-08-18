@@ -33,6 +33,31 @@ export type SSEEvent =
       notes?: string;
       /** Asks from the prompt the finished page still doesn't satisfy. */
       unmet_requirements?: string;
+      /**
+       * How an uploaded page came out of prep (schema-from-html only).
+       *
+       * 'patch'   — its layout comes from its markup, so any part of it can be
+       *             edited in place and nothing about it was changed.
+       * 'rebuild' — its layout is pixel coordinates in a stylesheet, so markup
+       *             edits are inert and restructuring would overlap the
+       *             original. Text/image/colour edits are still safe.
+       *
+       * See ai-page-layout.ts for how that is decided and why. Sent because the
+       * page this was built for got a flat "Done preparing this page!" and then
+       * had its hero stacked on top of itself — the user had no way to know
+       * which kind of page they were editing.
+       */
+      prep_strategy?: 'patch' | 'rebuild';
+      /** The plain-English version of prep_strategy, written for the chat. */
+      prep_note?: string;
+      /**
+       * Where the page as it was BEFORE a rebuild was saved (rebuild-flow only).
+       *
+       * A rebuild replaces the whole document, so there has to be a way back.
+       * Test variants do not need this — their rebuild lands in the draft and
+       * Discard draft is the undo — so it is only set for ordinary pages.
+       */
+      backup_html_url?: string;
       /** External images that failed verification and were left untouched. */
       broken_assets?: number;
     };

@@ -21,7 +21,8 @@ import { MAX_ATTACHMENTS } from '@/lib/ai-edit-intent';
 import { forceAppendMissingDesignCopy } from '@/lib/ai-content-placement';
 import { verifyAndRehostHtmlImages } from '@/lib/ai-asset-integrity';
 import { ensureClickToEditFields } from '@/lib/ai-data-field-stamp';
-import { repairSlMarkers, markerCoverage } from '@/lib/ai-sl-markers';
+import { repairSlMarkers, markerCoverage, markerQuality } from '@/lib/ai-sl-markers';
+import { analyzePageLayout } from '@/lib/ai-page-layout';
 import {
   assetRequirements,
   enforceRequirements,
@@ -383,6 +384,31 @@ export async function POST(request: NextRequest) {
         console.log('[pages/build] marker coverage', {
           blocks: coverage.blocks,
           marked: coverage.marked,
+        });
+      }
+
+      // Coverage only says every block is inside a box. It does not say the
+      // boxes hold anything, and an empty box is a name the router can be lured
+      // into with nothing behind it (see markerQuality for the page where that
+      // happened). Measured here, NOT acted on: re-cutting boxes is only safe
+      // at prep, before a schema, a chat history and click-to-edit fields are
+      // keyed to these exact section names. Our own builder lays out in flow, so
+      // both of these should always come back clean — the point is to find out
+      // if that ever stops being true.
+      const quality = markerQuality(html);
+      if (!quality.ok) {
+        console.error('[pages/build] section map has boxes an edit cannot use', {
+          emptyBoxes: quality.empty,
+          dominant: quality.dominant,
+        });
+      }
+      const layout = analyzePageLayout(html);
+      if (layout.kind !== 'flow') {
+        console.error('[pages/build] generated page is not flow-layout', {
+          positioned: layout.positioned,
+          candidates: layout.candidates,
+          containerHeightPx: layout.containerHeightPx,
+          reasons: layout.reasons,
         });
       }
 

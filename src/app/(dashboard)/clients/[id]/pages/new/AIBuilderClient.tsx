@@ -34,6 +34,23 @@ interface Message {
   isQuestions?: boolean;
   questions?: string[];
   elapsedMs?: number;
+  /**
+   * Renders "Rebuild it" / "Leave it as it is" under the message.
+   *
+   * Set when prep found a page whose layout is pixel coordinates and which
+   * therefore cannot be restructured by editing its markup (see
+   * src/lib/ai-page-layout.ts). Rebuilding replaces the whole document —
+   * everything visible is copied across exactly, only the positioning is rewritten
+   * (see src/lib/ai-page-transpile.ts) — so it is still the user's call, never
+   * something we do to their page on our own initiative.
+   */
+  rebuildOffer?: boolean;
+  /**
+   * Set once the page has actually been rebuilt, so the buttons stop being
+   * clickable and the chat unlocks. There is no "declined" state: the only other
+   * answer to the offer is to leave the editor.
+   */
+  rebuildAnswered?: 'rebuilt';
 }
 
 interface InitialPage {
@@ -412,6 +429,19 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   // have HTML but no schema, and only once per page (guarded below and
   // idempotently on the server).
   const [preparingSchema, setPreparingSchema] = useState(false);
+  // A rebuild replaces the whole document, so it locks the chat the same way prep
+  // does — two writers on one page row is how a draft gets half-overwritten.
+  const [rebuilding, setRebuilding] = useState(false);
+  // Prep has asked whether to rebuild and the page has not been rebuilt yet.
+  //
+  // The chat is locked until it is, on purpose. This question is only ever asked
+  // about a page that cannot be restructured, so the very next thing the user types
+  // is the thing that would silently fail — "move the form up", "add a testimonials
+  // section". Leaving the composer open invited exactly the request the page cannot
+  // serve. A FAILED rebuild leaves this locked too, which is the point: the page is
+  // no more editable than it was before the attempt. The only other way out is Go
+  // back, which leaves the editor rather than unlocking a chat that cannot work.
+  const rebuildPending = messages.some((m) => m.rebuildOffer && m.rebuildAnswered === undefined);
   // True when the schema-from-html prep failed (fetch error, SSE error
   // event, or thrown exception). Editing stays locked while this is true —
   // there is no valid schema to edit against — until a retry succeeds.
@@ -589,6 +619,16 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       let resultAlready = false;
       let resultElapsedMs: number | undefined;
       let streamFailed = false;
+      // What prep concluded about this page: whether its layout can take a
+      // markup edit at all, and the plain-English version of that for the chat.
+      // A page whose layout is pixel coordinates in a stylesheet (Unbounce,
+      // Instapage, Muse, Figma exports) can take text/image/colour edits but
+      // cannot be restructured — see src/lib/ai-page-layout.ts. Saying so here,
+      // before the user types anything, is the whole point: the page this was
+      // built for got a flat "Done preparing this page!" and then had a brand
+      // new hero stacked on top of the old one.
+      let resultPrepStrategy: 'patch' | 'rebuild' | undefined;
+      let resultPrepNote: string | undefined;
 
       // The route returns a plain JSON body for the "already prepared"
       // fast path (idempotency guard, before any SSE stream opens) and an
@@ -602,6 +642,8 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
             resultHtmlUrl = event.html_url;
             resultAlready = !!event.already;
             resultElapsedMs = event.elapsed_ms;
+            resultPrepStrategy = event.prep_strategy;
+            resultPrepNote = event.prep_note;
           } else if (event.type === 'error') {
             streamFailed = true;
             toast.error(event.message || "Couldn't prepare this page for AI editing.");
@@ -613,6 +655,8 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         resultSchemaJson = data.schema_json;
         resultHtmlUrl = data.html_url;
         resultAlready = !!data.already;
+        // The already-prepared fast path returns before any analysis runs, so
+        // there is no verdict to report — the generic message below is used.
       }
 
       if (resultSchemaJson) {
@@ -626,11 +670,30 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       // Transient confirmation only — the chat message below carries the
       // same info permanently, so this doesn't need to persist like the
       // UTM warning toast does (which stays until the user dismisses it).
-      toast.success('This page is ready for AI editing.', {
-        id: 'schema-from-html-ready',
-        duration: 4000,
+      // A coordinate-layout page is not simply "ready" — it has a question
+      // waiting, and the composer is locked until it is answered, so the toast
+      // points at the question rather than announcing success.
+      if (resultPrepStrategy === 'rebuild') {
+        toast('This page needs rebuilding before it can be restructured — rebuild it in the chat.', {
+          id: 'schema-from-html-ready',
+          duration: 9000,
+          icon: '⚠️',
+        });
+      } else {
+        toast.success('This page is ready for AI editing.', {
+          id: 'schema-from-html-ready',
+          duration: 4000,
+        });
+      }
+      addMessage({
+        role: 'assistant',
+        content:
+          resultPrepNote ??
+          'Done preparing this page! Click any text in the preview to edit it, or ask me to make changes.',
+        elapsedMs: resultElapsedMs,
+        // A coordinate page gets the offer to rebuild rather than a rebuild.
+        ...(resultPrepStrategy === 'rebuild' ? { rebuildOffer: true } : {}),
       });
-      addMessage({ role: 'assistant', content: 'Done preparing this page! Click any text in the preview to edit it, or ask me to make changes.', elapsedMs: resultElapsedMs });
     } catch {
       toast.error("Couldn't prepare this page for AI editing.");
       setSchemaPrepFailed(true);
@@ -638,6 +701,108 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       setPreparingSchema(false);
       setSchemaEvents(null);
     }
+  }
+
+  /**
+   * Rebuild a coordinate-layout page as a flow-layout one, on the user's say-so.
+   *
+   * Only ever reached by clicking "Rebuild it" on the offer prep put in the chat.
+   * The route refuses pages that do not need it, checks that the original's
+   * content survived, and leaves the page untouched if it did not — so a failure
+   * here costs the user nothing but the wait.
+   */
+  async function runRebuild(messageIndex: number) {
+    if (!initialPage || rebuilding) return;
+    setRebuilding(true);
+    setSchemaEvents([]);
+    try {
+      const res = await fetch(`/api/pages/${initialPage.id}/rebuild-flow`, { method: 'POST' });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        const reason = err.error || "Couldn't rebuild this page.";
+        toast.error(reason);
+        // Also written into the chat, not just toasted. A failed rebuild leaves the
+        // offer unanswered on purpose, which keeps the composer locked: the page is
+        // still un-editable, so every message the user could send is one that would
+        // silently fail. A toast that has already faded would leave them looking at
+        // a disabled box with no idea why. The page itself is untouched either way.
+        addMessage({
+          role: 'assistant',
+          content: `${reason} Your page is unchanged — try the rebuild again, or go back.`,
+        });
+        return;
+      }
+
+      let doneSchema: unknown;
+      let doneHtmlUrl: string | undefined;
+      let doneNote: string | undefined;
+      let doneNotes: string | undefined;
+      let doneElapsed: number | undefined;
+      let failed = false;
+
+      await readSSEStream(res, (event) => {
+        setSchemaEvents((prev) => (prev ? [...prev, event] : [event]));
+        if (event.type === 'done') {
+          doneSchema = event.schema_json;
+          doneHtmlUrl = event.html_url;
+          doneNote = event.prep_note;
+          doneNotes = event.notes;
+          doneElapsed = event.elapsed_ms;
+        } else if (event.type === 'error') {
+          failed = true;
+          // The route's error messages say what happened to the page, so they are
+          // shown as written rather than replaced with a generic failure.
+          toast.error(event.message || "Couldn't rebuild this page.");
+          addMessage({ role: 'assistant', content: event.message });
+        }
+      });
+      if (failed) return;
+
+      if (doneSchema) {
+        schemaRef.current = doneSchema;
+        setSchemaJson(doneSchema);
+      }
+      // The whole document changed, so the preview has to be refetched.
+      setHtmlUrl(doneHtmlUrl ? `${doneHtmlUrl}?t=${Date.now()}` : (prev) => (prev ? `${prev.split('?')[0]}?t=${Date.now()}` : prev));
+      if (isTestVariantPage) setHasDraft(true);
+
+      setMessages((prev) =>
+        prev.map((m, i) => (i === messageIndex ? { ...m, rebuildAnswered: 'rebuilt' } : m)),
+      );
+      toast.success('Page rebuilt — every section is editable now.', { duration: 6000 });
+      addMessage({
+        role: 'assistant',
+        content: [doneNote, doneNotes].filter(Boolean).join(' ') || 'This page has been rebuilt.',
+        elapsedMs: doneElapsed,
+      });
+    } catch {
+      toast.error("Couldn't rebuild this page.");
+      // Same reasoning as the !res.ok branch above — the composer stays locked
+      // until the offer is answered, so the reason has to survive in the chat.
+      addMessage({
+        role: 'assistant',
+        content: "Couldn't rebuild this page — your page is unchanged. Try the rebuild again, or go back.",
+      });
+    } finally {
+      setRebuilding(false);
+      setSchemaEvents(null);
+    }
+  }
+
+  /**
+   * The only other way out of an unanswered rebuild offer: leave.
+   *
+   * There used to be a "Leave it as it is" button that answered the question and
+   * unlocked the chat, on the grounds that text, image and colour edits do work on
+   * a coordinate page. That was the wrong trade to offer. The offer only ever
+   * appears on a page that cannot be restructured, so unlocking the chat invites
+   * exactly the requests the page cannot serve — and there is no way to tell, from
+   * a message, which kind of request it is until it has already failed. Rebuild it
+   * or go back; nothing in between.
+   */
+  function leaveWithoutRebuilding() {
+    router.push(backPath ?? `/clients/${clientId}/pages`);
+    router.refresh();
   }
 
   useEffect(() => {
@@ -1477,7 +1642,9 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
 
   async function handleFollowUp(e: React.FormEvent) {
     e.preventDefault();
-    if ((!followUpInput.trim() && chatImages.length === 0) || !pageId || preparingSchema || schemaPrepFailed) return;
+    // A rebuild rewrites the whole document and the whole schema; an edit landing
+    // mid-rebuild would be applied to markup that is about to be replaced.
+    if ((!followUpInput.trim() && chatImages.length === 0) || !pageId || preparingSchema || rebuilding || rebuildPending || schemaPrepFailed) return;
     const instruction = followUpInput.trim() || 'Please incorporate these reference images into the page.';
     const attachedImages = takePendingChatImages();
     setFollowUpInput('');
@@ -1797,6 +1964,50 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                       ) : (
                         <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">{msg.content}</p>
                       )}
+                      {/*
+                        Rebuild offer. Prep found a page whose layout is pixel
+                        coordinates, so restructuring it by editing markup is
+                        impossible — the choice is the user's, because a rebuild
+                        keeps the content and colours exactly but reinterprets the
+                        layout. Disabled once answered so the same page cannot be
+                        rebuilt twice from scrollback.
+                      */}
+                      {msg.rebuildOffer && (
+                        <div className="mt-3 flex flex-wrap items-center gap-2">
+                          {msg.rebuildAnswered === undefined ? (
+                            <>
+                              <button
+                                onClick={() => runRebuild(i)}
+                                disabled={rebuilding || preparingSchema || isLoading}
+                                className="px-3 py-1.5 text-xs font-medium rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                              >
+                                {rebuilding ? 'Rebuilding…' : 'Rebuild this page'}
+                              </button>
+                              <button
+                                onClick={leaveWithoutRebuilding}
+                                disabled={rebuilding}
+                                className="px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-200 dark:border-white/10 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-white/5 disabled:opacity-50 transition-colors"
+                              >
+                                Go back
+                              </button>
+                              {/*
+                                What rebuilding does to the live page, in one line,
+                                at the point of the choice — this is where it is
+                                worth reading, and it is why the prep message itself
+                                stays short.
+                              */}
+                              <span className="text-[11px] text-slate-400 dark:text-slate-500">
+                                {isTestVariantPage
+                                  ? 'Saves as a draft — the live variant keeps serving the original.'
+                                  : 'Saves a copy of the original first.'}
+                                {' Your text, images, colours and video are copied across exactly.'}
+                              </span>
+                            </>
+                          ) : (
+                            <span className="text-[11px] text-slate-400 dark:text-slate-500">Rebuilt.</span>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
                   {/* Message actions */}
@@ -1854,7 +2065,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
           )}
 
           {/* Background schema prep for raw-HTML pages — only shown before any real edit starts */}
-          {preparingSchema && !isLoading && followUpEvents === null && (
+          {(preparingSchema || rebuilding) && !isLoading && followUpEvents === null && (
             <div className="flex items-start gap-2.5">
               <div className="w-6 h-6 rounded-full bg-indigo-50 dark:bg-indigo-600/15 border border-indigo-100 dark:border-indigo-600/25 flex items-center justify-center flex-shrink-0 mt-0.5">
                 <Sparkles size={11} className="text-indigo-600 dark:text-indigo-400" />
@@ -2096,10 +2307,10 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                     el.style.height = 'auto';
                     el.style.height = `${Math.min(el.scrollHeight, FOLLOW_UP_MAX_HEIGHT)}px`;
                   }}
-                  disabled={isLoading || preparingSchema || schemaPrepFailed}
+                  disabled={isLoading || preparingSchema || rebuilding || rebuildPending || schemaPrepFailed}
                   className="w-full bg-transparent px-3.5 pt-3 pb-2 text-sm text-slate-700 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none resize-none disabled:opacity-40 overflow-y-auto"
                   style={{ maxHeight: FOLLOW_UP_MAX_HEIGHT }}
-                  placeholder={schemaPrepFailed ? 'Preparation failed — try again above' : preparingSchema ? 'Preparing this page for editing…' : 'Ask Splitlab…'}
+                  placeholder={schemaPrepFailed ? 'Preparation failed — try again above' : rebuilding ? 'Rebuilding this page…' : preparingSchema ? 'Preparing this page for editing…' : rebuildPending ? 'Rebuild this page above to start editing it' : 'Ask Splitlab…'}
                   rows={2}
                   onKeyDown={e => {
                     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); }
@@ -2110,7 +2321,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                   <div className="flex items-center gap-0.5">
                     <button
                       type="button"
-                      disabled={isLoading || preparingSchema || schemaPrepFailed || chatImages.length >= 3}
+                      disabled={isLoading || preparingSchema || rebuilding || rebuildPending || schemaPrepFailed || chatImages.length >= 3}
                       onClick={() => chatImageInputRef.current?.click()}
                       className="p-1.5 text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                       title="Attach image (max 3)"
@@ -2121,7 +2332,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                   <div className="flex items-center gap-1.5">
                     <button
                       type="submit"
-                      disabled={(!followUpInput.trim() && chatImages.length === 0) || isLoading || preparingSchema || schemaPrepFailed}
+                      disabled={(!followUpInput.trim() && chatImages.length === 0) || isLoading || preparingSchema || rebuilding || rebuildPending || schemaPrepFailed}
                       className="w-7 h-7 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-30 disabled:cursor-not-allowed rounded-full flex items-center justify-center transition-colors"
                     >
                       <Send size={12} className="text-white" />
