@@ -23,6 +23,9 @@ import {
 } from '@/lib/ai-page-requirements';
 import { buildConversationContext, classifyEditIntent, MAX_ATTACHMENTS } from '@/lib/ai-edit-intent';
 
+export const dynamic = 'force-dynamic';
+export const maxDuration = 800;
+
 const SECTION_TYPES_BLOCK = SECTION_VOCABULARY
   .map(s => `- ${s.schemaExample}\n  Use when: ${s.whenToUse}`)
   .join('\n');
