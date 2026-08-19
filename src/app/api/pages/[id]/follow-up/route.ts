@@ -14,6 +14,7 @@ import { checkAiAllowance, type UsageContext } from '@/lib/ai-usage';
 import { reportAiOverageUsage } from '@/lib/ai-overage-billing';
 import { extractUrls, scrapeCompetitorUrl, fetchLogoAssets, fetchContentImageAssets } from '@/lib/ai-competitor-scrape';
 import { buildHtmlFromSchema } from '@/lib/ai-page-builder';
+import { buildFontFollowUpBlock } from '@/lib/ai-page-fonts';
 import { createSSEStream, sendSSE, closeSSE, SSE_HEADERS, type SSEEvent } from '@/lib/sse';
 import { isTestVariantPage, getLinkedVariant } from '@/lib/page-drafts';
 import { rescanVariantHtml } from '@/lib/services/scan';
@@ -85,6 +86,8 @@ export const dynamic = 'force-dynamic';
 // 300s cutoff (capped by the hosting plan's real limit).
 export const maxDuration = 800;
 
+const FONT_FOLLOWUP_BLOCK = buildFontFollowUpBlock();
+
 const SYSTEM_PROMPT = `You are editing an existing landing page. The user will give you an instruction to modify the page.
 
 ## Your job
@@ -137,6 +140,8 @@ When the user attaches one or more images, decide their role by reading the full
 - If the instruction asks to keep/make/match a section "like this" / "match this" / "same as this" with a screenshot of the desired look → the image is a DESIGN REFERENCE. Recreate that section's layout, structure, and visible copy from the screenshot in real HTML/CSS. Never paste the screenshot as an <img src> of the whole section. Leaving the section unchanged is a failure.
 - If both purposes appear in one instruction (e.g. "use photo A on hero and fix this alignment issue in photo B") → handle each image accordingly.
 When in doubt, ask yourself: is the user pointing at a problem, handing you an asset to embed, or showing how something should look? Let the instruction answer that.
+
+${FONT_FOLLOWUP_BLOCK}
 
 ## Surgical change rule — CRITICAL for patch and style
 Make the MINIMUM edit required. Do NOT restructure, reorganize, or rebuild any section. Change only the specific property, value, or element the instruction targets.
