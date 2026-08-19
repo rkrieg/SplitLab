@@ -78,6 +78,9 @@ You can SEE every attached image. The instruction says what each one is for — 
 ## Section types (available moves — pick a varied combination per page, not the same 4-5 every time)
 ${SECTION_TYPES_BLOCK}
 
+## Escape hatch — when nothing above fits
+If part of the brief explicitly describes something visual or interactive that none of the types above can represent (a schematic diagram, a custom map, a flowchart, a bespoke widget) — do NOT force it into the nearest type just because it superficially resembles one (e.g. do not turn a diagram into "stats" cards just because it has labeled facts). Use "custom_block" instead and carry the description verbatim into its "description" field, including any explicit constraints from the brief (e.g. "no external map tiles or APIs"). This is a last resort for content that genuinely has no fit — most sections belong to one of the types above.
+
 ## Content rules
 - Write real, compelling copy based on the business. No placeholders, no lorem ipsum.
 - The user has pre-selected a vertical — treat it as a bias toward certain section types (see the per-vertical hint appended below), not a fixed template. Refine based on the specific prompt.
@@ -108,6 +111,7 @@ For sections that benefit from real photography, add these two fields directly o
 | about / case_study | One image_prompt on the section if a real photo would help |
 | features / benefits / services / how_it_works | Add ONE image_prompt on the section (or on the lead item) unless the section is purely icon-driven — a supporting photo that illustrates the point beats an icon-only wall |
 | nav / stats / pricing / faq / footer / comparison / logo_wall / guarantee / urgency_banner | NEVER |
+| custom_block | Case-by-case — only if the description explicitly calls for a real photo (not a diagram/illustration, which the build step draws itself) |
 
 Default to using image_prompt on every eligible section rather than skipping it — treat "no image" as the exception, not the default. Maximum 10 total image_prompts across the entire schema. Priority order: hero first, gallery items, team/testimonials, features/benefits, other sections.
 
