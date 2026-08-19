@@ -24,6 +24,7 @@ import {
   verifyAskApplied,
   judgeUnrequestedLoss,
   extractDesignReferenceCopy,
+  placeRestoredImagesIntelligently,
 } from '@/lib/ai-follow-up-helpers';
 import {
   injectBrandAssetsIntoSchema,
@@ -65,6 +66,7 @@ import {
   splitLossesByRegion,
   sectionsContainingAsset,
   snapshotPageFacts,
+  type PageLosses,
 } from '@/lib/ai-page-preservation';
 import {
   assetRequirements,
@@ -1303,12 +1305,23 @@ async function runRegionRewrite(opts: {
         }`,
       },
     ];
-    const text = await askAI({
-      system: SCOPED_REGION_SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: userContent }],
-      maxTokens: REGION_REWRITE_MAX_TOKENS,
-      label: 'follow-up:region-rewrite',
-    });
+    // Streamed, not a single blocking call — a broad edit can run several
+    // minutes with zero bytes on the wire until the whole response is ready,
+    // and a connection that quiet gets killed by network infra in between
+    // (confirmed live: repeated ECONNRESET/"terminated" on this exact call).
+    // Streaming keeps bytes moving so the connection reads as alive. The
+    // chunks themselves are unused — this call's output is JSON parsed only
+    // once complete, never shown to the user raw — so a dropped stream is
+    // free to restart from scratch like any other transient retry.
+    const text = await askAIStream(
+      {
+        system: SCOPED_REGION_SYSTEM_PROMPT,
+        messages: [{ role: 'user', content: userContent }],
+        maxTokens: REGION_REWRITE_MAX_TOKENS,
+        label: 'follow-up:region-rewrite',
+      },
+      () => {},
+    );
     let raw = text.trim();
     if (raw.startsWith('```')) raw = raw.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
     const jsonStart = raw.indexOf('{');
@@ -5216,14 +5229,37 @@ export async function POST(
         // the bookkeeping with the code. When no rewrite ran (full-page rebuild
         // regenerates the whole document) there is no such edge, and the guard
         // covers everything exactly as before.
+        //
+        // "Presumed intended" is only safe for the swap case the comment above
+        // describes. A prompt with no image content in it at all ("make it
+        // responsive, less padding") gives the model no reason to touch a
+        // picture — a dropped one there is just as unrequested as one outside
+        // the run, and skipping judgement on it silently ships a page missing
+        // real content. Confirmed live: 3 trust-badge images vanished this way
+        // and were never even considered for repair. So the exemption only
+        // applies when the message actually says it's swapping an asset;
+        // otherwise an in-region image loss goes back through the same
+        // judge + repair path as everything else. Headings/sections/fields
+        // inside the run keep the blanket exemption — condensing two headings
+        // into one is common and legitimate, and re-litigating that is the
+        // false positive this guard was already burned by once.
+        const assetLossIsIntended = intent.intentionalAssetReplace || !!logoSwapAppliedUrl;
         const regionSplit = rewrittenRegion
           ? splitLossesByRegion(allRemaining, originalHtmlForPreservation, rewrittenRegion)
           : null;
-        const remaining = regionSplit ? regionSplit.outside : allRemaining;
+        const remaining: PageLosses = regionSplit
+          ? {
+              ...regionSplit.outside,
+              images: assetLossIsIntended
+                ? regionSplit.outside.images
+                : [...regionSplit.outside.images, ...regionSplit.inside.images],
+            }
+          : allRemaining;
         if (regionSplit && hasLosses(regionSplit.inside)) {
           console.log('[pages/follow-up] losses inside the rewritten region are the edit, not damage', {
             region: rewrittenRegion,
-            images: regionSplit.inside.images.length,
+            images: assetLossIsIntended ? regionSplit.inside.images.length : 0,
+            imagesReconsidered: assetLossIsIntended ? 0 : regionSplit.inside.images.length,
             headings: regionSplit.inside.headings.length,
             sections: regionSplit.inside.sections,
           });
@@ -5250,8 +5286,9 @@ export async function POST(
         //
         // The cheap, certain cases are still settled without a call: an
         // explicit removal, a full rebuild, or a deliberate asset swap all make
-        // the loss intended by definition.
-        const assetLossIsIntended = intent.intentionalAssetReplace || !!logoSwapAppliedUrl;
+        // the loss intended by definition. (assetLossIsIntended computed above,
+        // before remaining — it decides whether an in-region image gets folded
+        // back in as a real loss.)
         const lossObviouslyIntended =
           intent.removalIntent ||
           intent.fullRebuild ||
@@ -5272,9 +5309,22 @@ export async function POST(
           sections: sectionsContainingAsset(originalHtmlForPreservation, url),
         }));
 
+        // A data-field name is bookkeeping for the click-to-edit UI, not
+        // content — losing one while every image/heading/section survives
+        // means the text or picture is still on the page, just not editable
+        // under its old handle. That is a real regression worth fixing, but
+        // it is not in the same league as a missing image, and must not by
+        // itself carry the same all-or-nothing penalty (reject the whole
+        // edit) that real content loss does.
+        const isEditableFieldOnlyLoss = (l: PageLosses) =>
+          l.images.length === 0 &&
+          l.headings.length === 0 &&
+          l.sections.length === 0 &&
+          l.editableFields.length > 0;
+
         let destructive = false;
         let lossSummary: string | null = null;
-        if (!lossObviouslyIntended) {
+        if (!lossObviouslyIntended && !isEditableFieldOnlyLoss(remaining)) {
           const judged = await judgeUnrequestedLoss({
             prompt,
             losses: remaining,
@@ -5334,25 +5384,69 @@ export async function POST(
                   images: stillMissingImages,
                 })
               : { html: repair.html, restored: [] as string[] };
+          // The splice above guarantees a restored image can never break the
+          // page (max-width-capped), but "never breaks" and "looks right"
+          // are different bars — it lands at a generic spot with no idea
+          // what its neighbours look like. One more pass lets the model fit
+          // JUST that image's position/size to its own section; the result
+          // is verified before being trusted (verifyImagePlacementEdit), so
+          // a section that fails verification — or a call that fails
+          // outright — keeps the deterministic version exactly as it was.
+          const placement =
+            imageRepair.restored.length > 0
+              ? await placeRestoredImagesIntelligently({
+                  html: imageRepair.html,
+                  beforeHtml: originalHtmlForPreservation,
+                  images: imageRepair.restored,
+                  usage: usageCtx,
+                })
+              : { html: imageRepair.html, placed: [] as string[] };
+
           const repairedHtml =
             imageRepair.restored.length > 0
               ? ensureClickToEditFields(
-                  imageRepair.html,
+                  placement.html,
                   finalSchemaJsonReal ?? (schema as Record<string, unknown> | null),
                 )
-              : imageRepair.html;
+              : placement.html;
 
           if (repair.restored.length > 0 || imageRepair.restored.length > 0) {
-            const afterRepair = findUnrequestedLosses({
+            // A full re-diff against the pristine original, same as the very
+            // first check — which means it also brings back every loss the
+            // first pass already excused as "inside the rewritten region,
+            // the edit's own doing" (splitLossesByRegion above). Left
+            // un-split, those already-forgiven losses reappear here as if
+            // they were new, and a repair that had genuinely fixed
+            // everything it owed the user got rejected anyway over damage
+            // that was never damage — confirmed live: 3 images already
+            // cleared as in-region came back at this step and, combined with
+            // one unrelated leftover, were enough to tip the second judge
+            // into "not intended" and discard a repair that had already
+            // restored the logo and both other images correctly. Applies the
+            // same asset-swap-aware fold as the first pass, for the same
+            // reason: an in-region image is only presumed-intended when the
+            // message actually said it was swapping one.
+            const afterRepairAll = findUnrequestedLosses({
               beforeHtml: originalHtmlForPreservation,
               afterHtml: repairedHtml,
               prompt,
               removalIntent: intent.removalIntent,
             });
+            const afterRepairSplit = rewrittenRegion
+              ? splitLossesByRegion(afterRepairAll, originalHtmlForPreservation, rewrittenRegion)
+              : null;
+            const afterRepair: PageLosses = afterRepairSplit
+              ? {
+                  ...afterRepairSplit.outside,
+                  images: assetLossIsIntended
+                    ? afterRepairSplit.outside.images
+                    : [...afterRepairSplit.outside.images, ...afterRepairSplit.inside.images],
+                }
+              : afterRepairAll;
             // Clean ⇒ keep. Still lossy ⇒ the judge decides again on what is
             // actually left, not on the damage we already undid.
             let stillDestructive = hasLosses(afterRepair);
-            if (stillDestructive) {
+            if (stillDestructive && !isEditableFieldOnlyLoss(afterRepair)) {
               const rejudged = await judgeUnrequestedLoss({
                 prompt,
                 losses: afterRepair,
@@ -5366,10 +5460,13 @@ export async function POST(
               });
               stillDestructive = !rejudged.intended;
               if (stillDestructive) lossSummary = rejudged.summary;
+            } else if (stillDestructive) {
+              stillDestructive = false;
             }
             console.log('[pages/follow-up] collateral repair', {
               restoredSections: repair.restored,
               restoredImages: imageRepair.restored,
+              intelligentlyPlaced: placement.placed,
               protectedSections: requestedSections,
               stillDestructive,
             });

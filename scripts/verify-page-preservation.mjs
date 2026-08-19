@@ -428,6 +428,89 @@ assert('each restored copy keeps ITS OWN original data-field name',
   twoSpotsRestore.html.includes('data-field="nav.logo"') &&
   twoSpotsRestore.html.includes('data-field="footer.logo"'));
 
+// A restored image must not be able to blow out the section it lands in —
+// the section around it was regenerated, so any sizing the original relied
+// on from a parent class or the section's own <style> block is gone. The
+// tag itself must come back with a self-contained overflow guard.
+const noStyleSection = `
+<!-- SL:trust --><section><div class="row"><h3>Trusted by</h3></div></section><!-- /SL:trust -->`;
+const noStyleBefore = `
+<!-- SL:trust --><section><div class="row"><h3>Trusted by</h3><img src="https://cdn.site.com/badge.png" data-field="trust.badge"/></div></section><!-- /SL:trust -->`;
+const noStyleRestore = P.restoreLostImagesInPlace({
+  beforeHtml: noStyleBefore,
+  afterHtml: noStyleSection,
+  images: ['https://cdn.site.com/badge.png'],
+});
+assert('a restored image with no prior inline style gets an overflow guard',
+  /<img[^>]*style="max-width:100%;height:auto;"[^>]*src="https:\/\/cdn\.site\.com\/badge\.png"/.test(noStyleRestore.html));
+
+// One that already had SOME inline style (but no max-width) must keep that
+// style and have the guard appended, not replaced.
+const partialStyleSection = `
+<!-- SL:trust --><section><div class="row"></div></section><!-- /SL:trust -->`;
+const partialStyleBefore = `
+<!-- SL:trust --><section><div class="row"><img src="https://cdn.site.com/badge.png" style="border-radius:4px" data-field="trust.badge"/></div></section><!-- /SL:trust -->`;
+const partialStyleRestore = P.restoreLostImagesInPlace({
+  beforeHtml: partialStyleBefore,
+  afterHtml: partialStyleSection,
+  images: ['https://cdn.site.com/badge.png'],
+});
+assert('an existing inline style is kept and the overflow guard is appended to it',
+  partialStyleRestore.html.includes('style="border-radius:4px;max-width:100%;height:auto;"'));
+
+// One that already constrains max-width must be left exactly as it was —
+// never doubled up.
+const alreadyCappedSection = `
+<!-- SL:hero --><section></section><!-- /SL:hero -->`;
+const alreadyCappedBefore = `
+<!-- SL:hero --><section><img src="https://cdn.site.com/hero.png" style="max-width:400px;height:auto" data-field="hero.image"/></section><!-- /SL:hero -->`;
+const alreadyCappedRestore = P.restoreLostImagesInPlace({
+  beforeHtml: alreadyCappedBefore,
+  afterHtml: alreadyCappedSection,
+  images: ['https://cdn.site.com/hero.png'],
+});
+assert('an image that already constrains its own max-width is left untouched',
+  alreadyCappedRestore.html.includes('style="max-width:400px;height:auto"') &&
+  (alreadyCappedRestore.html.match(/max-width/g) ?? []).length === 1);
+
+// getSlSection / replaceSlSection — the byte-level primitives the AI-assisted
+// placement pass uses to read one section and splice its improved version
+// back in.
+const twoSectionPage = `<!-- SL:nav --><nav><a>Home</a></nav><!-- /SL:nav -->
+<!-- SL:hero --><section><h1>Welcome, get $500M funded</h1></section><!-- /SL:hero -->`;
+const gotHero = P.getSlSection(twoSectionPage, 'hero');
+assert('getSlSection returns the section\'s inner markup', gotHero?.inner.includes('<h1>Welcome, get $500M funded</h1>'));
+assert('getSlSection returns null for a section that is not live', P.getSlSection(twoSectionPage, 'footer') === null);
+
+const replaced = P.replaceSlSection(twoSectionPage, 'hero', '<section><h1>New headline, still $500M</h1></section>');
+assert('replaceSlSection swaps only the named section\'s inner markup', replaced.includes('<h1>New headline, still $500M</h1>'));
+assert('replaceSlSection leaves the other section untouched', replaced.includes('<nav><a>Home</a></nav>'));
+assert('replaceSlSection does not mangle a dollar figure via $-replacement syntax', replaced.includes('still $500M') && !replaced.includes('undefined'));
+
+// verifyImagePlacementEdit — the gate the AI placement pass's answer must
+// clear before it is trusted over the deterministic (safe but generic)
+// splice. Fails closed: any doubt, reject.
+const placementBefore = `<div class="row"><h3>Trusted by</h3><img src="https://cdn.site.com/badge.png" style="max-width:100%;height:auto;" data-field="trust.badge"/><img src="https://cdn.site.com/other.png" data-field="trust.other"/></div>`;
+const goodPlacement = `<div class="row"><h3>Trusted by</h3><img src="https://cdn.site.com/other.png" data-field="trust.other" style="width:60px"/><img src="https://cdn.site.com/badge.png" data-field="trust.badge" style="width:60px"/></div>`;
+assert('a placement edit that keeps the image, its data-field, and every sibling image passes',
+  P.verifyImagePlacementEdit({ before: placementBefore, after: goodPlacement, mustKeepSrc: 'https://cdn.site.com/badge.png' }));
+
+const droppedSrc = `<div class="row"><h3>Trusted by</h3><img src="https://cdn.site.com/other.png" data-field="trust.other"/></div>`;
+assert('a placement edit that drops the very image it was asked to place fails',
+  !P.verifyImagePlacementEdit({ before: placementBefore, after: droppedSrc, mustKeepSrc: 'https://cdn.site.com/badge.png' }));
+
+const droppedField = `<div class="row"><h3>Trusted by</h3><img src="https://cdn.site.com/badge.png" style="width:60px"/><img src="https://cdn.site.com/other.png" data-field="trust.other"/></div>`;
+assert('a placement edit that silently drops an unrelated data-field fails',
+  !P.verifyImagePlacementEdit({ before: placementBefore, after: droppedField, mustKeepSrc: 'https://cdn.site.com/badge.png' }));
+
+const droppedSibling = `<div class="row"><img src="https://cdn.site.com/badge.png" data-field="trust.badge" style="width:60px"/></div>`;
+assert('a placement edit that silently drops a sibling image fails',
+  !P.verifyImagePlacementEdit({ before: placementBefore, after: droppedSibling, mustKeepSrc: 'https://cdn.site.com/badge.png' }));
+
+const gutted = `<img src="https://cdn.site.com/badge.png" data-field="trust.badge"/>`;
+assert('a placement edit that guts most of the section fails, even if the one image survives',
+  !P.verifyImagePlacementEdit({ before: placementBefore, after: gutted, mustKeepSrc: 'https://cdn.site.com/badge.png' }));
+
 rmSync(outDir, { recursive: true, force: true });
 
 if (failed > 0) {

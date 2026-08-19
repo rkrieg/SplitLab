@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { jsonrepair } from 'jsonrepair';
-import { askAI, isRateLimited, AIResponseTruncatedError } from '@/lib/ai-client';
+import { askAIStream, isRateLimited, AIResponseTruncatedError } from '@/lib/ai-client';
 import { VERTICAL_VALUES } from '@/lib/ai-page-verticals';
 import { SECTION_VOCABULARY, VERTICAL_PRIORITY_HINTS } from '@/lib/ai-page-vocabulary';
 import { resolveWorkspaceRole, resolveOwnerPlan } from '@/lib/workspace-auth';
@@ -343,7 +343,16 @@ export async function POST(request: NextRequest) {
 
     let text: string;
     try {
-      text = await askAI({ system: systemPrompt, messages, maxTokens: 128000, label: 'generate' });
+      // Streamed, not a single blocking call — competitor scrape + a large
+      // schema can take 30-90+ seconds, and a connection with zero bytes
+      // moving that long reads as dead to anything watching it (confirmed:
+      // 502s from a dev tunnel on this exact call). Streaming keeps bytes
+      // moving so the connection stays alive; the chunks themselves are
+      // unused here since the JSON is only parsed once complete.
+      text = await askAIStream(
+        { system: systemPrompt, messages, maxTokens: 128000, label: 'generate' },
+        () => {},
+      );
     } catch (err) {
       if (err instanceof AIResponseTruncatedError) {
         console.error('[pages/generate] response truncated at maxTokens', {

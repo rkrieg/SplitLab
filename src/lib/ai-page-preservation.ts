@@ -362,6 +362,34 @@ function findImgTagForSrc(html: string, src: string): string | null {
 }
 
 /**
+ * Guard a restored `<img>` tag against blowing out the section it lands in.
+ *
+ * The tag is copied verbatim from the page as it stood before the edit, but
+ * the section around it has since been completely regenerated — any sizing
+ * the original relied on from a parent class or the section's own <style>
+ * block (rather than the tag's own attributes) no longer exists to size it.
+ * An unconstrained `<img>` then renders at its native pixel size inside a
+ * flex/full-width container — confirmed live: a restored image covering the
+ * entire section. `max-width:100%; height:auto` never fights an existing
+ * explicit size (it only clamps), so this is safe whether the restored
+ * image is a small badge or a large content photo.
+ */
+function capImageOverflow(tag: string): string {
+  const styleMatch = /\bstyle\s*=\s*(["'])([\s\S]*?)\1/i.exec(tag);
+  if (styleMatch) {
+    if (/max-width/i.test(styleMatch[2])) return tag;
+    const quote = styleMatch[1];
+    const newStyle = `${styleMatch[2].replace(/;?\s*$/, '')};max-width:100%;height:auto;`;
+    return (
+      tag.slice(0, styleMatch.index) +
+      `style=${quote}${newStyle}${quote}` +
+      tag.slice(styleMatch.index + styleMatch[0].length)
+    );
+  }
+  return tag.replace(/^<img\b/i, '<img style="max-width:100%;height:auto;"');
+}
+
+/**
  * Put specific missing images back where they used to be, without touching
  * anything else in those sections.
  *
@@ -403,7 +431,8 @@ export function restoreLostImagesInPlace(opts: {
 
       const container = /<(div|section|header|nav|footer|aside|main|ul)\b[^>]*>/i.exec(liveBlock.inner);
       const at = container && container.index !== undefined ? container.index + container[0].length : 0;
-      const newInner = liveBlock.inner.slice(0, at) + tag + liveBlock.inner.slice(at);
+      const safeTag = capImageOverflow(tag);
+      const newInner = liveBlock.inner.slice(0, at) + safeTag + liveBlock.inner.slice(at);
       const replacement = `<!-- SL:${owner.name} -->${newInner}<!-- /SL:${owner.name} -->`;
       // Replacement passed as a function, not a string — landing-page copy
       // routinely contains a literal "$500M"-style dollar figure, and
@@ -449,4 +478,65 @@ export function describeLosses(losses: PageLosses): string | null {
   }
   if (bits.length === 0) return null;
   return `${bits.join('; ')} without being asked for`;
+}
+
+/** One SL section's current markup, by name — or null when it isn't live. */
+export function getSlSection(html: string, name: string): { block: string; inner: string } | null {
+  const re = new RegExp(`<!--\\s*SL:${name}\\s*-->([\\s\\S]*?)<!--\\s*/SL:${name}\\s*-->`, 'i');
+  const m = re.exec(html);
+  if (!m) return null;
+  return { block: m[0], inner: m[1] };
+}
+
+/** Replace one SL section's inner markup in place, byte-for-byte elsewhere. */
+export function replaceSlSection(html: string, name: string, newInner: string): string {
+  const re = new RegExp(`<!--\\s*SL:${name}\\s*-->[\\s\\S]*?<!--\\s*/SL:${name}\\s*-->`, 'i');
+  const replacement = `<!-- SL:${name} -->${newInner}<!-- /SL:${name} -->`;
+  // Function replacement — see restoreLostImagesInPlace above for why a
+  // string replacement is unsafe here (dollar-figure copy).
+  return html.replace(re, () => replacement);
+}
+
+/**
+ * Is a model's attempt to reposition/resize a restored image inside its own
+ * section actually safe to trust?
+ *
+ * The model is shown a section with a mechanically-inserted image (correct
+ * content, wrong spot/size) and asked to fit it in naturally — genuinely
+ * useful for placement in a way no regex can be, but "rewrite this section"
+ * is exactly the shape of call that has silently dropped content all night.
+ * Trust nothing about the result except what this checks: the restored
+ * image's own src survives, every data-field the section had is still
+ * there (nothing else quietly lost its click-to-edit handle), every other
+ * image the section had is still there, and the section did not shrink to
+ * a suspicious fraction of its size (a sign something besides the one
+ * image got rewritten or dropped). Fails closed: any doubt, reject — the
+ * caller's plain spliced-and-capped version is always the safe fallback.
+ */
+export function verifyImagePlacementEdit(opts: {
+  before: string;
+  after: string;
+  mustKeepSrc: string;
+}): boolean {
+  const { before, after, mustKeepSrc } = opts;
+  if (!after.trim()) return false;
+
+  const srcRe = new RegExp(`<img\\b[^>]*\\bsrc\\s*=\\s*["']${mustKeepSrc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}["']`, 'i');
+  if (!srcRe.test(after)) return false;
+
+  const fieldsBefore = Array.from(before.matchAll(/\bdata-field=["']([^"']+)["']/gi)).map((m) => m[1]);
+  for (const f of fieldsBefore) {
+    if (!new RegExp(`data-field=["']${f.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}["']`, 'i').test(after)) return false;
+  }
+
+  const imagesBefore = Array.from(before.matchAll(/<img\b[^>]*\bsrc=["']([^"']+)["']/gi)).map((m) => m[1]);
+  for (const u of imagesBefore) {
+    if (!after.includes(u)) return false;
+  }
+
+  // A section that lost more than half its bytes rewrote more than one
+  // image's placement, whatever the diff above missed.
+  if (after.length < before.length * 0.5) return false;
+
+  return true;
 }

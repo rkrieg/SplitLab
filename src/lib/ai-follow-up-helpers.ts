@@ -8,6 +8,12 @@ import { askAI, type AIContent, type AIContentBlock } from '@/lib/ai-client';
 import type { UsageContext } from '@/lib/ai-usage';
 import { inferTargetSectionNames, dedupeDesignCopyLines } from '@/lib/ai-content-placement';
 import { MAX_ATTACHMENTS } from '@/lib/ai-edit-intent';
+import {
+  sectionsContainingAsset,
+  getSlSection,
+  replaceSlSection,
+  verifyImagePlacementEdit,
+} from '@/lib/ai-page-preservation';
 
 export interface PlanStep {
   /** Narrow instruction for this step only */
@@ -326,7 +332,7 @@ export async function verifyAskApplied(opts: {
   afterHtml: string;
   usage?: UsageContext;
 }): Promise<{ applied: boolean; reason: string | null }> {
-  const cap = (s: string) => (s.length > 6000 ? `${s.slice(0, 6000)}\n<!-- truncated -->` : s);
+  const cap = (s: string) => (s.length > 50000 ? `${s.slice(0, 50000)}\n<!-- truncated -->` : s);
   try {
     const text = await askAI({
       system:
@@ -467,13 +473,17 @@ export async function judgeUnrequestedLoss(opts: {
         'intended=true when the loss follows naturally from the request — rewriting or condensing copy ' +
         'changes headings, a redesign replaces images, tightening a section merges elements, ' +
         'an explicit removal deletes things. ' +
-        'A lost image marked [INSIDE the section this edit was about] is almost always intended: ' +
-        'putting a picture somewhere that already had one replaces it, and that is what was asked for. ' +
-        'Swapping, replacing or re-using an image is a REPLACEMENT, not a deletion — the old one going ' +
-        'is the edit working, not the edit failing. Say intended=false there only if the user clearly ' +
-        'wanted BOTH pictures kept and only one survived. ' +
+        'A lost image marked [INSIDE the section this edit was about] is intended ONLY when the request ' +
+        'actually says something about a picture, photo, logo or image for that area — putting one where ' +
+        'one already was replaces it, and that is the edit working, not failing. The [INSIDE...] marker by ' +
+        'itself proves nothing: if the request never mentions any image at all — it is about layout, ' +
+        'spacing, color, responsiveness, wording, anything that is not a picture — a dropped image there ' +
+        'is NOT explained by the edit, even though it sits in a section the edit was touching. Treat it ' +
+        'exactly like a loss anywhere else on the page: intended=false. Say intended=true for an in-region ' +
+        'image only when the request gives an actual image-related reason for it to be gone. ' +
         'intended=false ONLY when the loss is unrelated to what was asked — e.g. they asked to resize a logo ' +
-        'and unrelated photos and headings vanished from elsewhere. ' +
+        'and unrelated photos and headings vanished from elsewhere, OR an in-region image vanished with no ' +
+        'image-related ask to explain it. ' +
         'When unsure, answer intended=true: wrongly calling a good edit "damage" throws away work the user wanted.',
       messages: [
         {
@@ -510,6 +520,88 @@ export async function judgeUnrequestedLoss(opts: {
     console.warn('[follow-up] judgeUnrequestedLoss unavailable — treating loss as intended', err);
     return { intended: true, summary: null };
   }
+}
+
+/**
+ * Fit a just-restored image into its section naturally, instead of leaving
+ * it exactly where the deterministic repair mechanically dropped it (start
+ * of the first container, capped at max-width so it can never break the
+ * page — but not necessarily sized or placed like the section actually
+ * wants). Runs AFTER that repair, per restored image, and can only ever
+ * improve on it: the model's answer is verified (verifyImagePlacementEdit —
+ * same src, every data-field and image the section had before is still
+ * there, nothing shrank suspiciously) before it is trusted. A section that
+ * fails verification, or a call that fails outright, keeps its
+ * deterministic placement exactly as it was — this never makes things
+ * worse than the caller's fallback.
+ */
+export async function placeRestoredImagesIntelligently(opts: {
+  /** The page AFTER the deterministic restoreLostImagesInPlace repair already ran. */
+  html: string;
+  /** The page as it stood before the edit — context on how the section used to look. */
+  beforeHtml: string;
+  /** URLs restoreLostImagesInPlace just put back. */
+  images: string[];
+  usage?: UsageContext;
+}): Promise<{ html: string; placed: string[] }> {
+  let html = opts.html;
+  const placed: string[] = [];
+
+  for (const url of opts.images) {
+    const owner = sectionsContainingAsset(html, url)[0];
+    if (!owner) continue;
+    const live = getSlSection(html, owner);
+    if (!live) continue;
+    const original = sectionsContainingAsset(opts.beforeHtml, url).includes(owner)
+      ? getSlSection(opts.beforeHtml, owner)
+      : null;
+
+    try {
+      const text = await askAI({
+        system:
+          'A section of a landing page just had one image mechanically reinserted after being ' +
+          'accidentally dropped by an earlier edit. It is visible and cannot break the page (capped at ' +
+          "max-width:100%), but it landed at a generic spot — the start of the section's first container " +
+          '— and may look out of place: oversized relative to its neighbours, in the wrong spot in a ' +
+          'row/column, or not matching the section\'s visual rhythm. ' +
+          'Reposition and/or resize ONLY that one image (inline style only) so it fits naturally — match ' +
+          'the size/shape of sibling images in the same section when there are any (e.g. a row of small ' +
+          'logos/badges should all be the same size). ' +
+          'Do not change the image\'s src or data-field attribute. Do not add, remove, or reword anything ' +
+          'else in the section — no other tag, attribute, class or text may change. ' +
+          'Return ONLY the corrected section HTML — no SL markers, no explanation, no code fence.',
+        messages: [
+          {
+            role: 'user',
+            content:
+              (original
+                ? `HOW THIS SECTION ORIGINALLY LOOKED (context on sizing/position only — its exact markup no longer applies, the section has since changed):\n${original.inner}\n\n`
+                : '') +
+              `THE SECTION NOW, WITH THE IMAGE MECHANICALLY REINSERTED:\n${live.inner}\n\n` +
+              `THE IMAGE TO FIT IN: ${url}`,
+          },
+        ],
+        maxTokens: 8000,
+        label: 'follow-up:place-restored-image',
+        usage: opts.usage ? { ...opts.usage, operation: 'route' } : undefined,
+      });
+      let raw = text.trim();
+      if (raw.startsWith('```')) raw = raw.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
+      if (!verifyImagePlacementEdit({ before: live.inner, after: raw, mustKeepSrc: url })) {
+        console.warn('[follow-up] placeRestoredImagesIntelligently rejected model output — keeping deterministic placement', {
+          section: owner,
+          url: url.slice(0, 120),
+        });
+        continue;
+      }
+      html = replaceSlSection(html, owner, raw);
+      placed.push(url);
+    } catch (err) {
+      console.warn('[follow-up] placeRestoredImagesIntelligently unavailable — keeping deterministic placement', err);
+    }
+  }
+
+  return { html, placed };
 }
 
 /**
