@@ -118,6 +118,24 @@ export function snapshotPageFacts(html: string): PageFacts {
 }
 
 /**
+ * An image URL that vanished from the page is not necessarily damage — if the
+ * same click-to-edit slot (data-field) that held it still holds an <img> tag
+ * after the edit, the model re-sourced that slot's asset rather than dropping
+ * it (e.g. a fresh upload of the same headshot while restructuring its
+ * section for another reason entirely). This is the same identity signal
+ * editableFields loss detection already relies on — just applied to the image
+ * itself — so a legitimate re-source doesn't get mistaken for lost content
+ * and then have the stale image reinserted as an orphaned duplicate.
+ */
+function imageSlotWasReplaced(beforeHtml: string, url: string, afterFields: string[]): boolean {
+  const tag = findImgTagForSrc(beforeHtml, url);
+  if (!tag) return false;
+  const fieldMatch = /\bdata-field=["']([^"']+)["']/i.exec(tag);
+  if (!fieldMatch) return false;
+  return afterFields.includes(fieldMatch[1]);
+}
+
+/**
  * What the edit destroyed without being asked to. Returns empty losses when the
  * prompt shows removal intent, so intentional deletes never look like bugs.
  */
@@ -143,10 +161,14 @@ export function findUnrequestedLosses(opts: {
   const after = snapshotPageFacts(afterHtml);
 
   // An image that moved to a re-hosted copy of itself is not a loss, so compare
-  // on the filename tail as well as the full URL.
+  // on the filename tail as well as the full URL. Nor is one whose data-field
+  // slot still holds an <img> after the edit — that's a re-source, not a drop.
   const afterTails = new Set(after.imageUrls.map(urlTail));
   const images = before.imageUrls.filter(
-    (u) => !after.imageUrls.includes(u) && !afterTails.has(urlTail(u)),
+    (u) =>
+      !after.imageUrls.includes(u) &&
+      !afterTails.has(urlTail(u)) &&
+      !imageSlotWasReplaced(beforeHtml, u, after.editableFields),
   );
 
   const sections = before.sectionNames.filter((n) => !after.sectionNames.includes(n));

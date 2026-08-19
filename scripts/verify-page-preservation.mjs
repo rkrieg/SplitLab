@@ -97,6 +97,28 @@ assert('re-hosted copy of the same file is not a loss',
   P.findUnrequestedLosses({ beforeHtml: pageWithLogo, afterHtml: rehosted, prompt: 'make it blue' })
     .images.length === 0);
 
+// Confirmed live: a "make it responsive" rewrite regenerated a testimonial
+// section and picked a fresh headshot upload for an avatar's data-field slot
+// (different file entirely, not a re-host of the same one) while restructuring
+// everything around it. The old URL is gone, but the slot is still filled —
+// this must not read as a loss, or the guard puts the stale avatar back in
+// too and the page shows the same person twice.
+const avatarSlot = `
+<!-- SL:testimonials --><section><img src="https://i.imgur.com/old-avatar.png" data-field="sections.2.image" alt="Michael Rodriguez"/></section><!-- /SL:testimonials -->`;
+const avatarResourced = `
+<!-- SL:testimonials --><section><img src="https://supabase.co/storage/new-avatar.jpeg" data-field="sections.2.image" alt="Michael Rodriguez"/></section><!-- /SL:testimonials -->`;
+assert('re-sourcing a data-field image slot with a different file is not a loss',
+  P.findUnrequestedLosses({ beforeHtml: avatarSlot, afterHtml: avatarResourced, prompt: 'make it responsive' })
+    .images.length === 0);
+
+// The other half: if the data-field slot is genuinely empty afterward (no <img>
+// with that field at all), the old URL disappearing IS still a real loss.
+const avatarDropped = `
+<!-- SL:testimonials --><section><p>Michael Rodriguez</p></section><!-- /SL:testimonials -->`;
+assert('a data-field slot that truly has no image left is still reported as a loss',
+  P.findUnrequestedLosses({ beforeHtml: avatarSlot, afterHtml: avatarDropped, prompt: 'make it responsive' })
+    .images.length === 1);
+
 // Section and heading loss.
 const sectionGone = pageWithLogo.replace(
   /<!-- SL:footer -->[\s\S]*?<!-- \/SL:footer -->/,
