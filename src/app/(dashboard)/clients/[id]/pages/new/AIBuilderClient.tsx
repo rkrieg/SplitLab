@@ -842,7 +842,8 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       '2. Rebuild the markup in that order using normal flow: stack vertically-arranged content as ordinary block elements, and group anything that currently sits side-by-side (similar vertical position, different horizontal position) into a flexbox or grid row.',
       '3. Remove every position: absolute/fixed, left, top, and the fixed-height "canvas" container entirely — nothing should be pinned to a fixed x/y coordinate or a fixed page height afterward. The page must grow and shrink naturally with its content and reflow correctly on mobile.',
       '4. Keep every visible piece of the original exactly as it is: every word of text, every image (same src), every link (same href), every video/embed, every form field, every color, every font. Do not paraphrase, summarize, invent, add, or drop any content — this is a layout rebuild, not a redesign or a rewrite.',
-      '5. Before you finish, check your rebuilt HTML against the original: every sentence of visible text and every image/link/embed URL that appears in the original must still appear somewhere in your output. If anything is missing, add it back rather than leaving it out — do not report this as done until that check passes.',
+      '5. Mobile is not optional: at every breakpoint (and especially a narrow ~375–414px phone width), every flex/grid child must actually fill or shrink to the available width — do not rely on flex-direction: column alone. Any flex/grid container using align-items: center (or an item with only a max-width and no width) will NOT shrink its children to fit a narrow viewport, so images and cards silently overflow/crop instead of stacking cleanly. At each breakpoint where a container switches to column/stacked layout, also set align-items: stretch (or width: 100%; max-width: 100% directly on the children) so nothing keeps its desktop width. Trace every element\'s width at ~375px yourself before finishing — if anything would extend past the viewport edge, that is a bug, fix it.',
+      '6. Before you finish, check your rebuilt HTML against the original: every sentence of visible text and every image/link/embed URL that appears in the original must still appear somewhere in your output. If anything is missing, add it back rather than leaving it out — do not report this as done until that check passes.',
       '',
       'Return one complete, self-contained HTML document.',
     ].join('\n');
@@ -899,6 +900,12 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         toast.error(err.error || "Couldn't save your HTML.");
         return;
       }
+      const updated = await res.json().catch(() => null);
+      // The whole document changed, so the preview has to be refetched —
+      // same as runRebuild. Without this the iframe keeps showing the
+      // pre-reupload HTML until runSchemaPrep's own (much later) refresh
+      // finishes, which for a large page can take a minute or more.
+      if (updated?.html_url) setHtmlUrl(`${updated.html_url}?t=${Date.now()}`);
       setReuploadHtml('');
       setRebuildBlockOpen(false);
       addMessage({ role: 'assistant', content: 'HTML replaced — preparing this page for editing…' });
