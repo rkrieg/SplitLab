@@ -517,6 +517,26 @@ export function buildTrackingSnippet(
     return key;
   }
 
+  // Read hidden inputs at send time. Used by the JS-submit path so a late-filled
+  // gclid still lands after hasData is already true. Never called before that
+  // gate — scanning on every fetch would turn unrelated POSTs into leads.
+  function readHiddenFieldsNow(scopeForm) {
+    var fields = {}, hiddenParams = {};
+    try {
+      var els = scopeForm && scopeForm.elements ? scopeForm.elements : document.querySelectorAll('input');
+      for (var i = 0; i < els.length; i++) {
+        var el = els[i];
+        if ((el.type || '').toLowerCase() !== 'hidden') continue;
+        var hn = hiddenFieldKey(el);
+        if (hn && el.value) {
+          fields[hn] = el.value;
+          if (isTrackingParam(hn)) hiddenParams[hn] = el.value;
+        }
+      }
+    } catch(e) {}
+    return { fields: fields, hiddenParams: hiddenParams };
+  }
+
   function snapshotVisibleFormFields() {
     try {
       var inputs = document.querySelectorAll('input, select, textarea');
@@ -631,7 +651,12 @@ export function buildTrackingSnippet(
     if (!hasData) return;
     if (!fieldsLookValid(_lastClickScopeForm)) return;
     _leadSent = true;
-    sendFormLead(_accumulatedFormData);
+    var fields = {};
+    var k;
+    for (k in _accumulatedFormData) { if (_accumulatedFormData.hasOwnProperty(k)) fields[k] = _accumulatedFormData[k]; }
+    var hiddenNow = readHiddenFieldsNow(_lastClickScopeForm);
+    for (k in hiddenNow.fields) { if (hiddenNow.fields.hasOwnProperty(k)) fields[k] = hiddenNow.fields[k]; }
+    sendFormLead(fields, hiddenNow.hiddenParams);
   }
 
   function patchNetworkForJsSubmit() {

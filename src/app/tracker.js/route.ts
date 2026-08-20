@@ -996,6 +996,26 @@ function buildTrackerScript(appUrl: string): string {
     return key;
   }
 
+  // Read hidden inputs at send time. Used by the JS-submit path so a late-filled
+  // gclid still lands after hasData is already true. Never called before that
+  // gate — scanning on every fetch would turn unrelated POSTs into leads.
+  function readHiddenFieldsNow() {
+    var fields = {}, hiddenParams = {};
+    try {
+      var els = document.querySelectorAll("input");
+      for (var i = 0; i < els.length; i++) {
+        var el = els[i];
+        if ((el.type || "").toLowerCase() !== "hidden") continue;
+        var hn = hiddenFieldKey(el);
+        if (hn && el.value) {
+          fields[hn] = el.value;
+          if (isTrackingParam(hn)) hiddenParams[hn] = el.value;
+        }
+      }
+    } catch(e) {}
+    return { fields: fields, hiddenParams: hiddenParams };
+  }
+
   function snapshotVisibleFormFields() {
     try {
       var inputs = document.querySelectorAll("input, select, textarea");
@@ -1091,12 +1111,21 @@ function buildTrackerScript(appUrl: string): string {
     if (!hasData) return;
     _leadSent = true;
 
-    var split2 = splitTrackingParams(trackingParams());
+    var fields = {};
+    var k;
+    for (k in _accumulatedFormData) { if (_accumulatedFormData.hasOwnProperty(k)) fields[k] = _accumulatedFormData[k]; }
+    var hiddenNow = readHiddenFieldsNow();
+    for (k in hiddenNow.fields) { if (hiddenNow.fields.hasOwnProperty(k)) fields[k] = hiddenNow.fields[k]; }
+    var all = trackingParams();
+    for (k in hiddenNow.hiddenParams) {
+      if (hiddenNow.hiddenParams.hasOwnProperty(k) && !all[k]) all[k] = hiddenNow.hiddenParams[k];
+    }
+    var split2 = splitTrackingParams(all);
     var payload = JSON.stringify({
       testId: _ctx.tid,
       variantId: _ctx.vid,
       visitorHash: _ctx.vh,
-      formFields: _accumulatedFormData,
+      formFields: fields,
       utm: split2.utm,
       extraParams: split2.extra,
       // Read at submit time, before the site navigates to any thank-you page,
