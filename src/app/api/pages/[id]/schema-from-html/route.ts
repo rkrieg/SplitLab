@@ -731,6 +731,7 @@ export async function POST(
           html_url: page.html_url ?? '',
           prep_strategy: earlyOutcome.strategy,
           prep_note: earlyOutcome.message,
+          rebuild_reasons: earlyLayout.reasons,
           elapsed_ms: Date.now() - startedAt,
         });
         closeSSE(controller);

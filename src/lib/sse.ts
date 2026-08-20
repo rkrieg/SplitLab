@@ -51,6 +51,14 @@ export type SSEEvent =
       /** The plain-English version of prep_strategy, written for the chat. */
       prep_note?: string;
       /**
+       * Machine-readable evidence behind prep_strategy === 'rebuild' (from
+       * PageLayout.reasons in ai-page-layout.ts) — e.g. "62 of the page's 88
+       * top-level blocks are placed at fixed left/top coordinates". Only sent
+       * alongside prep_strategy 'rebuild'. Lets the client build a specific
+       * prompt for the user's own AI tool instead of generic boilerplate.
+       */
+      rebuild_reasons?: string[];
+      /**
        * Where the page as it was BEFORE a rebuild was saved (rebuild-flow only).
        *
        * A rebuild replaces the whole document, so there has to be a way back.

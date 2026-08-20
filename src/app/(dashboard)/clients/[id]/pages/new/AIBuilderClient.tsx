@@ -7,6 +7,7 @@ import {
   Wand2, Layout, Palette, RefreshCw, Monitor, Smartphone,
   ExternalLink, RotateCcw, Plus, Download, Lock, ArrowRight,
   Sliders, Trash2, AlertTriangle, MoreHorizontal, MousePointer2, ChevronDown,
+  FileCode2,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { cn } from '@/lib/utils';
@@ -14,6 +15,10 @@ import { VERTICAL_LABELS } from '@/lib/ai-page-verticals';
 import { SAMPLE_PROMPTS } from '@/lib/ai-page-sample-prompts';
 import { readSSEStream, type SSEEvent } from '@/lib/use-sse-stream';
 import { LiveProgressPanel } from '@/components/ai/LiveProgressPanel';
+// Pure, zero-dependency function (no AI call, no network) — safe to run
+// client-side. Used by the rebuild-block modal's Reupload flow to check
+// pasted HTML instantly and for free, before ever touching the network.
+import { analyzePageLayout } from '@/lib/ai-page-layout';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -428,16 +433,23 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   // A rebuild replaces the whole document, so it locks the chat the same way prep
   // does — two writers on one page row is how a draft gets half-overwritten.
   const [rebuilding, setRebuilding] = useState(false);
-  // Prep has asked whether to rebuild and the page has not been rebuilt yet.
-  //
-  // The chat is locked until it is, on purpose. This question is only ever asked
-  // about a page that cannot be restructured, so the very next thing the user types
-  // is the thing that would silently fail — "move the form up", "add a testimonials
-  // section". Leaving the composer open invited exactly the request the page cannot
-  // serve. A FAILED rebuild leaves this locked too, which is the point: the page is
-  // no more editable than it was before the attempt. The only other way out is Go
-  // back, which leaves the editor rather than unlocking a chat that cannot work.
-  const rebuildPending = messages.some((m) => m.rebuildOffer && m.rebuildAnswered === undefined);
+  // Non-dismissable modal shown instead of in-chat rebuild buttons — the client
+  // does not want SplitLab rebuilding the page itself, only: go back, or hand the
+  // user a prompt for their own AI tool and let them reupload the cleaned HTML.
+  // No backdrop-click / Escape close by design — see the modal's JSX below.
+  const [rebuildBlockOpen, setRebuildBlockOpen] = useState(false);
+  // Plain-English evidence behind the current rebuild block (PageLayout.reasons),
+  // used to build a specific copy-paste prompt instead of generic boilerplate.
+  const [rebuildReasons, setRebuildReasons] = useState<string[]>([]);
+  const [reuploadHtml, setReuploadHtml] = useState('');
+  const [reuploading, setReuploading] = useState(false);
+  // Prep found a page that cannot be safely edited in place (rebuildBlockOpen
+  // above). The chat is locked while this is true, on purpose. This question is
+  // only ever asked about a page that cannot be restructured, so the very next
+  // thing the user types is the thing that would silently fail — "move the form
+  // up", "add a testimonials section". Leaving the composer open invited exactly
+  // the request the page cannot serve.
+  const rebuildPending = rebuildBlockOpen;
   // True when the schema-from-html prep failed (fetch error, SSE error
   // event, or thrown exception). Editing stays locked while this is true —
   // there is no valid schema to edit against — until a retry succeeds.
@@ -625,6 +637,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       // new hero stacked on top of the old one.
       let resultPrepStrategy: 'patch' | 'rebuild' | undefined;
       let resultPrepNote: string | undefined;
+      let resultRebuildReasons: string[] | undefined;
 
       // The route returns a plain JSON body for the "already prepared"
       // fast path (idempotency guard, before any SSE stream opens) and an
@@ -640,6 +653,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
             resultElapsedMs = event.elapsed_ms;
             resultPrepStrategy = event.prep_strategy;
             resultPrepNote = event.prep_note;
+            resultRebuildReasons = event.rebuild_reasons;
           } else if (event.type === 'error') {
             streamFailed = true;
             toast.error(event.message || "Couldn't prepare this page for AI editing.");
@@ -670,16 +684,19 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       // waiting, and the composer is locked until it is answered, so the toast
       // points at the question rather than announcing success.
       if (resultPrepStrategy === 'rebuild') {
-        toast('This page needs rebuilding before it can be restructured — rebuild it in the chat.', {
+        toast('This page needs to be rebuilt before it can be edited here.', {
           id: 'schema-from-html-ready',
           duration: 9000,
           icon: '⚠️',
         });
+        setRebuildReasons(resultRebuildReasons ?? []);
+        setRebuildBlockOpen(true);
       } else {
         toast.success('This page is ready for AI editing.', {
           id: 'schema-from-html-ready',
           duration: 4000,
         });
+        setRebuildBlockOpen(false);
       }
       addMessage({
         role: 'assistant',
@@ -687,7 +704,9 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
           resultPrepNote ??
           'Done preparing this page! Click any text in the preview to edit it, or ask me to make changes.',
         elapsedMs: resultElapsedMs,
-        // A coordinate page gets the offer to rebuild rather than a rebuild.
+        // A coordinate page gets the block dialog rather than an offer to
+        // rebuild here — kept on the message for chat history/context only,
+        // the modal above drives the actual interaction now.
         ...(resultPrepStrategy === 'rebuild' ? { rebuildOffer: true } : {}),
       });
     } catch {
@@ -799,6 +818,98 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   function leaveWithoutRebuilding() {
     router.push(backPath ?? `/clients/${clientId}/pages`);
     router.refresh();
+  }
+
+  /**
+   * A copy-paste prompt for the user's own AI tool (Claude, Lovable, etc.),
+   * built from the same plain-English evidence (PageLayout.reasons) the log
+   * line already carries — see ai-page-layout.ts. Specific to what is
+   * actually wrong with THIS page rather than generic boilerplate.
+   */
+  function buildRebuildPrompt(reasons: string[]): string {
+    const why = reasons.length > 0
+      ? reasons.map((r) => `- ${r}`).join('\n')
+      : '- Its layout is defined by fixed pixel coordinates (position: absolute/fixed with left/top values) rather than normal document flow.';
+    return [
+      "This landing page's HTML is laid out using fixed pixel coordinates (CSS position: absolute/fixed with left/top values, inside a container locked to a fixed pixel height) instead of normal responsive document flow. Specifically, on this page:",
+      why,
+      '',
+      'This means any new content or edit currently lands ON TOP of existing content instead of pushing it out of the way, because nothing here actually flows — this is the exact problem to fix, not a styling issue.',
+      '',
+      'Please rebuild this HTML to use normal, responsive document flow instead, following these steps:',
+      '',
+      "1. Read every element's current left/top coordinates and stacking order from the stylesheet, and use them to work out the real top-to-bottom, left-to-right reading order of the content as a human sees it today — that reading order is what your rebuilt markup order must follow.",
+      '2. Rebuild the markup in that order using normal flow: stack vertically-arranged content as ordinary block elements, and group anything that currently sits side-by-side (similar vertical position, different horizontal position) into a flexbox or grid row.',
+      '3. Remove every position: absolute/fixed, left, top, and the fixed-height "canvas" container entirely — nothing should be pinned to a fixed x/y coordinate or a fixed page height afterward. The page must grow and shrink naturally with its content and reflow correctly on mobile.',
+      '4. Keep every visible piece of the original exactly as it is: every word of text, every image (same src), every link (same href), every video/embed, every form field, every color, every font. Do not paraphrase, summarize, invent, add, or drop any content — this is a layout rebuild, not a redesign or a rewrite.',
+      '5. Before you finish, check your rebuilt HTML against the original: every sentence of visible text and every image/link/embed URL that appears in the original must still appear somewhere in your output. If anything is missing, add it back rather than leaving it out — do not report this as done until that check passes.',
+      '',
+      'Return one complete, self-contained HTML document.',
+    ].join('\n');
+  }
+
+  /**
+   * Reupload from the rebuild-block modal. This is the user's own cleaned
+   * HTML, deliberately supplied as the new baseline — not an AI draft — so it
+   * replaces the LIVE variant HTML directly, exactly like the "Edit HTML"
+   * modal on the test screen already does (same PATCH /api/pages/[id] path).
+   * clear_draft also drops any AI draft accumulated against the OLD markup,
+   * which is now stale. Prep then reruns against the fresh HTML — if it is
+   * still coordinate-based the modal reopens, otherwise the chat unlocks.
+   */
+  /**
+   * Reupload from the rebuild-block modal, in three steps:
+   *   1. Check — analyzePageLayout() is pure and has no server-only deps, so
+   *      it runs right here, instantly and for free. A still-coordinate
+   *      paste is rejected before it ever touches the network: no wasted
+   *      request, and no risk of burning the schema-from-html AI-call rate
+   *      limit on an attempt that was never going to pass.
+   *   2. Upload — only once the check passes: PATCH the HTML in as this
+   *      page's LIVE content (this is the user's own deliberately-supplied
+   *      new baseline, not an AI draft — same live-write path the "Edit
+   *      HTML" modal on the test screen already uses). clear_draft drops any
+   *      AI draft accumulated against the OLD markup, which is now stale.
+   *   3. Close the modal and unlock the chat immediately — then kick off the
+   *      same background prep (runSchemaPrep, no different from what any
+   *      freshly-uploaded page gets on first open) to stamp data-field/SL
+   *      markers for the chat/WYSIWYG editor. A failure at this stage is not
+   *      a reupload failure — the HTML is already live and correct — it
+   *      surfaces through the normal schemaPrepFailed / "Try again" UI like
+   *      any other page's prep failure would.
+   */
+  async function handleReupload() {
+    if (!initialPage || !reuploadHtml.trim() || reuploading) return;
+
+    const layout = analyzePageLayout(reuploadHtml);
+    if (layout.strategy === 'rebuild') {
+      setRebuildReasons(layout.reasons);
+      toast.error('This HTML still uses fixed positioning instead of normal layout — nothing was changed. Try the updated prompt below with your AI tool.');
+      return;
+    }
+
+    setReuploading(true);
+    try {
+      const res = await fetch(`/api/pages/${initialPage.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ html_content: reuploadHtml, clear_draft: true }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.error || "Couldn't save your HTML.");
+        return;
+      }
+      setReuploadHtml('');
+      setRebuildBlockOpen(false);
+      addMessage({ role: 'assistant', content: 'HTML replaced — preparing this page for editing…' });
+      // schema_json/draft_schema_json were just cleared by the write above,
+      // so runSchemaPrep's idempotency guard is open and this runs fresh.
+      await runSchemaPrep();
+    } catch {
+      toast.error("Couldn't save your HTML.");
+    } finally {
+      setReuploading(false);
+    }
   }
 
   useEffect(() => {
@@ -1957,47 +2068,22 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                         <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">{msg.content}</p>
                       )}
                       {/*
-                        Rebuild offer. Prep found a page whose layout is pixel
-                        coordinates, so restructuring it by editing markup is
-                        impossible — the choice is the user's, because a rebuild
-                        keeps the content and colours exactly but reinterprets the
-                        layout. Disabled once answered so the same page cannot be
-                        rebuilt twice from scrollback.
+                        Prep found a page whose layout is pixel coordinates, so
+                        restructuring it by editing markup is impossible. The
+                        interactive choice (go back / reupload cleaned HTML)
+                        lives in the non-dismissable modal (rebuildBlockOpen)
+                        triggered alongside this message, not here — this is
+                        kept purely as chat history/context. SplitLab no longer
+                        offers to rebuild the page itself; runRebuild/rebuild-flow
+                        stay in place but are unreachable from the UI.
                       */}
                       {msg.rebuildOffer && (
-                        <div className="mt-3 flex flex-wrap items-center gap-2">
-                          {msg.rebuildAnswered === undefined ? (
-                            <>
-                              <button
-                                onClick={() => runRebuild(i)}
-                                disabled={rebuilding || preparingSchema || isLoading}
-                                className="px-3 py-1.5 text-xs font-medium rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                              >
-                                {rebuilding ? 'Rebuilding…' : 'Rebuild this page'}
-                              </button>
-                              <button
-                                onClick={leaveWithoutRebuilding}
-                                disabled={rebuilding}
-                                className="px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-200 dark:border-white/10 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-white/5 disabled:opacity-50 transition-colors"
-                              >
-                                Go back
-                              </button>
-                              {/*
-                                What rebuilding does to the live page, in one line,
-                                at the point of the choice — this is where it is
-                                worth reading, and it is why the prep message itself
-                                stays short.
-                              */}
-                              <span className="text-[11px] text-slate-400 dark:text-slate-500">
-                                {isTestVariantPage
-                                  ? 'Saves as a draft — the live variant keeps serving the original.'
-                                  : 'Saves a copy of the original first.'}
-                                {' Your text, images, colours and video are copied across exactly.'}
-                              </span>
-                            </>
-                          ) : (
-                            <span className="text-[11px] text-slate-400 dark:text-slate-500">Rebuilt.</span>
-                          )}
+                        <div className="mt-3">
+                          <span className="text-[11px] text-slate-400 dark:text-slate-500">
+                            {msg.rebuildAnswered === undefined
+                              ? 'See the dialog above to continue.'
+                              : 'Resolved.'}
+                          </span>
                         </div>
                       )}
                     </div>
@@ -2302,7 +2388,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                   disabled={isLoading || preparingSchema || rebuilding || rebuildPending || schemaPrepFailed}
                   className="w-full bg-transparent px-3.5 pt-3 pb-2 text-sm text-slate-700 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none resize-none disabled:opacity-40 overflow-y-auto"
                   style={{ maxHeight: FOLLOW_UP_MAX_HEIGHT }}
-                  placeholder={schemaPrepFailed ? 'Preparation failed — try again above' : rebuilding ? 'Rebuilding this page…' : preparingSchema ? 'Preparing this page for editing…' : rebuildPending ? 'Rebuild this page above to start editing it' : 'Ask Splitlab…'}
+                  placeholder={schemaPrepFailed ? 'Preparation failed — try again above' : rebuilding ? 'Rebuilding this page…' : preparingSchema ? 'Preparing this page for editing…' : rebuildPending ? 'Resolve the dialog above to start editing this page' : 'Ask Splitlab…'}
                   rows={2}
                   onKeyDown={e => {
                     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); }
@@ -2660,6 +2746,106 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
             className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           />
+        </div>
+      )}
+
+      {/*
+        Rebuild-block dialog. Prep found a page whose layout is fixed pixel
+        coordinates rather than markup, so restructuring it here is impossible
+        (see ai-page-layout.ts). Per the client, SplitLab does not rebuild
+        this itself — the user either goes back (existing "Edit HTML" modal
+        on the test screen already covers reupload there) or reuploads their
+        own cleaned HTML right here, using the prompt below on their own AI
+        tool. Deliberately no backdrop-click / Escape close: every message
+        typed into a locked chat here would silently fail, so there is no
+        "dismiss and come back later".
+      */}
+      {rebuildBlockOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl p-6 w-full max-w-lg mx-4 shadow-2xl max-h-[85vh] overflow-y-auto">
+            <div className="flex items-start gap-3 mb-4">
+              <div className="w-9 h-9 rounded-full bg-amber-50 dark:bg-amber-500/10 border border-amber-100 dark:border-amber-500/20 flex items-center justify-center flex-shrink-0">
+                <AlertTriangle size={16} className="text-amber-600 dark:text-amber-500" />
+              </div>
+              <div>
+                <h3 className="text-slate-900 dark:text-slate-100 font-semibold text-base">This page needs to be rebuilt</h3>
+                <p className="text-sm text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
+                  Its layout is fixed pixel coordinates rather than normal document flow, so editing it here would overlap content instead of moving it. Clean it up with your own AI tool using the prompt below, then reupload the result — or go back.
+                </p>
+              </div>
+            </div>
+
+            <div className="mb-4">
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs font-medium text-slate-700 dark:text-slate-300">Prompt for your AI tool</label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(buildRebuildPrompt(rebuildReasons));
+                    toast.success('Prompt copied');
+                  }}
+                  className="inline-flex items-center gap-1 text-[11px] text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 transition-colors"
+                >
+                  <Copy size={11} /> Copy
+                </button>
+              </div>
+              <textarea
+                readOnly
+                value={buildRebuildPrompt(rebuildReasons)}
+                className="input-base w-full h-28 resize-y font-mono text-[11px] leading-relaxed"
+                onFocus={(e) => e.target.select()}
+              />
+            </div>
+
+            <div className="mb-5">
+              <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+                Reupload cleaned HTML
+              </label>
+              <textarea
+                value={reuploadHtml}
+                onChange={(e) => setReuploadHtml(e.target.value)}
+                placeholder="<!DOCTYPE html>..."
+                className="input-base w-full h-32 resize-y font-mono text-xs"
+              />
+              <label className="btn-secondary text-xs inline-flex items-center gap-1.5 cursor-pointer mt-2">
+                <FileCode2 size={12} /> Upload .html file
+                <input
+                  type="file"
+                  accept=".html,.htm"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = () => setReuploadHtml(reader.result as string);
+                    reader.readAsText(file);
+                    e.target.value = '';
+                  }}
+                />
+              </label>
+              <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-2">
+                We check this first — if it still can&apos;t be edited here, nothing changes and you can try again. If it passes, it replaces the current HTML for this {isTestVariantPage ? 'variant, and the live test starts serving it immediately' : 'page'}. Any unsaved AI draft on this page is discarded.
+              </p>
+            </div>
+
+            <div className="flex justify-between items-center gap-2">
+              <button
+                onClick={leaveWithoutRebuilding}
+                disabled={reuploading}
+                className="px-3 py-2 text-sm font-medium rounded-xl border border-slate-200 dark:border-white/10 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-white/5 disabled:opacity-50 transition-colors"
+              >
+                Go back
+              </button>
+              <button
+                onClick={handleReupload}
+                disabled={reuploading || !reuploadHtml.trim()}
+                className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-xl bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {reuploading && <Loader2 size={13} className="animate-spin" />}
+                {reuploading ? 'Saving…' : 'Check & Replace HTML'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

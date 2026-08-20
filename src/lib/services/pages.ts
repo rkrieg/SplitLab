@@ -92,6 +92,15 @@ export interface UpdatePageInput {
   schema_json?: Record<string, unknown>;
   conversation_json?: unknown[];
   draft?: boolean;
+  /**
+   * Live write only (ignored when draft: true) — also nulls draft_html_content
+   * and draft_schema_json. For a caller replacing the whole document with HTML
+   * the user is deliberately supplying as the new baseline (e.g. the AI Pages
+   * "Reupload HTML" flow after a coordinate-layout page couldn't be edited),
+   * any AI draft accumulated against the OLD markup is stale and must not
+   * silently reappear as "unsaved changes" the next time the draft is opened.
+   */
+  clear_draft?: boolean;
 }
 export interface PageMeta { html_url: string | null; schema_json: Record<string, unknown> | null }
 
@@ -113,7 +122,7 @@ export async function updatePageDraftOrLive(
   pageMeta: PageMeta,
   input: UpdatePageInput
 ): Promise<ServiceResult<unknown>> {
-  const { draft, ...data } = input;
+  const { draft, clear_draft, ...data } = input;
 
   if (typeof data.html_content === 'string') {
     data.html_content = await inlineDataUrisToStorage(data.html_content, pageId);
@@ -160,6 +169,7 @@ export async function updatePageDraftOrLive(
     ...(htmlReplaced ? { field_selectors_json: null } : {}),
     ...(data.html_url && !data.html_content ? { html_content: null } : {}),
     ...(schemaNowStale ? { schema_json: null, conversation_json: [] } : {}),
+    ...(clear_draft === true ? { draft_html_content: null, draft_schema_json: null } : {}),
   };
 
   if (htmlReplaced) {
