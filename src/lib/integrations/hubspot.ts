@@ -201,34 +201,55 @@ export async function fetchHubSpotForms(accessToken: string): Promise<HubSpotFor
   return forms.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-function resolveSystemField(
-  key: string,
-  systemData: {
-    ip_address?: string | null;
-    variantName?: string;
-    submitted_at?: string;
-    utm_source?: string | null;
-    utm_medium?: string | null;
-    utm_campaign?: string | null;
-    utm_content?: string | null;
-    utm_term?: string | null;
-    gclid?: string | null;
-    fbclid?: string | null;
-  }
-): string | null {
+type HubSpotSystemData = {
+  ip_address?: string | null;
+  variantName?: string;
+  submitted_at?: string;
+  utm_source?: string | null;
+  utm_medium?: string | null;
+  utm_campaign?: string | null;
+  utm_content?: string | null;
+  utm_term?: string | null;
+  gclid?: string | null;
+  fbclid?: string | null;
+  extraParams?: Record<string, string> | null;
+};
+
+function nonempty(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+function resolveSystemField(key: string, systemData: HubSpotSystemData): string | null {
   switch (key) {
-    case 'ip_address':   return systemData.ip_address ?? null;
-    case 'variant':      return systemData.variantName ?? null;
-    case 'submitted_at': return systemData.submitted_at ?? null;
-    case 'utm_source':   return systemData.utm_source ?? null;
-    case 'utm_medium':   return systemData.utm_medium ?? null;
-    case 'utm_campaign': return systemData.utm_campaign ?? null;
-    case 'utm_content':  return systemData.utm_content ?? null;
-    case 'utm_term':     return systemData.utm_term ?? null;
-    case 'gclid':        return systemData.gclid ?? null;
-    case 'fbclid':       return systemData.fbclid ?? null;
+    case 'ip_address':   return nonempty(systemData.ip_address);
+    case 'variant':      return nonempty(systemData.variantName);
+    case 'submitted_at': return nonempty(systemData.submitted_at);
+    case 'utm_source':   return nonempty(systemData.utm_source);
+    case 'utm_medium':   return nonempty(systemData.utm_medium);
+    case 'utm_campaign': return nonempty(systemData.utm_campaign);
+    case 'utm_content':  return nonempty(systemData.utm_content);
+    case 'utm_term':     return nonempty(systemData.utm_term);
+    case 'gclid':        return nonempty(systemData.gclid);
+    case 'fbclid':       return nonempty(systemData.fbclid);
     default:             return null;
   }
+}
+
+// Same order for every mapped key: form value, then extra_params, then the
+// system column. System-only lookup dropped form gclid/fbclid even when they
+// were mapped, because those names are also system-field keys.
+function resolveMappedLeadValue(
+  ourField: string,
+  formFields: Record<string, string>,
+  systemData: HubSpotSystemData,
+): string | null {
+  return (
+    nonempty(formFields[ourField]) ??
+    nonempty(systemData.extraParams?.[ourField]) ??
+    (SYSTEM_FIELDS.some((f) => f.key === ourField) ? resolveSystemField(ourField, systemData) : null)
+  );
 }
 
 export async function syncLeadToHubSpot(params: {
@@ -264,11 +285,8 @@ export async function syncLeadToHubSpot(params: {
   const resolved: Record<string, string> = {};
   for (const [ourField, hubspotField] of Object.entries(fieldMappings)) {
     if (!hubspotField || hubspotField === '(-) Not mapped') continue;
-    const isSystemField = SYSTEM_FIELDS.some(f => f.key === ourField);
-    const value = isSystemField
-      ? resolveSystemField(ourField, systemData)
-      : (formFields[ourField] ?? systemData.extraParams?.[ourField] ?? null);
-    if (value !== null && value !== '') {
+    const value = resolveMappedLeadValue(ourField, formFields, systemData);
+    if (value !== null) {
       resolved[hubspotField] = value;
     }
   }

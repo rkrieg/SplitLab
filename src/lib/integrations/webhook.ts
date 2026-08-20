@@ -35,6 +35,12 @@ const SYSTEM_FIELD_KEYS = [
 
 export { SYSTEM_FIELD_KEYS };
 
+function nonempty(value: unknown): string | null {
+  if (value === undefined || value === null) return null;
+  const trimmed = String(value).trim();
+  return trimmed ? trimmed : null;
+}
+
 function buildPayload(
   formFields: Record<string, string>,
   systemValues: Record<string, string | null | undefined>,
@@ -42,24 +48,21 @@ function buildPayload(
 ): Record<string, string> {
   const payload: Record<string, string> = {};
 
-  // Apply form field mappings
-  for (const [slField, webhookKey] of Object.entries(mappings.formFields)) {
+  // Same order as HubSpot: form value first, system column only fills a
+  // destination key that is still empty. If both map to `gclid`, a form
+  // gclid is kept; URL gclid is used when the form field is blank.
+  for (const [slField, webhookKey] of Object.entries(mappings.formFields ?? {})) {
     const key = webhookKey?.trim();
-    if (!key) continue; // blank right side = exclude
-    const value = formFields[slField];
-    if (value !== undefined && value !== null) {
-      payload[key] = String(value);
-    }
+    if (!key) continue;
+    const value = nonempty(formFields[slField]);
+    if (value !== null) payload[key] = value;
   }
 
-  // Apply system field mappings
-  for (const [slField, webhookKey] of Object.entries(mappings.systemFields)) {
+  for (const [slField, webhookKey] of Object.entries(mappings.systemFields ?? {})) {
     const key = webhookKey?.trim();
-    if (!key) continue; // blank right side = exclude
-    const value = systemValues[slField];
-    if (value !== undefined && value !== null) {
-      payload[key] = String(value);
-    }
+    if (!key || payload[key] !== undefined) continue;
+    const value = nonempty(systemValues[slField]);
+    if (value !== null) payload[key] = value;
   }
 
   return payload;
