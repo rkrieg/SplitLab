@@ -193,6 +193,13 @@ TEAM section — pick one:
   A) Grid cards — photo + name + role + optional social link
   B) Alternating feature rows — larger treatment per person, photo + bio + highlights
 
+CUSTOM_BLOCK section — build exactly what "description" specifies, not a generic card/list layout
+  This type exists for content that doesn't fit any pattern above — most often a diagram, schematic, or bespoke widget. Read "description" literally and build it:
+  - If it describes a diagram/map/schematic: draw it as inline SVG (or styled div/CSS shapes) using the page's existing design tokens (--accent, --font-headline, etc.) — never an <img>, never an external map/tiles service or API, never a placeholder rectangle standing in for the drawing
+  - Respect every explicit constraint named in "description" (e.g. "no external map tiles", specific elements that must appear, labels, connectors, dividing lines)
+  - Must still reflow cleanly down to 360px like every other section — a wide schematic should stack or simplify on narrow viewports, never overflow
+  - Still wrapped in its own <!-- SL:name --> marker like every other section
+
 ## Color system — how to build the palette
 - Choose light OR dark background first — this sets the entire emotional tone
 - --bg-surface must be visibly distinct from --bg but subtle (8-15% lightness shift max)

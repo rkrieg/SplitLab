@@ -140,6 +140,12 @@ export const SECTION_VOCABULARY: SectionPattern[] = [
     schemaExample: '{ "type": "map_location", "address": "...", "hours": "...", "map_embed_url": null }',
   },
   {
+    type: 'custom_block',
+    description: 'A bespoke section — a diagram, schematic, custom widget, or layout — for content that does not fit any type above.',
+    whenToUse: 'ONLY when the prompt explicitly describes something visual/interactive that no other type here can represent (e.g. a schematic map, a flowchart, a relationship diagram). Never a default, and never for ordinary content that fits an existing type — this is an escape hatch, not a first choice.',
+    schemaExample: '{ "type": "custom_block", "headline": "...", "description": "<verbatim spec of exactly what to build — the elements, their spatial relationship, labels, connectors, any dividing lines, and any constraints from the brief such as \'no external map tiles or APIs\'>" }',
+  },
+  {
     type: 'newsletter_signup',
     description: 'Lightweight single-field email capture, distinct from the full lead `form` section.',
     whenToUse: 'Content/media-driven pages, or as a secondary low-commitment CTA alongside a primary form.',

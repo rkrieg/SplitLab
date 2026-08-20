@@ -974,13 +974,60 @@ function buildTrackerScript(appUrl: string): string {
   // Accumulates form field values across stepper steps so submit captures all steps' data
   var _accumulatedFormData = {};
 
+  // Page-owned hidden inputs (gclid, fbclid, pageVariant, …) must land in
+  // formFields so a webhook mapping can send them. Ours and CSRF/session
+  // tokens still stay out — those are not lead data.
+  function isOurHiddenInput(el) {
+    return !!(el.getAttribute && (el.getAttribute("data-sl") === "1" || el.getAttribute("data-sl-utm") === "1"));
+  }
+  function isSensitiveHiddenName(name) {
+    if (!name) return true;
+    var n = String(name).toLowerCase();
+    if (n.indexOf("sl_") === 0) return true;
+    if (n.indexOf("csrf") !== -1) return true;
+    if (n === "authenticity_token" || n === "form_build_id" || n === "_token" || n === "_wpnonce") return true;
+    if (n === "session_id" || n === "sessionid" || n === "_session") return true;
+    return false;
+  }
+  function hiddenFieldKey(el) {
+    if (isOurHiddenInput(el)) return null;
+    var key = el.name || el.id || "";
+    if (!key || isSensitiveHiddenName(key)) return null;
+    return key;
+  }
+
+  // Read hidden inputs at send time. Used by the JS-submit path so a late-filled
+  // gclid still lands after hasData is already true. Never called before that
+  // gate — scanning on every fetch would turn unrelated POSTs into leads.
+  function readHiddenFieldsNow() {
+    var fields = {}, hiddenParams = {};
+    try {
+      var els = document.querySelectorAll("input");
+      for (var i = 0; i < els.length; i++) {
+        var el = els[i];
+        if ((el.type || "").toLowerCase() !== "hidden") continue;
+        var hn = hiddenFieldKey(el);
+        if (hn && el.value) {
+          fields[hn] = el.value;
+          if (isTrackingParam(hn)) hiddenParams[hn] = el.value;
+        }
+      }
+    } catch(e) {}
+    return { fields: fields, hiddenParams: hiddenParams };
+  }
+
   function snapshotVisibleFormFields() {
     try {
       var inputs = document.querySelectorAll("input, select, textarea");
       for (var i = 0; i < inputs.length; i++) {
         var el = inputs[i];
         var t = (el.type || "").toLowerCase();
-        if (t === "password" || t === "hidden" || t === "submit" || t === "button" || t === "reset" || t === "file") continue;
+        if (t === "password" || t === "submit" || t === "button" || t === "reset" || t === "file") continue;
+        if (t === "hidden") {
+          var hkey = hiddenFieldKey(el);
+          if (hkey && el.value) _accumulatedFormData[hkey] = el.value;
+          continue;
+        }
         if ((t === "checkbox" || t === "radio") && !el.checked) continue;
         var key = el.name || el.id || el.getAttribute("placeholder") || null;
         if (key && el.value) _accumulatedFormData[key] = el.value;
@@ -1001,19 +1048,14 @@ function buildTrackerScript(appUrl: string): string {
         var el = elements[i];
         var t = (el.type || "").toLowerCase();
         if (t === "hidden") {
-          // The standard landing-page pattern for UTM passthrough is hidden
-          // inputs populated from the query string, so blanket-skipping them
-          // discarded the client's own solution.
-          //
-          // Do NOT read hidden inputs generally — they also carry CSRF tokens,
-          // session IDs and internal state. Only names matching the tracking
-          // rules, and only into extra_params, never into form_fields.
           try {
-            // Ours, appended by decorateFormForSubmit / injectUtmFieldsIntoForm.
-            // Skipping these is what stops the inject-then-recapture loop.
-            if (el.getAttribute && (el.getAttribute("data-sl") === "1" || el.getAttribute("data-sl-utm") === "1")) continue;
-            var hn = el.name || "";
-            if (isTrackingParam(hn) && el.value) hiddenParams[hn] = el.value;
+            var hn = hiddenFieldKey(el);
+            if (hn && el.value) {
+              // Mapped webhook/HubSpot keys read formFields — skipping hidden
+              // here is why gclid/fbclid never went out even when mapped.
+              fields[hn] = el.value;
+              if (isTrackingParam(hn)) hiddenParams[hn] = el.value;
+            }
           } catch(e) {}
           continue;
         }
@@ -1069,12 +1111,21 @@ function buildTrackerScript(appUrl: string): string {
     if (!hasData) return;
     _leadSent = true;
 
-    var split2 = splitTrackingParams(trackingParams());
+    var fields = {};
+    var k;
+    for (k in _accumulatedFormData) { if (_accumulatedFormData.hasOwnProperty(k)) fields[k] = _accumulatedFormData[k]; }
+    var hiddenNow = readHiddenFieldsNow();
+    for (k in hiddenNow.fields) { if (hiddenNow.fields.hasOwnProperty(k)) fields[k] = hiddenNow.fields[k]; }
+    var all = trackingParams();
+    for (k in hiddenNow.hiddenParams) {
+      if (hiddenNow.hiddenParams.hasOwnProperty(k) && !all[k]) all[k] = hiddenNow.hiddenParams[k];
+    }
+    var split2 = splitTrackingParams(all);
     var payload = JSON.stringify({
       testId: _ctx.tid,
       variantId: _ctx.vid,
       visitorHash: _ctx.vh,
-      formFields: _accumulatedFormData,
+      formFields: fields,
       utm: split2.utm,
       extraParams: split2.extra,
       // Read at submit time, before the site navigates to any thank-you page,
@@ -1145,7 +1196,8 @@ function buildTrackerScript(appUrl: string): string {
         var name = el.name;
         if (!name || _registeredFields[name]) continue;
         var t = (el.type || "").toLowerCase();
-        if (t === "password" || t === "hidden" || t === "submit" || t === "button" || t === "reset" || t === "file") continue;
+        if (t === "password" || t === "submit" || t === "button" || t === "reset" || t === "file") continue;
+        if (t === "hidden" && !hiddenFieldKey(el)) continue;
         _registeredFields[name] = true;
         fields.push(name);
       }

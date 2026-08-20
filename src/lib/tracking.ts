@@ -495,13 +495,60 @@ export function buildTrackingSnippet(
     return true;
   }
 
+  // Page-owned hidden inputs (gclid, fbclid, pageVariant, …) must land in
+  // formFields so a webhook mapping can send them. Ours and CSRF/session
+  // tokens still stay out — those are not lead data.
+  function isOurHiddenInput(el) {
+    return !!(el.getAttribute && (el.getAttribute('data-sl') === '1' || el.getAttribute('data-sl-utm') === '1'));
+  }
+  function isSensitiveHiddenName(name) {
+    if (!name) return true;
+    var n = String(name).toLowerCase();
+    if (n.indexOf('sl_') === 0) return true;
+    if (n.indexOf('csrf') !== -1) return true;
+    if (n === 'authenticity_token' || n === 'form_build_id' || n === '_token' || n === '_wpnonce') return true;
+    if (n === 'session_id' || n === 'sessionid' || n === '_session') return true;
+    return false;
+  }
+  function hiddenFieldKey(el) {
+    if (isOurHiddenInput(el)) return null;
+    var key = el.name || el.id || '';
+    if (!key || isSensitiveHiddenName(key)) return null;
+    return key;
+  }
+
+  // Read hidden inputs at send time. Used by the JS-submit path so a late-filled
+  // gclid still lands after hasData is already true. Never called before that
+  // gate — scanning on every fetch would turn unrelated POSTs into leads.
+  function readHiddenFieldsNow(scopeForm) {
+    var fields = {}, hiddenParams = {};
+    try {
+      var els = scopeForm && scopeForm.elements ? scopeForm.elements : document.querySelectorAll('input');
+      for (var i = 0; i < els.length; i++) {
+        var el = els[i];
+        if ((el.type || '').toLowerCase() !== 'hidden') continue;
+        var hn = hiddenFieldKey(el);
+        if (hn && el.value) {
+          fields[hn] = el.value;
+          if (isTrackingParam(hn)) hiddenParams[hn] = el.value;
+        }
+      }
+    } catch(e) {}
+    return { fields: fields, hiddenParams: hiddenParams };
+  }
+
   function snapshotVisibleFormFields() {
     try {
       var inputs = document.querySelectorAll('input, select, textarea');
       for (var i = 0; i < inputs.length; i++) {
         var el = inputs[i];
         var t = (el.type || '').toLowerCase();
-        if (t === 'password' || t === 'hidden' || t === 'submit' || t === 'button' || t === 'reset' || t === 'file') continue;
+        if (t === 'password' || t === 'submit' || t === 'button' || t === 'reset' || t === 'file') continue;
+        if (t === 'hidden') {
+          var hkey = hiddenFieldKey(el);
+          if (hkey && el.value) _accumulatedFormData[hkey] = el.value;
+          continue;
+        }
         if ((t === 'checkbox' || t === 'radio') && !el.checked) continue;
         var key = el.name || el.id || el.getAttribute('placeholder') || null;
         if (key && el.value) _accumulatedFormData[key] = el.value;
@@ -575,17 +622,14 @@ export function buildTrackingSnippet(
         var el = elements[i];
         var t = (el.type || '').toLowerCase();
         if (t === 'hidden') {
-          // The standard landing-page UTM-passthrough pattern is hidden inputs
-          // filled from the query string, so blanket-skipping them discarded
-          // the client's own solution. Read ONLY names matching the tracking
-          // rules — hidden inputs also carry CSRF tokens and session IDs — and
-          // route them to extra_params, never to form_fields.
           try {
-            // Ours, appended by decorateFormForSubmit / injectUtmFieldsIntoForm.
-            // Skipping these is what stops the inject-then-recapture loop.
-            if (el.getAttribute && (el.getAttribute('data-sl') === '1' || el.getAttribute('data-sl-utm') === '1')) continue;
-            var hn = el.name || '';
-            if (isTrackingParam(hn) && el.value) hiddenParams[hn] = el.value;
+            var hn = hiddenFieldKey(el);
+            if (hn && el.value) {
+              // Mapped webhook/HubSpot keys read formFields — skipping hidden
+              // here is why gclid/fbclid never went out even when mapped.
+              fields[hn] = el.value;
+              if (isTrackingParam(hn)) hiddenParams[hn] = el.value;
+            }
           } catch(e) {}
           continue;
         }
@@ -607,7 +651,12 @@ export function buildTrackingSnippet(
     if (!hasData) return;
     if (!fieldsLookValid(_lastClickScopeForm)) return;
     _leadSent = true;
-    sendFormLead(_accumulatedFormData);
+    var fields = {};
+    var k;
+    for (k in _accumulatedFormData) { if (_accumulatedFormData.hasOwnProperty(k)) fields[k] = _accumulatedFormData[k]; }
+    var hiddenNow = readHiddenFieldsNow(_lastClickScopeForm);
+    for (k in hiddenNow.fields) { if (hiddenNow.fields.hasOwnProperty(k)) fields[k] = hiddenNow.fields[k]; }
+    sendFormLead(fields, hiddenNow.hiddenParams);
   }
 
   function patchNetworkForJsSubmit() {
@@ -853,8 +902,10 @@ export function buildTrackingSnippet(
       for (var ri = 0; ri < inputs.length; ri++) {
         var rel = inputs[ri];
         var rt = (rel.type || '').toLowerCase();
-        if (rt === 'password' || rt === 'hidden' || rt === 'submit' || rt === 'button' || rt === 'reset' || rt === 'file') continue;
-        var rname = rel.name || rel.id || rel.getAttribute('placeholder') || null;
+        if (rt === 'password' || rt === 'submit' || rt === 'button' || rt === 'reset' || rt === 'file') continue;
+        var rname = rt === 'hidden'
+          ? hiddenFieldKey(rel)
+          : (rel.name || rel.id || rel.getAttribute('placeholder') || null);
         if (!rname || seen[rname]) continue;
         seen[rname] = true;
         fields.push(rname);

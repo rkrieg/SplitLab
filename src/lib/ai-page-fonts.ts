@@ -124,8 +124,8 @@ Rules:
 - Copy the chosen font's @import URL(s) verbatim as the FIRST line(s) inside your <style> tag
 - You may combine multiple @import URLs into one request by appending &family=... parameters — but copying each URL separately also works
 - Set --font-headline and --font-body as CSS custom properties in :root
-- Never use any font not listed here
-- Never use system-ui or Arial as a headline font
+- Never use any font not listed here — UNLESS the user's original request explicitly names a specific font (e.g. "use Montserrat", "headline in Helvetica"). In that case use exactly that font for the role they named instead of the library, building the correct Google Fonts @import URL for it yourself (fall back to the closest library font only if the named font is not on Google Fonts). This exception applies per role — a font named for headlines only overrides the headline pick, not the body pick.
+- Never use system-ui or Arial as a headline font, unless the user explicitly asked for that exact font
 
 ### Headline fonts (pick one)
 ${headlineRows}
@@ -135,4 +135,23 @@ ${bodyRows}
 
 ### Mono font (only for technical/dev-tool pages)
 ${monoRows}`;
+}
+
+/**
+ * Font guidance for the follow-up/edit route (changing fonts on an existing
+ * page), as opposed to buildFontLibraryBlock() which is for building a page
+ * from scratch. Covers both cases the edit route sees:
+ *   - the user names a specific font ("use Roboto")
+ *   - the user leaves it to the model ("pick a good font combination")
+ */
+export function buildFontFollowUpBlock(): string {
+  const headlineNames = Object.keys(FONT_LIBRARY.headline).join(', ');
+  const bodyNames = Object.keys(FONT_LIBRARY.body).join(', ');
+
+  return `## Font changes (patch and style)
+- If the instruction names a specific font (e.g. "use Roboto", "change the headline font to Montserrat", "body text in Helvetica") — use exactly that Google Font. Build the correct Google Fonts @import URL for it yourself and add it as the FIRST line inside the <style> block (alongside any @import already there for the role you did not change). Do not substitute a similar-looking font from the library below.
+- If the instruction leaves the choice to you ("pick a font combination", "give it a font that fits", "any combination is fine") — pick one headline font and one body font from this library, matched to the page's existing business context: ${headlineNames} (headline) / ${bodyNames} (body). Copy that font's @import URL verbatim.
+- Either way: set --font-headline and/or --font-body as CSS custom properties in :root (whichever role changed), and update every element that references them — do not leave the old @import in place unused, and do not leave elements hardcoded to the old family name outside the variable.
+- Headline and body should stay visually distinct families unless the instruction explicitly asks for a single-font page.
+- Never use system-ui or Arial as a headline font unless the instruction explicitly asked for that exact font.`;
 }
