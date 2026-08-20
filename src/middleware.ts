@@ -77,6 +77,7 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith('/settings') ||
     pathname.startsWith('/billing') ||
     pathname.startsWith('/invite') ||
+    pathname.startsWith('/admin') || // admin portal — role gate enforced in the layout
     pathname.startsWith('/affiliates'); // admin affiliate mgmt (NOT public /affiliate)
 
   if (isDashboardRoute) {
