@@ -166,7 +166,11 @@ function SamplePromptChip({ vertical, onUse }: { vertical: string; onUse: (promp
 }
 
 function hasUnfilledPlaceholders(text: string): boolean {
-  return /\[[^\]]+\]/.test(text);
+  // Markdown checkbox markers ([ ], [x], [X]) are task-list syntax, not
+  // unfilled template placeholders like [Company Name] — strip them first
+  // so a pasted checklist/spec doesn't false-positive as needing input.
+  const withoutCheckboxes = text.replace(/\[\s*[xX]?\s*\]/g, '');
+  return /\[[^\]]+\]/.test(withoutCheckboxes);
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
