@@ -900,6 +900,12 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         toast.error(err.error || "Couldn't save your HTML.");
         return;
       }
+      const updated = await res.json().catch(() => null);
+      // The whole document changed, so the preview has to be refetched —
+      // same as runRebuild. Without this the iframe keeps showing the
+      // pre-reupload HTML until runSchemaPrep's own (much later) refresh
+      // finishes, which for a large page can take a minute or more.
+      if (updated?.html_url) setHtmlUrl(`${updated.html_url}?t=${Date.now()}`);
       setReuploadHtml('');
       setRebuildBlockOpen(false);
       addMessage({ role: 'assistant', content: 'HTML replaced — preparing this page for editing…' });
