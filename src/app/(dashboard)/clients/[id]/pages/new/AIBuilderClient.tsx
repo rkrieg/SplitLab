@@ -165,14 +165,6 @@ function SamplePromptChip({ vertical, onUse }: { vertical: string; onUse: (promp
   );
 }
 
-function hasUnfilledPlaceholders(text: string): boolean {
-  // Markdown checkbox markers ([ ], [x], [X]) are task-list syntax, not
-  // unfilled template placeholders like [Company Name] — strip them first
-  // so a pasted checklist/spec doesn't false-positive as needing input.
-  const withoutCheckboxes = text.replace(/\[\s*[xX]?\s*\]/g, '');
-  return /\[[^\]]+\]/.test(withoutCheckboxes);
-}
-
 // ── Component ─────────────────────────────────────────────────────────────────
 
 /**
@@ -1341,10 +1333,6 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     if (!prompt.trim() || !pageName.trim()) return;
     if (prompt.length > MAX_PROMPT_LENGTH) {
       toast.error(`Your prompt is ${prompt.length - MAX_PROMPT_LENGTH} characters over the limit — please shorten it.`);
-      return;
-    }
-    if (hasUnfilledPlaceholders(prompt)) {
-      toast.error('Please fill in the highlighted [placeholder] fields before building.');
       return;
     }
     const previewUrls = chatImagesRef.current.map(img => img.preview);
