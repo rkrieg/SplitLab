@@ -24,6 +24,8 @@ const updateSchema = z.object({
   // design — whatever it does gets superseded if the user later replaces
   // the variant with their draft anyway.
   draft: z.boolean().optional(),
+  // See UpdatePageInput.clear_draft in services/pages.ts — live write only.
+  clear_draft: z.boolean().optional(),
 });
 
 export async function GET(
