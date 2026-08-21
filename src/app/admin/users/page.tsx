@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { requireAdmin } from '@/lib/admin-auth';
 import { db } from '@/lib/supabase-server';
+import { getRevenueByCustomer, fmtMoney } from '@/lib/admin-revenue';
 import { Search } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
@@ -21,7 +22,7 @@ export default async function AdminUsers({
 
   let query = db
     .from('users')
-    .select('id, email, name, role, plan, status, subscription_status, created_at', { count: 'exact' })
+    .select('id, email, name, role, plan, status, subscription_status, created_at, stripe_customer_id', { count: 'exact' })
     .order('created_at', { ascending: false });
 
   if (q) query = query.or(`email.ilike.%${q}%,name.ilike.%${q}%`);
@@ -34,6 +35,9 @@ export default async function AdminUsers({
   for (const c of clients ?? []) {
     if (c.owner_id) clientCounts.set(c.owner_id, (clientCounts.get(c.owner_id) ?? 0) + 1);
   }
+
+  // Actual billed revenue per Stripe customer (real payers stand out from test accounts).
+  const revenue = await getRevenueByCustomer();
 
   const totalPages = Math.max(1, Math.ceil((count ?? 0) / PAGE_SIZE));
   const mkHref = (p: number) => `/admin/users?${new URLSearchParams({ ...(q ? { q } : {}), page: String(p) })}`;
@@ -66,6 +70,7 @@ export default async function AdminUsers({
               <th className="px-5 py-2.5 font-medium">Plan</th>
               <th className="px-5 py-2.5 font-medium">Subscription</th>
               <th className="px-5 py-2.5 font-medium text-right">Clients</th>
+              <th className="px-5 py-2.5 font-medium text-right">Billed</th>
               <th className="px-5 py-2.5 font-medium">Joined</th>
             </tr>
           </thead>
@@ -82,11 +87,17 @@ export default async function AdminUsers({
                 <td className="px-5 py-3 capitalize">{u.plan ?? 'free'}</td>
                 <td className="px-5 py-3 text-slate-500 dark:text-slate-400">{u.subscription_status ?? '—'}</td>
                 <td className="px-5 py-3 text-right tabular-nums">{clientCounts.get(u.id) ?? 0}</td>
+                <td className="px-5 py-3 text-right tabular-nums">
+                  {!revenue.available ? '—'
+                    : (u.stripe_customer_id && (revenue.byCustomer.get(u.stripe_customer_id) ?? 0) > 0
+                        ? <span className="font-semibold text-green-700 dark:text-green-400">{fmtMoney(revenue.byCustomer.get(u.stripe_customer_id) ?? 0)}</span>
+                        : <span className="text-slate-400">$0.00</span>)}
+                </td>
                 <td className="px-5 py-3 text-slate-500 dark:text-slate-400">{new Date(u.created_at).toLocaleDateString()}</td>
               </tr>
             ))}
             {(users ?? []).length === 0 && (
-              <tr><td colSpan={6} className="px-5 py-10 text-center text-slate-400">No users found{q ? ` for “${q}”` : ''}.</td></tr>
+              <tr><td colSpan={7} className="px-5 py-10 text-center text-slate-400">No users found{q ? ` for “${q}”` : ''}.</td></tr>
             )}
           </tbody>
         </table>

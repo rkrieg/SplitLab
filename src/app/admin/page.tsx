@@ -3,6 +3,8 @@ import { requireAdmin } from '@/lib/admin-auth';
 import { db } from '@/lib/supabase-server';
 import { PLAN_DETAILS, TOKENS_PER_CREDIT, type PlanId } from '@/lib/plans';
 import AdminGrowthCharts, { type GrowthPoint } from './AdminGrowthCharts';
+import AdminRevenueChart from './AdminRevenueChart';
+import { getRevenueByCustomer, getRevenueOverview, fmtMoney } from '@/lib/admin-revenue';
 
 export const dynamic = 'force-dynamic';
 
@@ -50,6 +52,14 @@ export default async function AdminDashboard() {
   const tokensThisMonth = (usage ?? []).reduce((a, r) => a + (r.input_tokens ?? 0) + (r.output_tokens ?? 0), 0);
   const creditsThisMonth = Math.ceil(tokensThisMonth / TOKENS_PER_CREDIT);
 
+  // Actual billed revenue (Stripe) — the real signal vs. DB plan flags.
+  const [revenue, revOverview] = await Promise.all([getRevenueByCustomer(), getRevenueOverview(12)]);
+  const revenueSeries = revOverview.series.map((p) => ({
+    label: p.label,
+    collected: Math.round(p.collectedCents) / 100,
+    mrr: Math.round(p.mrrCents) / 100,
+  }));
+
   // 90-day signup series: new per day + running total.
   const WIN = 90;
   const windowStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) - (WIN - 1) * 86_400_000);
@@ -89,8 +99,10 @@ export default async function AdminDashboard() {
         <StatCard label="Total users" value={total.toLocaleString()} />
         <StatCard label="New (7 days)" value={new7.toLocaleString()} sub={`${new30.toLocaleString()} in last 30`} />
         <StatCard label="Engaged users" value={engaged.toLocaleString()} sub="created a client" />
-        <StatCard label="Paid users" value={paid.toLocaleString()} sub={`${activeSubs.length} active subs`} />
-        <StatCard label="Est. MRR" value={`$${mrr.toLocaleString()}`} sub="active subscriptions" />
+        <StatCard label="Paid (by plan flag)" value={paid.toLocaleString()} sub={`${activeSubs.length} active subs`} />
+        <StatCard label="MRR (active)" value={revOverview.available ? fmtMoney(revOverview.currentMrrCents) : `~$${mrr.toLocaleString()}`} sub={revOverview.available ? 'from Stripe' : 'estimated (no Stripe here)'} />
+        <StatCard label="Total billed" value={revenue.available ? fmtMoney(revenue.totalCents) : '—'} sub={revenue.available ? 'all-time (Stripe)' : 'Stripe not configured'} />
+        <StatCard label="Paying customers" value={revenue.available ? revenue.payingCustomers.toLocaleString() : '—'} sub="actually charged" />
         <StatCard label="Clients" value={clientCount.toLocaleString()} />
         <StatCard label="Tests" value={(testCount ?? 0).toLocaleString()} />
         <StatCard label="AI credits used" value={creditsThisMonth.toLocaleString()} sub="this month" />
@@ -98,6 +110,9 @@ export default async function AdminDashboard() {
 
       {/* Growth chart */}
       <AdminGrowthCharts data={series} />
+
+      {/* Revenue + MRR chart */}
+      <AdminRevenueChart data={revenueSeries} available={revOverview.available} />
 
       {/* By plan */}
       <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5">

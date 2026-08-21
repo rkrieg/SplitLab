@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import { requireAdmin } from '@/lib/admin-auth';
 import { db } from '@/lib/supabase-server';
 import { getAiUsageSummary } from '@/lib/ai-usage';
+import { getCustomerRevenue, fmtMoney } from '@/lib/admin-revenue';
 import { getPlanDetails } from '@/lib/plans';
 import { ArrowLeft } from 'lucide-react';
 import UserActions from './UserActions';
@@ -39,9 +40,10 @@ export default async function AdminUserDetail({ params }: { params: { id: string
   if (!user) notFound();
 
   const plan = user.plan ?? 'free';
-  const [{ data: clients }, usage] = await Promise.all([
+  const [{ data: clients }, usage, lifetimeRevenue] = await Promise.all([
     db.from('clients').select('id, name, created_at').eq('owner_id', user.id).order('created_at', { ascending: false }),
     getAiUsageSummary(user.id, plan),
+    user.stripe_customer_id ? getCustomerRevenue(user.stripe_customer_id) : Promise.resolve(0),
   ]);
 
   const clientIds = (clients ?? []).map((c) => c.id);
@@ -97,6 +99,9 @@ export default async function AdminUserDetail({ params }: { params: { id: string
           <Row label="Stripe customer" value={user.stripe_customer_id
             ? <a className="text-indigo-600 dark:text-indigo-400 hover:underline" href={`https://dashboard.stripe.com/customers/${user.stripe_customer_id}`} target="_blank" rel="noreferrer">{user.stripe_customer_id}</a>
             : '—'} />
+          <Row label="Lifetime billed" value={lifetimeRevenue < 0
+            ? '—'
+            : <span className={lifetimeRevenue > 0 ? 'font-semibold text-green-700 dark:text-green-400' : ''}>{fmtMoney(lifetimeRevenue)}</span>} />
           <Row label="Overage" value={user.ai_overage_enabled ? `On (cap $${((user.ai_overage_cap_cents ?? 0) / 100).toFixed(0)})` : 'Off'} />
         </Card>
 
