@@ -1,6 +1,6 @@
 import { db } from '@/lib/supabase-server';
 
-export type LogCategory = 'ai_call' | 'event_skip' | 'stripe_webhook' | 'domain_verification';
+export type LogCategory = 'ai_call' | 'event_skip' | 'stripe_webhook' | 'domain_verification' | 'admin_impersonate' | 'admin_action';
 export type LogLevel = 'info' | 'warn' | 'error';
 
 /**

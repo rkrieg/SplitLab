@@ -34,7 +34,7 @@ export async function reportAiOverageUsage(ownerId: string | null): Promise<void
   try {
     const { data: user } = await db
       .from('users')
-      .select('plan, stripe_customer_id, ai_overage_enabled, ai_overage_cap_cents, ai_overage_reported_cents, ai_overage_period')
+      .select('plan, stripe_customer_id, stripe_subscription_id, ai_overage_enabled, ai_overage_cap_cents, ai_overage_reported_cents, ai_overage_period')
       .eq('id', ownerId)
       .single();
 
@@ -60,6 +60,22 @@ export async function reportAiOverageUsage(ownerId: string | null): Promise<void
     }
 
     const stripe = getStripeClient();
+
+    // Ensure the customer's subscription carries the metered overage price, so the
+    // meter events we report actually land on an invoice. Safe to attempt each
+    // time — we only add it if missing. Requires STRIPE_AI_OVERAGE_PRICE (the
+    // metered price tied to the meter above).
+    const overagePriceId = process.env.STRIPE_AI_OVERAGE_PRICE;
+    if (overagePriceId && user.stripe_subscription_id) {
+      try {
+        const sub = await stripe.subscriptions.retrieve(user.stripe_subscription_id);
+        const hasItem = sub.items.data.some((it) => it.price?.id === overagePriceId);
+        if (!hasItem) await stripe.subscriptionItems.create({ subscription: sub.id, price: overagePriceId });
+      } catch {
+        /* non-fatal — the item may already exist or the sub may be uncatchable */
+      }
+    }
+
     await stripe.billing.meterEvents.create({
       event_name: eventName,
       payload: {
