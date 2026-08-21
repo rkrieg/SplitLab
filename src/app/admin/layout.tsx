@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { requireAdmin } from '@/lib/admin-auth';
-import { LayoutDashboard, Users, ArrowLeft, ShieldCheck, Ticket } from 'lucide-react';
+import { LayoutDashboard, Users, ArrowLeft, ShieldCheck, Ticket, CreditCard } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,6 +28,9 @@ export default async function AdminLayout({ children }: { children: React.ReactN
               </Link>
               <Link href="/admin/coupons" className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
                 <Ticket size={15} /> Coupons
+              </Link>
+              <Link href="/admin/stripe" className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
+                <CreditCard size={15} /> Stripe
               </Link>
             </nav>
           </div>
