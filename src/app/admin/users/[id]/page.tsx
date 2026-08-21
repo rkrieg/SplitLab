@@ -4,6 +4,7 @@ import { requireAdmin } from '@/lib/admin-auth';
 import { db } from '@/lib/supabase-server';
 import { getAiUsageSummary } from '@/lib/ai-usage';
 import { getCustomerRevenue, fmtMoney } from '@/lib/admin-revenue';
+import { classifyAccount, ACCOUNT_TYPE_META } from '@/lib/admin-classify';
 import { getPlanDetails } from '@/lib/plans';
 import { ArrowLeft } from 'lucide-react';
 import UserActions from './UserActions';
@@ -33,7 +34,7 @@ export default async function AdminUserDetail({ params }: { params: { id: string
 
   const { data: user } = await db
     .from('users')
-    .select('id, email, name, role, status, plan, created_at, updated_at, stripe_customer_id, subscription_status, subscription_current_period_end, ai_overage_enabled, ai_overage_cap_cents')
+    .select('id, email, name, role, status, plan, created_at, updated_at, stripe_customer_id, stripe_subscription_id, subscription_status, subscription_current_period_end, ai_overage_enabled, ai_overage_cap_cents')
     .eq('id', params.id)
     .maybeSingle();
 
@@ -62,6 +63,8 @@ export default async function AdminUserDetail({ params }: { params: { id: string
   }
 
   const planDetails = getPlanDetails(plan);
+  const acctType = classifyAccount(user, lifetimeRevenue < 0 ? 0 : lifetimeRevenue);
+  const acctMeta = ACCOUNT_TYPE_META[acctType];
 
   return (
     <div className="space-y-6 max-w-4xl">
@@ -74,6 +77,7 @@ export default async function AdminUserDetail({ params }: { params: { id: string
           <h1 className="text-xl font-semibold">{user.name || '—'}</h1>
           <p className="text-sm text-slate-500 dark:text-slate-400">{user.email}</p>
           <div className="flex items-center gap-2 mt-2">
+            <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${acctMeta.badge}`}>{acctMeta.label}</span>
             <span className="text-[11px] px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 capitalize">{user.role}</span>
             <span className="text-[11px] px-2 py-0.5 rounded-full bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 capitalize">{plan}</span>
             <span className="text-[11px] px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">{user.status}</span>

@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { requireAdmin } from '@/lib/admin-auth';
 import { db } from '@/lib/supabase-server';
 import { getRevenueByCustomer, fmtMoney } from '@/lib/admin-revenue';
+import { classifyAccount, ACCOUNT_TYPE_META } from '@/lib/admin-classify';
 import { Search } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
@@ -22,7 +23,7 @@ export default async function AdminUsers({
 
   let query = db
     .from('users')
-    .select('id, email, name, role, plan, status, subscription_status, created_at, stripe_customer_id', { count: 'exact' })
+    .select('id, email, name, role, plan, status, subscription_status, created_at, stripe_customer_id, stripe_subscription_id', { count: 'exact' })
     .order('created_at', { ascending: false });
 
   if (q) query = query.or(`email.ilike.%${q}%,name.ilike.%${q}%`);
@@ -67,6 +68,7 @@ export default async function AdminUsers({
             <tr className="text-left text-xs text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-800">
               <th className="px-5 py-2.5 font-medium">User</th>
               <th className="px-5 py-2.5 font-medium">Role</th>
+              <th className="px-5 py-2.5 font-medium">Type</th>
               <th className="px-5 py-2.5 font-medium">Plan</th>
               <th className="px-5 py-2.5 font-medium">Subscription</th>
               <th className="px-5 py-2.5 font-medium text-right">Clients</th>
@@ -75,7 +77,11 @@ export default async function AdminUsers({
             </tr>
           </thead>
           <tbody>
-            {(users ?? []).map((u) => (
+            {(users ?? []).map((u) => {
+              const billed = u.stripe_customer_id ? (revenue.byCustomer.get(u.stripe_customer_id) ?? 0) : 0;
+              const type = classifyAccount(u, revenue.available ? billed : 0);
+              const meta = ACCOUNT_TYPE_META[type];
+              return (
               <tr key={u.id} className="border-b border-slate-50 dark:border-slate-800/50 hover:bg-slate-50 dark:hover:bg-slate-800/40">
                 <td className="px-5 py-3">
                   <Link href={`/admin/users/${u.id}`} className="hover:text-indigo-600 dark:hover:text-indigo-400">
@@ -84,20 +90,24 @@ export default async function AdminUsers({
                   </Link>
                 </td>
                 <td className="px-5 py-3 capitalize text-slate-600 dark:text-slate-300">{u.role}</td>
+                <td className="px-5 py-3">
+                  <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${meta.badge}`}>{meta.label}</span>
+                </td>
                 <td className="px-5 py-3 capitalize">{u.plan ?? 'free'}</td>
                 <td className="px-5 py-3 text-slate-500 dark:text-slate-400">{u.subscription_status ?? '—'}</td>
                 <td className="px-5 py-3 text-right tabular-nums">{clientCounts.get(u.id) ?? 0}</td>
                 <td className="px-5 py-3 text-right tabular-nums">
                   {!revenue.available ? '—'
-                    : (u.stripe_customer_id && (revenue.byCustomer.get(u.stripe_customer_id) ?? 0) > 0
-                        ? <span className="font-semibold text-green-700 dark:text-green-400">{fmtMoney(revenue.byCustomer.get(u.stripe_customer_id) ?? 0)}</span>
+                    : (billed > 0
+                        ? <span className="font-semibold text-green-700 dark:text-green-400">{fmtMoney(billed)}</span>
                         : <span className="text-slate-400">$0.00</span>)}
                 </td>
                 <td className="px-5 py-3 text-slate-500 dark:text-slate-400">{new Date(u.created_at).toLocaleDateString()}</td>
               </tr>
-            ))}
+              );
+            })}
             {(users ?? []).length === 0 && (
-              <tr><td colSpan={7} className="px-5 py-10 text-center text-slate-400">No users found{q ? ` for “${q}”` : ''}.</td></tr>
+              <tr><td colSpan={8} className="px-5 py-10 text-center text-slate-400">No users found{q ? ` for “${q}”` : ''}.</td></tr>
             )}
           </tbody>
         </table>
