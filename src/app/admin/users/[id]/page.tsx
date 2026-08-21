@@ -5,6 +5,7 @@ import { db } from '@/lib/supabase-server';
 import { getAiUsageSummary } from '@/lib/ai-usage';
 import { getPlanDetails } from '@/lib/plans';
 import { ArrowLeft } from 'lucide-react';
+import UserActions from './UserActions';
 
 export const dynamic = 'force-dynamic';
 
@@ -76,8 +77,7 @@ export default async function AdminUserDetail({ params }: { params: { id: string
             <span className="text-[11px] px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">{user.status}</span>
           </div>
         </div>
-        {/* Impersonation lands here in the next step. */}
-        <span className="text-xs text-slate-400 dark:text-slate-500 italic">“Log in as user” coming next</span>
+        <UserActions userId={user.id} userEmail={user.email} currentPlan={plan} />
       </div>
 
       <div className="grid md:grid-cols-2 gap-4">

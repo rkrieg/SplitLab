@@ -164,6 +164,9 @@ declare module 'next-auth' {
       name: string;
       role: UserRole;
       plan: string;
+      // Set while an admin is impersonating this account (the real admin's id/email).
+      impersonatorId?: string;
+      impersonatorEmail?: string;
     };
   }
   interface User {
@@ -180,5 +183,9 @@ declare module 'next-auth/jwt' {
     id: string;
     role: UserRole;
     plan: string;
+    email?: string;
+    name?: string;
+    impersonatorId?: string;
+    impersonatorEmail?: string;
   }
 }

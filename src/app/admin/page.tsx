@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { requireAdmin } from '@/lib/admin-auth';
 import { db } from '@/lib/supabase-server';
 import { PLAN_DETAILS, TOKENS_PER_CREDIT, type PlanId } from '@/lib/plans';
+import AdminGrowthCharts, { type GrowthPoint } from './AdminGrowthCharts';
 
 export const dynamic = 'force-dynamic';
 
@@ -49,6 +50,26 @@ export default async function AdminDashboard() {
   const tokensThisMonth = (usage ?? []).reduce((a, r) => a + (r.input_tokens ?? 0) + (r.output_tokens ?? 0), 0);
   const creditsThisMonth = Math.ceil(tokensThisMonth / TOKENS_PER_CREDIT);
 
+  // 90-day signup series: new per day + running total.
+  const WIN = 90;
+  const windowStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) - (WIN - 1) * 86_400_000);
+  const buckets = new Map<string, number>();
+  let beforeCount = 0;
+  for (const x of u) {
+    const d = new Date(x.created_at);
+    if (d < windowStart) { beforeCount++; continue; }
+    const key = d.toISOString().slice(0, 10);
+    buckets.set(key, (buckets.get(key) ?? 0) + 1);
+  }
+  const series: GrowthPoint[] = [];
+  let cum = beforeCount;
+  for (let i = 0; i < WIN; i++) {
+    const d = new Date(windowStart.getTime() + i * 86_400_000);
+    const n = buckets.get(d.toISOString().slice(0, 10)) ?? 0;
+    cum += n;
+    series.push({ label: d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }), newUsers: n, cumulative: cum });
+  }
+
   const { data: recent } = await db
     .from('users')
     .select('id, email, name, plan, subscription_status, created_at')
@@ -74,6 +95,9 @@ export default async function AdminDashboard() {
         <StatCard label="Tests" value={(testCount ?? 0).toLocaleString()} />
         <StatCard label="AI credits used" value={creditsThisMonth.toLocaleString()} sub="this month" />
       </div>
+
+      {/* Growth chart */}
+      <AdminGrowthCharts data={series} />
 
       {/* By plan */}
       <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5">
