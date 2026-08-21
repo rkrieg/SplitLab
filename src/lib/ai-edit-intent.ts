@@ -20,7 +20,7 @@
  * routing quality, never break editing.
  */
 
-import { askAI, type AIContent, type AIContentBlock } from '@/lib/ai-client';
+import { askAI, askAIStream, type AIContent, type AIContentBlock } from '@/lib/ai-client';
 import type { UsageContext } from '@/lib/ai-usage';
 import { parseModelRequirements, type PageRequirement } from '@/lib/ai-page-requirements';
 import type { ContentReuseIntent } from '@/lib/ai-content-placement';
@@ -712,15 +712,17 @@ export async function classifyEditIntent(opts: {
 
   let text: string;
   try {
-    text = await askAI({
+    text = await askAIStream({
       system: SYSTEM + opts.requirementInstruction,
       messages: [{ role: 'user', content: userContent }],
       // Requirements checklist + asks can exceed 2k; truncation used to force
-      // the keyword fallback and silently mis-route design vs bug.
-      maxTokens: 8000,
+      // the keyword fallback and silently mis-route design vs bug. Streamed
+      // (like every other large-maxTokens call in this codebase) so a large
+      // ceiling doesn't risk an HTTP timeout on the non-streaming path.
+      maxTokens: 64000,
       label: opts.label ?? 'edit-intent',
       usage: opts.usage,
-    });
+    }, () => {});
   } catch (err) {
     console.error('[edit-intent] classification call failed — caller should clarify or decide', err);
     return null;

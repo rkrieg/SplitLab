@@ -24,6 +24,33 @@ export function extractUrls(text: string): string[] {
   return Array.from(new Set(matches));
 }
 
+// Video/media embed CDNs — a URL to one of these in a prompt/PRD is almost always a
+// "embed this video" instruction (e.g. "https://player.mux.com/<id>"), never a
+// "clone this site's design" reference. Scraping these as a competitor pulls in the
+// CDN's own marketing-site chrome (nav, footer, brand colors) and misattributes it to
+// the page being built — e.g. a Mux embed URL producing "© Mux, Inc." in the footer.
+const NON_COMPETITOR_URL_HOSTS = [
+  'player.mux.com',
+  'stream.mux.com',
+  'player.vimeo.com',
+  'vimeo.com',
+  'youtube.com',
+  'youtu.be',
+  'youtube-nocookie.com',
+  'fast.wistia.net',
+  'wistia.com',
+  'wistia.net',
+];
+
+export function isEmbedAssetUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.replace(/^www\./, '');
+    return NON_COMPETITOR_URL_HOSTS.some((h) => host === h || host.endsWith(`.${h}`));
+  } catch {
+    return false;
+  }
+}
+
 async function fetchFirecrawlData(url: string, apiKey: string): Promise<{ rawHtml: string; html: string }> {
   const res = await fetch('https://api.firecrawl.dev/v1/scrape', {
     method: 'POST',
