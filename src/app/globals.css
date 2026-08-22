@@ -104,3 +104,18 @@
     @apply text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider;
   }
 }
+
+/* Article / resources typography */
+@layer components {
+  .article-prose { @apply text-slate-700 dark:text-slate-300 leading-relaxed; }
+  .article-prose .lead { @apply text-lg text-slate-600 dark:text-slate-300 mb-6; }
+  .article-prose h2 { @apply text-xl font-bold text-slate-900 dark:text-slate-100 mt-8 mb-3; }
+  .article-prose h3 { @apply text-base font-semibold text-slate-900 dark:text-slate-100 mt-5 mb-2; }
+  .article-prose p { @apply mb-4; }
+  .article-prose ul { @apply list-disc pl-6 mb-4 space-y-1.5; }
+  .article-prose li { @apply text-slate-700 dark:text-slate-300; }
+  .article-prose a { @apply text-[#3D8BDA] font-medium hover:underline; }
+  .article-prose strong { @apply text-slate-900 dark:text-slate-100 font-semibold; }
+  .article-prose em { @apply italic; }
+  .article-prose .callout { @apply rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 p-4 my-6 text-sm; }
+}

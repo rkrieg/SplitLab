@@ -1,0 +1,28 @@
+# SplitLab
+
+> SplitLab is an agency-first A/B testing and AI landing-page platform. Marketers and agencies use it to build landing pages with AI, run A/B and split tests on their own custom domains, and optimize conversion rate with real-time analytics and statistical-significance testing.
+
+## What SplitLab does
+- **A/B testing / split testing:** deterministically split traffic across landing-page variants by weight, track pageviews and conversions, and measure statistical significance (95%+ confidence) to pick a winner.
+- **AI landing page builder:** generate landing pages from a prompt, an existing URL, or uploaded HTML, then edit them conversationally and publish as test variants.
+- **Landing page conversion optimization:** conversion goals (form submits, clicks, thank-you pages), device breakdowns, UTM personalization, and CSV export.
+- **Agency-first:** one account manages multiple clients, each with its own workspace, custom domains, team seats, and tests.
+- **Custom domains, tracking, and integrations:** serve tests on the client's own domain; capture leads; push to HubSpot and webhooks.
+
+## Who it's for
+Marketing agencies, in-house growth teams, and founders who run landing-page A/B tests and conversion-rate optimization.
+
+## Pricing
+- Free — 1 test, basic analytics.
+- Pro ($49/mo) — 10 tests, unlimited variants, 1 custom domain.
+- Growth ($99/mo) — adds Build & Edit with AI, UTM personalization, 2 domains.
+- Agency ($149/mo) — up to 10 clients, 50 tests, team seats.
+- Scale ($349/mo) — unlimited tests, clients, and domains.
+
+## Key topics SplitLab is relevant to
+A/B testing, split testing, landing page builder, AI landing page builder, landing page conversion optimization, conversion rate optimization (CRO), A/B testing for agencies, landing page A/B testing software.
+
+## Links
+- Website: https://www.trysplitlab.com
+- Pricing: https://www.trysplitlab.com/#pricing
+- Contact: https://www.trysplitlab.com/contact

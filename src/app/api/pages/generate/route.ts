@@ -7,7 +7,7 @@ import { VERTICAL_VALUES } from '@/lib/ai-page-verticals';
 import { SECTION_VOCABULARY, VERTICAL_PRIORITY_HINTS } from '@/lib/ai-page-vocabulary';
 import { resolveWorkspaceRole, resolveOwnerPlan } from '@/lib/workspace-auth';
 import { PLAN_LIMITS } from '@/lib/plans';
-import { extractUrls, scrapeCompetitorUrl } from '@/lib/ai-competitor-scrape';
+import { extractUrls, isEmbedAssetUrl, scrapeCompetitorUrl } from '@/lib/ai-competitor-scrape';
 import {
   injectBrandAssetsIntoSchema,
   classifyPageShapeIntent,
@@ -75,6 +75,11 @@ You can SEE every attached image. The instruction says what each one is for — 
   }
 }
 
+Use ONLY the keys shown above for hero/footer/nav — never add extra keys (e.g. no
+footer.address, footer.phone, etc.) unless the brief explicitly requires a field that has no
+home in this structure, in which case use the closest matching section type instead of
+inventing a top-level key.
+
 ## Section types (available moves — pick a varied combination per page, not the same 4-5 every time)
 ${SECTION_TYPES_BLOCK}
 
@@ -90,6 +95,7 @@ If part of the brief explicitly describes something visual or interactive that n
   - Full offer / marketing LP with no size constraint → typically 3–7 mid-page sections; vary the mix.
 - Do NOT invent fake statistics, awards, client logos, "as seen in" bars, or social-proof numbers unless the user provided them or explicitly asked for social proof / testimonials / stats. Prefer omitting proof sections over fabricating them.
 - If the user asked for a confirmation / thank-you / dead-end / hero-only page: do NOT add stats, logo walls, testimonials, or mid-page marketing sections they did not request.
+- When the prompt/PRD gives exact, verbatim text for legal, compliance, copyright, or footer copy, use it byte-for-byte — never paraphrase, shorten, or invent a replacement. This is especially strict for footer.copyright and any disclaimer/legal text explicitly quoted in the brief.
 - JSON validity is non-negotiable. If any copy you write — including phrases quoted or reused from the user's prompt — contains a double-quote character, you MUST escape it as \" inside the JSON string. Never emit a literal unescaped " inside a string value.
 
 ## Visual-first bias — nobody reads landing pages, they skim
@@ -202,7 +208,7 @@ export async function POST(request: NextRequest) {
     // steers the schema and flips keepProof below. The classifier already
     // returns intent for the create path — ask it whether the URL is a
     // reference to copy before scraping.
-    const urls = extractUrls(prompt);
+    const urls = extractUrls(prompt).filter((u) => !isEmbedAssetUrl(u));
     const competitorContext = urls.length > 0 ? await scrapeCompetitorUrl(urls[0]) : null;
     let minimalOrCustom = false;
     if (competitorContext) {

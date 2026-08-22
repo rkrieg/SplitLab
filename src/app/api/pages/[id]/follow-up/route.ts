@@ -12,7 +12,7 @@ import { resolveWorkspaceRole, resolveOwnerPlan, resolveWorkspaceOwner } from '@
 import { PLAN_LIMITS } from '@/lib/plans';
 import { checkAiAllowance, type UsageContext } from '@/lib/ai-usage';
 import { reportAiOverageUsage } from '@/lib/ai-overage-billing';
-import { extractUrls, scrapeCompetitorUrl, fetchLogoAssets, fetchContentImageAssets } from '@/lib/ai-competitor-scrape';
+import { extractUrls, isEmbedAssetUrl, scrapeCompetitorUrl, fetchLogoAssets, fetchContentImageAssets } from '@/lib/ai-competitor-scrape';
 import { buildHtmlFromSchema } from '@/lib/ai-page-builder';
 import { buildFontFollowUpBlock } from '@/lib/ai-page-fonts';
 import { createSSEStream, sendSSE, closeSSE, SSE_HEADERS, type SSEEvent } from '@/lib/sse';
@@ -115,6 +115,22 @@ The "thinking" field must always be FIRST in the object so it appears immediatel
 patch is dramatically faster than style (it touches only the sections that changed instead of regenerating the entire document) and is the correct choice for the vast majority of edit requests. Do not use type:style just because it feels safer or more thorough — that's the wrong tradeoff and it's slow.
 If the HTML has SL markers and the instruction clearly targets a specific existing element or section (a form, a button, a headline, a card, one section's spacing/sizing/color), that is a patch — even if you're not 100% sure which single marker it falls under, pick the SL section that visibly contains that element and patch it. Reach for style only when the instruction genuinely can't be scoped to 1–3 sections (a full redesign, a site-wide rework touching 4+ sections, or the HTML truly has no SL markers at all).
 Example: instruction "make the form smaller so it's not massive on desktop and mobile, and make sure it's responsive" against HTML where the form lives inside <!-- SL:popup -->...<!-- /SL:popup --> → type:patch, sections:[{"name":"popup","html":"...resized form markup..."}]. This is NOT a style-level change even though it affects both desktop and mobile — responsive behavior is CSS within that one section.
+
+## Structural rules (type:structural only) — CRITICAL
+Every key in schema_json that is not part of what the instruction asked you to change must be
+copied through byte-for-byte identical to the current schema shown to you — same value, same
+nesting, same order. Do not regenerate, reword, rephrase, "clean up," or invent a new value for
+any field outside the actual edit, even ones you are simply passing through. This applies to
+every section, not just the one(s) the instruction is about — a request that only concerns the
+hero must leave footer, nav, testimonials, and every other key exactly as given.
+If you cannot recall or reconstruct a field's exact original value with full confidence, copy it
+verbatim from the "Current schema" block above rather than writing a plausible-looking
+replacement — a paraphrased or invented value in an untouched field is a bug, even if it reads
+fine on its own.
+Watch for cross-contamination: a vendor/provider name, domain, or id sitting in one field (e.g.
+a video field's "mux" id or a "player.mux.com" URL) must never leak into an unrelated untouched
+field elsewhere in the schema (e.g. footer.copyright becoming "© Mux, Inc.") — that field's
+correct value is whatever was already there, not something inspired by nearby text.
 
 ## Patch rules (type:patch only)
 - Each section in the sections array must have "name" (matching an existing <!-- SL:name --> marker) and "html" (the complete updated HTML for that element — do NOT include the <!-- SL: --> markers themselves in the html value)
@@ -2151,7 +2167,9 @@ export async function POST(
   const mentionedUrls = extractUrls(prompt);
   const mentionedUrlImageFlags = await Promise.all(mentionedUrls.map(isImageUrl));
   const promptImageUrls = mentionedUrls.filter((_, i) => mentionedUrlImageFlags[i]);
-  const competitorUrls = mentionedUrls.filter((_, i) => !mentionedUrlImageFlags[i]);
+  // Video/media embed CDN URLs (e.g. a Mux/Vimeo/YouTube embed link) are never a
+  // "clone this site" competitor reference — exclude them the same way generate/route.ts does.
+  const competitorUrls = mentionedUrls.filter((u, i) => !mentionedUrlImageFlags[i] && !isEmbedAssetUrl(u));
 
   // Merge prompt-detected image URLs in with any client-attached ones so the
   // model can embed them exactly like an uploaded image attachment. Capped at

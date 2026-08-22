@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import Sidebar from '@/components/layout/Sidebar';
 import VisitorCapBanner from '@/components/layout/VisitorCapBanner';
+import ImpersonationBanner from '@/components/layout/ImpersonationBanner';
 
 async function fetchVisitorUsage(cookie: string) {
   try {
@@ -50,6 +51,7 @@ export default async function DashboardLayout({
     <div className="flex min-h-screen bg-slate-50 dark:bg-slate-900">
       <Sidebar />
       <main className="flex-1 flex flex-col min-w-0 overflow-auto transition-all duration-200">
+        <ImpersonationBanner />
         {showBanner && visitorUsage && (
           <VisitorCapBanner
             used={visitorUsage.used}
