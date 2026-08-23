@@ -217,6 +217,10 @@ export default function LandingPage() {
           <div className="footer-links" style={{flexWrap:'wrap'}}>
             <a href="/resources"><strong>Resources</strong></a>
             <a href="/resources/how-to-ab-test-a-landing-page">How to A/B Test a Landing Page</a>
+            <a href="/resources/glossary">A/B Testing Glossary</a>
+            <a href="/tools/ab-test-significance-calculator">Significance Calculator</a>
+            <a href="/compare/splitlab-vs-unbounce">SplitLab vs Unbounce</a>
+            <a href="/compare/splitlab-vs-vwo">SplitLab vs VWO</a>
           </div>
         </div>
         <div className="footer-inner">
