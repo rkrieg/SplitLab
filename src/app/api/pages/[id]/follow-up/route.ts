@@ -1110,7 +1110,7 @@ async function runScopedInsert(
           const slot = typeof rec.slot === 'string' ? rec.slot.trim() : '';
           const imagePrompt = typeof rec.prompt === 'string' ? rec.prompt.trim() : '';
           if (!slot || !imagePrompt || !html.includes(slot)) return null;
-          const url = await generateAndUploadImage(imagePrompt, pageSlug, 'medium');
+          const url = await generateAndUploadImage(imagePrompt, pageSlug, 'high');
           return url ? { slot, url } : null;
         }),
       );
@@ -1416,7 +1416,7 @@ async function runRegionRewrite(opts: {
           const slot = typeof rec.slot === 'string' ? rec.slot.trim() : '';
           const imagePrompt = typeof rec.prompt === 'string' ? rec.prompt.trim() : '';
           if (!slot || !imagePrompt || !out.some((s) => s.html.includes(slot))) return null;
-          const url = await generateAndUploadImage(imagePrompt, opts.pageSlug!, 'medium');
+          const url = await generateAndUploadImage(imagePrompt, opts.pageSlug!, 'high');
           return url ? { slot, url } : null;
         }),
       );
@@ -4178,7 +4178,7 @@ export async function POST(
           } else if (imageGenerateShapeOk) {
             const pageSlugForImage = page.slug ?? crypto.randomUUID();
             sendSSE(controller, { type: 'status', message: 'Generating image...' });
-            const generatedUrl = await generateAndUploadImage(routing!.image_prompt!, pageSlugForImage, 'medium');
+            const generatedUrl = await generateAndUploadImage(routing!.image_prompt!, pageSlugForImage, 'high');
             if (generatedUrl) {
               sendSSE(controller, { type: 'image_ready', url: generatedUrl });
               targetSections = routing!.target_sections;
@@ -5116,9 +5116,17 @@ export async function POST(
         const unmet = describeUnmet(results);
         if (unmet) {
           console.warn('[pages/follow-up] unmet requirements', { unmet, prompt: prompt.slice(0, 200) });
+        }
+        // text_present only proves the model's OWN phrasing of the ask didn't
+        // survive verbatim, not that content was dropped — a retry already ran
+        // above, so surfacing a leftover wording mismatch to the user reads as
+        // "you ignored me" on a turn that did the work. Structural misses
+        // (asset, CTA, section) still get reported since those are real.
+        const userFacingUnmet = describeUnmet(results.filter((r) => r.requirement.kind !== 'text_present'));
+        if (userFacingUnmet) {
           partialMessage = partialMessage
-            ? `${partialMessage} Still not applied: ${unmet}.`
-            : `Still not applied: ${unmet}.`;
+            ? `${partialMessage} Still not applied: ${userFacingUnmet}.`
+            : `Still not applied: ${userFacingUnmet}.`;
         }
       }
       // A URL that did not respond is a warning about the page, not a part of

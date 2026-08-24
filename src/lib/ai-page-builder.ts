@@ -130,6 +130,19 @@ Never hardcode any of these values outside :root. Every element references a CSS
 - If content is dense, reduce padding — never push the CTA below the fold
 - On mobile (max-width: 768px): min-height: auto; padding: 80px 24px 60px — never use 100vh on mobile hero
 
+### Account for the nav sitting above the hero (mandatory)
+The sticky nav (see Navigation rules below) sits in normal document flow directly above .hero — it is NOT removed from layout, so a flat min-height: 100vh on .hero plus the nav's own height together exceed one viewport every time, even with light hero content. Do not change the nav's position: sticky behavior to fix this (that pattern is required — see Navigation rules). Instead, size the hero to leave room for it:
+- Define a --nav-h custom property in :root matching the nav's actual rendered height (max 72px per the nav rules below, so --nav-h: 72px is a safe default; use a smaller value if the nav is visibly shorter).
+- On desktop, set the hero to min-height: calc(100vh - var(--nav-h)) instead of a flat 100vh.
+- On mobile the hero already uses min-height: auto, so this does not apply there.
+
+### When hero content is dense (mandatory — do not let this lose to "never override PRD content")
+A PRD/brief that spells out many trust signals (badges, a phone line, multiple micro-proof bullets, a ratings+logo row) still must never be crammed entirely inside .hero — that is what causes fold overflow. Nothing here says to drop any of that content; it only says where it lives:
+- Keep inside .hero: the H1, ONE subhead, ONE primary CTA (plus an optional ghost/secondary CTA), and ONE proof element (see CRO rules above for the exact "above the fold" budget).
+- If the PRD calls for more than that (extra trust bullets, a phone/contact line, a ratings+logo row, secondary proof), place the overflow in a slim strip section immediately BELOW .hero — same page, same visible-without-much-scrolling area, just not inside the section whose job is to fit one viewport. The content is fully preserved on the page; only its section placement changes.
+- Never add the phone/contact number as its own separate stacked line inside the hero content when it already appears in the nav — see the Navigation rules below for the full reasoning (the nav CTA duplicating the hero's primary CTA is expected and fine; a duplicate phone line is not).
+- When the hero has a two-column layout with a media column (video/image) that ends up visually shorter than the text column's stacked content, place secondary proof (a ratings line, review-platform badges) inside that media column, below the media itself, reusing its existing vertical space — do NOT additionally append a new full-width row (with its own margin/padding/border-top) below the whole grid. Only add a new full-width row when both columns are already the same height and there is no slack in either column to reuse.
+
 ## Hero headline — hard line-count cap (mandatory, most-violated rule)
 - The H1 must visually wrap to 2 lines, 3 at the absolute most, at desktop width (≥1200px). A headline that wraps to 4+ lines is an automatic fail — it pushes the subhead/CTA down and can blow past the viewport even with min-height:100vh, since min-height only sets a floor, not a ceiling.
 - Before picking a font-size, work out how wide the headline's own column actually is — NOT the full viewport:
@@ -275,7 +288,7 @@ Never hand-pick a second hex value for a hover, shadow-tint, or glow state — d
 - For a premium atmospheric background (hero sections, dark pages especially) as an alternative to a flat 2-color gradient: stack 2-3 radial-gradient() layers at different positions/sizes built from the palette via color-mix/oklch, combined with mix-blend-mode: screen or overlay on the upper layers — reads as a considered "mesh gradient" rather than the generic diagonal default. CSS-only, no images, no canvas/WebGL.
 
 ## CRO rules — conversion rate optimization
-- Above the fold must contain: ONE headline, ONE subhead, ONE primary CTA button, ONE proof element (star rating / client count / award / key result stat)
+- Above the fold must contain: ONE headline, ONE subhead, ONE primary CTA button, ONE proof element (star rating / client count / award / key result stat). This budget holds even when the PRD/brief lists more trust signals than that — see "When hero content is dense" under Hero height above for where the rest goes. Never treat "the brief mentions it" as license to stack every trust signal into the hero.
 - Primary CTA must appear minimum 3 times across the page — in hero, mid-page, and final CTA section
 - Never place two equal-weight CTA buttons side by side — always primary button + ghost/text secondary
 - Social proof section must appear within 2 sections of the hero — never buried at page bottom
@@ -318,6 +331,7 @@ Common, easy-to-miss mistakes — check every generated page against this list b
 - Desktop nav starts fully transparent on load. On scroll, apply a background treatment that suits the page style — frosted glass (backdrop-filter: blur(14px)) works well on most styles, but a solid var(--bg-surface) or a dark overlay is fine too if it fits the aesthetic. Wire this via the safe JS scroll listener below
 - Add a subtle bottom border on scroll: border-bottom: 1px solid var(--border)
 - Nav CTA button must match the page primary button exactly — same accent color, same border-radius, same font weight
+- The nav CTA button is required (see above) even when the hero also has its own primary CTA — that duplication is expected and fine, since the nav CTA is what stays reachable once the user scrolls past the hero. The one thing to avoid is a phone/contact number appearing as its OWN separate stacked line inside the hero content when it's already shown in the nav — that's pure duplicate vertical space with nothing gained, since the nav is visible at the same time as the hero on first paint. Keep the phone number in the nav (or in a slim strip below the hero per "When hero content is dense" above) rather than as an extra block inside the hero's text column.
 
 ### Mobile drawer — CSS-only checkbox pattern (mandatory, no JS)
 Use the checkbox hack. Nav HTML structure must be:

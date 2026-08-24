@@ -428,8 +428,14 @@ export async function POST(request: NextRequest) {
       // actual page (skip error pages / tiny files) and rewrites keep data-field
       // + SL markers.
 
+      // text_present only proves the model's OWN phrasing of an ask didn't
+      // survive verbatim — the build pass is a separate AI call free to word
+      // things differently, so a paraphrase reads as a false "not landed" on
+      // content that's actually on the page. Structural kinds (asset missing,
+      // CTA present, section not removed/changed, wrong color) stay user-facing
+      // since those really do mean something was dropped, not just reworded.
       const finalUnmet = requirements.length > 0
-        ? describeUnmet(checkRequirements(html, requirements))
+        ? describeUnmet(checkRequirements(html, requirements).filter((r) => r.requirement.kind !== 'text_present'))
         : unmet;
 
       sendSSE(controller, {
