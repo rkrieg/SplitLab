@@ -55,6 +55,7 @@ import {
   resolveInsertPlacement,
   resolveSectionOrder,
   resolveSectionsForAsk,
+  type AttachmentRole,
 } from '@/lib/ai-edit-intent';
 import { ensureClickToEditFields } from '@/lib/ai-data-field-stamp';
 import { verifyAndRehostHtmlImages } from '@/lib/ai-asset-integrity';
@@ -721,9 +722,10 @@ async function runScopedPatch(
   /** Optional corrective note appended on a retry (outer-tag / JSON shape). */
   correctionNote?: string,
   usage?: UsageContext,
+  imageRoleByUrl?: Map<string, AttachmentRole>,
 ): Promise<string | null> {
   try {
-    const imageUrlsNote = attachedImagesInstructionNote(imageUrls ?? []);
+    const imageUrlsNote = attachedImagesInstructionNote(imageUrls ?? [], imageRoleByUrl);
     const correctionBlock = correctionNote ? `\n\n${correctionNote}` : '';
     const userContent: AIContent = [
       ...(imageUrls ?? []).map((url): AIContentBlock => ({ type: 'image', url })),
@@ -817,10 +819,11 @@ async function runScopedPatchWithRetry(
   prompt: string,
   imageUrls: string[] | undefined,
   usage?: UsageContext,
+  imageRoleByUrl?: Map<string, AttachmentRole>,
 ): Promise<{ html: string | null; failedSanity: boolean; failedParse: boolean }> {
   const requiredTag = outerTag(sectionHtml);
 
-  const first = await runScopedPatch(sectionHtml, schemaSlice, prompt, imageUrls, undefined, usage);
+  const first = await runScopedPatch(sectionHtml, schemaSlice, prompt, imageUrls, undefined, usage, imageRoleByUrl);
   const firstOk = acceptScopedPatchHtml(sectionHtml, first, 'first-attempt');
   if (firstOk) {
     return { html: firstOk, failedSanity: false, failedParse: false };
@@ -842,7 +845,7 @@ async function runScopedPatchWithRetry(
     gotTag,
   });
 
-  const second = await runScopedPatch(sectionHtml, schemaSlice, prompt, imageUrls, correction, usage);
+  const second = await runScopedPatch(sectionHtml, schemaSlice, prompt, imageUrls, correction, usage, imageRoleByUrl);
   const secondOk = acceptScopedPatchHtml(sectionHtml, second, 'retry');
   if (secondOk) {
     return { html: secondOk, failedSanity: false, failedParse: false };
@@ -1067,6 +1070,7 @@ async function runScopedInsert(
   imageUrls: string[] | undefined,
   /** Storage prefix for any images this section needs generated. */
   pageSlug: string | null,
+  imageRoleByUrl?: Map<string, AttachmentRole>,
 ): Promise<{ name: string; html: string } | null> {
   try {
     // Defensive cap — this is a small, scoped call (writing one section, not
@@ -1075,7 +1079,7 @@ async function runScopedInsert(
     const truncatedHead = headSectionHtml.length > 20_000
       ? `${headSectionHtml.slice(0, 20_000)}\n/* ...truncated... */`
       : headSectionHtml;
-    const imageUrlsNote = attachedImagesInstructionNote(imageUrls ?? []);
+    const imageUrlsNote = attachedImagesInstructionNote(imageUrls ?? [], imageRoleByUrl);
     const userContent: AIContent = [
       ...(imageUrls ?? []).map((url): AIContentBlock => ({ type: 'image', url })),
       {
@@ -1322,6 +1326,7 @@ async function runRegionRewrite(opts: {
   regionUnresolved?: boolean;
   /** Recent turns — context only, never re-done. */
   conversation?: string;
+  imageRoleByUrl?: Map<string, AttachmentRole>;
 }): Promise<
   | {
       kind: 'sections';
@@ -1336,7 +1341,7 @@ async function runRegionRewrite(opts: {
     const truncatedHead = opts.headSectionHtml.length > 20_000
       ? `${opts.headSectionHtml.slice(0, 20_000)}\n/* ...truncated... */`
       : opts.headSectionHtml;
-    const imageUrlsNote = attachedImagesInstructionNote(opts.imageUrls ?? []);
+    const imageUrlsNote = attachedImagesInstructionNote(opts.imageUrls ?? [], opts.imageRoleByUrl);
     const userContent: AIContent = [
       ...(opts.imageUrls ?? []).map((url): AIContentBlock => ({ type: 'image', url })),
       {
@@ -1508,6 +1513,7 @@ async function applyRegionRewriteToHtml(opts: {
    * model was blamed for skipping an ask it had never been shown.
    */
   focusSections?: string[];
+  imageRoleByUrl?: Map<string, AttachmentRole>;
 }): Promise<
   | {
       kind: 'applied';
@@ -1708,6 +1714,7 @@ async function applyRegionRewriteToHtml(opts: {
     noQuestions: opts.noQuestions,
     regionUnresolved,
     conversation: opts.conversation,
+    imageRoleByUrl: opts.imageRoleByUrl,
   });
   if (result.kind === 'failed') return result;
   // Pass the model's question straight through. Wrapping it in a retry or
@@ -2245,8 +2252,24 @@ export async function POST(
         sourceUrl: intent.sourceUrl ? intent.sourceUrl.slice(0, 80) : null,
         requirements: intent.requirements.length,
         isQuestion: intent.isQuestion,
+        attachmentRoles: intent.attachmentRoles,
       }
     : 'unavailable');
+
+  // Per-URL role the classifier already worked out ("content_asset" = embed
+  // exactly, "locator"/"design_reference"/"bug_report" = never embed the file
+  // itself). Built once here and handed to every HTML-writing call below so
+  // none of them has to re-guess "embed or reference?" from the raw URL list
+  // alone — that re-guess is what embedded a "here's where I mean" screenshot
+  // as literal page content.
+  const roleByUrl = new Map<string, AttachmentRole>(
+    intent
+      ? imageRolesFromIntent(intent, effectiveImageUrls).map((r) => [
+          r.url,
+          r.role === 'bug_reference' ? 'bug_report' : r.role,
+        ])
+      : [],
+  );
 
   // Intent failed (timeout / truncate / bad JSON). That is OUR outage, not a
   // badly-worded request — so say so and let them retry, instead of asking the
@@ -2599,6 +2622,7 @@ export async function POST(
             html: baseHtml,
             instruction: withConstraints(prompt),
             imageUrls: routingImageUrls.length > 0 ? routingImageUrls : undefined,
+            imageRoleByUrl: roleByUrl,
             pageSlug: page.slug ?? null,
             schema: finalSchemaJson ?? schema,
             usage: usageCtx,
@@ -2741,6 +2765,7 @@ export async function POST(
               html,
               instruction: rewriteInstruction,
               imageUrls: routingImageUrls.length > 0 ? routingImageUrls : undefined,
+              imageRoleByUrl: roleByUrl,
               pageSlug: page.slug ?? null,
               schema: finalSchemaJson ?? schema,
               usage: usageCtx,
@@ -3494,6 +3519,7 @@ export async function POST(
                 html: workingHtml,
                 instruction: withConstraints(instruction),
                 imageUrls: images,
+                imageRoleByUrl: roleByUrl,
                 pageSlug: page.slug ?? null,
                 schema: finalSchemaJson ?? schema,
                 usage: usageCtx,
@@ -3612,6 +3638,7 @@ export async function POST(
                     ),
                     stepImages,
                     page.slug ?? null,
+                    roleByUrl,
                   );
                   if (!inserted) break;
                   const wrappedBlock = `<!-- SL:${inserted.name} -->\n${inserted.html.trim()}\n<!-- /SL:${inserted.name} -->`;
@@ -4250,7 +4277,7 @@ export async function POST(
             const anchorSection = slSections.find((s) => s.name === anchorName)!;
             const headSection = slSections.find((s) => s.name === 'head');
             const usedNames = slSections.map((s) => s.name);
-            const inserted = await runScopedInsert(anchorSection.html, headSection?.html ?? '', usedNames, withConstraints(prompt), routingImageUrls, page.slug ?? null);
+            const inserted = await runScopedInsert(anchorSection.html, headSection?.html ?? '', usedNames, withConstraints(prompt), routingImageUrls, page.slug ?? null, roleByUrl);
             if (inserted) {
               const wrappedBlock = `<!-- SL:${inserted.name} -->\n${inserted.html.trim()}\n<!-- /SL:${inserted.name} -->`;
               const spliced = insertSlSectionBlock(html, anchorName, routing!.position as 'before' | 'after', wrappedBlock);
@@ -4311,6 +4338,7 @@ export async function POST(
               html,
               instruction: withConstraints(prompt),
               imageUrls: routingImageUrls,
+              imageRoleByUrl: roleByUrl,
               pageSlug: page.slug ?? null,
               schema: finalSchemaJson ?? schema,
               usage: usageCtx,
@@ -4366,7 +4394,7 @@ export async function POST(
               ? `\n\nREQUIRED visible copy from an attached screenshot — each of these strings MUST appear verbatim in the section HTML:\n` +
                 designCopyLines.map((l, i) => `${i + 1}. ${l}`).join('\n')
               : '';
-          const embedNote = attachedImagesInstructionNote(routingImageUrls);
+          const embedNote = attachedImagesInstructionNote(routingImageUrls, roleByUrl);
           const scopedPromptFinal = scopedPrompt + designNote + embedNote;
           // Vision + URL list: every attachment. Instruction decides which go in src.
           const scopedImageUrls = generatedImageUrl
@@ -4384,7 +4412,7 @@ export async function POST(
               break;
             }
             const schemaSlice = { [name]: (schema as Record<string, unknown> | null | undefined)?.[name] };
-            let patchResult = await runScopedPatchWithRetry(section.html, schemaSlice, scopedPromptFinal, scopedImageUrls, usageCtx);
+            let patchResult = await runScopedPatchWithRetry(section.html, schemaSlice, scopedPromptFinal, scopedImageUrls, usageCtx, roleByUrl);
             let updated = patchResult.html;
             if (!updated) {
               console.error(`[pages/follow-up] scoped patch failed for section "${name}" after retry`, {
@@ -4609,7 +4637,7 @@ export async function POST(
           ? [
               {
                 type: 'text' as const,
-                text: attachedImagesInstructionNote(routingImageUrls).trim(),
+                text: attachedImagesInstructionNote(routingImageUrls, roleByUrl).trim(),
               },
               ...routingImageUrls.map((url): AIContentBlock => ({ type: 'image', url })),
             ]

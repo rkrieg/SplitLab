@@ -61,11 +61,43 @@ export const MAX_ATTACHMENTS = 3;
  * instruction says what each file is for. Mixed "screenshot of where + photo
  * to place" is a normal ask, not two menus.
  */
-export function attachedImagesInstructionNote(imageUrls: string[]): string {
+const ATTACHMENT_ROLE_GUIDANCE: Record<AttachmentRole, string> = {
+  content_asset: 'USE THIS FILE AS CONTENT — copy this exact URL into src ON the page.',
+  locator: 'LOCATOR ONLY — this shows WHERE the user means, or a style/mood to aim for. Never put this exact file on the page. If the instruction is asking for a photo here, you MUST still add one: use src="SL_IMG_n" and an image_prompts entry so a new one gets generated — do NOT skip the section or return it unchanged just because this file itself is off-limits.',
+  design_reference: 'LOOK REFERENCE ONLY — recreate the style/layout shown, never embed this exact file as content.',
+  bug_report: 'BUG REPORT — shows a problem on our own page, not an asset. Never embed this file as content.',
+};
+
+/**
+ * roleByUrl comes from the classifier's own attachment_roles judgement
+ * (computed once per turn, see AttachmentRole above). Without it every
+ * downstream call had to re-guess "embed or reference?" from one generic
+ * sentence, with none of the classification already paid for — a screenshot
+ * attached as a "here's where/what I mean" pointer got embedded verbatim as
+ * page content because nothing told the HTML-writing call it wasn't meant to
+ * be. Optional and additive: a caller with no role information gets the old
+ * generic instruction, unchanged.
+ */
+export function attachedImagesInstructionNote(
+  imageUrls: string[],
+  roleByUrl?: Map<string, AttachmentRole>,
+): string {
   if (imageUrls.length === 0) return '';
+  if (!roleByUrl || roleByUrl.size === 0) {
+    return (
+      `\n\nAttached image URL(s), in order. You can SEE each one. The instruction says what they are for. Use a URL in src ONLY when the instruction wants that file ON the page; copy it exactly. Never embed a screenshot of the page as content:\n` +
+      imageUrls.map((u, i) => `${i + 1}. ${u}`).join('\n')
+    );
+  }
   return (
-    `\n\nAttached image URL(s), in order. You can SEE each one. The instruction says what they are for. Use a URL in src ONLY when the instruction wants that file ON the page; copy it exactly. Never embed a screenshot of the page as content:\n` +
-    imageUrls.map((u, i) => `${i + 1}. ${u}`).join('\n')
+    `\n\nAttached image URL(s), in order. You can SEE each one. Each is labelled with its role — follow the role, not just the wording of the instruction:\n` +
+    imageUrls
+      .map((u, i) => {
+        const role = roleByUrl.get(u);
+        const guidance = role ? ATTACHMENT_ROLE_GUIDANCE[role] : ATTACHMENT_ROLE_GUIDANCE.content_asset;
+        return `${i + 1}. ${u} — ${guidance}`;
+      })
+      .join('\n')
   );
 }
 
