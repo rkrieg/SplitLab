@@ -166,6 +166,29 @@ export interface EditIntent {
    * by 500 companies" for a brand that never said so can't ship.
    */
   wantsSocialProof: boolean;
+  /**
+   * The message asks something (capability, how-it-works, general chit-chat)
+   * rather than requesting a concrete change to THIS page right now. When
+   * true, callers should answer conversationally and skip the edit pipeline
+   * entirely — asks[] is expected to be empty in that case. Judged on intent,
+   * not phrasing: "can you make the button bigger?" is a concrete ask despite
+   * being a question; "is there a way to connect this to my CRM?" is not.
+   * Defaults to false on anything uncertain — an ambiguous message falling
+   * through to the existing edit path is the safer failure than a real
+   * request for a change getting silently answered instead of applied.
+   */
+  isQuestion: boolean;
+  /**
+   * A message can ask a question AND request an edit in the same breath
+   * ("what do you think about the hero? also remove the FAQ section") — that
+   * edit still goes through `asks` as normal (isQuestion is false whenever
+   * asks is non-empty), but the question part would otherwise be silently
+   * dropped since nothing else in the pipeline answers it. The model captures
+   * that leftover question here, verbatim, so the caller can answer it and
+   * fold the answer into the same turn's response instead of ignoring it.
+   * Null whenever there is no such leftover question.
+   */
+  questionAside: string | null;
 }
 
 const SYSTEM = `You classify a single edit request for an AI landing-page builder. You do NOT edit anything and you do NOT judge the result — you only describe what the user is asking for, so the right code path runs.
@@ -173,6 +196,8 @@ const SYSTEM = `You classify a single edit request for an AI landing-page builde
 Respond with ONLY a JSON object. Begin with { and end with }. No prose, no markdown fences.
 
 {
+  "is_question": true|false,
+  "question_aside": "<verbatim leftover question text, or null>",
   "design_reference": true|false,
   "reuse_reference_copy": true|false,
   "bug_report": true|false,
@@ -192,6 +217,14 @@ Respond with ONLY a JSON object. Begin with { and end with }. No prose, no markd
 }
 
 Field meanings:
+- "is_question": true when the message asks something — about what's possible, how something works, general chit-chat ("hi", "how are you", "what can you do") — rather than requesting a concrete change to THIS page right now. Judge this on INTENT, not phrasing or punctuation: a question mark does not make something a question, and a polite/indirect phrasing does not make something not-an-edit.
+  - EDIT despite question phrasing: "Can you make the button bigger?", "Could we add a testimonial section?", "Would it be possible to change the hero color to blue?" — each names a concrete change to make on this page. is_question: false, and put the real ask in "asks" as normal.
+  - QUESTION despite no question mark: "not sure if a submission endpoint is something you support", "wondering how the pricing section works" — no concrete change is named, only something to find out. is_question: true.
+  - True questions: "is there a way to connect this to my CRM?", "what sections do you recommend for a SaaS page?", "hi, how are you?", "what can you actually do here?".
+  - Also true when an image is attached: "do you think our hero section is good enough?", "check the screenshot and tell me if this looks good" — the user wants an opinion/critique, not a change performed. is_question: true, attachment_roles for that image should still describe what the picture shows (do not force it to "bug_report" just because critique was asked) — the picture is there for you to look at and comment on, not to trigger an edit.
+  - When true, leave "asks" empty — do NOT force something into "asks" just to satisfy the rule below; that rule is for constraint-only messages, not questions, and does not apply here.
+  - Default to false whenever genuinely unsure. A message wrongly treated as an edit still gets handled (today's behavior); a real request for a change wrongly treated as a question would get answered instead of applied, which is worse.
+- "question_aside": when the message ALSO contains a real question alongside a concrete edit — "what do you think about the hero section? and can you please remove the FAQ section?" — the edit goes in "asks" as normal (that part IS an edit, so is_question is false), but the question ("what do you think about the hero section?") would otherwise be silently dropped since nothing else answers it. Put that leftover question here, verbatim (or close to it), so it can be answered alongside the edit. Null when there is no such leftover question — most messages, including pure edits and pure questions (which use "is_question" instead), leave this null.
 - "design_reference": the user wants the page, or a named part of it, to LOOK like an attached image or a referenced site. True for "make our footer like this", "also match the footer with screenshot", "make the footer similar to screenshot", "same vibe as the pic", "copy this bottom bar" — the wording does not matter, the intent does.
 - "reuse_reference_copy": the WORDS visible in the reference must appear on the page (cloning a footer's legal text, "use the copy from this"). FALSE when the user supplies their own copy or caps the scope ("except it should say X", "nothing else is required") — putting the reference's words on the page then is wrong.
 - "bug_report": an attachment shows something broken/ugly on OUR OWN page (the user is complaining), rather than a design to copy. Both can be true when the user complains AND points at a reference.
@@ -209,7 +242,7 @@ Field meanings:
 - "count" on each ask: how many NEW sections an "add" creates ("add 2 sections like this" → 2). 1 for everything else. Never 0.
 - "design_match" on each ask: true ONLY when THIS ask means "make it look like the attached image" — recreate that section's layout and structure from the picture. Judge each ask separately. In "increase the footer logo size slightly and add a section like this image", the ADD ask is design_match true and the footer ask is FALSE — the footer is a small resize, and rebuilding it from an unrelated screenshot would destroy it. A resize, recolour, spacing tweak or copy edit is design_match false even when the same message also contains a reference image. An ask whose only image is a "locator" is ALWAYS design_match false — that picture says where, not how it should look.
 - "image_indexes" on each ask: which attached images that ask refers to, numbered from 1 in the order they were attached. "make the footer like this and the nav like that" with two screenshots is [1] on the footer ask and [2] on the nav ask. Leave it [] when the ask refers to no image, or when a single image applies to everything. Getting this right stops one ask's reference from being handed to an unrelated ask.
-- "constraints": standing conditions that qualify the OTHER asks rather than being work of their own — "keep the dark theme we have", "don't touch the nav", "same fonts", "keep it on one page". Put the condition here, NOT in "asks". A constraint is something that can already be true; an ask is something we must change. If the user's whole message is a constraint with nothing to change, then it IS the ask — do not empty "asks" to fill this. Copy the user's own words.
+- "constraints": standing conditions that qualify the OTHER asks rather than being work of their own — "keep the dark theme we have", "don't touch the nav", "same fonts", "keep it on one page". Put the condition here, NOT in "asks". A constraint is something that can already be true; an ask is something we must change. If the user's whole message is a constraint with nothing to change AND is_question is false, then it IS the ask — do not empty "asks" to fill this. Copy the user's own words. (This does not apply when is_question is true — a question legitimately has empty "asks".)
 - "full_rebuild": true only for whole-page work (redesign the page, clone another site, add several new sections).
 - "uses_earlier_source": the user refers to a SITE they gave earlier ("the website i gave you", "get the logo from that url") — NOT "the screenshot i gave you". A screenshot is an attachment, not a source URL.
 - "source_url": a site URL to take brand assets from — from this message, or the earlier one when uses_earlier_source is true and it is listed in the context below. Otherwise null.
@@ -904,6 +937,15 @@ export function normalizeIntent(
     removalIntent: truthy(raw.removal_intent),
     intentionalAssetReplace: truthy(raw.intentional_asset_replace),
     wantsSocialProof: truthy(raw.wants_social_proof),
+    // Guard against the model contradicting itself (is_question: true but asks
+    // also populated) — when it gave us concrete asks, act on them rather than
+    // discard a real edit because a flag also came back true. Treating it as
+    // an edit is the safer of the two possible failures.
+    isQuestion: truthy(raw.is_question) && asks.length === 0,
+    questionAside:
+      typeof raw.question_aside === 'string' && raw.question_aside.trim()
+        ? raw.question_aside.trim().slice(0, 500)
+        : null,
     requirements: parseModelRequirements(raw.requirements, {
       knownSections: known,
       embeddableAssetUrls: opts.embeddableAssetUrls,

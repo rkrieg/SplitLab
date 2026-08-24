@@ -449,6 +449,30 @@ function replaceUniqueTextInHtml(html: string, oldText: string, newText: string)
   return html.replace(new RegExp(escaped), newText);
 }
 
+// Used only when classifyEditIntent() decides a message is a pure question
+// (is_question: true, asks: []) — no page change happens on this turn, so this
+// call must never claim we already did or will automatically do something we
+// don't actually support. Keep this list accurate as features ship; an AI that
+// confidently promises a capability we don't have is worse than one that says
+// "not yet, but I can note it for later."
+const FOLLOW_UP_QUESTION_SYSTEM = `You are the chat assistant for SplitLab's AI landing-page builder, answering a question about the product — not editing the page on this turn. Reply in plain text, short paragraphs or a tight list when it genuinely helps scanability, no heavy markdown headers. Be warm and direct, like a helpful teammate, not a formal support script.
+
+You are always given the current page's real HTML below — read it. When asked to judge or review something ("is our FAQ good?", "is the hero good enough?"), answer concretely from the ACTUAL content and structure you can see in that HTML: the real copy, whether a section exists, how it's built (e.g. accordion markup vs a flat list), CTA text and placement. Never say "I don't have access" or ask for a screenshot just to answer a content/structure question — you already have the markup, so use it.
+
+What you genuinely cannot judge from HTML alone is anything purely visual/rendered — actual spacing, overlap, whether a font loaded, colors as displayed. If the question depends on that and no image is attached, say so plainly and specifically ("I can see the FAQ has 6 questions in an accordion — can't tell from the markup whether the spacing looks cramped though, a screenshot would confirm that") rather than refusing to answer at all.
+
+If an image is attached, you CAN see it too — usually a screenshot of the user's own current page. Look at it and give a concrete critique of what you see (layout balance, broken characters/icons rendering as boxes, copy wrapping awkwardly, visual hierarchy) on top of what the HTML tells you. Never claim you cannot see an attached image.
+
+What this builder can actually do right now, so you never overpromise:
+- Edit any existing section: restyle, recolor, resize, rewrite copy, fix spacing/alignment, replace an image.
+- Add brand-new sections, remove sections, reorder sections.
+- Match a look from an attached screenshot or a reference site (design_reference), and fetch a real logo or content photos from a given site URL.
+- Generate real photography for sections via AI image generation.
+- Every form submission on a live page is automatically captured into SplitLab's own Leads for that test — no setup needed. Workspace-level integrations (HubSpot, email notification, or a webhook to a third-party URL) can be turned on per test in the workspace's Integrations settings, and any lead captured there gets forwarded automatically.
+- What it CANNOT do yet: wire an arbitrary custom submission endpoint directly into the page's own code from a chat instruction (forms don't POST anywhere on their own — delivery goes through the Leads/Integrations path above instead). No built-in confirmation-email-on-submit beyond what the email integration sends.
+
+If asked something outside this list, say so plainly rather than guessing. If the message is just a greeting or small talk, respond warmly and briefly, and you may offer to help with something concrete — but don't invent unrequested tasks.`;
+
 const SURGICAL_TEXT_SYSTEM_PROMPT = `You rewrite a single piece of landing-page copy. Return JSON only — no markdown fences, no explanation.
 {"text":"the new copy here"}
 
@@ -2220,6 +2244,7 @@ export async function POST(
         fullRebuild: intent.fullRebuild,
         sourceUrl: intent.sourceUrl ? intent.sourceUrl.slice(0, 80) : null,
         requirements: intent.requirements.length,
+        isQuestion: intent.isQuestion,
       }
     : 'unavailable');
 
@@ -2241,6 +2266,79 @@ export async function POST(
         });
       } catch (err) {
         console.error('[pages/follow-up] intent-failure reporting failed', err);
+        sendSSE(controller, { type: 'error', message: userFacingAIErrorMessage(err) });
+      } finally {
+        closeSSE(controller);
+      }
+    })();
+    return response;
+  }
+
+  // Attached images (a screenshot of the current page, a reference) must reach
+  // this call the same way they reach classifyEditIntent — missed once
+  // already: the first version sent only the text prompt, so an attached hero
+  // screenshot was invisible and the model correctly (but uselessly) said it
+  // couldn't see it.
+  //
+  // The current page's own HTML is also handed over as text, always — this is
+  // the same `htmlForModel` every other full-page AI call in this route
+  // already uses, no extra fetch/render involved. It's what lets a question
+  // like "is our FAQ good?" get a real, specific answer (actual questions,
+  // whether it's an accordion, etc.) without requiring a screenshot or a live
+  // Puppeteer re-render of the page — the disabled `runPostUploadNavLogoQa`
+  // path (see the comment ~5658 below) is exactly the render-and-screenshot
+  // approach that broke production once already, so this stays text-only on
+  // purpose. HTML alone can't catch purely visual/rendering bugs (overlap, a
+  // font not loading) — the system prompt tells the model to say so rather
+  // than guess.
+  //
+  // Shared by two call sites: a standalone question (below) and a question
+  // riding alongside a real edit via `intent.questionAside` (near the final
+  // `doneEvent`, appended as a note instead of replacing the edit result).
+  const answerFollowUpQuestion = async (questionText: string): Promise<string> => {
+    const fullQuestionText = `Current page HTML:\n${htmlForModel}\n\nUser question: ${questionText}`;
+    const questionContent: AIContent = effectiveImageUrls.length > 0
+      ? [
+          ...effectiveImageUrls.map((url): AIContentBlock => ({ type: 'image', url })),
+          { type: 'text', text: fullQuestionText },
+        ]
+      : fullQuestionText;
+    const answer = await askAI({
+      system: FOLLOW_UP_QUESTION_SYSTEM,
+      messages: [{ role: 'user', content: questionContent }],
+      maxTokens: 3000,
+      label: 'follow-up:answer-question',
+      usage: usageCtx,
+    });
+    return answer.trim().slice(0, 6000) || "I'm not sure how to answer that — could you rephrase?";
+  };
+
+  // Pure question ("hi how are you", "can you connect this to my CRM?", "what
+  // can you do here?") — no concrete change was asked for, so the entire
+  // edit/patch/requirements pipeline below must not run. Answer conversationally
+  // and stop, exactly like the existing clarify path stops before touching the
+  // page — except this is never persisted as `clarify: true`, since that flag
+  // means "we asked a section-ambiguity question" and forces noQuestions on the
+  // NEXT turn's edit; a plain Q&A exchange must not suppress a genuine
+  // clarifying question on whatever the user asks next.
+  if (intent.isQuestion && intent.asks.length === 0) {
+    const { stream, controller } = createSSEStream();
+    const response = new Response(stream, { headers: SSE_HEADERS });
+    void (async () => {
+      try {
+        const reply = await answerFollowUpQuestion(prompt);
+        const userEntry: Record<string, unknown> = { role: 'user', content: prompt };
+        if (Array.isArray(image_urls) && image_urls.length > 0) userEntry.image_urls = image_urls;
+        await db
+          .from('pages')
+          .update({
+            conversation_json: [...history, userEntry, { role: 'assistant', content: reply }],
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', params.id);
+        sendSSE(controller, { type: 'clarify', message: reply });
+      } catch (err) {
+        console.error('[pages/follow-up] question-answer call failed', err);
         sendSSE(controller, { type: 'error', message: userFacingAIErrorMessage(err) });
       } finally {
         closeSSE(controller);
@@ -5699,6 +5797,20 @@ export async function POST(
             `position for — they may sit on top of the original content instead of flowing after it. ` +
             `Check the preview. Restructuring a page like this isn't reliable; it needs rebuilding first.`,
           );
+        }
+      }
+
+      // A question rode alongside this turn's edit ("what do you think about
+      // the hero? also remove the FAQ") — the edit above already ran normally;
+      // this only answers the leftover question so it isn't silently dropped.
+      // Best-effort: a failure here must not undo or block the edit that
+      // already succeeded, so it degrades to no note rather than an error.
+      if (intent.questionAside) {
+        try {
+          const asideAnswer = await answerFollowUpQuestion(intent.questionAside);
+          addNote(asideAnswer);
+        } catch (err) {
+          console.error('[pages/follow-up] question_aside answer failed', err);
         }
       }
 
