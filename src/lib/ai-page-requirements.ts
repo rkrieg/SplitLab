@@ -737,8 +737,32 @@ function checkOne(html: string, req: PageRequirement, beforeHtml?: string): bool
       return !!req.value && html.includes(req.value);
     case 'text_present':
       return !!req.value && normalizeText(html).includes(normalizeText(req.value));
-    case 'element_absent':
-      return !!req.value && !html.includes(req.value);
+    case 'element_absent': {
+      if (!req.value) return false;
+      // A section-scoped ask ("remove the CTA from the navbar") must only be
+      // checked against that section — the same label commonly exists
+      // elsewhere on the page (a hero CTA, a footer link) on purpose, and a
+      // whole-page substring search flags that as the removal having failed.
+      const sections = req.sections ?? [];
+      const haystacks =
+        sections.length > 0
+          ? sections.map((name) => sectionInner(html, name)).filter((s): s is string => s !== null)
+          : [html];
+      // A named section that no longer exists in the HTML has nothing to
+      // search — that is not evidence the element is still there.
+      if (sections.length > 0 && haystacks.length === 0) return true;
+      const stillPresent = haystacks.some((h) => h.includes(req.value as string));
+      if (stillPresent) {
+        const hit = haystacks.find((h) => h.includes(req.value as string))!;
+        const idx = hit.indexOf(req.value);
+        console.warn('[ai-page-requirements] element_absent still present', {
+          value: req.value,
+          sections,
+          context: hit.slice(Math.max(0, idx - 60), idx + req.value.length + 60),
+        });
+      }
+      return !stillPresent;
+    }
     case 'section_absent': {
       if (!req.value) return true;
       return !sectionInner(html, req.value);
