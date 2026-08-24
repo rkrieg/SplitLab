@@ -213,6 +213,16 @@ export default function LandingPage() {
       </section>
 
       <footer>
+        <div className="footer-inner" style={{flexWrap:'wrap',gap:'12px',borderBottom:'1px solid rgba(148,163,184,0.15)',paddingBottom:'16px',marginBottom:'16px'}}>
+          <div className="footer-links" style={{flexWrap:'wrap'}}>
+            <a href="/resources"><strong>Resources</strong></a>
+            <a href="/resources/how-to-ab-test-a-landing-page">How to A/B Test a Landing Page</a>
+            <a href="/resources/glossary">A/B Testing Glossary</a>
+            <a href="/tools/ab-test-significance-calculator">Significance Calculator</a>
+            <a href="/compare/splitlab-vs-unbounce">SplitLab vs Unbounce</a>
+            <a href="/compare/splitlab-vs-vwo">SplitLab vs VWO</a>
+          </div>
+        </div>
         <div className="footer-inner">
           <div className="footer-left">
             <img src="/splitlab-logo-dark.png" alt="SplitLab" style={{height:'60px',width:'auto'}} />

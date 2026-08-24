@@ -2,9 +2,50 @@ import type { Metadata } from 'next';
 import './globals.css';
 import Providers from './providers';
 
+const SITE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://www.trysplitlab.com';
+const DESCRIPTION =
+  'SplitLab is an agency-first A/B testing and AI landing-page platform. Build landing pages with AI, run A/B and split tests on your own custom domains, and optimize conversion with real-time analytics.';
+
 export const metadata: Metadata = {
-  title: 'SplitLab — A/B Testing Platform',
-  description: 'Agency-grade landing page A/B testing and management platform.',
+  metadataBase: new URL(SITE_URL),
+  title: {
+    default: 'SplitLab — A/B Testing & AI Landing Page Builder',
+    template: '%s | SplitLab',
+  },
+  description: DESCRIPTION,
+  applicationName: 'SplitLab',
+  keywords: [
+    'A/B testing',
+    'split testing',
+    'landing page optimization',
+    'landing page conversion optimization',
+    'conversion rate optimization',
+    'landing page builder',
+    'AI landing page builder',
+    'A/B testing software',
+    'A/B testing for agencies',
+    'landing page A/B testing',
+  ],
+  authors: [{ name: 'SplitLab' }],
+  openGraph: {
+    type: 'website',
+    url: SITE_URL,
+    siteName: 'SplitLab',
+    title: 'SplitLab — A/B Testing & AI Landing Page Builder',
+    description: DESCRIPTION,
+    images: [{ url: '/android-chrome-512x512.png', width: 512, height: 512, alt: 'SplitLab' }],
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'SplitLab — A/B Testing & AI Landing Page Builder',
+    description: DESCRIPTION,
+    images: ['/android-chrome-512x512.png'],
+  },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: { index: true, follow: true, 'max-image-preview': 'large', 'max-snippet': -1, 'max-video-preview': -1 },
+  },
   icons: {
     icon: [
       { url: '/favicon.ico' },
