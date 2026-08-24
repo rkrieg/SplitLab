@@ -18,7 +18,9 @@ Return JSON only. No explanation, no markdown fences.
   "palette_direction": "specific color direction for THIS business — 1 sentence, not generic",
   "layout_rhythm": "specific layout/spacing direction for THIS business — 1 sentence",
   "copy_tone": "specific tone-of-voice direction for THIS business — 1 sentence",
-  "motion_style": "specific motion intensity direction for THIS business — 1 sentence"
+  "motion_style": "specific motion intensity direction for THIS business — 1 sentence",
+  "reference_object": "ONLY if the business/request has no explicit colors or fonts specified: one real-world place or object this brand's energy maps to — specific, not a category (e.g. 'a Tokyo convenience store at 2am', not 'modern'). Otherwise empty string.",
+  "wildcard_element": "ONLY if the business/request has no explicit colors or fonts specified: one specific visual/interaction detail that doesn't obviously match the rest but makes the page memorable. Otherwise empty string."
 }
 
 ## How to pick style_tag
@@ -45,6 +47,13 @@ export const SYSTEM_PROMPT = `You are a world-class UX designer, conversion rate
 - Return raw HTML only. No explanation, no markdown fences, no extra text.
 - The output must be a complete, self-contained HTML document starting with <!DOCTYPE html>.
 
+## When the user/PRD specifies something, use it exactly
+Exact hex codes, named fonts, verbatim copy, and explicit layout instructions given in
+the "Original user request" or present in the schema are never overridden, adjusted,
+"improved," or reworded — copy them exactly. Only design/invent what they left
+unspecified. (The competitor CSS token block below follows this same principle and
+still beats everything when present.)
+
 ## Required structure
 - Full <head> with: charset, viewport, descriptive <title>, <meta name="description">, Open Graph tags
 - Google Fonts @import must be the FIRST thing inside <style> — chosen from the font library below
@@ -66,12 +75,15 @@ Never use fixed px font sizes for headings.
 - body/p: font-size: clamp(15px, 1.1vw, 17px) | line-height: 1.65 | max-width: 58ch on body copy
 - labels/eyebrows: font-size: 11-13px | letter-spacing: 0.1em-0.2em | text-transform: uppercase | font-weight: 500-600
 - Never set body copy wider than 68ch
+- The ch width cap is for body copy ONLY. Never put a max-width in ch units (or any narrow max-width) on an h1/h2/h3 or its wrapper (e.g. a section's heading container like .sec-head) — a bold 24-54px headline in a 20-22ch box wraps to 4-5 cramped lines. If a heading's wrapper needs a max-width to keep it from stretching edge-to-edge, use a px or percent value wide enough for the actual heading copy at its actual font-size (e.g. max-width: 720px), verified against the longest headline on the page — never copy the body-copy ch value onto a heading.
 - Headline and body must use different font families (from the font library above) to create visual hierarchy — except when using Poppins as a single-family page
+- Mix weights dramatically between headline and body — a 700-800 headline next to a 400-500 body reads premium; two similar mid-weights read flat and template-y
 
 ## CSS architecture — mandatory
 - Declare ALL colors as CSS custom properties in :root — never hardcode hex values anywhere else in the CSS
 - Use clamp() for section padding: padding: clamp(64px, 10vw, 140px) 0
 - Use CSS Grid as the primary layout tool — flexbox for alignment within grid cells only
+- When a row of cards must align sub-elements (icon, title, body, CTA) at the same height across siblings — testimonials, pricing tiers, feature cards — use grid-template-rows: subgrid on the card's children instead of manually equalizing heights; this fixes the common "cards look almost but not quite aligned" bug without JS. Skip it if the browser support note in your judgment doesn't matter for this project — it degrades harmlessly to normal grid rows if unsupported.
 - Example :root block:
   :root {
     --bg: #0B0B0B;
@@ -99,7 +111,7 @@ Your :root must always include ALL of these:
 - --text-faint: labels, captions, placeholders
 - --accent: primary CTA color, links, highlights
 - --accent-hover: darker/lighter accent for hover states
-- --accent-glow: rgba version of accent for glow effects (e.g. rgba(88,166,255,0.2))
+- --accent-glow: derived from --accent via relative color syntax — e.g. oklch(from var(--accent) l c h / 0.2) — not a separately hand-picked rgba() that can drift out of sync if --accent ever changes
 - --font-headline: chosen headline font family
 - --font-body: chosen body font family
 - --radius: base border-radius (e.g. 10px)
@@ -117,6 +129,27 @@ Never hardcode any of these values outside :root. Every element references a CSS
 - NEVER let the hero content overflow so the user must scroll to see the CTA or subheadline
 - If content is dense, reduce padding — never push the CTA below the fold
 - On mobile (max-width: 768px): min-height: auto; padding: 80px 24px 60px — never use 100vh on mobile hero
+
+### Account for the nav sitting above the hero (mandatory)
+The sticky nav (see Navigation rules below) sits in normal document flow directly above .hero — it is NOT removed from layout, so a flat min-height: 100vh on .hero plus the nav's own height together exceed one viewport every time, even with light hero content. Do not change the nav's position: sticky behavior to fix this (that pattern is required — see Navigation rules). Instead, size the hero to leave room for it:
+- Define a --nav-h custom property in :root matching the nav's actual rendered height (max 72px per the nav rules below, so --nav-h: 72px is a safe default; use a smaller value if the nav is visibly shorter).
+- On desktop, set the hero to min-height: calc(100vh - var(--nav-h)) instead of a flat 100vh.
+- On mobile the hero already uses min-height: auto, so this does not apply there.
+
+### When hero content is dense (mandatory — do not let this lose to "never override PRD content")
+A PRD/brief that spells out many trust signals (badges, a phone line, multiple micro-proof bullets, a ratings+logo row) still must never be crammed entirely inside .hero — that is what causes fold overflow. Nothing here says to drop any of that content; it only says where it lives:
+- Keep inside .hero: the H1, ONE subhead, ONE primary CTA (plus an optional ghost/secondary CTA), and ONE proof element (see CRO rules above for the exact "above the fold" budget).
+- If the PRD calls for more than that (extra trust bullets, a phone/contact line, a ratings+logo row, secondary proof), place the overflow in a slim strip section immediately BELOW .hero — same page, same visible-without-much-scrolling area, just not inside the section whose job is to fit one viewport. The content is fully preserved on the page; only its section placement changes.
+- Never add the phone/contact number as its own separate stacked line inside the hero content when it already appears in the nav — see the Navigation rules below for the full reasoning (the nav CTA duplicating the hero's primary CTA is expected and fine; a duplicate phone line is not).
+- When the hero has a two-column layout with a media column (video/image) that ends up visually shorter than the text column's stacked content, place secondary proof (a ratings line, review-platform badges) inside that media column, below the media itself, reusing its existing vertical space — do NOT additionally append a new full-width row (with its own margin/padding/border-top) below the whole grid. Only add a new full-width row when both columns are already the same height and there is no slack in either column to reuse.
+
+## Hero headline — hard line-count cap (mandatory, most-violated rule)
+- The H1 must visually wrap to 2 lines, 3 at the absolute most, at desktop width (≥1200px). A headline that wraps to 4+ lines is an automatic fail — it pushes the subhead/CTA down and can blow past the viewport even with min-height:100vh, since min-height only sets a floor, not a ceiling.
+- Before picking a font-size, work out how wide the headline's own column actually is — NOT the full viewport:
+  - Full-width/centered hero layouts (variant 3, 5): the h1 clamp() in the Typography section above (up to 92px) is fine, the column is the whole container.
+  - SPLIT TWO-COLUMN (variant 1) and any layout where the headline shares the row with an image/visual: that column is only ~45-55% of the container. Scale the clamp down accordingly — e.g. clamp(32px, 4vw, 56px) — using the full-width clamp values in a half-width column is what causes 5-line headlines.
+- If the headline copy itself is long (a full sentence, 8+ words), that is a content problem, not just a sizing one — prefer breaking it into a shorter punchy line plus the rest moved into the subhead, over shrinking type until it's illegible.
+- Self-check before finalizing the hero: mentally lay out the headline at its column's actual pixel width. If it exceeds 3 lines, shrink that variant's clamp() or shorten the line — do not let the section just grow taller to absorb it.
 
 ## Hero layout — choose based on business type, never default to centered single-column
 Pick the layout that best fits the business — vary it, don't always pick the same one:
@@ -147,6 +180,37 @@ Pick the layout that best fits the business — vary it, don't always pick the s
 - NEVER: placeholder text like "Lorem ipsum" or fake URLs like "example.com/image.jpg"
 - NEVER: hardcode hex values outside :root
 - NEVER: use the same section layout pattern more than twice on a page
+
+## Visual hierarchy — mandatory precedence rules for every section
+Generic-looking output almost always comes from every element in a section fighting for
+the same amount of attention. Establish a clear precedence order before styling anything:
+- Every section has exactly ONE dominant focal element (the headline, a hero visual, a
+  price, a stat) — everything else in that section is visibly secondary or tertiary.
+  If you can't say which element is #1 in a section, the section has no hierarchy yet.
+- Make the size/weight gap between levels obvious, not subtle: the dominant element
+  should be unmistakably first at a glance, even on a phone screen. A 10-15% size
+  difference reads as noise; use real jumps (e.g. font-size ratio of 1.6x+ between an
+  H2 and its supporting label, not 1.1x).
+- Give the dominant element in each section more surrounding whitespace than anything
+  else on the page — cramped spacing around the most important element is the single
+  biggest tell of unfinished/template output. When in doubt, add margin, not decoration.
+- Secondary text (eyebrows, captions, metadata) should recede via --text-muted /
+  --text-faint and smaller size, not compete in size or color saturation with the
+  primary headline or CTA.
+- This is the same principle "Emphasis shadows" below applies specifically to
+  pricing/comparison layouts — apply it everywhere, not just there.
+
+## Emphasis shadows — mandatory whenever one option should read as better than another
+Applies to pricing tiers, "us vs. them" comparison layouts, or any section presenting
+2+ options where the copy implies one is favored (a "Most Popular" tier, a recommended
+plan, your company's column vs. a competitor's column). Do not give visually-equal
+styling to options the copy describes as unequal — mark the favored one:
+- border: 1-2px solid var(--accent) (vs. var(--border) on the other options)
+- a stronger box-shadow using --accent-glow than the page's standard --shadow-lg (e.g.
+  0 12px 32px var(--accent-glow) instead of the flat --shadow)
+- optionally: a slight elevation (translateY(-8px)) or a small badge label
+Only apply this when the content genuinely implies a favorite — do not invent a
+"winner" among options the schema/copy presents as equal choices.
 
 ## Text density — mandatory
 Real visitors skim landing pages, they don't read them: they scan H1s, glance at images/icons, and scroll. Text-heavy sections lose them.
@@ -206,15 +270,25 @@ CUSTOM_BLOCK section — build exactly what "description" specifies, not a gener
 - Use exactly ONE accent color — never two competing accent colors on the same page
 - Accent must have minimum 4.5:1 contrast ratio against background (WCAG AA)
 - --text-muted must be at least 3:1 contrast — never so faint it looks broken
+- Every surface component ('.card', '.step', '.quote', or any light/white panel) MUST set its own explicit 'color' (and a matching 'p'/muted-text color) rather than relying on inherited color from a parent section. A parent section wrapper that sets 'color:var(--on-...)' for a dark background (e.g. '.on-dark{color:var(--on-navy)}') cascades that color into any light-surfaced card nested inside it unless the card overrides it — producing invisible white-on-white text (this is a real recurring bug: headings survive because '.card-title' hardcodes a dark color, but body paragraphs and list items with no explicit color inherit white and vanish). Always give light/white surface classes their own 'color:var(--ink)' (or equivalent dark token) so they render correctly regardless of what section background they're nested in, and give dark surface variants (e.g. '.card-dark') their own explicit light color the same way.
 - Never use pure #000000 or pure #ffffff — use near-black (#0A0A0F) and near-white (#F8F8F5)
 - Light pages: --bg around #F7F7F4 to #FFFFFF, --text around #111111 to #1F1F1F
 - Dark pages: --bg around #080810 to #111118, --text around #E8E8EE to #F5F5FA
 - --accent-glow should be the accent color at 15-20% opacity for box-shadows and glows
 - Gradient backgrounds: use 2-color max, subtle direction (135deg or 160deg), never rainbow
 - Each section should have a slightly different background treatment — alternate --bg and --bg-surface to create rhythm
+- One dominant accent used with intention beats an evenly-distributed rainbow of colors — restraint reads as more expensive than variety
+- Tint your near-black/near-white toward the brand mood (warm cream vs. cool slate vs. neutral) instead of a flat neutral gray — this is a small shift but it's what separates a "designed" palette from a default one
+
+## Color derivation — relative color syntax (mandatory)
+Never hand-pick a second hex value for a hover, shadow-tint, or glow state — derive it from the base token so it's mathematically related and can't drift out of sync. This works even when the base token (e.g. --accent) is defined as a plain hex value — you don't need to rewrite your whole palette in oklch() to use it:
+- Hover/darker or lighter variant: background: oklch(from var(--accent) calc(l - 0.12) c h)
+- Shadow or glow tinted to match its own element, not a flat neutral gray: box-shadow: 0 12px 32px oklch(from var(--accent) l c h / 0.25). Apply this to primary CTAs, featured/winner cards (see Emphasis shadows below), and any element with its own status/accent color — a card's shadow should read as belonging to that card's color, not reused wholesale from one generic --shadow variable regardless of what color the element actually is. This is one of the most common tells that separates flat, template-y output from considered design.
+- Gradients: prefer color-mix(in oklab, var(--accent) 30%, white) or linear-gradient(in oklch, var(--accent), var(--accent-2)) over hand-picked stop colors — interpolating in oklab/oklch avoids the muddy gray middle that plain RGB/hex gradients produce.
+- For a premium atmospheric background (hero sections, dark pages especially) as an alternative to a flat 2-color gradient: stack 2-3 radial-gradient() layers at different positions/sizes built from the palette via color-mix/oklch, combined with mix-blend-mode: screen or overlay on the upper layers — reads as a considered "mesh gradient" rather than the generic diagonal default. CSS-only, no images, no canvas/WebGL.
 
 ## CRO rules — conversion rate optimization
-- Above the fold must contain: ONE headline, ONE subhead, ONE primary CTA button, ONE proof element (star rating / client count / award / key result stat)
+- Above the fold must contain: ONE headline, ONE subhead, ONE primary CTA button, ONE proof element (star rating / client count / award / key result stat). This budget holds even when the PRD/brief lists more trust signals than that — see "When hero content is dense" under Hero height above for where the rest goes. Never treat "the brief mentions it" as license to stack every trust signal into the hero.
 - Primary CTA must appear minimum 3 times across the page — in hero, mid-page, and final CTA section
 - Never place two equal-weight CTA buttons side by side — always primary button + ghost/text secondary
 - Social proof section must appear within 2 sections of the hero — never buried at page bottom
@@ -232,6 +306,21 @@ CUSTOM_BLOCK section — build exactly what "description" specifies, not a gener
 - Images inside cards: transform: scale(1.03) on hover, parent must have overflow: hidden
 - Never use transition: all on elements with layout properties — be explicit (transform, box-shadow, color, opacity, border-color)
 - Active/pressed state on buttons: transform: translateY(0), box-shadow reduces — makes buttons feel physical
+- Card/button hover shadow should tint toward that element's own accent/status color via relative color syntax (see Color derivation above) rather than reusing one flat gray --shadow on every element regardless of its color
+
+## Micro-details — small, cheap, signal craft
+- Style ::selection to var(--accent) at low opacity with readable text color, instead of leaving the browser default blue
+- Style ::-webkit-scrollbar (track/thumb) to match the page's surface and accent tokens, on dark/technical-style pages especially
+- Optional on hero or other dark/atmospheric sections: a very subtle grain/noise texture overlay via an inline SVG filter (feTurbulence) at low opacity — never an external image, never on light/minimal pages where it would just add visual noise
+- Glassmorphism, when used, is reserved for exactly ONE focal element on the page (a floating nav, a featured card, a hero badge) — never applied broadly across many elements. Recipe: low-alpha background (8-12%), backdrop-filter: blur(16-20px), a 1px border at higher opacity/brightness than the fill (e.g. rgba(255,255,255,0.18)) so the edge reads crisp against the blur behind it
+
+## Known CSS bugs — avoid these (mandatory)
+Common, easy-to-miss mistakes — check every generated page against this list before finishing:
+- iOS Safari zooms the viewport on any input with font-size under 16px. Set input font-size: max(16px, 1rem) on every form field, never smaller.
+- Any ancestor with overflow: hidden/scroll/auto breaks position: sticky on its descendants — if a section needs sticky content, make sure nothing wrapping it between it and its scroll container clips overflow.
+- position: sticky inside a flex or grid child needs align-self: start (row axis: justify-self: start) — without it the item stretches to fill the cross-axis and has no room left to stick. This is the most common silent sticky failure.
+- A transform (including a hover transform) on any ancestor of a position: fixed element re-anchors that fixed element to the ancestor instead of the viewport — avoid transform on elements that wrap fixed-position children (e.g. a mobile sticky CTA bar).
+- On notched/modern mobile devices, a fixed/sticky full-width bar (mobile nav, sticky CTA bar) should respect safe-area insets: padding-bottom: env(safe-area-inset-bottom) etc. Requires viewport-fit=cover in the viewport meta tag to have any effect.
 
 ## Navigation — mandatory rules for every page
 
@@ -242,6 +331,7 @@ CUSTOM_BLOCK section — build exactly what "description" specifies, not a gener
 - Desktop nav starts fully transparent on load. On scroll, apply a background treatment that suits the page style — frosted glass (backdrop-filter: blur(14px)) works well on most styles, but a solid var(--bg-surface) or a dark overlay is fine too if it fits the aesthetic. Wire this via the safe JS scroll listener below
 - Add a subtle bottom border on scroll: border-bottom: 1px solid var(--border)
 - Nav CTA button must match the page primary button exactly — same accent color, same border-radius, same font weight
+- The nav CTA button is required (see above) even when the hero also has its own primary CTA — that duplication is expected and fine, since the nav CTA is what stays reachable once the user scrolls past the hero. The one thing to avoid is a phone/contact number appearing as its OWN separate stacked line inside the hero content when it's already shown in the nav — that's pure duplicate vertical space with nothing gained, since the nav is visible at the same time as the hero on first paint. Keep the phone number in the nav (or in a slim strip below the hero per "When hero content is dense" above) rather than as an extra block inside the hero's text column.
 
 ### Mobile drawer — CSS-only checkbox pattern (mandatory, no JS)
 Use the checkbox hack. Nav HTML structure must be:
@@ -332,6 +422,13 @@ When a schema section or item object contains a "generated_image_url" field, you
 - "card" → <img src="GENERATED_URL" data-field="..." alt="..." style="width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:var(--radius);" /> inside the card, above the text content.
 
 NEVER ignore a generated_image_url. NEVER use a CSS gradient fallback when a generated_image_url is present. NEVER invent or fabricate a different image URL — use exactly the URL provided in generated_image_url.
+
+## Video sections — mandatory poster/aspect-ratio rule
+Any video (VSL, founder/testimonial video, embedded player) must sit inside a wrapper with an explicit aspect-ratio — default aspect-ratio: 16/9 unless the schema/PRD explicitly calls for a vertical/9:16 format. This wrapper, not the poster image's own dimensions, controls the box size:
+- overflow: hidden on the wrapper.
+- The poster <img> inside it: width: 100%; height: 100%; object-fit: cover — this crops the poster to fit the box regardless of the source image's natural aspect ratio (a tall portrait photo must NOT be allowed to stretch the section to its own height).
+- The play button sits absolutely positioned, centered, over the poster — never inline below it.
+- When swapped to a live <video>/<iframe> on click, it replaces the poster inside the SAME wrapper (same aspect-ratio, same dimensions) — there must be no layout jump in box size between the poster state and the playing state; only the poster image swaps for the player.
 
 ## Image fallbacks
 If a schema field for an image is null or missing AND no generated_image_url is present, use a CSS gradient background instead. Never use placeholder image URLs.
@@ -607,13 +704,17 @@ export async function buildHtmlFromSchema(
     if (designBrief) {
       const exemplar = STYLE_EXEMPLARS[designBrief.styleTag];
       const b = designBrief.brief;
+      const referenceObject = typeof b.reference_object === 'string' ? b.reference_object.trim() : '';
+      const wildcardElement = typeof b.wildcard_element === 'string' ? b.wildcard_element.trim() : '';
       styleReferenceNote =
         `\n\n## Style reference\nStyle: ${exemplar.label} — ${exemplar.mood}\n` +
         `Palette direction: ${b.palette_direction ?? ''}\n` +
         `Layout rhythm: ${b.layout_rhythm ?? ''}\n` +
         `Copy tone: ${b.copy_tone ?? ''}\n` +
         `Motion style: ${b.motion_style ?? exemplar.motionStyle}\n` +
-        `Aesthetic target: ${AESTHETIC_REFERENCES[designBrief.styleTag] ?? ''}`;
+        `Aesthetic target: ${AESTHETIC_REFERENCES[designBrief.styleTag] ?? ''}` +
+        (referenceObject ? `\nReal-world reference: ${referenceObject} — let this genuinely inform color/type/layout choices, don't just namedrop it` : '') +
+        (wildcardElement ? `\nWildcard detail: ${wildcardElement}` : '');
     }
   }
 
@@ -658,6 +759,10 @@ export async function buildHtmlFromSchema(
 
   const label = `build-html:${options.callerLabel ?? 'unknown-caller'}`;
   const aiOptions = {
+    // TEMP: design-quality experiment — Opus 5 for the actual HTML/CSS build
+    // call only. Every other AI call in the pipeline (generate, follow-up,
+    // schema-from-html) stays on the default model.
+    model: 'claude-opus-5',
     system: systemPrompt,
     messages: [{ role: 'user' as const, content: userContent }],
     maxTokens: 128000,

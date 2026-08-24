@@ -12,7 +12,7 @@ import { resolveWorkspaceRole, resolveOwnerPlan, resolveWorkspaceOwner } from '@
 import { PLAN_LIMITS } from '@/lib/plans';
 import { checkAiAllowance, type UsageContext } from '@/lib/ai-usage';
 import { reportAiOverageUsage } from '@/lib/ai-overage-billing';
-import { extractUrls, scrapeCompetitorUrl, fetchLogoAssets, fetchContentImageAssets } from '@/lib/ai-competitor-scrape';
+import { extractUrls, isEmbedAssetUrl, scrapeCompetitorUrl, fetchLogoAssets, fetchContentImageAssets } from '@/lib/ai-competitor-scrape';
 import { buildHtmlFromSchema } from '@/lib/ai-page-builder';
 import { buildFontFollowUpBlock } from '@/lib/ai-page-fonts';
 import { createSSEStream, sendSSE, closeSSE, SSE_HEADERS, type SSEEvent } from '@/lib/sse';
@@ -115,6 +115,22 @@ The "thinking" field must always be FIRST in the object so it appears immediatel
 patch is dramatically faster than style (it touches only the sections that changed instead of regenerating the entire document) and is the correct choice for the vast majority of edit requests. Do not use type:style just because it feels safer or more thorough — that's the wrong tradeoff and it's slow.
 If the HTML has SL markers and the instruction clearly targets a specific existing element or section (a form, a button, a headline, a card, one section's spacing/sizing/color), that is a patch — even if you're not 100% sure which single marker it falls under, pick the SL section that visibly contains that element and patch it. Reach for style only when the instruction genuinely can't be scoped to 1–3 sections (a full redesign, a site-wide rework touching 4+ sections, or the HTML truly has no SL markers at all).
 Example: instruction "make the form smaller so it's not massive on desktop and mobile, and make sure it's responsive" against HTML where the form lives inside <!-- SL:popup -->...<!-- /SL:popup --> → type:patch, sections:[{"name":"popup","html":"...resized form markup..."}]. This is NOT a style-level change even though it affects both desktop and mobile — responsive behavior is CSS within that one section.
+
+## Structural rules (type:structural only) — CRITICAL
+Every key in schema_json that is not part of what the instruction asked you to change must be
+copied through byte-for-byte identical to the current schema shown to you — same value, same
+nesting, same order. Do not regenerate, reword, rephrase, "clean up," or invent a new value for
+any field outside the actual edit, even ones you are simply passing through. This applies to
+every section, not just the one(s) the instruction is about — a request that only concerns the
+hero must leave footer, nav, testimonials, and every other key exactly as given.
+If you cannot recall or reconstruct a field's exact original value with full confidence, copy it
+verbatim from the "Current schema" block above rather than writing a plausible-looking
+replacement — a paraphrased or invented value in an untouched field is a bug, even if it reads
+fine on its own.
+Watch for cross-contamination: a vendor/provider name, domain, or id sitting in one field (e.g.
+a video field's "mux" id or a "player.mux.com" URL) must never leak into an unrelated untouched
+field elsewhere in the schema (e.g. footer.copyright becoming "© Mux, Inc.") — that field's
+correct value is whatever was already there, not something inspired by nearby text.
 
 ## Patch rules (type:patch only)
 - Each section in the sections array must have "name" (matching an existing <!-- SL:name --> marker) and "html" (the complete updated HTML for that element — do NOT include the <!-- SL: --> markers themselves in the html value)
@@ -432,6 +448,30 @@ function replaceUniqueTextInHtml(html: string, oldText: string, newText: string)
   if (!matches || matches.length !== 1) return null;
   return html.replace(new RegExp(escaped), newText);
 }
+
+// Used only when classifyEditIntent() decides a message is a pure question
+// (is_question: true, asks: []) — no page change happens on this turn, so this
+// call must never claim we already did or will automatically do something we
+// don't actually support. Keep this list accurate as features ship; an AI that
+// confidently promises a capability we don't have is worse than one that says
+// "not yet, but I can note it for later."
+const FOLLOW_UP_QUESTION_SYSTEM = `You are the chat assistant for SplitLab's AI landing-page builder, answering a question about the product — not editing the page on this turn. Reply in plain text, short paragraphs or a tight list when it genuinely helps scanability, no heavy markdown headers. Be warm and direct, like a helpful teammate, not a formal support script.
+
+You are always given the current page's real HTML below — read it. When asked to judge or review something ("is our FAQ good?", "is the hero good enough?"), answer concretely from the ACTUAL content and structure you can see in that HTML: the real copy, whether a section exists, how it's built (e.g. accordion markup vs a flat list), CTA text and placement. Never say "I don't have access" or ask for a screenshot just to answer a content/structure question — you already have the markup, so use it.
+
+What you genuinely cannot judge from HTML alone is anything purely visual/rendered — actual spacing, overlap, whether a font loaded, colors as displayed. If the question depends on that and no image is attached, say so plainly and specifically ("I can see the FAQ has 6 questions in an accordion — can't tell from the markup whether the spacing looks cramped though, a screenshot would confirm that") rather than refusing to answer at all.
+
+If an image is attached, you CAN see it too — usually a screenshot of the user's own current page. Look at it and give a concrete critique of what you see (layout balance, broken characters/icons rendering as boxes, copy wrapping awkwardly, visual hierarchy) on top of what the HTML tells you. Never claim you cannot see an attached image.
+
+What this builder can actually do right now, so you never overpromise:
+- Edit any existing section: restyle, recolor, resize, rewrite copy, fix spacing/alignment, replace an image.
+- Add brand-new sections, remove sections, reorder sections.
+- Match a look from an attached screenshot or a reference site (design_reference), and fetch a real logo or content photos from a given site URL.
+- Generate real photography for sections via AI image generation.
+- Every form submission on a live page is automatically captured into SplitLab's own Leads for that test — no setup needed. Workspace-level integrations (HubSpot, email notification, or a webhook to a third-party URL) can be turned on per test in the workspace's Integrations settings, and any lead captured there gets forwarded automatically.
+- What it CANNOT do yet: wire an arbitrary custom submission endpoint directly into the page's own code from a chat instruction (forms don't POST anywhere on their own — delivery goes through the Leads/Integrations path above instead). No built-in confirmation-email-on-submit beyond what the email integration sends.
+
+If asked something outside this list, say so plainly rather than guessing. If the message is just a greeting or small talk, respond warmly and briefly, and you may offer to help with something concrete — but don't invent unrequested tasks.`;
 
 const SURGICAL_TEXT_SYSTEM_PROMPT = `You rewrite a single piece of landing-page copy. Return JSON only — no markdown fences, no explanation.
 {"text":"the new copy here"}
@@ -1094,7 +1134,7 @@ async function runScopedInsert(
           const slot = typeof rec.slot === 'string' ? rec.slot.trim() : '';
           const imagePrompt = typeof rec.prompt === 'string' ? rec.prompt.trim() : '';
           if (!slot || !imagePrompt || !html.includes(slot)) return null;
-          const url = await generateAndUploadImage(imagePrompt, pageSlug, 'medium');
+          const url = await generateAndUploadImage(imagePrompt, pageSlug, 'high');
           return url ? { slot, url } : null;
         }),
       );
@@ -1400,7 +1440,7 @@ async function runRegionRewrite(opts: {
           const slot = typeof rec.slot === 'string' ? rec.slot.trim() : '';
           const imagePrompt = typeof rec.prompt === 'string' ? rec.prompt.trim() : '';
           if (!slot || !imagePrompt || !out.some((s) => s.html.includes(slot))) return null;
-          const url = await generateAndUploadImage(imagePrompt, opts.pageSlug!, 'medium');
+          const url = await generateAndUploadImage(imagePrompt, opts.pageSlug!, 'high');
           return url ? { slot, url } : null;
         }),
       );
@@ -2151,7 +2191,9 @@ export async function POST(
   const mentionedUrls = extractUrls(prompt);
   const mentionedUrlImageFlags = await Promise.all(mentionedUrls.map(isImageUrl));
   const promptImageUrls = mentionedUrls.filter((_, i) => mentionedUrlImageFlags[i]);
-  const competitorUrls = mentionedUrls.filter((_, i) => !mentionedUrlImageFlags[i]);
+  // Video/media embed CDN URLs (e.g. a Mux/Vimeo/YouTube embed link) are never a
+  // "clone this site" competitor reference — exclude them the same way generate/route.ts does.
+  const competitorUrls = mentionedUrls.filter((u, i) => !mentionedUrlImageFlags[i] && !isEmbedAssetUrl(u));
 
   // Merge prompt-detected image URLs in with any client-attached ones so the
   // model can embed them exactly like an uploaded image attachment. Capped at
@@ -2202,6 +2244,7 @@ export async function POST(
         fullRebuild: intent.fullRebuild,
         sourceUrl: intent.sourceUrl ? intent.sourceUrl.slice(0, 80) : null,
         requirements: intent.requirements.length,
+        isQuestion: intent.isQuestion,
       }
     : 'unavailable');
 
@@ -2223,6 +2266,79 @@ export async function POST(
         });
       } catch (err) {
         console.error('[pages/follow-up] intent-failure reporting failed', err);
+        sendSSE(controller, { type: 'error', message: userFacingAIErrorMessage(err) });
+      } finally {
+        closeSSE(controller);
+      }
+    })();
+    return response;
+  }
+
+  // Attached images (a screenshot of the current page, a reference) must reach
+  // this call the same way they reach classifyEditIntent — missed once
+  // already: the first version sent only the text prompt, so an attached hero
+  // screenshot was invisible and the model correctly (but uselessly) said it
+  // couldn't see it.
+  //
+  // The current page's own HTML is also handed over as text, always — this is
+  // the same `htmlForModel` every other full-page AI call in this route
+  // already uses, no extra fetch/render involved. It's what lets a question
+  // like "is our FAQ good?" get a real, specific answer (actual questions,
+  // whether it's an accordion, etc.) without requiring a screenshot or a live
+  // Puppeteer re-render of the page — the disabled `runPostUploadNavLogoQa`
+  // path (see the comment ~5658 below) is exactly the render-and-screenshot
+  // approach that broke production once already, so this stays text-only on
+  // purpose. HTML alone can't catch purely visual/rendering bugs (overlap, a
+  // font not loading) — the system prompt tells the model to say so rather
+  // than guess.
+  //
+  // Shared by two call sites: a standalone question (below) and a question
+  // riding alongside a real edit via `intent.questionAside` (near the final
+  // `doneEvent`, appended as a note instead of replacing the edit result).
+  const answerFollowUpQuestion = async (questionText: string): Promise<string> => {
+    const fullQuestionText = `Current page HTML:\n${htmlForModel}\n\nUser question: ${questionText}`;
+    const questionContent: AIContent = effectiveImageUrls.length > 0
+      ? [
+          ...effectiveImageUrls.map((url): AIContentBlock => ({ type: 'image', url })),
+          { type: 'text', text: fullQuestionText },
+        ]
+      : fullQuestionText;
+    const answer = await askAI({
+      system: FOLLOW_UP_QUESTION_SYSTEM,
+      messages: [{ role: 'user', content: questionContent }],
+      maxTokens: 3000,
+      label: 'follow-up:answer-question',
+      usage: usageCtx,
+    });
+    return answer.trim().slice(0, 6000) || "I'm not sure how to answer that — could you rephrase?";
+  };
+
+  // Pure question ("hi how are you", "can you connect this to my CRM?", "what
+  // can you do here?") — no concrete change was asked for, so the entire
+  // edit/patch/requirements pipeline below must not run. Answer conversationally
+  // and stop, exactly like the existing clarify path stops before touching the
+  // page — except this is never persisted as `clarify: true`, since that flag
+  // means "we asked a section-ambiguity question" and forces noQuestions on the
+  // NEXT turn's edit; a plain Q&A exchange must not suppress a genuine
+  // clarifying question on whatever the user asks next.
+  if (intent.isQuestion && intent.asks.length === 0) {
+    const { stream, controller } = createSSEStream();
+    const response = new Response(stream, { headers: SSE_HEADERS });
+    void (async () => {
+      try {
+        const reply = await answerFollowUpQuestion(prompt);
+        const userEntry: Record<string, unknown> = { role: 'user', content: prompt };
+        if (Array.isArray(image_urls) && image_urls.length > 0) userEntry.image_urls = image_urls;
+        await db
+          .from('pages')
+          .update({
+            conversation_json: [...history, userEntry, { role: 'assistant', content: reply }],
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', params.id);
+        sendSSE(controller, { type: 'clarify', message: reply });
+      } catch (err) {
+        console.error('[pages/follow-up] question-answer call failed', err);
         sendSSE(controller, { type: 'error', message: userFacingAIErrorMessage(err) });
       } finally {
         closeSSE(controller);
@@ -4160,7 +4276,7 @@ export async function POST(
           } else if (imageGenerateShapeOk) {
             const pageSlugForImage = page.slug ?? crypto.randomUUID();
             sendSSE(controller, { type: 'status', message: 'Generating image...' });
-            const generatedUrl = await generateAndUploadImage(routing!.image_prompt!, pageSlugForImage, 'medium');
+            const generatedUrl = await generateAndUploadImage(routing!.image_prompt!, pageSlugForImage, 'high');
             if (generatedUrl) {
               sendSSE(controller, { type: 'image_ready', url: generatedUrl });
               targetSections = routing!.target_sections;
@@ -5098,9 +5214,17 @@ export async function POST(
         const unmet = describeUnmet(results);
         if (unmet) {
           console.warn('[pages/follow-up] unmet requirements', { unmet, prompt: prompt.slice(0, 200) });
+        }
+        // text_present only proves the model's OWN phrasing of the ask didn't
+        // survive verbatim, not that content was dropped — a retry already ran
+        // above, so surfacing a leftover wording mismatch to the user reads as
+        // "you ignored me" on a turn that did the work. Structural misses
+        // (asset, CTA, section) still get reported since those are real.
+        const userFacingUnmet = describeUnmet(results.filter((r) => r.requirement.kind !== 'text_present'));
+        if (userFacingUnmet) {
           partialMessage = partialMessage
-            ? `${partialMessage} Still not applied: ${unmet}.`
-            : `Still not applied: ${unmet}.`;
+            ? `${partialMessage} Still not applied: ${userFacingUnmet}.`
+            : `Still not applied: ${userFacingUnmet}.`;
         }
       }
       // A URL that did not respond is a warning about the page, not a part of
@@ -5673,6 +5797,20 @@ export async function POST(
             `position for — they may sit on top of the original content instead of flowing after it. ` +
             `Check the preview. Restructuring a page like this isn't reliable; it needs rebuilding first.`,
           );
+        }
+      }
+
+      // A question rode alongside this turn's edit ("what do you think about
+      // the hero? also remove the FAQ") — the edit above already ran normally;
+      // this only answers the leftover question so it isn't silently dropped.
+      // Best-effort: a failure here must not undo or block the edit that
+      // already succeeded, so it degrades to no note rather than an error.
+      if (intent.questionAside) {
+        try {
+          const asideAnswer = await answerFollowUpQuestion(intent.questionAside);
+          addNote(asideAnswer);
+        } catch (err) {
+          console.error('[pages/follow-up] question_aside answer failed', err);
         }
       }
 

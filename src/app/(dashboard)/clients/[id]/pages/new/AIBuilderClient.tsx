@@ -2011,7 +2011,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         </div>
 
         {/* Chat thread */}
-        <div ref={threadRef} className="flex-1 overflow-y-auto px-4 py-5 space-y-5">
+        <div ref={threadRef} className="flex-1 overflow-y-auto overflow-x-hidden px-4 py-5 space-y-5">
 
           {/* Welcome */}
           {phase === 'prompt' && messages.length === 0 && (
@@ -2050,18 +2050,18 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                       ))}
                     </div>
                   )}
-                  <p className="text-sm text-slate-700 dark:text-slate-200 leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+                  <p className="text-sm text-slate-700 dark:text-slate-200 leading-relaxed whitespace-pre-wrap break-words">{msg.content}</p>
                 </div>
               ) : (
-                <div className="max-w-[92%] space-y-1.5">
+                <div className="max-w-[92%] min-w-0 space-y-1.5">
                   <div className="flex items-start gap-2.5">
                     <div className="w-6 h-6 rounded-full bg-indigo-50 dark:bg-indigo-600/15 border border-indigo-100 dark:border-indigo-600/25 flex items-center justify-center flex-shrink-0 mt-0.5">
                       <Sparkles size={11} className="text-indigo-600 dark:text-indigo-400" />
                     </div>
-                    <div className="flex-1">
+                    <div className="flex-1 min-w-0">
                       {msg.isQuestions && msg.questions ? (
                         <div>
-                          <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed mb-2">{msg.content}</p>
+                          <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed mb-2 break-words">{msg.content}</p>
                           <ul className="space-y-1.5">
                             {msg.questions.map((q, qi) => (
                               <li key={qi} className="text-xs text-slate-500 dark:text-slate-400 flex gap-1.5">
@@ -2072,7 +2072,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                           </ul>
                         </div>
                       ) : (
-                        <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">{msg.content}</p>
+                        <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed break-words">{msg.content}</p>
                       )}
                       {/*
                         Prep found a page whose layout is pixel coordinates, so
