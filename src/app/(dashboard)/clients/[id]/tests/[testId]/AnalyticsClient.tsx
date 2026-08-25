@@ -243,7 +243,6 @@ function SpeedBadge({ testId, variant }: { testId: string; variant: Variant }) {
   const [desktop, setDesktop] = useState<number | null>(variant.speed_desktop ?? null);
   const [testedAt, setTestedAt] = useState<string | null>(variant.speed_tested_at ?? null);
   const [loading, setLoading] = useState(false);
-  const [open, setOpen] = useState(false);
 
   async function run() {
     setLoading(true);
@@ -251,7 +250,7 @@ function SpeedBadge({ testId, variant }: { testId: string; variant: Variant }) {
       const res = await fetch(`/api/tests/${testId}/variants/${variant.id}/speed-test`, { method: "POST" });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) { toast.error(d.error || "Speed test failed"); return; }
-      setMobile(d.mobile ?? null); setDesktop(d.desktop ?? null); setTestedAt(d.testedAt ?? null); setOpen(true);
+      setMobile(d.mobile ?? null); setDesktop(d.desktop ?? null); setTestedAt(d.testedAt ?? null);
     } catch { toast.error("Speed test failed"); }
     finally { setLoading(false); }
   }
@@ -260,32 +259,31 @@ function SpeedBadge({ testId, variant }: { testId: string; variant: Variant }) {
 
   if (loading) {
     return (
-      <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400">
-        <Loader2 size={10} className="animate-spin" /> Testing speed…
+      <span className="inline-flex items-center gap-1 text-[10px] text-slate-500 dark:text-slate-400">
+        <Loader2 size={10} className="animate-spin" /> Testing…
       </span>
     );
   }
   if (grade == null) {
     return (
       <button onClick={run} title="Run a Google PageSpeed load-speed test" className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:border-indigo-400 hover:text-indigo-500 transition-colors">
-        <Zap size={10} /> Test speed
+        <Zap size={10} /> Test
       </button>
     );
   }
   return (
-    <span className="inline-flex flex-col items-start gap-1">
-      <button onClick={() => setOpen((o) => !o)} title="Load speed (Google PageSpeed). Click for mobile vs desktop." className={`inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded ${speedColor(grade)}`}>
-        <Zap size={10} /> Speed {grade}
+    <div className="inline-flex flex-col items-end gap-0.5">
+      <button
+        onClick={run}
+        title={testedAt ? `Load speed (Google PageSpeed) · tested ${timeAgo(testedAt)} · click to re-test` : "Load speed (Google PageSpeed) · click to re-test"}
+        className={`inline-flex items-center gap-1 text-xs font-bold px-1.5 py-0.5 rounded ${speedColor(grade)}`}
+      >
+        <Zap size={11} /> {grade}
       </button>
-      {open && (
-        <span className="text-[10px] text-slate-500 dark:text-slate-400 flex items-center gap-2 flex-wrap">
-          <span>Mobile {mobile ?? "—"}</span>
-          <span>Desktop {desktop ?? "—"}</span>
-          {testedAt && <span>· {timeAgo(testedAt)}</span>}
-          <button onClick={run} className="underline hover:text-indigo-500">re-test</button>
-        </span>
-      )}
-    </span>
+      <span className="text-[10px] text-slate-400 dark:text-slate-500 whitespace-nowrap">
+        M {mobile ?? "—"} · D {desktop ?? "—"}
+      </span>
+    </div>
   );
 }
 
@@ -3000,6 +2998,9 @@ export default function AnalyticsClient({
                     <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">
                       Conf.
                     </th>
+                    <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">
+                      Speed
+                    </th>
                     <th className="text-center px-3 py-3 text-slate-400 font-medium w-16"></th>
                     <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">
                       Actions
@@ -3010,7 +3011,7 @@ export default function AnalyticsClient({
                   {loading ? (
                     <tr>
                       <td
-                        colSpan={12}
+                        colSpan={13}
                         className="px-5 py-10 text-center text-slate-400"
                       >
                         <RefreshCw
@@ -3023,7 +3024,7 @@ export default function AnalyticsClient({
                   ) : activeStats.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={12}
+                        colSpan={13}
                         className="px-5 py-10 text-center text-slate-400"
                       >
                         No data yet. Publish this page to start collecting
@@ -3090,7 +3091,6 @@ export default function AnalyticsClient({
                                   {showEdited && <> · Edited {fmtDate(editedIso)}</>}
                                 </p>
                               )}
-                              <div className="mt-1"><SpeedBadge testId={test.id} variant={stat.variant} /></div>
                               {stat.variant.duplicated_from_id && (
                                 <p className="text-slate-400 dark:text-slate-500 text-[10px] flex items-center gap-1 mt-0.5">
                                   <Copy size={9} className="flex-shrink-0" />
@@ -3253,6 +3253,10 @@ export default function AnalyticsClient({
                                 <span className="text-slate-500">—</span>
                               )}
                             </td>
+                            {/* Load speed (Google PageSpeed) */}
+                            <td className={`px-3 py-3.5 text-right ${rowBg}`}>
+                              <SpeedBadge testId={test.id} variant={stat.variant} />
+                            </td>
                             {/* Uplift % */}
                             <td className={`px-3 py-3.5 text-center ${rowBg}`}>
                               {uplift !== null ? (
@@ -3413,7 +3417,7 @@ export default function AnalyticsClient({
 
                           {stat.variant.pages?.draft_html_content && (
                             <tr className={rowBg}>
-                              <td colSpan={11} className="px-5 py-2">
+                              <td colSpan={12} className="px-5 py-2">
                                 <div className="flex items-center gap-1.5">
                                   <span className="text-xs font-medium text-amber-600 dark:text-amber-500">
                                     Unsaved AI edits for this variant
@@ -3433,7 +3437,7 @@ export default function AnalyticsClient({
                           {isEditing && (
                             <tr>
                               <td
-                                colSpan={12}
+                                colSpan={13}
                                 className="border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 px-6 py-4"
                               >
                                 <div className="grid grid-cols-2 gap-4 max-w-2xl">
