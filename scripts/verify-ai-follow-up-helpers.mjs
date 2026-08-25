@@ -813,6 +813,13 @@ assert('builder designReferenceCopy option', pageBuilder.includes('designReferen
 
 // Asset integrity: nothing may embed an unverified third-party URL
 const assets = readFileSync(join(__dirname, '../src/lib/ai-asset-integrity.ts'), 'utf8');
+const fromHtml = readFileSync(join(__dirname, '../src/app/api/pages/from-html/route.ts'), 'utf8');
+const schemaFromHtml = readFileSync(join(__dirname, '../src/app/api/pages/[id]/schema-from-html/route.ts'), 'utf8');
+const rebuildFlow = readFileSync(join(__dirname, '../src/app/api/pages/[id]/rebuild-flow/route.ts'), 'utf8');
+const ensureEditable = readFileSync(join(__dirname, '../src/app/api/pages/[id]/ensure-editable/route.ts'), 'utf8');
+const uploadRoute = readFileSync(join(__dirname, '../src/app/api/upload/route.ts'), 'utf8');
+const pagesService = readFileSync(join(__dirname, '../src/lib/services/pages.ts'), 'utf8');
+const testsService = readFileSync(join(__dirname, '../src/lib/services/tests.ts'), 'utf8');
 assert('assets materializeAsset', assets.includes('export async function materializeAsset'));
 assert('assets verifyAndRehostHtmlImages', assets.includes('export async function verifyAndRehostHtmlImages'));
 assert('assets checks content-type', assets.includes("contentType.startsWith('image/')"));
@@ -879,7 +886,8 @@ assert('intent failure reports an AI outage instead of interrogating the user',
   follow.includes('intent unavailable — reporting AI outage, no regex fallback') &&
     follow.includes('didn’t respond properly just now'));
 assert('no allowIntentKeywordFallback gate', !follow.includes('allowIntentKeywordFallback'));
-assert('edit-intent budget allows the checklist', intentSrc.includes('maxTokens: 8000'));
+assert('edit-intent budget allows the checklist',
+  /maxTokens: (?:8000|1[6-9]\d{3}|[2-9]\d{4,})/.test(intentSrc));
 assert('follow-up routes design match off the intent', follow.includes('const wantsDesignMatch = intent.designReference'));
 assert('follow-up routes multi-ask off the intent', follow.includes('intent.asks.length > 1'));
 assert('follow-up takes target sections from the intent', follow.includes('intentSections.length > 0') || follow.includes('intent.targetSections'));
@@ -1176,7 +1184,7 @@ assert(
 );
 assert(
   'follow-up restores a lost logo where it was, not always nav/footer',
-  follow.includes('sectionsContainingAsset(originalHtmlForPreservation'),
+  follow.includes('sectionsContainingAsset(preservationBaseline'),
 );
 assert(
   'unchanged section fails when the user named that section',
@@ -1199,7 +1207,7 @@ assert('edit flow captures the routed checklist',
 assert('edit flow merges model + regex checklists',
   /mergeRequirements\(\s*modelRequirements/.test(follow));
 assert('edit flow passes the before-image so section_changed is checkable',
-  follow.includes('beforeHtml: originalHtmlForPreservation'));
+  follow.includes('beforeHtml: preservationBaseline'));
 assert('create schema pass asks for the checklist',
   gen.includes('REQUIREMENT_EXTRACTION_INSTRUCTION') && gen.includes('parseModelRequirements'));
 assert('create returns the checklist', gen.includes('{ requirements: modelRequirements }'));
@@ -1489,7 +1497,7 @@ assert('the editable set may be scattered, and is never one strip',
   /editableNames = Array\.from\(new Set\(\[\.\.\.focus, \.\.\.fromResolver\]\)\)/.test(follow));
 assert('a page that fits is sent whole rather than sliced',
   /if \(bodyChars <= contextBudget\) \{/.test(follow) &&
-  follow.includes('editableNames = body.map((sec) => sec.name);'));
+  follow.includes('editableNames = focus.length > 0 ? focus : body.map((sec) => sec.name);'));
 assert('the classifier\'s sections actually reach the rewrite',
   follow.includes('focusSections?: string[];') &&
   (follow.match(/focusSections: intent\.targetSections,/g) || []).length >= 4);
@@ -1547,14 +1555,95 @@ assert('the widened-region case is visible in the logs',
 assert('the loss judge is told WHICH image and WHERE it was',
   helpers.includes('imageSections?: Array<{ url: string; sections: string[] }>') &&
   helpers.includes('was in section: ') &&
-  follow.includes('sections: sectionsContainingAsset(originalHtmlForPreservation, url)'));
+  follow.includes('sections: sectionsContainingAsset(preservationBaseline, url)'));
+// ── Re-hosting an image must not read as deleting it ────────────────────────
+// The loss check diffs the page against its previous self BY IMAGE URL, and
+// the re-host step rewrites image URLs on one side of that diff. An untouched
+// image therefore looked deleted: confirmed live on a headline-only edit as 6
+// phantom losses, one ~90s repair call each (514s total), and a duplicate copy
+// of every "restored" image on the page. findUnrequestedLosses tries to survive
+// this by comparing filename tails, but Unbounce-style URLs end in the whole
+// percent-encoded original link, so the tail never matches and the guard was
+// silently inert for exactly the pages that needed it.
+assert('the before-copy is re-addressed the same way the edited page was',
+  follow.includes('applyRehostMap(originalHtmlForPreservation, assetScan.rehostedMap)'));
+assert('every asset lookup after the re-host uses that baseline, not the raw original',
+  !/beforeHtml: originalHtmlForPreservation/.test(follow) &&
+  !/sectionsContainingAsset\(originalHtmlForPreservation/.test(follow) &&
+  !/splitLossesByRegion\([a-zA-Z]+, originalHtmlForPreservation/.test(follow));
+// Re-hosting is correctness (a skipped copy = a permanent dependency on someone
+// else's server); the own-storage probe is only a health check. So the cap
+// belongs on the probe, never on the copy — it used to be `.slice(0, 12)` on
+// the work list, which left images 13+ foreign forever.
+assert('re-hosting is never truncated, only the health probe is',
+  assets.includes('const targets = Array.from(srcs);') &&
+  assets.includes('Array.from(ownSrcs).slice(0, Math.max(0, maxProbes))'));
+assert('assets are fetched in bounded batches rather than all at once',
+  assets.includes('const REHOST_CONCURRENCY = 5;') &&
+  assets.includes('async function inBatches'));
+// Every route that hands a page to the editor re-hosts first, so by edit time
+// there is nothing left to move and the diff above can never be tripped.
+// ── One call owns BOTH ways a page can depend on someone else ───────────────
+// base64 inlined in the markup, and <img> pointing at another host. Every
+// intake closed the first; exactly one closed the second, so a variant pasted
+// in through tests.ts kept its Unbounce URLs. Unifying them means a seventh
+// intake cannot be added that remembers half.
+assert('every HTML intake takes ownership of both, via one call',
+  [fromHtml, uploadRoute, pagesService, testsService].every((f) =>
+    f.includes('takeOwnershipOfHtmlAssets(')));
+assert('no intake still calls the base64 half on its own',
+  [fromHtml, uploadRoute, pagesService, testsService].every((f) =>
+    !f.includes('inlineDataUrisToStorage(')));
+assert('the helper does both halves',
+  assets.includes('const inlined = await inlineDataUrisToStorage(html, pageId);') &&
+  assets.includes('await verifyAndRehostHtmlImages({ pageSlug: pageId, html: inlined })'));
+// An embedded player is a live service, not an asset to copy — rewriting its
+// src would break playback. Only <img> is ever touched.
+assert('embedded players and other tags are never rewritten',
+  (assets.match(/html\.matchAll\(\/</g) || []).length === 1 &&
+  /html\.matchAll\(\/<img\\b/.test(assets));
+// Wherever a schema travels with the html, it carries image URLs of its own and
+// has to move with the same map, or page and editor point at different copies.
+assert('a schema written alongside the html is re-addressed too',
+  pagesService.includes('applyRehostMap(JSON.stringify(data.schema_json), owned.rehostedMap)') &&
+  pagesService.includes('applyRehostMap(JSON.stringify(page.draft_schema_json), ownedDraft.rehostedMap)'));
+// Copying images is network work proportional to image count; on the platform
+// default (~10-15s) an image-heavy page is killed mid-copy and left half-owned.
+assert('every route that now downloads images has a real time ceiling',
+  [fromHtml, uploadRoute, ensureEditable].every((f) => /export const maxDuration = \d+;/.test(f)));
+assert('every path into the editor re-hosts before the first edit',
+  fromHtml.includes('await takeOwnershipOfHtmlAssets(') &&
+  schemaFromHtml.includes('await verifyAndRehostHtmlImages(') &&
+  rebuildFlow.includes('await verifyAndRehostHtmlImages(') &&
+  ensureEditable.includes('await verifyAndRehostHtmlImages('));
+// schema-from-html runs only when a page has NO schema; ensure-editable only
+// when it HAS one. They are exact complements, so covering both is what makes
+// the copy unconditional — a page edited long ago under the old code never
+// sees prep again, and would otherwise stay foreign forever.
+assert('the two prep routes are complements, so no page is skipped',
+  schemaFromHtml.includes('await verifyAndRehostHtmlImages(') &&
+  ensureEditable.includes("if (!schema) {") &&
+  client.includes('if (initialPage.draft_schema_json ?? initialPage.schema_json) return;') &&
+  client.includes('if (!(initialPage.draft_schema_json ?? initialPage.schema_json)) return;'));
+// Stamping used to be this route's only job, so it returned early when there
+// was nothing to stamp. That early return would now discard a completed asset
+// copy and leave the page foreign for the next edit to trip over.
+assert('a completed re-host is saved even when there is nothing to stamp',
+  ensureEditable.includes('const schemaChanged = rehostedCount > 0;') &&
+  ensureEditable.includes('if (!htmlChanged && !schemaChanged) {'));
+// The schema stores image URLs for the editor's thumbnails; leaving those on
+// the old host points page and editor at two different copies.
+assert('the schema is re-addressed alongside the html',
+  schemaFromHtml.includes('applyRehostMap(JSON.stringify(schemaJson)') &&
+  rebuildFlow.includes('applyRehostMap(JSON.stringify(finalSchema)'));
 assert('the loss judge is told which sections the edit was about',
   helpers.includes('requestedSections?: string[]') &&
   helpers.includes('THE EDIT WAS ABOUT THESE SECTIONS:') &&
   follow.includes('requestedSections,'));
 assert('a loss inside the edited section is flagged as such, and read as a replacement',
   helpers.includes('[INSIDE the section this edit was about]') &&
-  helpers.includes('is a REPLACEMENT, not a deletion'));
+  helpers.includes('one already was replaces it, and that is the edit working, not failing') &&
+  helpers.includes('is a REWRITE, not a deletion'));
 assert('both judge calls get the same facts — not just the first',
   (follow.match(/imageSections:/g) || []).length >= 2 &&
   (follow.match(/requestedSections,/g) || []).length >= 2);
@@ -1631,7 +1720,7 @@ assert('markers are written by code, so a rewrite cannot drop them',
   follow.includes('const block = (name: string, htmlBody: string) =>') &&
   follow.includes('text: block(sec.name, sec.html)'));
 assert('a delete-only turn is still a real edit',
-  follow.includes("if (deleted.length > 0) return { kind: 'sections', sections: [], deleted };"));
+  follow.includes("if (deleted.length > 0) return { kind: 'sections', sections: [], deleted, message };"));
 // Reordering has to MOVE bytes, which no in-place replacement can express — so
 // it is only attempted when nothing unmarked sits between the sections.
 assert('reordering is attempted only when it cannot drag unmarked content along',
@@ -1670,8 +1759,61 @@ assert('the follow-up route emits notes on the done event',
   /\.\.\.\(pageNotes\.length > 0 \? \{ notes: pageNotes\.join\(' '\) \} : \{\}\)/.test(follow));
 assert('the orphaned `warning` field is gone',
   !/\{ warning: assetWarning \}/.test(follow) && !/let assetWarning/.test(follow));
+// The headline itself is now the model's own sentence when it wrote one — the
+// fixed copy is the fallback, not the default (see SSEEvent.message). What this
+// still guards is the shape: a note is APPENDED to that headline, and never
+// routed through the partial_message branch that raises a retry toast.
 assert('a note keeps the Done headline and raises no retry toast',
-  /content: done\.notes\s*\n?\s*\? `Done! The page has been updated\. \$\{done\.notes\}`/.test(client));
+  /const didIt = done\.message\?\.trim\(\) \|\| 'Done! The page has been updated\.';/.test(client) &&
+  /content: done\.notes \? `\$\{didIt\} \$\{done\.notes\}` : didIt,/.test(client));
+// Every success sentence the user read used to be written by us — one fixed
+// line, printed whether the turn nudged a logo or rebuilt a hero. The model knew
+// what it had changed and had nowhere to say it, because the rewrite contract
+// asked only for HTML. These four keep that channel open end to end.
+assert('the rewrite is required to write one sentence for the user',
+  follow.includes('## "message" — always required') &&
+  follow.includes('{"message":"...one sentence to the user...","sections"'));
+assert('that sentence survives parsing and reaches the caller',
+  follow.includes('return raw.length >= 3 ? raw.slice(0, 1200) : null;') &&
+  follow.includes('const message = normalizeEditorMessage(parsed.message);') &&
+  follow.includes('message: result.message,'));
+// One message can carry several asks ("make the logo bigger, remove the FAQ,
+// and make the button red"), so the reply is one line per thing changed. The
+// first version of this collapsed ALL whitespace, which ran three reported
+// edits into one paragraph — and a squeezed report is how an ask that never
+// happened goes unnoticed. Line breaks are load-bearing on both sides: kept by
+// the parser, and rendered by the bubble.
+assert('a multi-ask edit can report each change on its own line',
+  (follow.match(/ONE LINE PER THING THE USER ASKED FOR/g) || []).length >= 2 &&
+  follow.includes('.split(/\\r?\\n/)') &&
+  follow.includes(".replace(/[ \\t]+/g, ' ')") &&
+  client.includes('break-words whitespace-pre-wrap">{msg.content}</p>'));
+// ── The full-page rewrite speaks too ────────────────────────────────────────
+// Only the region rewrite could write its own message, so a whole-page redesign
+// — the biggest thing this product does — reported the fixed "Done! The page
+// has been updated." Both paths now share one normalizer, so there is exactly
+// one implementation of how the model's words reach the chat.
+assert('the full-page rewrite is asked for a message too',
+  follow.includes('"message":"...what you changed, for the user...","type":"structural"') &&
+  follow.includes('"message":"...what you changed, for the user...","type":"patch"') &&
+  follow.includes('"message":"...what you changed, for the user...","type":"style"'));
+assert('the full-page message is parsed and does not clobber the region one',
+  follow.includes('editorMessage = editorMessage ?? normalizeEditorMessage(parsed.message);'));
+// A rebuild touches everything, so "one line per section changed" would print a
+// wall. The count is over ASKS, which keeps "redesign the page" at one line and
+// still gives "redesign the page and enlarge the logo" two.
+assert('the reply counts asks, not edits',
+  (follow.match(/Count ASKS, not edits/g) || []).length >= 2);
+assert('thinking and message are kept distinct on the full-page path',
+  follow.includes('"thinking" and "message" are NOT the same field'));
+assert('an ask that could not be carried out has to be named, not dropped',
+  follow.includes('Say what did NOT happen, in its own line'));
+assert('the done event carries it, and omits it when no model wrote one',
+  /\.\.\.\(editorMessage \? \{ message: editorMessage \} : \{\}\)/.test(follow) &&
+  /message\?: string;/.test(sseSrc));
+assert('a silent no-change still prefers the model words over our fixed line',
+  follow.includes('reason: message ?? "I looked at that and didn\'t find anything to change on the page."'));
+
 assert('a note is not lost when something else really is partial',
   /\$\{done\.notes \? ` \$\{done\.notes\}` : ''\}/.test(client));
 
@@ -1694,7 +1836,7 @@ assert('the create path does not list a broken image under "not everything lande
 // The three legitimate writers must survive — a genuinely missing ask still has
 // to say so, or this fix trades a false alarm for a silent failure.
 assert('a genuinely unmet requirement still reports partly done',
-  /partialMessage = partialMessage\s*\n?\s*\? `\$\{partialMessage\} Still not applied: \$\{unmet\}\.`/.test(follow));
+  follow.includes('Still not applied: ${userFacingUnmet}.`'));
 assert('a step still failing after its retry still reports partly done',
   /Applied part of that request\. Some parts still need a follow-up/.test(follow));
 assert('a logo landing while other asks failed still reports partly done',
