@@ -50,15 +50,17 @@ import {
   classifyEditIntent,
   imageRolesFromIntent,
   MAX_ATTACHMENTS,
+  MAX_EARLIER_ATTACHMENTS,
   attachedImagesInstructionNote,
   resolveEditRegion,
   resolveInsertPlacement,
   resolveSectionOrder,
   resolveSectionsForAsk,
   type AttachmentRole,
+  type EarlierAttachment,
 } from '@/lib/ai-edit-intent';
 import { ensureClickToEditFields } from '@/lib/ai-data-field-stamp';
-import { verifyAndRehostHtmlImages } from '@/lib/ai-asset-integrity';
+import { verifyAndRehostHtmlImages, applyRehostMap } from '@/lib/ai-asset-integrity';
 import {
   findUnrequestedLosses,
   hasLosses,
@@ -89,6 +91,35 @@ export const maxDuration = 800;
 
 const FONT_FOLLOWUP_BLOCK = buildFontFollowUpBlock();
 
+/**
+ * The sentence(s) the editing model wrote for the user, cleaned for a chat
+ * bubble. Returns null when the model wrote nothing usable, which is the
+ * caller's cue to fall back to the fixed copy.
+ *
+ * Line breaks are LOAD-BEARING and must survive: the contract asks for one
+ * line per thing the user asked for, so a message about three asks is three
+ * lines. Collapsing all whitespace (the obvious way to normalise) would run
+ * them into one paragraph and undo that. Spaces within a line are still
+ * normalised, blank lines dropped, and the whole thing capped — at 8 lines,
+ * since MAX asks per message is 6 plus room for a couldn't-do line or two,
+ * and at a length that fits a chat bubble.
+ *
+ * Shared by the region rewrite and the full-page rewrite so both paths speak
+ * to the user through exactly one implementation.
+ */
+function normalizeEditorMessage(value: unknown): string | null {
+  const raw =
+    typeof value === 'string'
+      ? value
+          .split(/\r?\n/)
+          .map((line) => line.replace(/[ \t]+/g, ' ').trim())
+          .filter(Boolean)
+          .slice(0, 8)
+          .join('\n')
+      : '';
+  return raw.length >= 3 ? raw.slice(0, 1200) : null;
+}
+
 const SYSTEM_PROMPT = `You are editing an existing landing page. The user will give you an instruction to modify the page.
 
 ## Your job
@@ -102,15 +133,33 @@ const SYSTEM_PROMPT = `You are editing an existing landing page. The user will g
 ## Output shapes
 
 Structural change — return schema only, NO html field:
-{"thinking":"One sentence describing what you are about to do","type":"structural","schema_json":{...updated full schema...}}
+{"thinking":"One sentence describing what you are about to do","message":"...what you changed, for the user...","type":"structural","schema_json":{...updated full schema...}}
 
 Localized patch — use ONLY when the HTML contains <!-- SL:name --> markers AND the change touches 1–3 existing sections:
-{"thinking":"One sentence describing what you are about to change","type":"patch","sections":[{"name":"hero","html":"<section class=\"hero\">...complete updated section HTML...</section>"},{"name":"head","html":"<style>:root{--accent:#0000ff;...all other variables unchanged...}</style>"}]}
+{"thinking":"One sentence describing what you are about to change","message":"...what you changed, for the user...","type":"patch","sections":[{"name":"hero","html":"<section class=\"hero\">...complete updated section HTML...</section>"},{"name":"head","html":"<style>:root{--accent:#0000ff;...all other variables unchanged...}</style>"}]}
 
 Full HTML rewrite — use when patch is not applicable (no SL markers, or 4+ sections change):
-{"thinking":"One sentence describing what you are about to change","type":"style","html":"<!DOCTYPE html>...complete updated HTML with SL markers..."}
+{"thinking":"One sentence describing what you are about to change","message":"...what you changed, for the user...","type":"style","html":"<!DOCTYPE html>...complete updated HTML with SL markers..."}
 
 The "thinking" field must always be FIRST in the object so it appears immediately in the stream.
+
+## "message" — always required
+This is the only thing the user reads in the chat once the edit lands. Without it they get a fixed line we wrote in advance ("Done! The page has been updated.") no matter what you did, so write it every time.
+
+"thinking" and "message" are NOT the same field. "thinking" is a live status shown while you work — what you are about to do. "message" is what the user is left with afterwards: past tense, describing the result.
+
+Put "message" SECOND, right after "thinking" and before the payload. A full rewrite can be very long, and a field at the end of it can be cut off before it arrives.
+
+ONE LINE PER THING THE USER ASKED FOR — separate lines with \\n. One ask, one line. Three asks, three lines.
+
+Count ASKS, not edits. This matters most here, because this path rewrites large parts of the page at once: "redesign the whole page" is ONE ask, so it gets ONE line describing the result — never a list of every section you rewrote. But "redesign the page and make the logo bigger" is TWO asks and gets two lines.
+
+Plain language, past tense, naming what changed on THEIR page:
+"Redesigned the page around the layout in your reference — new hero, tighter spacing, and a single accent colour throughout.\\nMade the logo about 30% larger."
+
+Say what did NOT happen, in its own line, whenever part of the request could not be carried out — a thing you could not find, an image you could not read, an ask the page has no room for. A silently dropped ask is the worst outcome here, because the user reads a confident message and believes all of it landed.
+
+Not "Done", not "I have updated the page as requested", not a list of the rules you followed. Never mention section names as internal identifiers if the user would not recognise them, never mention data-field, markers, or JSON. Keep it to one short line each — this is a chat reply, not a report.
 
 ## Classification bias — default to patch
 patch is dramatically faster than style (it touches only the sections that changed instead of regenerating the entire document) and is the correct choice for the vast majority of edit requests. Do not use type:style just because it feels safer or more thorough — that's the wrong tradeoff and it's slow.
@@ -521,7 +570,13 @@ async function trySurgicalTextEdit(
           content: `Current copy:\n${oldText}\n\nInstruction:\n${prompt}`,
         },
       ],
-      maxTokens: 1000,
+      // Sized for Haiku, which had no thinking overhead. Every call here runs
+      // on Sonnet 5, whose adaptive thinking is billed against this same
+      // ceiling BEFORE the answer starts — so a small budget can be spent
+      // entirely on thinking and truncate the response. Truncation here fails
+      // silently (see the catch below), so the loss is invisible. Costs
+      // nothing: Anthropic bills output actually generated, not this ceiling.
+      maxTokens: 32000,
       label: 'follow-up:surgical-text',
     });
     let raw = text.trim();
@@ -1202,7 +1257,21 @@ const SCOPED_REGION_SYSTEM_PROMPT = `You are rewriting ONE CONTIGUOUS RUN of sec
 
 IMPORTANT: Your entire response must be ONLY the JSON object below — begin your response with { and end it with }. Do NOT write any explanation, reasoning, preamble, or markdown code fences before or after the JSON. Any text outside the JSON object will break the parser.
 
-{"sections":[{"name":"kebab-case-section-name","html":"...complete section HTML, a single top-level element..."}],"deleted":["section-name-to-remove"],"image_prompts":[{"slot":"SL_IMG_1","prompt":"..."}]}
+{"message":"...one sentence to the user...","sections":[{"name":"kebab-case-section-name","html":"...complete section HTML, a single top-level element..."}],"deleted":["section-name-to-remove"],"image_prompts":[{"slot":"SL_IMG_1","prompt":"..."}]}
+
+## "message" — always required
+This is the only thing the user reads. Without it they get a fixed line we wrote in advance ("Done! The page has been updated.") no matter what you did, so write it every time, even on a routine edit.
+
+ONE LINE PER THING THE USER ASKED FOR — separate lines with \\n. One ask, one line. Three asks, three lines. A single message often asks for several things at once ("make the logo bigger, remove the FAQ, and make the hero button red"), and squeezing those into one sentence means some of them go unreported: the user then has no idea which of their asks actually happened.
+
+Count ASKS, not edits. One ask that required you to touch six sections is still ONE line — the user asked for one thing, so describe the one result, not the six places you touched it. Report an edit you made that was not asked for only when it was needed to carry out an ask.
+
+Plain language, past tense, naming what changed on THEIR page:
+"Made the footer logo about 30% larger.\\nRemoved the FAQ section.\\nChanged the hero button to red."
+
+Say what did NOT happen, in its own line, whenever part of the request could not be carried out — a thing you could not find, an image you could not read, an ask the page has no room for. A silently dropped ask is the worst outcome here, because the user reads a confident message and believes all of it landed: "I couldn't find a testimonials section to remove." Same for anything you changed that was not literally asked for because the ask required it — say so.
+
+Not "Done", not "I have updated the section as requested", not a list of the rules you followed. Never mention section names as internal identifiers if the user would not recognise them, never mention data-field, markers, or JSON. Keep it to one short line each — this is a chat reply, not a report.
 
 ## Silence means KEEP
 Return in "sections" ONLY the sections you changed or added. Any section in the run you do not mention is kept exactly as it is — you do not need to repeat it, and leaving it out never removes it.
@@ -1226,6 +1295,15 @@ Do NOT ask when:
 
 Name real things from the page in the question ("the pricing heading, or the one above the form?"), never internal identifiers. One question, no preamble, no list of options longer than two or three.
 
+## When there is genuinely nothing to change
+Instead of the object above, reply with ONLY:
+
+{"no_change":"...one short sentence saying why nothing was changed..."}
+
+Use this when you understood the request and deliberately decided no edit is needed — the page already reads that way, the change was already made in an earlier turn, or the thing you were asked to copy cannot be read in the attached image. Write the sentence for the USER, in plain language, naming what is already there ("The hero already carries that subheadline: 'Deduct up to 80%…'"). If the reason is that you cannot read the image, say that plainly instead.
+
+An empty "sections" array is NOT how you say this. {"sections":[]} tells the system your rewrite failed, and the user is then told we could not work out what they meant — which is false, and blames them for your decision. If you are changing nothing, say so here.
+
 Rules for the sections object:
 - You may return sections rewritten, brand new ones (splitting or adding), or the whole run reordered. Merging two sections into one means returning the merged section AND listing the absorbed name in "deleted".
 - KEEP A SECTION'S EXISTING NAME whenever that section survives in recognisable form, even if you moved it or restyled it. Only invent a new kebab-case name for a section that genuinely did not exist before. Names must be unique.
@@ -1246,6 +1324,40 @@ Rules for the sections object:
  * for exactly one of them. For a payload that was too large it is misleading —
  * renaming sections does nothing — and for a provider blip it is wrong. Losing
  * the reason turns a specific, fixable failure into a vague one.
+ */
+/**
+ * ── DECISION: who writes the words the user reads ────────────────────────────
+ *
+ * The model's own words for everything the model actually said. Canned text
+ * ONLY where the model never spoke.
+ *
+ * Everything a user read used to be written here, in advance: one fixed
+ * "Done! The page has been updated." for every success, and three fixed
+ * sentences for every failure. The model did the thinking and we did all the
+ * talking, which is why the product read like a script instead of an
+ * assistant — and why a deliberate no-op came out as "I couldn't work out what
+ * to change. Name the section", blaming the user's wording for a decision the
+ * model had made on purpose.
+ *
+ * So the rewrite contract now carries a required `message` (see
+ * SCOPED_REGION_SYSTEM_PROMPT), plus `no_change` and `question` — three ways
+ * for it to speak, covering every outcome it can reach. Those are shown
+ * verbatim.
+ *
+ * This function is the deliberate exception, and it stays hardcoded because
+ * there is nothing else it COULD be. Its three reasons are the cases where no
+ * model text exists to show:
+ *   • 'provider'  — the reply was unparseable, or the call threw. No words.
+ *   • 'too_long'  — the request never reached the model. No words.
+ *   • 'unusable'  — the reply was malformed past rescuing. No words.
+ * A well-formed reply that changed nothing is NOT here: it returns `no_change`
+ * and the model's own sentence goes out instead.
+ *
+ * The only way to make these three "intelligent" is a second AI call to
+ * narrate the failure. Rejected on purpose: it spends money and adds latency
+ * exactly on a turn that has already failed, and these three sentences are
+ * specific and actionable as written. Do not add that call without a reason
+ * better than "it would sound smarter".
  */
 /**
  * What the user is told, per reason.
@@ -1333,8 +1445,16 @@ async function runRegionRewrite(opts: {
       sections: Array<{ name: string; html: string }>;
       /** Names the model explicitly asked to remove. Omission never deletes. */
       deleted: string[];
+      /** The model's own one-line account of what it did. Null if it wrote none. */
+      message: string | null;
     }
   | { kind: 'question'; question: string }
+  /**
+   * The model understood the ask and deliberately changed nothing — the page
+   * already reads that way, or it could not read what it was asked to copy.
+   * NOT a failure: the reason is written for the user and shown verbatim.
+   */
+  | { kind: 'no_change'; reason: string }
   | { kind: 'failed'; reason: RegionFailReason }
 > {
   try {
@@ -1382,6 +1502,8 @@ async function runRegionRewrite(opts: {
       deleted?: unknown;
       image_prompts?: unknown;
       question?: unknown;
+      no_change?: unknown;
+      message?: unknown;
     };
     try {
       try {
@@ -1404,13 +1526,43 @@ async function runRegionRewrite(opts: {
       console.log('[pages/follow-up] region rewrite asked the user a question', { question });
       return { kind: 'question', question };
     }
+    const message = normalizeEditorMessage(parsed.message);
+
+    // "I understood, and nothing needs changing." Checked with the question
+    // above, before anything reads `sections` — a deliberate no-op is an
+    // answer, not a broken rewrite.
+    if (typeof parsed.no_change === 'string' && parsed.no_change.trim()) {
+      const reason = parsed.no_change.trim().slice(0, 500);
+      console.log('[pages/follow-up] region rewrite reported nothing to change', { reason });
+      return { kind: 'no_change', reason };
+    }
     const deleted = Array.isArray(parsed.deleted)
       ? parsed.deleted.filter((d): d is string => typeof d === 'string' && d.trim().length > 0)
       : [];
     if (!Array.isArray(parsed.sections) || parsed.sections.length === 0) {
       // Deleting is a real edit on its own — "remove the pricing section" needs
       // no rewritten HTML at all.
-      if (deleted.length > 0) return { kind: 'sections', sections: [], deleted };
+      if (deleted.length > 0) return { kind: 'sections', sections: [], deleted, message };
+      // A well-formed {"sections":[]} is the model saying it changed nothing.
+      // This used to collapse into 'unusable', whose message is "I couldn't
+      // work out what to change. Name the section…" — telling the user their
+      // wording was the problem when the classifier had already resolved the
+      // section, the ask and its requirements, and the rewrite had simply
+      // decided there was nothing to do. Reported honestly instead, with the
+      // caveat that a model which took this route rather than "no_change"
+      // never told us WHY, so the sentence has to stay generic.
+      if (Array.isArray(parsed.sections)) {
+        console.warn('[pages/follow-up] region rewrite returned an empty sections array — reading as no-change', {
+          rawPreview: text.slice(0, 300),
+          hasMessage: message !== null,
+        });
+        // Its own sentence if it wrote one — the fixed line is only for a reply
+        // that contained no words at all, where there is nothing to show.
+        return {
+          kind: 'no_change',
+          reason: message ?? "I looked at that and didn't find anything to change on the page.",
+        };
+      }
       console.error('[pages/follow-up] region rewrite returned no sections', { rawPreview: text.slice(0, 1500) });
       return { kind: 'failed', reason: 'unusable' };
     }
@@ -1469,7 +1621,7 @@ async function runRegionRewrite(opts: {
       }
     }
 
-    return { kind: 'sections', sections: out, deleted };
+    return { kind: 'sections', sections: out, deleted, message };
   } catch (err) {
     const reason: RegionFailReason = isPromptTooLongError(err)
       ? 'too_long'
@@ -1527,8 +1679,15 @@ async function applyRegionRewriteToHtml(opts: {
        * doing its job. See splitLossesByRegion.
        */
       region: string[];
+      /**
+       * The model's own account of the edit, shown to the user instead of the
+       * fixed "Done! The page has been updated." Null when it wrote none.
+       */
+      message: string | null;
     }
   | { kind: 'question'; question: string }
+  /** Understood, and deliberately nothing to do. See runRegionRewrite. */
+  | { kind: 'no_change'; reason: string }
   | { kind: 'failed'; reason: RegionFailReason }
 > {
   const live = extractSlSections(opts.html);
@@ -1721,6 +1880,10 @@ async function applyRegionRewriteToHtml(opts: {
   // downgrading it to null would be code overruling the one call that read
   // both the page and the ask.
   if (result.kind === 'question') return result;
+  // Same rule for "nothing to change": the call that read the page and the ask
+  // is the one entitled to that verdict. Re-running it as a failure would put
+  // back the wrong-and-blaming error this replaced.
+  if (result.kind === 'no_change') return result;
   const rewritten = result.sections;
   const deleted = result.deleted;
   if (rewritten.length === 0 && deleted.length === 0) return { kind: 'failed', reason: 'unusable' };
@@ -1868,6 +2031,7 @@ async function applyRegionRewriteToHtml(opts: {
     schema: schemaCopy,
     wrote,
     region: Array.from(new Set([...insideNames, ...wrote])),
+    message: result.message,
   };
 }
 
@@ -2206,8 +2370,53 @@ export async function POST(
   // model can embed them exactly like an uploaded image attachment. Capped at
   // 3 total to match the existing image_urls validation above.
   // Same cap the classifier uses, from the same constant — see MAX_ATTACHMENTS.
-  const effectiveImageUrls = [...(image_urls ?? []), ...promptImageUrls].slice(0, MAX_ATTACHMENTS);
-  const hasUserImages = effectiveImageUrls.length > 0;
+  const currentTurnImageUrls = [...(image_urls ?? []), ...promptImageUrls].slice(0, MAX_ATTACHMENTS);
+
+  // ── Pictures from earlier turns, offered back to the classifier ───────────
+  //
+  // conversation_json has stored these URLs all along (they are permanent
+  // public Storage URLs from upload-chat-image), and not one model call ever
+  // received them: a past attachment reached the model only as the TEXT
+  // "[attached 1 image(s)]". So "add the subheadline from the image" was
+  // answered by a model told a picture existed and shown none. It asked for a
+  // re-attach — correct, given its input — and the next turn then hit
+  // lastAssistantWasClarify, which forces noQuestions, leaving it unable to
+  // ask and still unable to see. That turn died as "I couldn't work out what
+  // to change". Two turns lost to an input we were already holding.
+  //
+  // Deliberately NOT a "look back N turns" rule, and deliberately not gated on
+  // the message matching some phrase like "the image above". Which picture a
+  // message means is a judgement about the message — exactly the judgement
+  // this file hands to the model everywhere else — and any regex or distance
+  // test is the keyword gate this design removed. The model is shown the
+  // pictures and names the ones it needs (intent.earlierImages).
+  //
+  // The one bound is cost, which is arithmetic rather than judgement: every
+  // vision attachment spends ~IMAGE_TOKENS of the same window the page HTML
+  // has to fit into. Filled most-recent-first so the cap sheds the images
+  // least likely to be the one meant.
+  const earlierAttachmentPool: EarlierAttachment[] = [];
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (earlierAttachmentPool.length >= MAX_EARLIER_ATTACHMENTS) break;
+    const entry = history[i];
+    if (!entry || entry.role !== 'user' || !Array.isArray(entry.image_urls)) continue;
+    const note =
+      typeof entry.content === 'string' ? entry.content.replace(/\s+/g, ' ').trim().slice(0, 160) : '';
+    for (let j = entry.image_urls.length - 1; j >= 0; j--) {
+      if (earlierAttachmentPool.length >= MAX_EARLIER_ATTACHMENTS) break;
+      const url = entry.image_urls[j];
+      // Rows written by older builds (or a client that optimistically stored a
+      // blob: preview) can hold something that is not a fetchable URL. A
+      // vision block pointing at one fails the whole classification call, so
+      // anything that isn't http(s) never enters the pool.
+      if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) continue;
+      if (currentTurnImageUrls.includes(url)) continue;
+      if (earlierAttachmentPool.some((a) => a.url === url)) continue;
+      earlierAttachmentPool.push({ url, note });
+    }
+  }
+  // Oldest first, so E-numbers read down the conversation the way it happened.
+  earlierAttachmentPool.reverse();
 
   // ── What is this person asking for? ───────────────────────────────────────
   // One model call decides routing. If it fails: ask the user once (no infinite
@@ -2217,7 +2426,19 @@ export async function POST(
   // REFERS to. Held by the route since forever and handed to exactly one call
   // (the full-page rebuild), while the path that runs on almost every edit was
   // given the bare sentence. "make it bigger" is unanswerable without this.
-  const conversationContext = buildConversationContext(history);
+  //
+  // Two versions, because the annotation on each past turn states whether that
+  // turn's picture is actually in front of the model, and the two calls are
+  // shown different sets: the classifier sees the whole offered pool, while
+  // everything after it sees only what the classifier chose to reuse. One
+  // shared string would tell one of them a picture is "shown to you" when it
+  // is not — which is the very lie this fix exists to remove.
+  const conversationForIntent = buildConversationContext(history, {
+    availableImageUrls: new Set([
+      ...currentTurnImageUrls,
+      ...earlierAttachmentPool.map((a) => a.url),
+    ]),
+  });
 
   const priorUserUrls = history
     .filter((h) => h.role === 'user' && typeof h.content === 'string')
@@ -2230,14 +2451,18 @@ export async function POST(
     // "remove this" + a screenshot resolve to a real section instead of
     // silently returning no target and changing nothing.
     sectionOutline: intentSectionsSnapshot.map((s) => ({ name: s.name, text: s.text })),
-    imageUrls: effectiveImageUrls,
+    imageUrls: currentTurnImageUrls,
+    // Offered, not applied — the model names which of these this message is
+    // pointing back at, and only those are carried into the edit below.
+    earlierImages: earlierAttachmentPool,
     earlierUrls: priorUserUrls,
     embeddableAssetUrls: [
       ...(preEditLogoUrl ? [preEditLogoUrl] : []),
-      ...effectiveImageUrls,
+      ...currentTurnImageUrls,
+      ...earlierAttachmentPool.map((a) => a.url),
     ],
     requirementInstruction: REQUIREMENT_EXTRACTION_INSTRUCTION,
-    conversation: conversationContext,
+    conversation: conversationForIntent,
     usage: usageCtx,
     label: 'follow-up:edit-intent',
   });
@@ -2254,7 +2479,31 @@ export async function POST(
         isQuestion: intent.isQuestion,
         attachmentRoles: intent.attachmentRoles,
       }
-    : 'unavailable');
+    : 'unavailable', {
+      currentTurnImages: currentTurnImageUrls.length,
+      earlierImagesOffered: earlierAttachmentPool.length,
+      earlierImagesReused: intent?.earlierImages.map((e) => e.role) ?? [],
+    });
+
+  // This turn's attachments, plus any earlier one the classifier says this
+  // message is actually about. Order matters and is fixed: the current
+  // message's own images stay first, because attachmentRoles and every ask's
+  // imageIndexes are positional over exactly those. Reused ones append after
+  // and are matched by URL instead (see imageRolesFromIntent).
+  //
+  // Identical to currentTurnImageUrls whenever nothing is reused — which is
+  // most turns, and every turn on a conversation with no earlier attachments.
+  // So the no-reuse path is byte-for-byte the old behaviour.
+  const effectiveImageUrls = Array.from(
+    new Set([...currentTurnImageUrls, ...(intent?.earlierImages ?? []).map((e) => e.url)]),
+  );
+  const hasUserImages = effectiveImageUrls.length > 0;
+
+  // Now that the reuse decision is made, the transcript can state honestly
+  // which past attachments the calls below can actually see.
+  const conversationContext = buildConversationContext(history, {
+    availableImageUrls: new Set(effectiveImageUrls),
+  });
 
   // Per-URL role the classifier already worked out ("content_asset" = embed
   // exactly, "locator"/"design_reference"/"bug_report" = never embed the file
@@ -2329,7 +2578,13 @@ export async function POST(
     const answer = await askAI({
       system: FOLLOW_UP_QUESTION_SYSTEM,
       messages: [{ role: 'user', content: questionContent }],
-      maxTokens: 3000,
+      // Sized for Haiku, which had no thinking overhead. Every call here runs
+      // on Sonnet 5, whose adaptive thinking is billed against this same
+      // ceiling BEFORE the answer starts — so a small budget can be spent
+      // entirely on thinking and truncate the response. Truncation here fails
+      // silently (see the catch below), so the loss is invisible. Costs
+      // nothing: Anthropic bills output actually generated, not this ceiling.
+      maxTokens: 128000,
       label: 'follow-up:answer-question',
       usage: usageCtx,
     });
@@ -2581,6 +2836,47 @@ export async function POST(
        * sentence that fits only one of the three cases.
        */
       let regionFailReason: RegionFailReason = 'unusable';
+      /**
+       * The rewrite understood the ask and deliberately changed nothing (the
+       * page already reads that way, an earlier turn already did it, an image
+       * it was asked to copy from is unreadable). Held apart from
+       * regionFailReason because the two are opposite messages: this one has to
+       * say what IS true of the page, never "name the section and what should
+       * happen to it" — which reads as "your wording was the problem" on a turn
+       * where the classifier resolved the section, the ask and its
+       * requirements perfectly well.
+       */
+      let noChangeReason: string | null = null;
+      /**
+       * What the model says it did, in its own words — the sentence the user
+       * actually reads on success. Null whenever no model authored one (the
+       * full-page rebuild path, deterministic splices), and the client then
+       * falls back to the fixed "Done! The page has been updated."
+       */
+      let editorMessage: string | null = null;
+
+      /**
+       * End the turn with "understood, nothing to change" instead of an error.
+       *
+       * Stored as an ordinary assistant turn — never `clarify: true`, which
+       * means "we asked a section-ambiguity question" and forces noQuestions on
+       * the next turn. A no-op verdict must not gag a genuine question about
+       * whatever the user says next ("no, it really isn't there").
+       */
+      const reportNoChange = async (reason: string) => {
+        const userEntry: Record<string, unknown> = { role: 'user', content: prompt };
+        if (Array.isArray(image_urls) && image_urls.length > 0) userEntry.image_urls = image_urls;
+        await db
+          .from('pages')
+          .update({
+            conversation_json: [...history, userEntry, { role: 'assistant', content: reason }],
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', params.id);
+        console.log('[pages/follow-up] nothing to change', { reason });
+        sendSSE(controller, { type: 'clarify', message: reason });
+        closeSSE(controller);
+      };
 
       /**
        * The one general path, reachable from every narrow dead end.
@@ -2639,6 +2935,14 @@ export async function POST(
           console.error('[pages/follow-up] region fallback threw', { reason, err });
           return false;
         }
+        if (result && result.kind === 'no_change') {
+          // Not applied, so this still returns false — but the caller must not
+          // then report the narrow path's own failure over the top of a real
+          // answer about the page.
+          noChangeReason = result.reason;
+          console.log('[pages/follow-up] region fallback reported nothing to change', { reason });
+          return false;
+        }
         if (!result || result.kind === 'failed') {
           console.error('[pages/follow-up] region fallback could not act either', {
             reason,
@@ -2655,6 +2959,7 @@ export async function POST(
         finalHtml = result.html;
         finalSchemaJson = result.schema;
         rewrittenRegion = result.region;
+        editorMessage = result.message;
         scopedApplied = true;
         scopedFailureReason = null;
         resultType = 'patch';
@@ -2803,12 +3108,26 @@ export async function POST(
             closeSSE(controller);
             return;
           }
+          // Understood, nothing to do. The page is untouched and that is the
+          // correct outcome, so this must not fall through to the miss report
+          // below — the user is owed the reason, not "I couldn't work out what
+          // to change". Stored as an ordinary assistant turn (never
+          // clarify:true, which would gag the NEXT turn's question) so a reply
+          // of "no, it really isn't there" is handled normally.
+          if (result && result.kind === 'no_change') {
+            await reportNoChange(result.reason);
+            return;
+          }
           if (result && result.kind === 'applied') {
             finalHtml = result.html;
             finalSchemaJson = result.schema;
             rewrittenRegion = result.region;
+            editorMessage = result.message;
             scopedApplied = true;
-            console.log('[pages/follow-up] primary region rewrite applied', { wrote: result.wrote });
+            console.log('[pages/follow-up] primary region rewrite applied', {
+              wrote: result.wrote,
+              message: result.message,
+            });
           } else {
             // Carry WHY out to the message. A thrown call never reached the
             // model at all, which is the same class of problem as a provider
@@ -3534,6 +3853,16 @@ export async function POST(
                 focusSections: intent.targetSections,
                 noQuestions: true,
               });
+              // A step that deliberately changed nothing did NOT apply, so it
+              // still returns null and the plan records it as unapplied —
+              // returning [] here would claim a step succeeded and let "Done"
+              // ship for work that never happened. The reason is kept so the
+              // turn's final message can say what is actually true of the page
+              // instead of blaming the user's wording.
+              if (result.kind === 'no_change') {
+                noChangeReason = result.reason;
+                return null;
+              }
               if (result.kind === 'question' || result.kind === 'failed') return null;
               workingHtml = result.html;
               finalSchemaJson = result.schema;
@@ -4372,6 +4701,7 @@ export async function POST(
               finalHtml = regionResult.html;
               finalSchemaJson = regionResult.schema;
               rewrittenRegion = regionResult.region;
+              editorMessage = regionResult.message;
               scopedApplied = true;
             } else {
               console.log('[pages/follow-up] routing did not qualify and no region resolved, falling back to full-page path', {
@@ -4542,6 +4872,13 @@ export async function POST(
       // for an edge case. If the logs say otherwise, retry
       // applyRegionRewriteToHtml once here — do not reopen the dispatcher.
       if (!scopedApplied && regionAttempted) {
+        // A recovery attempt may have come back with "nothing to change" —
+        // that is an answer about the page, and it outranks the earlier
+        // failure it was recovering from.
+        if (noChangeReason) {
+          await reportNoChange(noChangeReason);
+          return;
+        }
         console.error('[pages/follow-up] primary region rewrite missed — not dispatching a menu', {
           reason: regionFailReason,
         });
@@ -4561,6 +4898,12 @@ export async function POST(
       // failure site.
       if (!scopedApplied && scopedFailureReason && !logoSwapCompleted &&
           !(await tryGeneralFallback(scopedFailureReason, html))) {
+        // The recovery ran and reported there was nothing to change — say that
+        // rather than the narrow path's "couldn't apply the edit cleanly".
+        if (noChangeReason) {
+          await reportNoChange(noChangeReason);
+          return;
+        }
         console.error(`[pages/follow-up] scoped op qualified but failed (${scopedFailureReason}) — not falling back to full-page`, {
           scopedFailureReason,
           promptLength: prompt.length,
@@ -4739,6 +5082,7 @@ export async function POST(
 
       let parsed: {
         thinking?: string;
+        message?: string;
         type: 'structural' | 'style' | 'patch';
         schema_json?: unknown;
         html?: string;
@@ -4765,6 +5109,13 @@ export async function POST(
       }
 
       resultType = parsed.type;
+
+      // The full-page rewrite speaks for itself, same as the region rewrite.
+      // `??` rather than `=`: when the region rewrite already ran and recovered
+      // this turn (`scopedApplied`), ITS sentence describes the work the user
+      // actually got, and `parsed` here may be the invalid-JSON sentinel. A
+      // plain assignment would overwrite a real message with nothing.
+      editorMessage = editorMessage ?? normalizeEditorMessage(parsed.message);
 
       let structuralRecovered = false;
       if (scopedApplied) {
@@ -5033,6 +5384,12 @@ export async function POST(
       }
 
       if (htmlUnchanged) {
+        // Byte-identical because the model decided the page already says what
+        // was asked for — not because we failed to understand it.
+        if (noChangeReason) {
+          await reportNoChange(noChangeReason);
+          return;
+        }
         const designMatch =
           !hasMultipleAsks && (designReferenceUrls.length > 0 || wantsDesignMatch);
         // Name EVERY ask that failed, not just the one whose wording happened to
@@ -5087,6 +5444,49 @@ export async function POST(
         });
       }
 
+      // ── The page as it was, addressed the way the page is addressed NOW ───
+      //
+      // Everything below compares the edited page against the page as it stood
+      // before the edit, to catch content the model dropped. That comparison is
+      // made on image URLs — and the re-host above just REWROTE image URLs on
+      // one side of it.
+      //
+      // So an image nobody touched appeared in "before" as
+      //   image-service.unbounce.com/https%3A%2F%2F…46afbae4
+      // and in "after" as
+      //   …supabase.co/storage/…/abc123.png
+      // and the diff, seeing the first string missing, called it deleted.
+      //
+      // Confirmed live, on a request that only changed a headline: 6 phantom
+      // "lost" images, one repair model call each (~90s apiece, 514s total),
+      // and — because those images had never actually gone anywhere — the
+      // repair added a SECOND copy of each. Duplicate logo rows on the page,
+      // caused entirely by the guard meant to protect it.
+      //
+      // findUnrequestedLosses does try to survive this by comparing filename
+      // tails, but that assumes a URL ends in a filename. These end in the
+      // whole original link with its slashes percent-encoded, so the "tail" is
+      // the entire blob and never matches anything. The guard was silently
+      // inert for exactly the pages that needed it.
+      //
+      // Applying the same map to the before-copy makes both sides speak the
+      // same addresses, so a re-host is invisible to the diff and only real
+      // losses survive. Preferred over reordering the two steps: sixteen call
+      // sites downstream read this baseline, several of them looking assets up
+      // BY URL in it (restoreLostImagesInPlace, sectionsContainingAsset,
+      // placeRestoredImagesIntelligently), and those must resolve against the
+      // same addresses the edited page now uses or a genuine restore would
+      // fail to find its own image.
+      //
+      // Ideally nothing is left to re-host by this point — from-html,
+      // schema-from-html and rebuild-flow all run the same scan first. This
+      // stays for what they cannot cover: an external image the user pastes
+      // mid-edit, or one the model writes itself.
+      const preservationBaseline =
+        Object.keys(assetScan.rehostedMap).length > 0
+          ? applyRehostMap(originalHtmlForPreservation, assetScan.rehostedMap)
+          : originalHtmlForPreservation;
+
       // Requirements: what the user actually asked for, checked against what we
       // built. Deterministic fixes are applied here; anything still unmet
       // downgrades the toast instead of claiming Done.
@@ -5111,7 +5511,7 @@ export async function POST(
           console.log('[pages/follow-up] requirements enforced', enforced.applied);
         }
         let results = checkRequirements(finalHtmlPersisted, requirements, {
-          beforeHtml: originalHtmlForPreservation,
+          beforeHtml: preservationBaseline,
         });
 
         // FIX IT, don't just announce it.
@@ -5192,7 +5592,7 @@ export async function POST(
             if (repatched.length > 0) {
               const candidate = applyPatch(finalHtmlPersisted, repatched);
               const candidateResults = checkRequirements(candidate, requirements, {
-                beforeHtml: originalHtmlForPreservation,
+                beforeHtml: preservationBaseline,
               });
               const failedBefore = results.map((r) => !r.passed);
               const failedAfter = candidateResults.map((r) => !r.passed);
@@ -5297,7 +5697,7 @@ export async function POST(
       // occasionally dropping something, but we can make sure a drop never
       // costs the user their whole edit.
       const losses = findUnrequestedLosses({
-        beforeHtml: originalHtmlForPreservation,
+        beforeHtml: preservationBaseline,
         afterHtml: finalHtmlPersisted,
         prompt,
         removalIntent: intent.removalIntent,
@@ -5326,7 +5726,7 @@ export async function POST(
           const slNames = Array.from(
             finalHtmlPersisted.matchAll(/<!--\s*SL:([a-z0-9_-]+)\s*-->/gi),
           ).map((m) => m[1]);
-          const original = sectionsContainingAsset(originalHtmlForPreservation, lostLogo);
+          const original = sectionsContainingAsset(preservationBaseline, lostLogo);
           const targets = original.filter((n) => slNames.includes(n));
           if (targets.length === 0) {
             targets.push(...slNames.filter((n) => /nav|header|footer/i.test(n)));
@@ -5362,7 +5762,7 @@ export async function POST(
 
         // Anything we could not put back is reported rather than hidden.
         const allRemaining = findUnrequestedLosses({
-          beforeHtml: originalHtmlForPreservation,
+          beforeHtml: preservationBaseline,
           afterHtml: finalHtmlPersisted,
           prompt,
           removalIntent: intent.removalIntent,
@@ -5402,7 +5802,7 @@ export async function POST(
         // false positive this guard was already burned by once.
         const assetLossIsIntended = intent.intentionalAssetReplace || !!logoSwapAppliedUrl;
         const regionSplit = rewrittenRegion
-          ? splitLossesByRegion(allRemaining, originalHtmlForPreservation, rewrittenRegion)
+          ? splitLossesByRegion(allRemaining, preservationBaseline, rewrittenRegion)
           : null;
         const remaining: PageLosses = regionSplit
           ? {
@@ -5463,7 +5863,7 @@ export async function POST(
         );
         const imageOrigins = remaining.images.slice(0, 8).map((url) => ({
           url,
-          sections: sectionsContainingAsset(originalHtmlForPreservation, url),
+          sections: sectionsContainingAsset(preservationBaseline, url),
         }));
 
         // A data-field name is bookkeeping for the click-to-edit UI, not
@@ -5518,7 +5918,7 @@ export async function POST(
         let effectiveLosses = remaining;
         if (destructive) {
           const repair = restoreDamagedSections({
-            beforeHtml: originalHtmlForPreservation,
+            beforeHtml: preservationBaseline,
             afterHtml: finalHtmlPersisted,
             losses: remaining,
             protectedSections: requestedSections,
@@ -5536,7 +5936,7 @@ export async function POST(
           const imageRepair =
             stillMissingImages.length > 0
               ? restoreLostImagesInPlace({
-                  beforeHtml: originalHtmlForPreservation,
+                  beforeHtml: preservationBaseline,
                   afterHtml: repair.html,
                   images: stillMissingImages,
                 })
@@ -5553,7 +5953,7 @@ export async function POST(
             imageRepair.restored.length > 0
               ? await placeRestoredImagesIntelligently({
                   html: imageRepair.html,
-                  beforeHtml: originalHtmlForPreservation,
+                  beforeHtml: preservationBaseline,
                   images: imageRepair.restored,
                   usage: usageCtx,
                 })
@@ -5584,13 +5984,13 @@ export async function POST(
             // reason: an in-region image is only presumed-intended when the
             // message actually said it was swapping one.
             const afterRepairAll = findUnrequestedLosses({
-              beforeHtml: originalHtmlForPreservation,
+              beforeHtml: preservationBaseline,
               afterHtml: repairedHtml,
               prompt,
               removalIntent: intent.removalIntent,
             });
             const afterRepairSplit = rewrittenRegion
-              ? splitLossesByRegion(afterRepairAll, originalHtmlForPreservation, rewrittenRegion)
+              ? splitLossesByRegion(afterRepairAll, preservationBaseline, rewrittenRegion)
               : null;
             const afterRepair: PageLosses = afterRepairSplit
               ? {
@@ -5609,7 +6009,7 @@ export async function POST(
                 losses: afterRepair,
                 imageSections: afterRepair.images.slice(0, 8).map((url) => ({
                   url,
-                  sections: sectionsContainingAsset(originalHtmlForPreservation, url),
+                  sections: sectionsContainingAsset(preservationBaseline, url),
                 })),
                 requestedSections,
                 headingsAfter: snapshotPageFacts(repairedHtml).headings,
@@ -5718,20 +6118,37 @@ export async function POST(
         // our HTML, (2) rewrites keep data-field + SL markers.
       }
 
-      // Save conversation
+      // Save conversation.
+      //
+      // Reconstructed to match the client's own composition exactly (see
+      // sendFollowUp), so reopening the page shows what the user actually read
+      // rather than an approximation of it.
+      const doneHeadline = editorMessage ?? 'Done! The page has been updated.';
+      const assistantReply = partialMessage
+        ? `Partly done (not fully finished). ${partialMessage}${pageNotes.length > 0 ? ` ${pageNotes.join(' ')}` : ''}`
+        : `${doneHeadline}${pageNotes.length > 0 ? ` ${pageNotes.join(' ')}` : ''}`;
       const userEntry: Record<string, unknown> = { role: 'user', content: prompt };
       if (Array.isArray(image_urls) && image_urls.length > 0) userEntry.image_urls = image_urls;
       const updatedConversation = [
         ...history,
         userEntry,
-        // Store the placeholder (pre-restore) schema, not finalSchemaJsonReal —
-        // conversation_json is only ever replayed back to the AI as text context (see the
-        // history.map above and AIBuilderClient, which never renders this raw), so it never
-        // needed real image bytes. Storing the restored version here is what let each turn's
-        // real base64 images compound in the prompt on every subsequent follow-up.
+        // WHAT THE USER WAS TOLD — the same sentence the client just rendered.
+        //
+        // This used to store JSON.stringify({type, schema_json}): a dump of the
+        // page schema where the reply belonged. Nothing ever parsed it back
+        // (one writer, zero readers), and it cost the product its whole chat
+        // history — on reload every assistant turn had to be replaced with
+        // canned text because there were no words to show, so a page reopened
+        // as a wall of "Done! The page has been updated." with the real
+        // answers gone. The schema itself was never at risk: pages.schema_json
+        // / draft_schema_json is its home, and this was only ever a duplicate.
+        //
+        // Replayed to the model as context too, which is a second gain — a
+        // sentence saying what changed beats a stale schema dump, and is a
+        // fraction of the tokens.
         {
           role: 'assistant',
-          content: JSON.stringify({ type: resultType, schema_json: finalSchemaJson ?? schema }),
+          content: assistantReply,
           // Which sections this turn actually touched. The next message is
           // often a correction — "no, use the hero's image" — that names the
           // WHAT but not the WHERE, because the where was settled a turn ago
@@ -5851,6 +6268,10 @@ export async function POST(
         ...(finalSchemaJsonReal ? { schema_json: finalSchemaJsonReal } : {}),
         ...(scrapeAttempted && !competitorContext ? { competitor_fetch_failed: true } : {}),
         elapsed_ms: Date.now() - startedAt,
+        // The model's own sentence, when a model wrote one. Omitted (not
+        // blanked) on the paths where none did, so the client's fixed copy
+        // still covers them — see SSEEvent.message.
+        ...(editorMessage ? { message: editorMessage } : {}),
         ...(partialMessage ? { partial_message: partialMessage } : {}),
         ...(pageNotes.length > 0 ? { notes: pageNotes.join(' ') } : {}),
       };

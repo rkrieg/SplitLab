@@ -354,7 +354,13 @@ export async function verifyAskApplied(opts: {
             `SECTION "${opts.sectionName}" AFTER:\n${cap(opts.afterHtml)}`,
         },
       ],
-      maxTokens: 300,
+      // Sized for Haiku, which had no thinking overhead. Every call here runs
+      // on Sonnet 5, whose adaptive thinking is billed against this same
+      // ceiling BEFORE the answer starts — so a small budget can be spent
+      // entirely on thinking and truncate the response. Truncation here fails
+      // silently (see the catch below), so the loss is invisible. Costs
+      // nothing: Anthropic bills output actually generated, not this ceiling.
+      maxTokens: 32000,
       label: 'follow-up:verify-ask-applied',
       usage: opts.usage ? { ...opts.usage, operation: 'route' } : undefined,
     });
@@ -496,7 +502,13 @@ export async function judgeUnrequestedLoss(opts: {
             `NO LONGER ON THE PAGE:\n${described}${nowNote}`,
         },
       ],
-      maxTokens: 300,
+      // Sized for Haiku, which had no thinking overhead. Every call here runs
+      // on Sonnet 5, whose adaptive thinking is billed against this same
+      // ceiling BEFORE the answer starts — so a small budget can be spent
+      // entirely on thinking and truncate the response. Truncation here fails
+      // silently (see the catch below), so the loss is invisible. Costs
+      // nothing: Anthropic bills output actually generated, not this ceiling.
+      maxTokens: 32000,
       label: 'follow-up:judge-loss',
       usage: opts.usage ? { ...opts.usage, operation: 'route' } : undefined,
     });
@@ -581,7 +593,12 @@ export async function placeRestoredImagesIntelligently(opts: {
               `THE IMAGE TO FIT IN: ${url}`,
           },
         ],
-        maxTokens: 8000,
+        // Returns the section's full HTML, so the ceiling has to clear a whole
+        // section — 8000 truncated real hero sections mid-tag and the turn fell
+        // back to the mechanical placement after burning ~90s. Matches every
+        // other HTML-returning call in the codebase; costs nothing, since
+        // Anthropic bills output tokens actually generated, not this ceiling.
+        maxTokens: 128000,
         label: 'follow-up:place-restored-image',
         usage: opts.usage ? { ...opts.usage, operation: 'route' } : undefined,
       });
@@ -922,7 +939,13 @@ export async function planMultiIntentEdit(opts: {
     const text = await askAI({
       system: PLANNER_SYSTEM,
       messages: [{ role: 'user', content: userContent }],
-      maxTokens: 4000,
+      // Sized for Haiku, which had no thinking overhead. Every call here runs
+      // on Sonnet 5, whose adaptive thinking is billed against this same
+      // ceiling BEFORE the answer starts — so a small budget can be spent
+      // entirely on thinking and truncate the response. Truncation here fails
+      // silently (see the catch below), so the loss is invisible. Costs
+      // nothing: Anthropic bills output actually generated, not this ceiling.
+      maxTokens: 128000,
       label: 'follow-up:multi-intent-plan',
       usage: usage ? { ...usage, operation: 'route' } : undefined,
     });
@@ -1018,7 +1041,13 @@ export async function extractDesignReferenceCopy(opts: {
           ],
         },
       ],
-      maxTokens: 1200,
+      // Sized for Haiku, which had no thinking overhead. Every call here runs
+      // on Sonnet 5, whose adaptive thinking is billed against this same
+      // ceiling BEFORE the answer starts — so a small budget can be spent
+      // entirely on thinking and truncate the response. Truncation here fails
+      // silently (see the catch below), so the loss is invisible. Costs
+      // nothing: Anthropic bills output actually generated, not this ceiling.
+      maxTokens: 32000,
       label: 'follow-up:design-ref-ocr',
       usage: usage ? { ...usage, operation: 'route' } : undefined,
     });

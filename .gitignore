@@ -45,3 +45,5 @@ stripe.exe
 
 # local test page for form-lead validation fix
 docs/titan.html
+
+*.html

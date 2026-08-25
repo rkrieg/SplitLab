@@ -34,6 +34,26 @@ export type SSEEvent =
       /** Asks from the prompt the finished page still doesn't satisfy. */
       unmet_requirements?: string;
       /**
+       * What the model that did the work says it did, in its own words.
+       *
+       * Every success message the user read used to be written by us — one
+       * fixed sentence, "Done! The page has been updated.", printed whether the
+       * turn moved a logo or rebuilt a hero. The model knew exactly what it had
+       * changed and had nowhere to say it, because the rewrite contract asked
+       * only for HTML. So the system did the thinking and we did all the
+       * talking, which is what made it read like a script rather than an
+       * assistant.
+       *
+       * Written by whichever rewrite did the work — the region rewrite or the
+       * full-page one; both normalise it through normalizeEditorMessage so
+       * there is one definition of how those words reach the chat.
+       *
+       * Absent whenever no model authored a sentence for this turn
+       * (deterministic splices, or a model that simply omitted the field) —
+       * the client then falls back to the fixed copy, exactly as before.
+       */
+      message?: string;
+      /**
        * How an uploaded page came out of prep (schema-from-html only).
        *
        * 'patch'   — its layout comes from its markup, so any part of it can be

@@ -3,8 +3,16 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { uploadHtml, inlineDataUrisToStorage } from '@/lib/storage';
+import { takeOwnershipOfHtmlAssets } from '@/lib/ai-asset-integrity';
 import { resolveWorkspaceRole } from '@/lib/workspace-auth';
 import { z } from 'zod';
+
+// Taking in HTML now also copies its images into our storage (see
+// takeOwnershipOfHtmlAssets), which is network work proportional to how many
+// images the page has. On the platform default (~10-15s) an image-heavy page
+// would be killed mid-copy, leaving it half-owned. Well under the 800s the AI
+// routes use — this is downloads, not generation.
+export const maxDuration = 300;
 
 const MAX_SIZE = 5 * 1024 * 1024; // 5 MB
 
@@ -65,7 +73,7 @@ export async function POST(request: NextRequest) {
     // rather than carrying multi-hundred-KB inline strings forever. Needs the
     // page id up front since images upload to a path keyed by it.
     const pageId = crypto.randomUUID();
-    htmlContent = await inlineDataUrisToStorage(htmlContent, pageId);
+    htmlContent = (await takeOwnershipOfHtmlAssets(htmlContent, pageId)).html;
 
     // Upload to storage
     const fileName = `${workspaceId}/${crypto.randomUUID()}.html`;

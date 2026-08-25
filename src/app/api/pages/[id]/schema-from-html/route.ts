@@ -9,6 +9,7 @@ import { resolveWorkspaceRole, resolveOwnerPlan, resolveWorkspaceOwner } from '@
 import { PLAN_LIMITS } from '@/lib/plans';
 import { isTestVariantPage } from '@/lib/page-drafts';
 import { extractDataUris, restoreDataUris, restoreDataUrisInValue } from '@/lib/data-uri-strip';
+import { verifyAndRehostHtmlImages, applyRehostMap } from '@/lib/ai-asset-integrity';
 import { createSSEStream, sendSSE, sendSSEPing, closeSSE, SSE_HEADERS } from '@/lib/sse';
 import { checkAiAllowance, type UsageContext } from '@/lib/ai-usage';
 import { reportAiOverageUsage } from '@/lib/ai-overage-billing';
@@ -844,8 +845,50 @@ export async function POST(
       // Swap real image bytes back in now that positions/markers are locked in —
       // both in the saved HTML and in the schema values the editor reads to show
       // "current image" thumbnails.
-      const annotatedHtml = restoreDataUris(annotatedHtmlWithPlaceholders, dataUriMap);
-      const schemaJson = restoreDataUrisInValue(schemaJsonWithPlaceholders, dataUriMap) as Record<string, unknown>;
+      let annotatedHtml = restoreDataUris(annotatedHtmlWithPlaceholders, dataUriMap);
+      let schemaJson = restoreDataUrisInValue(schemaJsonWithPlaceholders, dataUriMap) as Record<string, unknown>;
+
+      // Pages uploaded before re-hosting moved to the upload path still carry
+      // <img> tags pointing at whoever built them. This is the one place every
+      // such page passes through exactly once on its way to being editable, so
+      // it is where they get made self-contained.
+      //
+      // It matters beyond the broken-link risk: the edit path diffs a page
+      // against its previous self to catch content the model dropped, and
+      // re-hosting rewrites `src`, so an image that only changed ADDRESS read
+      // as deleted. That produced phantom losses, a repair call per phantom,
+      // and duplicate logos on the page. Doing it here means the first edit
+      // finds nothing left to move.
+      //
+      // Deliberately after the model work rather than before the early rebuild
+      // verdict above — that verdict is pure arithmetic, no model and no
+      // network, and it stays that way so the rebuild question costs nothing.
+      //
+      // The schema is remapped with the SAME map: it stores image URLs that the
+      // editor reads for its "current image" thumbnails, and leaving those on
+      // the old host would point the two at different copies.
+      //
+      // Best-effort: a slow third-party host must not cost the user their prep.
+      try {
+        const assetScan = await verifyAndRehostHtmlImages({
+          pageSlug: params.id,
+          html: annotatedHtml,
+        });
+        annotatedHtml = assetScan.html;
+        if (Object.keys(assetScan.rehostedMap).length > 0) {
+          schemaJson = JSON.parse(
+            applyRehostMap(JSON.stringify(schemaJson), assetScan.rehostedMap),
+          ) as Record<string, unknown>;
+        }
+        if (assetScan.rehosted.length > 0 || assetScan.broken.length > 0) {
+          console.log('[schema-from-html] asset integrity', {
+            rehosted: assetScan.rehosted.length,
+            broken: assetScan.broken.length,
+          });
+        }
+      } catch (err) {
+        console.warn('[schema-from-html] asset re-hosting failed — keeping original image URLs', err);
+      }
 
       // If almost nothing the AI listed could actually be located in the HTML,
       // something is structurally wrong (not just one-off text drift) — treat

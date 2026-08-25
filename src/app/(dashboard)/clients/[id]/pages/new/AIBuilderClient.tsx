@@ -566,8 +566,16 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     // Walk history by role rather than assuming strict user/assistant alternation —
     // older pages saved through the clarifying-questions round contain a duplicated
     // user entry, and pair-wise iteration would render assistant JSON payloads as
-    // user bubbles. Assistant entries are always raw JSON in storage, so they are
-    // replaced with friendly canned text.
+    // user bubbles.
+    //
+    // Assistant entries used to be raw JSON in storage without exception, so this
+    // replaced every one of them with canned text. That stopped being true — the
+    // question, no-change and edit paths all persist real sentences now — but the
+    // replacement stayed, so reopening a page threw away every real answer and
+    // rendered a wall of "Done! The page has been updated.", including for turns
+    // that had never been an edit at all ("hey how are you"). Show what was
+    // stored; fall back to the canned line only for the JSON blobs written by
+    // older builds, which have no words in them to show.
     const restored: Message[] = [];
     let assistantSeen = false;
     for (let i = 0; i < history.length; i++) {
@@ -579,11 +587,17 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         if (Array.isArray(entry.image_urls) && entry.image_urls.length > 0) userEntry.image_urls = entry.image_urls;
         restored.push(userEntry);
       } else {
+        const stored = typeof entry.content === 'string' ? entry.content.trim() : '';
+        // A pre-fix row: {"type":"patch","schema_json":{…}} or
+        // {"type":"questions",…} from the create flow. Never shown raw.
+        const isLegacyPayload = !stored || stored.startsWith('{') || stored.startsWith('[');
         restored.push({
           role: 'assistant',
-          content: assistantSeen
-            ? 'Done! The page has been updated.'
-            : `Got it! Built your ${VERTICAL_LABELS[initialPage.vertical] ?? 'new'} page.`,
+          content: isLegacyPayload
+            ? assistantSeen
+              ? 'Done! The page has been updated.'
+              : `Got it! Built your ${VERTICAL_LABELS[initialPage.vertical] ?? 'new'} page.`
+            : stored,
         });
         assistantSeen = true;
       }
@@ -1663,7 +1677,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       return;
     }
 
-    type FollowUpDone = { html_url: string; schema_json?: unknown; competitor_fetch_failed?: boolean; elapsed_ms?: number; partial_message?: string; notes?: string };
+    type FollowUpDone = { html_url: string; schema_json?: unknown; competitor_fetch_failed?: boolean; elapsed_ms?: number; partial_message?: string; notes?: string; message?: string };
     let doneData: FollowUpDone | null = null;
     let followUpError = false;
     let clarifyMessage: string | null = null;
@@ -1678,6 +1692,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
           elapsed_ms: event.elapsed_ms,
           partial_message: event.partial_message,
           notes: event.notes,
+          message: event.message,
         };
       } else if (event.type === 'clarify') {
         clarifyMessage = event.message || 'Which part of the page should I edit?';
@@ -1725,6 +1740,12 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       // about work that did land goes through `notes`, which keeps the "Done!"
       // headline and raises no retry toast — a user told "Partly done" re-sends
       // the request, and re-doing finished work is how good edits get undone.
+      // What the model that did the work says it did. Every success message
+      // used to be this one fixed sentence, printed whether the turn nudged a
+      // logo or rebuilt a hero — the model knew what it had changed and had
+      // nowhere to say it. Falls back to the fixed copy on the paths where no
+      // model authored a sentence (full-page rebuild, deterministic splices).
+      const didIt = done.message?.trim() || 'Done! The page has been updated.';
       if (done.partial_message) {
         toast(`Partly done — some edits still need a retry.`, { icon: '⚠️' });
         addMessage({
@@ -1735,9 +1756,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       } else {
         addMessage({
           role: 'assistant',
-          content: done.notes
-            ? `Done! The page has been updated. ${done.notes}`
-            : 'Done! The page has been updated.',
+          content: done.notes ? `${didIt} ${done.notes}` : didIt,
           elapsedMs: done.elapsed_ms,
         });
       }
@@ -2072,7 +2091,10 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                           </ul>
                         </div>
                       ) : (
-                        <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed break-words">{msg.content}</p>
+                        // whitespace-pre-wrap: the edit reply is one line per thing
+                        // changed, so without it a three-part edit renders as one
+                        // run-on paragraph and the per-ask reporting is lost.
+                        <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed break-words whitespace-pre-wrap">{msg.content}</p>
                       )}
                       {/*
                         Prep found a page whose layout is pixel coordinates, so

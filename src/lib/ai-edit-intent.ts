@@ -56,6 +56,44 @@ export type EditAskOp = 'edit' | 'add' | 'remove' | 'reorder';
 export const MAX_ATTACHMENTS = 3;
 
 /**
+ * How many attachments from EARLIER turns are SHOWN to the classifier.
+ *
+ * There is deliberately no "look back N turns" rule. Which picture a message
+ * means is a judgement about the message, and a distance-in-turns test is the
+ * same kind of keyword gate this file exists to delete — "the image" three
+ * turns back and "the image" eleven turns back are the same ask.
+ *
+ * What IS a fact is cost: every vision attachment is ~IMAGE_TOKENS out of the
+ * same context window the page HTML has to fit in (see ai-context-budget.ts),
+ * so the number shown is bounded. The pool is filled most-recent-first, so the
+ * cap drops the images least likely to be the one meant.
+ */
+export const MAX_EARLIER_ATTACHMENTS = 6;
+
+/**
+ * How many of those the classifier may actually pull INTO this turn.
+ *
+ * Being shown a picture is cheap and reversible; carrying it into the edit is
+ * not — it lands in the rewrite's payload and displaces page context. Same
+ * ceiling as a fresh message's attachments, so no downstream call can be handed
+ * more images than it was ever designed to reason about.
+ */
+export const MAX_REUSED_ATTACHMENTS = MAX_ATTACHMENTS;
+
+/**
+ * One attachment from an earlier turn, offered back to the classifier.
+ *
+ * `note` is the user's own words from the turn that carried it. Without it the
+ * model sees a numbered pile of pictures and no way to connect "the image I
+ * sent about the headline" to any particular one.
+ */
+export interface EarlierAttachment {
+  url: string;
+  /** The message text this image was attached to, trimmed. */
+  note?: string;
+}
+
+/**
  * One note for every HTML-writing call that sees attached images.
  * Code must not split attachments into "embed all" vs "embed none" — the
  * instruction says what each file is for. Mixed "screenshot of where + photo
@@ -146,6 +184,20 @@ export interface EditIntent {
   bugReport: boolean;
   /** Per-attachment role, in the order the URLs were passed. */
   attachmentRoles: AttachmentRole[];
+  /**
+   * Attachments from EARLIER turns that THIS message is actually about, with
+   * the role each one plays now.
+   *
+   * The URLs were always in the conversation record and never sent to anything:
+   * a past attachment reached the model as the text "[attached 1 image(s)]", so
+   * "add the subheadline from the image" was answered by a model that had been
+   * told a picture existed and never shown it. It asked for a re-attach, the
+   * next turn was then forbidden from asking again (lastAssistantWasClarify →
+   * noQuestions) and dead-ended — two turns lost to an input we were holding.
+   *
+   * Empty for almost every message, which is exactly the old behaviour.
+   */
+  earlierImages: Array<{ url: string; role: AttachmentRole }>;
   /** Distinct asks in the message — a multi-part request is where asks get dropped. */
   asks: EditAsk[];
   /**
@@ -234,6 +286,7 @@ Respond with ONLY a JSON object. Begin with { and end with }. No prose, no markd
   "reuse_reference_copy": true|false,
   "bug_report": true|false,
   "attachment_roles": ["design_reference"|"bug_report"|"content_asset"|"locator", ...],
+  "earlier_images_used": [{ "index": 1, "role": "design_reference"|"bug_report"|"content_asset"|"locator" }],
   "asks": [{ "instruction": "<one self-contained ask>", "sections": ["<sl section name>"], "op": "edit"|"add"|"remove"|"reorder", "count": 1, "design_match": true|false, "image_indexes": [1] }],
   "constraints": ["<a condition on the other asks, not a job of its own>", ...],
   "full_rebuild": true|false,
@@ -265,6 +318,10 @@ Field meanings:
   - "design_reference": a look to copy. The section will be REBUILT from this picture, so only choose it when the user wants it to look like that.
   - "bug_report": it shows something broken or ugly on our own page — a complaint.
   - "locator": it shows a part of OUR page purely to say WHICH part the user means — "put the image of the hero section here as well", "this section", "the one shown here", an arrow or circle drawn on their own page. The picture is a pointer, nothing more: it is never embedded and never copied from. When the words describe the change and the picture only identifies the place, this is the role. Prefer it over "design_reference" whenever the user is pointing rather than asking for a new look — rebuilding a section from a screenshot of itself destroys whatever the screenshot did not happen to show.
+- "earlier_images_used": pictures the user attached in EARLIER messages. They are shown to you AFTER the current attachments, numbered E1, E2, … and listed with the words they were sent with. Most messages need none — leave it [].
+  - Use it when THIS message points back at a picture instead of re-attaching it: "add the subheadline from the image", "the screenshot I sent", "it's in the message above", "same style as the one before", "use that photo in the footer too". Also use it for a follow-up that only makes sense with that picture in view — "make it bigger", "that's not what I meant" straight after a screenshot turn.
+  - "index" is the E-number (E1 → 1). "role" uses the same four values as "attachment_roles", judged by what THIS message is doing with the picture NOW — an image that was a design to copy last turn can be a plain locator this turn, and the reverse. When in doubt prefer "locator": it lets you read and reason about the picture without ever putting the file itself on the page.
+  - Name ONLY what this message actually needs. Every one you list is re-sent to the editor and takes room away from the page's own HTML, so an irrelevant pick makes the edit worse, not safer. If nothing in the message points backwards, leave it [] even when earlier images exist.
 - "asks": split the message into distinct asks. "make the footer like this and in nav increase the logo size" is TWO asks. Use section names EXACTLY as listed when you can map the user's words to them. "everywhere" / "all logos" / "the top bar" / "the bottom" ARE mappable — put the matching live names (nav, footer, hero, …) on that ask. Never leave "sections" empty just because the user did not type the internal name. Never invent a name that is not in the list.
 - "op" on each ask — what KIND of job it is. This decides whether we modify a section or build a new one, so it matters more than the wording:
   - "edit": change something that already exists (restyle, recolour, resize, rewrite copy, fix spacing, align, replace an image). This is the default and covers most asks.
@@ -328,28 +385,83 @@ const OUTLINE_MAX_SECTIONS = 24;
  */
 export function buildConversationContext(
   history: Array<{ role: string; content: string; image_urls?: string[]; sections?: string[] }>,
-  turns = 6,
+  opts: {
+    turns?: number;
+    /**
+     * URLs that are actually being SENT as vision blocks on this request.
+     *
+     * Without it every past attachment was annotated "[attached 1 image(s)]"
+     * whether or not the model could see it — a flat claim that a picture
+     * exists, with no way to tell "look at it" from "you were never shown
+     * this". A model told an image is there and handed none can only ask the
+     * user to re-attach what they already sent. Omit to keep the old
+     * annotation exactly as it was (callers that send no history images).
+     */
+    availableImageUrls?: Set<string>;
+  } = {},
 ): string {
+  const { turns = 6, availableImageUrls } = opts;
   const recent = history.slice(-turns).filter((h) => typeof h.content === 'string' && h.content.trim());
   if (recent.length === 0) return '';
   const lines = recent.map((h) => {
     // A turn's attachment is often the only place it says WHERE. Flagging it
     // stops the model reading that turn as if it had named a section in words.
-    const shot = (h.image_urls?.length ?? 0) > 0 ? ` [attached ${h.image_urls!.length} image(s)]` : '';
+    const attached = (h.image_urls ?? []).filter((u) => typeof u === 'string' && u.trim());
+    let shot = '';
+    if (attached.length > 0) {
+      if (!availableImageUrls) {
+        shot = ` [attached ${attached.length} image(s)]`;
+      } else {
+        const shown = attached.filter((u) => availableImageUrls.has(u)).length;
+        shot =
+          shown === attached.length
+            ? ` [attached ${attached.length} image(s) — shown to you in this request]`
+            : shown > 0
+              ? ` [attached ${attached.length} image(s), ${shown} of them shown to you in this request]`
+              : ` [attached ${attached.length} image(s) — NOT shown to you in this request]`;
+      }
+    }
     if (h.role !== 'assistant') {
       const said = h.content.replace(/\s+/g, ' ').trim();
       return `User${shot}: ${said.length > 400 ? `${said.slice(0, 400)}…` : said}`;
     }
-    // Our own turns are stored as a JSON blob of the page schema. Replayed
-    // raw they were 400 characters of truncated JSON per turn — noise that
-    // buried the user's actual words and told the model nothing. What matters
-    // about a past turn of ours is which sections it changed, which is the
-    // very thing a correction like "no, use the hero's image" points back at.
+    // Our own turns: prefer what we actually SAID.
+    //
+    // These used to be stored as a JSON blob of the page schema, so the only
+    // usable fact about a past turn was the list of sections it touched. That
+    // is WHERE we worked, and it was the best available — but it is not WHAT we
+    // did, and a correction points at the what:
+    //
+    //   turn 1  user: "add the subheadline from the image"
+    //   turn 2  user: "make it smaller"
+    //
+    //   with sections only → "You: edited the hero section(s)."
+    //     "it" could be the subheadline, the headline, the video, the button.
+    //     The model has to guess, and a wrong guess resizes the wrong element.
+    //
+    //   with the sentence  → "You: Added the subheadline under the new headline
+    //                         in the hero."
+    //     "it" is the subheadline. Nothing to guess.
+    //
+    // The sentence is the richer answer and it contains the section anyway, so
+    // it wins whenever one was stored. `sections` stays as the fallback for the
+    // blob-era rows that have no words in them, and remains the thing this
+    // relies on when a turn genuinely wrote no sentence.
     const changed = h.sections?.filter(Boolean) ?? [];
-    if (changed.length > 0) return `You: edited the ${changed.join(' and ')} section(s).`;
     const said = h.content.trim();
-    if (said.startsWith('{') || said.startsWith('[')) return 'You: edited the page.';
-    return `You: ${said.length > 400 ? `${said.slice(0, 400)}…` : said}`;
+    const isLegacyPayload = !said || said.startsWith('{') || said.startsWith('[');
+    if (!isLegacyPayload) {
+      const line = said.length > 400 ? `${said.slice(0, 400)}…` : said;
+      // Sections are appended, never replaced by the sentence. On the paths
+      // where no model wrote one, the stored line is our own generic fallback
+      // ("Done! The page has been updated.") — richer than a blob, but it names
+      // nothing, so dropping `sections` there would lose the WHERE this whole
+      // block exists to preserve. Keeping both costs a few words and can never
+      // lose either half.
+      return changed.length > 0 ? `You: ${line} (changed: ${changed.join(', ')})` : `You: ${line}`;
+    }
+    if (changed.length > 0) return `You: edited the ${changed.join(' and ')} section(s).`;
+    return 'You: edited the page.';
   });
   return (
     'EARLIER IN THIS CONVERSATION — ALREADY DONE, NOT A TO-DO LIST.\n' +
@@ -429,7 +541,13 @@ export async function resolveSectionsForAsk(opts: {
       system:
         'You map one edit request to the sections of a landing page it affects. Reply with ONLY a JSON array of section names taken exactly from the provided list, most relevant first, e.g. ["footer"] or ["nav","footer"]. Reply [] if you genuinely cannot tell — a wrong guess puts the user\'s edit in the wrong place. Never invent a name that is not in the list.',
       messages: [{ role: 'user', content: userContent }],
-      maxTokens: 300,
+      // Sized for Haiku, which had no thinking overhead. Every call here runs
+      // on Sonnet 5, whose adaptive thinking is billed against this same
+      // ceiling BEFORE the answer starts — so a small budget can be spent
+      // entirely on thinking and truncate the response. Truncation here fails
+      // silently (see the catch below), so the loss is invisible. Costs
+      // nothing: Anthropic bills output actually generated, not this ceiling.
+      maxTokens: 32000,
       label: opts.label ?? 'edit-intent:resolve-sections',
       usage: opts.usage,
     });
@@ -513,7 +631,13 @@ export async function resolveInsertPlacement(opts: {
         'something below the footer. ' +
         'Reply {"anchor":null} only if you truly cannot tell.',
       messages: [{ role: 'user', content: userContent }],
-      maxTokens: 200,
+      // Sized for Haiku, which had no thinking overhead. Every call here runs
+      // on Sonnet 5, whose adaptive thinking is billed against this same
+      // ceiling BEFORE the answer starts — so a small budget can be spent
+      // entirely on thinking and truncate the response. Truncation here fails
+      // silently (see the catch below), so the loss is invisible. Costs
+      // nothing: Anthropic bills output actually generated, not this ceiling.
+      maxTokens: 32000,
       label: opts.label ?? 'edit-intent:resolve-insert-placement',
       usage: opts.usage,
     });
@@ -581,7 +705,13 @@ export async function resolveSectionOrder(opts: {
         'Do not add, drop, rename, or invent names. ' +
         'Reply [] if the request does not actually call for a change of order.',
       messages: [{ role: 'user', content: userContent }],
-      maxTokens: 400,
+      // Sized for Haiku, which had no thinking overhead. Every call here runs
+      // on Sonnet 5, whose adaptive thinking is billed against this same
+      // ceiling BEFORE the answer starts — so a small budget can be spent
+      // entirely on thinking and truncate the response. Truncation here fails
+      // silently (see the catch below), so the loss is invisible. Costs
+      // nothing: Anthropic bills output actually generated, not this ceiling.
+      maxTokens: 32000,
       label: opts.label ?? 'edit-intent:resolve-section-order',
       usage: opts.usage,
     });
@@ -678,7 +808,13 @@ export async function resolveEditRegion(opts: {
         'because every section inside it gets rewritten and risks changing. ' +
         'Reply {"start":null} if you cannot tell which sections are involved.',
       messages: [{ role: 'user', content: userContent }],
-      maxTokens: 200,
+      // Sized for Haiku, which had no thinking overhead. Every call here runs
+      // on Sonnet 5, whose adaptive thinking is billed against this same
+      // ceiling BEFORE the answer starts — so a small budget can be spent
+      // entirely on thinking and truncate the response. Truncation here fails
+      // silently (see the catch below), so the loss is invisible. Costs
+      // nothing: Anthropic bills output actually generated, not this ceiling.
+      maxTokens: 32000,
       label: opts.label ?? 'edit-intent:resolve-region',
       usage: opts.usage,
     });
@@ -722,6 +858,12 @@ export async function classifyEditIntent(opts: {
   sectionOutline?: SectionOutlineEntry[];
   /** Attached image URLs for this message, in order. */
   imageUrls?: string[];
+  /**
+   * Attachments from earlier turns, oldest first — offered, not applied. The
+   * model picks which (if any) this message is pointing back at; see
+   * EditIntent.earlierImages.
+   */
+  earlierImages?: EarlierAttachment[];
   /** Site URLs seen in earlier turns, oldest first. */
   earlierUrls?: string[];
   /** URLs already in the page we could be asked to keep/verify. */
@@ -740,6 +882,12 @@ export async function classifyEditIntent(opts: {
   // and then got the default role downstream — "design_reference", i.e. rebuild
   // a section from a picture the model was never shown.
   const images = (opts.imageUrls ?? []).slice(0, MAX_ATTACHMENTS);
+  // Never offer back a picture that is already attached to THIS message —
+  // the same file twice would be two candidates for one ask, and any index the
+  // model returned for the duplicate would silently re-add what it already has.
+  const earlier = (opts.earlierImages ?? [])
+    .filter((a) => a && typeof a.url === 'string' && /^https?:\/\//i.test(a.url) && !images.includes(a.url))
+    .slice(0, MAX_EARLIER_ATTACHMENTS);
   const outline = opts.sectionOutline && opts.sectionOutline.length > 0
     ? buildSectionOutline(opts.sectionOutline)
     : null;
@@ -762,6 +910,16 @@ export async function classifyEditIntent(opts: {
     opts.earlierUrls && opts.earlierUrls.length > 0
       ? `URLs the user gave in earlier messages (most recent last): ${opts.earlierUrls.slice(-4).join(', ')}`
       : 'URLs the user gave in earlier messages: (none)',
+    ...(earlier.length > 0
+      ? [
+          '',
+          `Images attached in EARLIER messages, shown to you above after this message's own attachments. Use "earlier_images_used" to pull any of them into this turn:`,
+          ...earlier.map(
+            (a, i) =>
+              `E${i + 1}. sent with: ${a.note ? `"${a.note}"` : '(no message text)'}`,
+          ),
+        ]
+      : []),
     '',
     // The turns before this one. "logo looks too small" only means something
     // if you know a logo was just generated; "do the same for the footer"
@@ -770,8 +928,22 @@ export async function classifyEditIntent(opts: {
     `User message:\n${prompt}`,
   ].join('\n');
 
+  // Current attachments first, then a labelled divider, then the earlier ones.
+  // The divider is what makes the two groups distinguishable at all: images
+  // arrive as an unnamed sequence, so without it "the third picture" could be
+  // this message's or one from five turns ago, and attachment_roles (indexed
+  // over THIS message only) would drift onto the wrong file.
   const userContent: AIContent = [
     ...images.map((url): AIContentBlock => ({ type: 'image', url })),
+    ...(earlier.length > 0
+      ? [
+          {
+            type: 'text' as const,
+            text: `--- The next ${earlier.length} image(s) are E1${earlier.length > 1 ? `–E${earlier.length}` : ''}: attachments from EARLIER messages, not this one. They are NOT part of "attachment_roles" (that field describes only the ${images.length} image(s) attached to this message). Reference them through "earlier_images_used" instead. ---`,
+          },
+          ...earlier.map((a): AIContentBlock => ({ type: 'image', url: a.url })),
+        ]
+      : []),
     { type: 'text', text: context },
   ];
 
@@ -801,7 +973,9 @@ export async function classifyEditIntent(opts: {
     return null;
   }
 
-  return normalizeIntent(raw, { ...opts, prompt });
+  // The pool passed here is the FILTERED one the model was actually shown, so
+  // an E-number always indexes the same image at both ends of the call.
+  return normalizeIntent(raw, { ...opts, prompt, earlierImageUrls: earlier.map((a) => a.url) });
 }
 
 /** Validate/clamp the model's answer against what actually exists on the page. */
@@ -811,6 +985,8 @@ export function normalizeIntent(
     prompt?: string;
     sectionNames: string[];
     imageUrls?: string[];
+    /** The earlier-turn pool the model was shown, in E-number order. */
+    earlierImageUrls?: string[];
     earlierUrls?: string[];
     embeddableAssetUrls?: string[];
   },
@@ -893,6 +1069,57 @@ export function normalizeIntent(
     );
   }
 
+  // Earlier-turn attachments the model asked to reuse. Resolved by E-number
+  // against the pool it was actually shown, so an index it invented (or one
+  // pointing past the end of the pool) is dropped rather than silently landing
+  // on a different picture than the one it read.
+  const earlierPool = (opts.earlierImageUrls ?? []).slice(0, MAX_EARLIER_ATTACHMENTS);
+  const earlierImages: Array<{ url: string; role: AttachmentRole }> = [];
+  const rawEarlierUsed = Array.isArray(raw.earlier_images_used) ? raw.earlier_images_used : [];
+  for (const entry of rawEarlierUsed) {
+    let oneBased = NaN;
+    let claimedRole: unknown;
+    if (typeof entry === 'number') {
+      oneBased = entry;
+    } else if (typeof entry === 'string') {
+      // Tolerate "E2" / "2" — the prompt names them E1, E2, so the model
+      // echoing that label back is a near-certainty, not a malformed answer.
+      oneBased = Number(entry.trim().replace(/^e/i, ''));
+    } else if (entry && typeof entry === 'object') {
+      const rec = entry as Record<string, unknown>;
+      const idx = rec.index;
+      oneBased =
+        typeof idx === 'number'
+          ? idx
+          : typeof idx === 'string'
+            ? Number(idx.trim().replace(/^e/i, ''))
+            : NaN;
+      claimedRole = rec.role;
+    }
+    if (!Number.isFinite(oneBased)) continue;
+    const at = Math.floor(oneBased) - 1;
+    if (at < 0 || at >= earlierPool.length) continue;
+    const url = earlierPool[at];
+    if (earlierImages.some((e) => e.url === url)) continue;
+    earlierImages.push({
+      url,
+      // 'locator' is the safe default here, NOT 'design_reference'. A reused
+      // picture arrives with no fresh statement of what it is for, and
+      // design_reference means "rebuild that section from this image" — the
+      // most destructive reading in the system, and the last one to assume
+      // about a file the user merely pointed back at. A locator is fully
+      // readable (copy, colours, layout) and is never embedded or recreated.
+      role:
+        claimedRole === 'bug_report' ||
+        claimedRole === 'content_asset' ||
+        claimedRole === 'design_reference' ||
+        claimedRole === 'locator'
+          ? claimedRole
+          : 'locator',
+    });
+    if (earlierImages.length >= MAX_REUSED_ATTACHMENTS) break;
+  }
+
   // A source URL is only usable if the user actually gave it to us: this message
   // or an earlier turn. Never a URL the model recalled or invented.
   const claimedUrl = typeof raw.source_url === 'string' ? raw.source_url.trim() : '';
@@ -957,6 +1184,7 @@ export function normalizeIntent(
     reuseReferenceCopy: truthy(raw.reuse_reference_copy),
     bugReport: truthy(raw.bug_report) || roles.includes('bug_report'),
     attachmentRoles: roles,
+    earlierImages,
     asks,
     constraints,
     targetSections: targetSections.slice(0, 6),
@@ -998,6 +1226,19 @@ export function imageRolesFromIntent(
   role: 'design_reference' | 'bug_reference' | 'content_asset' | 'locator';
 }> {
   return imageUrls.map((url, i) => {
+    // Reused earlier attachments are appended AFTER this message's own, so
+    // attachmentRoles (which only ever covers this message) has no entry at
+    // their index — a positional read would fall through to the default chain
+    // and land on 'design_reference', i.e. "rebuild a section from this
+    // picture", for a file the classifier had already labelled a locator.
+    // Matched by URL so position cannot matter.
+    const reused = (intent.earlierImages ?? []).find((e) => e.url === url);
+    if (reused) {
+      return {
+        url,
+        role: reused.role === 'bug_report' ? ('bug_reference' as const) : reused.role,
+      };
+    }
     const raw = intent.attachmentRoles[i];
     let role: 'design_reference' | 'bug_reference' | 'content_asset' | 'locator' =
       raw === 'content_asset'

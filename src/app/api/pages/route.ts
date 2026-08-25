@@ -4,6 +4,13 @@ import { authOptions } from '@/lib/auth';
 import { resolveWorkspaceRole } from '@/lib/workspace-auth';
 import { createPage } from '@/lib/services/pages';
 
+// Taking in HTML now also copies its images into our storage (see
+// takeOwnershipOfHtmlAssets), which is network work proportional to how many
+// images the page has. On the platform default (~10-15s) an image-heavy page
+// would be killed mid-copy, leaving it half-owned. Well under the 800s the AI
+// routes use — this is downloads, not generation.
+export const maxDuration = 300;
+
 export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

@@ -2,9 +2,17 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
-import { uploadHtml, inlineDataUrisToStorage } from '@/lib/storage';
+import { uploadHtml } from '@/lib/storage';
 import { resolveWorkspaceRole } from '@/lib/workspace-auth';
 import { rescanVariantHtml } from '@/lib/services/scan';
+import { takeOwnershipOfHtmlAssets } from '@/lib/ai-asset-integrity';
+
+// Uploading now also copies every foreign image into our storage (see below),
+// which is network work proportional to how many images the page has. On the
+// platform default (~10-15s) an image-heavy import would have been killed
+// mid-copy, so this route needs a real ceiling. Well under the 800s used by
+// the AI routes — this is downloads, not generation.
+export const maxDuration = 300;
 
 export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -43,7 +51,12 @@ export async function POST(request: NextRequest) {
     const pageId = crypto.randomUUID();
     // Swap embedded base64 images for real hosted files before this HTML is
     // ever stored — see storage.ts's inlineDataUrisToStorage for why.
-    const convertedHtml = await inlineDataUrisToStorage(html_content, pageId);
+    // Both ways a page can arrive depending on someone else — base64 inlined in
+    // the markup, and <img> tags pointing at whoever built it — closed in one
+    // call, the same one every other HTML intake uses. See
+    // takeOwnershipOfHtmlAssets for why this belongs at intake and not later.
+    const convertedHtml = (await takeOwnershipOfHtmlAssets(html_content, pageId)).html;
+
     const storagePath = `pages/${workspace_id}/${pageId}.html`;
     const publicUrl = await uploadHtml(storagePath, convertedHtml);
 
