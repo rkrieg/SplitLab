@@ -7,18 +7,20 @@ import { resolveWorkspaceRole } from '@/lib/workspace-auth';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120; // PageSpeed runs are slow
 
-// Google PageSpeed Insights (Lighthouse) performance score, 0-100. Null on failure.
-async function psiScore(url: string, strategy: 'mobile' | 'desktop'): Promise<number | null> {
+// Google PageSpeed Insights (Lighthouse) performance score, 0-100.
+// Returns the score plus the HTTP status so the caller can tell a rate-limit
+// (429 — usually a missing PAGESPEED_API_KEY) apart from an unreachable page.
+async function psiScore(url: string, strategy: 'mobile' | 'desktop'): Promise<{ score: number | null; status: number }> {
   const key = process.env.PAGESPEED_API_KEY;
   const api = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(url)}&strategy=${strategy}&category=performance${key ? `&key=${key}` : ''}`;
   try {
     const res = await fetch(api, { cache: 'no-store' });
-    if (!res.ok) return null;
+    if (!res.ok) return { score: null, status: res.status };
     const data = await res.json();
     const score = data?.lighthouseResult?.categories?.performance?.score;
-    return typeof score === 'number' ? Math.round(score * 100) : null;
+    return { score: typeof score === 'number' ? Math.round(score * 100) : null, status: 200 };
   } catch {
-    return null;
+    return { score: null, status: 0 };
   }
 }
 
@@ -73,9 +75,16 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
     return NextResponse.json({ error: 'This variant has no page to speed-test yet.' }, { status: 400 });
   }
 
-  const [mobile, desktop] = await Promise.all([psiScore(url, 'mobile'), psiScore(url, 'desktop')]);
+  const [m, d] = await Promise.all([psiScore(url, 'mobile'), psiScore(url, 'desktop')]);
+  const mobile = m.score, desktop = d.score;
   if (mobile == null && desktop == null) {
-    return NextResponse.json({ error: 'PageSpeed test failed (URL may be unreachable). Try again.' }, { status: 502 });
+    const rateLimited = m.status === 429 || d.status === 429;
+    return NextResponse.json({
+      error: rateLimited
+        ? 'PageSpeed daily quota reached. Add a free PAGESPEED_API_KEY to enable speed tests.'
+        : 'PageSpeed could not load this page. Try again.',
+      rateLimited,
+    }, { status: 502 });
   }
 
   const testedAt = new Date().toISOString();
