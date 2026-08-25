@@ -62,6 +62,7 @@ import {
 } from '@/lib/ai-edit-intent';
 import { ensureClickToEditFields } from '@/lib/ai-data-field-stamp';
 import { verifyAndRehostHtmlImages, applyRehostMap } from '@/lib/ai-asset-integrity';
+import { measureAssetPlacement, describeAssetPlacement } from '@/lib/asset-placement';
 import {
   findUnrequestedLosses,
   hasLosses,
@@ -2796,12 +2797,32 @@ export async function POST(
   // "We couldn't find a usable headshot/product photo on that page" — about a
   // site the user never mentioned. When they hand us an image, that image is
   // the source; never go fetch a different one.
-  if (competitorUrls.length === 0 && !hasUserImages) {
+  //
+  // Link-imported photos count as "they handed us an image" for exactly the
+  // reason above, and did not used to: they travel in `asset_library`, not in
+  // image_urls, so `hasUserImages` scored them zero. Paste a Drive folder,
+  // then say "use the red car as the footer background", and this block went
+  // hunting through history for a website instead of using the four photos
+  // sitting in front of it.
+  if (competitorUrls.length === 0 && !hasUserImages && libraryAssets.length === 0) {
     const inherited =
       intent.usesEarlierSource && (intent.assetSource || intent.fullRebuild)
         ? intent.sourceUrl
         : null;
-    if (inherited && !(await isImageUrl(inherited))) {
+    // Same test the current-turn filter runs (see `competitorUrls` above). A
+    // URL arriving from history skipped it entirely, so a Drive folder that
+    // was correctly refused as a design reference on the turn it was pasted
+    // came back in as one on the next turn — and the scrape branches below are
+    // fetch-or-die, so scraping a folder listing for a headshot ended the turn
+    // with an error and the page untouched. isImageUrl alone never caught it:
+    // a folder link is not a direct image.
+    const inheritedKind = inherited ? classifyAssetSource(inherited) : null;
+    if (inheritedKind && inheritedKind !== 'webpage') {
+      console.log('[pages/follow-up] not inheriting asset-source URL as a competitor site', {
+        url: inherited,
+        kind: inheritedKind,
+      });
+    } else if (inherited && !(await isImageUrl(inherited))) {
       competitorUrls.push(inherited);
       console.log('[pages/follow-up] inherited source URL from history', { url: inherited });
     }
@@ -6251,6 +6272,30 @@ export async function POST(
       // Reconstructed to match the client's own composition exactly (see
       // sendFollowUp), so reopening the page shows what the user actually read
       // rather than an approximation of it.
+      // Photos imported from a link ON THIS TURN, checked against the HTML
+      // we are about to persist. Scoped to this turn deliberately: the library
+      // above also holds files carried forward from earlier turns, and a file
+      // the user imported four turns ago and never asked to place would
+      // otherwise generate the same complaint on every message since.
+      //
+      // A note, never a block. Declining to place a photo is often correct —
+      // the edit may have had nothing to do with imagery. What was wrong was
+      // saying nothing, which left "imported four, used none" looking like a
+      // broken fetch.
+      if (currentTurnLibraryCount > 0) {
+        const placement = measureAssetPlacement(
+          libraryAssets.slice(0, currentTurnLibraryCount),
+          finalHtmlPersisted,
+        );
+        console.log('[pages/follow-up] asset library placement', {
+          imported: placement.imported,
+          placed: placement.placed,
+          unused: placement.unusedNames,
+        });
+        const placementNote = describeAssetPlacement(placement);
+        if (placementNote) addNote(placementNote);
+      }
+
       const doneHeadline = editorMessage ?? 'Done! The page has been updated.';
       const assistantReply = partialMessage
         ? `Partly done (not fully finished). ${partialMessage}${pageNotes.length > 0 ? ` ${pageNotes.join(' ')}` : ''}`

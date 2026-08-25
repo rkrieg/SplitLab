@@ -389,6 +389,14 @@ export async function POST(request: NextRequest) {
     const viewableAssets = libraryAssets.filter((a) => VIEWABLE_EXT_RE.test(a.url));
     const unviewableAssets = libraryAssets.filter((a) => !VIEWABLE_EXT_RE.test(a.url));
 
+    if (libraryAssets.length > 0) {
+      console.log('[pages/generate] asset library', {
+        count: libraryAssets.length,
+        viewable: viewableAssets.length,
+        unviewable: unviewableAssets.length,
+      });
+    }
+
     const assetLibraryNote =
       libraryAssets.length > 0
         ? `\n\n## The client's own images — USE THESE, do not invent replacements\nThese ${libraryAssets.length} file(s) are real photos/logos the user supplied for this page. They are already hosted and safe to embed.\n` +

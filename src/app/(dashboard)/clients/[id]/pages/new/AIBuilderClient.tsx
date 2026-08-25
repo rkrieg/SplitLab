@@ -20,6 +20,7 @@ import { LiveProgressPanel } from '@/components/ai/LiveProgressPanel';
 // client-side. Used by the rebuild-block modal's Reupload flow to check
 // pasted HTML instantly and for free, before ever touching the network.
 import { analyzePageLayout } from '@/lib/ai-page-layout';
+import { describeAssetPlacement } from '@/lib/asset-placement';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -1581,6 +1582,11 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         ...(typeof reuseReferenceCopy === 'boolean' ? { reuse_reference_copy: reuseReferenceCopy } : {}),
         ...(designCopySections && designCopySections.length > 0 ? { design_copy_sections: designCopySections } : {}),
         ...(minimalShape ? { minimal_shape: true } : {}),
+        // Sent for MEASUREMENT only — the schema step already consumed these
+        // and wrote the ones it wanted onto generated_image_url. Build compares
+        // them against the finished HTML so we can tell the user how many
+        // landed. Still on the ref here; runGenerate clears it after we return.
+        ...(createLibraryRef.current.length > 0 ? { asset_library: createLibraryRef.current } : {}),
         ...(modelRequirements && modelRequirements.length > 0 ? { requirements: modelRequirements } : {}),
         ...((freshScreenshots ?? competitorScreenshots)?.length ? { competitor_screenshots: freshScreenshots ?? competitorScreenshots } : {}),
         ...(((freshCssTokens ?? competitorCssTokens)) ? { competitor_css_tokens: freshCssTokens ?? competitorCssTokens } : {}),
@@ -1604,6 +1610,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     let buildError = false;
     let unmetRequirements: string | null = null;
     let brokenAssets = 0;
+    let assetPlacementNote: string | null = null;
 
     await readSSEStream(res, (event) => {
       setBuildEvents(prev => [...prev, event]);
@@ -1613,6 +1620,15 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         finalSchema = event.schema_json ?? schema;
         unmetRequirements = event.unmet_requirements ?? null;
         brokenAssets = event.broken_assets ?? 0;
+        // Only sent when this build had link-imported files at all, so an
+        // ordinary build never produces a note about images it never had.
+        if (typeof event.imported_assets === 'number' && typeof event.placed_assets === 'number') {
+          assetPlacementNote = describeAssetPlacement({
+            imported: event.imported_assets,
+            placed: event.placed_assets,
+            unusedNames: event.unused_asset_names ?? [],
+          });
+        }
       } else if (event.type === 'error') {
         buildError = true;
         toast.error(event.message || 'Build failed');
@@ -1660,9 +1676,13 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     // An image URL that didn't respond is a note about the page, not an ask we
     // failed — it used to be listed alongside unmet asks under "not everything
     // landed", which reads as "you ignored me" on a page that is in fact done.
-    const note = brokenAssets > 0
+    const note = (brokenAssets > 0
       ? ` ${brokenAssets} image URL(s) couldn't be loaded and were left as they were.`
-      : '';
+      : '')
+      // Placing none of the user's imported photos can be the right call, but
+      // saying nothing about it reads as the import having failed — which is
+      // exactly how it was read. Name the outcome either way.
+      + (assetPlacementNote ? ` ${assetPlacementNote}` : '');
     if (unmetRequirements) {
       toast('Built, but some asks need another pass.', { icon: '⚠️' });
       addMessage({
