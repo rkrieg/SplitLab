@@ -670,6 +670,31 @@ export default function AnalyticsClient({
   const [clarityTokenDraft, setClarityTokenDraft] = useState('');
   const [claritySaving, setClaritySaving] = useState(false);
 
+  // UTM & ad-click forwarding toggle (per-test, default ON)
+  const [forwardParams, setForwardParams] = useState<boolean>(
+    ((initialTest as unknown) as { forward_url_params?: boolean }).forward_url_params !== false,
+  );
+  const [savingForwardParams, setSavingForwardParams] = useState(false);
+
+  async function toggleForwardParams(next: boolean) {
+    setForwardParams(next); // optimistic
+    setSavingForwardParams(true);
+    try {
+      const res = await fetch(`/api/tests/${test.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ forward_url_params: next }),
+      });
+      if (!res.ok) { setForwardParams(!next); toast.error("Failed to update setting"); return; }
+      toast.success(next ? "UTM forwarding enabled" : "UTM forwarding disabled");
+    } catch {
+      setForwardParams(!next);
+      toast.error("Failed to update setting");
+    } finally {
+      setSavingForwardParams(false);
+    }
+  }
+
   // AI Insights (per-variant read + recommendations from our data + optional Clarity)
   const _initialInsights = ((initialTest as unknown) as { ai_insights?: AiInsights }).ai_insights ?? null;
   const [aiInsights, setAiInsights] = useState<AiInsights | null>(_initialInsights);
@@ -5353,23 +5378,32 @@ export default function AnalyticsClient({
         {/* ─── SETTINGS TAB ─── */}
         {tab === "settings" && (
           <>
-            {/* UTM & ad-click forwarding (always on — informational) */}
-            <div className="card overflow-hidden border-green-500/30 bg-green-500/5">
+            {/* UTM & ad-click forwarding (per-test toggle, default ON) */}
+            <div className={`card overflow-hidden ${forwardParams ? "border-green-500/30 bg-green-500/5" : ""}`}>
               <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700 flex items-center gap-3">
-                <div className="w-8 h-8 rounded-lg bg-green-500/20 flex items-center justify-center">
-                  <CheckCircle2 size={16} className="text-green-600 dark:text-green-400" />
+                <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${forwardParams ? "bg-green-500/20" : "bg-slate-200 dark:bg-slate-700"}`}>
+                  <ArrowRight size={16} className={forwardParams ? "text-green-600 dark:text-green-400" : "text-slate-400"} />
                 </div>
                 <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <p className="font-medium text-slate-800 dark:text-slate-200 text-sm">UTM &amp; ad-click forwarding</p>
-                    <span className="flex items-center gap-1 text-xs font-medium text-green-500">
-                      <CheckCircle2 size={12} /> On
-                    </span>
-                  </div>
+                  <p className="font-medium text-slate-800 dark:text-slate-200 text-sm">UTM &amp; ad-click forwarding</p>
                   <p className="text-slate-500 dark:text-slate-400 text-xs mt-0.5">
-                    Automatically captured and passed through — no setup needed
+                    {forwardParams
+                      ? "On — captured and passed through automatically, no setup needed"
+                      : "Off — ad params are not forwarded to outbound destinations"}
                   </p>
                 </div>
+                {userRole !== "viewer" && (
+                  <button
+                    role="switch"
+                    aria-checked={forwardParams}
+                    aria-label="Toggle UTM & ad-click forwarding"
+                    disabled={savingForwardParams}
+                    onClick={() => toggleForwardParams(!forwardParams)}
+                    className={`relative inline-flex h-6 w-11 flex-shrink-0 rounded-full transition-colors disabled:opacity-50 ${forwardParams ? "bg-green-500" : "bg-slate-300 dark:bg-slate-600"}`}
+                  >
+                    <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform mt-0.5 ${forwardParams ? "translate-x-[22px]" : "translate-x-0.5"}`} />
+                  </button>
+                )}
               </div>
               <div className="px-5 py-4 space-y-3 text-sm text-slate-600 dark:text-slate-300">
                 <p>

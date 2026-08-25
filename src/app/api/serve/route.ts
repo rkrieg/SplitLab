@@ -332,13 +332,15 @@ export async function GET(request: NextRequest) {
         // the preview's pageviews, conversions and form leads.
         const proxyTrackingSnippet = buildTrackingSnippet(
           test.id, selectedVariant.id, visitorId, proxyGoals || [], APP_URL, customParamNames,
-          isPreview ? 'preview' : (overVisitorCap ? 'cap' : '')
+          isPreview ? 'preview' : (overVisitorCap ? 'cap' : ''),
+          test.forward_url_params !== false
         );
 
         const iframeUrlObj = new URL(selectedVariant.redirect_url);
         // Forward first, then set our own params — the deny-list keeps sl_* out
-        // of the forward, so ours are still set exactly once, below.
-        forwardInboundParams(iframeUrlObj, searchParams);
+        // of the forward, so ours are still set exactly once, below. Gated by the
+        // per-test UTM-forwarding switch.
+        if (test.forward_url_params !== false) forwardInboundParams(iframeUrlObj, searchParams);
         iframeUrlObj.searchParams.set('sl_vid', selectedVariant.id);
         iframeUrlObj.searchParams.set('sl_vh', visitorId);
         if (isScan) iframeUrlObj.searchParams.set('sl_scan', '1');
@@ -408,7 +410,7 @@ ${proxyTrackingSnippet}
       // same-domain destinations are supported — cross-domain (Calendly etc.)
       // would need sl_vid appended to outbound links, which isn't built yet.
       const redirectUrl = new URL(selectedVariant.redirect_url);
-      forwardInboundParams(redirectUrl, searchParams);
+      if (test.forward_url_params !== false) forwardInboundParams(redirectUrl, searchParams);
       redirectUrl.searchParams.set('sl_vid', selectedVariant.id);
       redirectUrl.searchParams.set('sl_vh', visitorId);
       if (isScan) redirectUrl.searchParams.set('sl_scan', '1');
@@ -544,7 +546,8 @@ ${proxyTrackingSnippet}
       goals || [],
       APP_URL,
       customParamNames,
-      isPreview ? 'preview' : (overVisitorCap ? 'cap' : '')
+      isPreview ? 'preview' : (overVisitorCap ? 'cap' : ''),
+      test.forward_url_params !== false
     );
 
     // 10. Inject UTM swap script (client-side, reads window.location.search)

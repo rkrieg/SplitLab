@@ -24,7 +24,15 @@ export function buildTrackingSnippet(
    * 'preview' also sticks for the rest of the tab (see below); 'cap' does not,
    * since the cap is re-evaluated server-side on every request.
    */
-  muteMode: '' | 'preview' | 'cap' = ''
+  muteMode: '' | 'preview' | 'cap' = '',
+  /**
+   * Per-test switch (tests.forward_url_params). When false, UTM / ad-click params
+   * are NOT appended to outbound link clicks or redirects. The sl_* tracking
+   * context (needed for cross-domain conversion attribution) and lead-form
+   * hidden-field capture are unaffected — only the pass-through to the next URL
+   * is disabled. Default true.
+   */
+  forwardParams: boolean = true
 ): string {
   const goalsJson = JSON.stringify(
     goals.map((g) => ({
@@ -99,6 +107,10 @@ export function buildTrackingSnippet(
   // cap all use it, so none of them can record a pageview, a conversion or a
   // form lead — the three always move together.
   var _mute = _isScan || _isPreview || ${JSON.stringify(muteMode === 'cap')};
+  // Per-test switch: forward UTM/ad-click params onto outbound destinations.
+  // Off = don't append them to links/redirects (sl_* context still rides
+  // cross-domain for tracking; lead-form capture is unaffected).
+  var _forwardParams = ${JSON.stringify(forwardParams)};
 
   // ─── Cross-page context persistence ─────────────────────────────────────────
   // Persist this test's context (variant, visitor, url_reached goals) keyed per
@@ -307,8 +319,9 @@ export function buildTrackingSnippet(
       }
 
       // Carry the visitor's ad params (utm_*, gclid, fbclid, custom) onto the
-      // destination URL — the whole point of the forwarding.
-      var p = trackingParams(), k;
+      // destination URL — the whole point of the forwarding. Gated by the
+      // per-test switch; sl_* above still rides so tracking is never affected.
+      var p = _forwardParams ? trackingParams() : {}, k;
       var len = u.toString().length;
       var added = false;
       for (k in p) {
