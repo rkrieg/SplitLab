@@ -128,7 +128,8 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
     .eq('type', 'clarity')
     .eq('enabled', true)
     .limit(1);
-  const clarityToken = (clarityInt?.[0]?.config as { api_token?: string } | null)?.api_token;
+  // Per-workspace token wins; otherwise the global agency token from env.
+  const clarityToken = (clarityInt?.[0]?.config as { api_token?: string } | null)?.api_token || process.env.CLARITY_API_TOKEN;
   const clarity = clarityToken ? await fetchClarity(clarityToken) : { ok: false, note: 'Clarity not connected (add a Data Export API token for behavioral signals).' };
 
   // 3. Ask the model for structured insights.

@@ -504,7 +504,10 @@ ${proxyTrackingSnippet}
     // session with this variant (sl_variant) so recordings/heatmaps can be
     // filtered per variant inside Clarity. Hosted HTML variants only — proxy
     // and redirect variants render a page we don't control.
-    const clarityProjectId = (clarityIntegration?.[0]?.config as { project_id?: string | null } | null)?.project_id;
+    // Per-workspace project id wins; otherwise fall back to a global agency-wide
+    // project set via env (CLARITY_PROJECT_ID) so every client gets Clarity with
+    // zero per-client setup.
+    const clarityProjectId = (clarityIntegration?.[0]?.config as { project_id?: string | null } | null)?.project_id || process.env.CLARITY_PROJECT_ID;
     if (clarityProjectId && /^[a-z0-9]+$/i.test(String(clarityProjectId))) {
       headScripts.push(buildClaritySnippet(String(clarityProjectId), selectedVariant.name));
     }
