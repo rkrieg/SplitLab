@@ -26,6 +26,7 @@ const NO_FORWARD_PARAMS = new Set([
   'sl_vid',          // set explicitly below; also read as forcedVid, so a
   'sl_vh',           // forwarded value could pin the wrong variant
   'sl_scan',         // handled explicitly via isScan
+  'sl_preview',      // set explicitly below when this request is a preview
   'sl_tid',          // not read here, reserved — excluded for symmetry with decorate()
   'preview_test_id', // dashboard-only, must not escape to a destination
 ]);
@@ -70,6 +71,10 @@ export async function GET(request: NextRequest) {
   const domain = searchParams.get('domain') || '';
   const urlPath = searchParams.get('path') || '/';
   const isScan = searchParams.get('sl_scan') === '1';
+  // Dashboard preview. sl_vh is only ever set on a URL the dashboard built, so
+  // its presence IS the preview signal; sl_preview is accepted too so a preview
+  // tab that navigates to a second SplitLab page stays a preview.
+  const isPreview = searchParams.has('sl_vh') || searchParams.get('sl_preview') === '1';
   const forcedVid = searchParams.get('sl_vid') || null;
   const forcedVh = searchParams.get('sl_vh') || null;
   // Visitor-facing URL forwarded by the shareable-link route ([slug]/[testId]),
@@ -198,7 +203,7 @@ export async function GET(request: NextRequest) {
     // 4b. Visitor cap check (skip for scan and Open-button/forcedVh and returning visitors)
     // previewTestId is NOT excluded — for free users the preview URL is the real traffic URL
     let overVisitorCap = false;
-    if (!isScan && !forcedVh && !existingCookie) {
+    if (!isScan && !isPreview && !existingCookie) {
       // Resolve workspace → client → owner
       const { data: wsRow } = await db
         .from('workspaces')
@@ -321,8 +326,13 @@ export async function GET(request: NextRequest) {
           .eq('test_id', test.id)
           .or(`variant_id.is.null,variant_id.eq.${selectedVariant.id}`);
 
-        const proxyTrackingSnippet = (overVisitorCap || forcedVh) ? '' : buildTrackingSnippet(
-          test.id, selectedVariant.id, visitorId, proxyGoals || [], APP_URL, customParamNames
+        // Muted, never omitted: the snippet is what sets __SL_SNIPPET__, and that
+        // flag is the only thing keeping a site-wide tracker.js tag dormant.
+        // Dropping the snippet used to wake that tracker up, which then recorded
+        // the preview's pageviews, conversions and form leads.
+        const proxyTrackingSnippet = buildTrackingSnippet(
+          test.id, selectedVariant.id, visitorId, proxyGoals || [], APP_URL, customParamNames,
+          isPreview ? 'preview' : (overVisitorCap ? 'cap' : '')
         );
 
         const iframeUrlObj = new URL(selectedVariant.redirect_url);
@@ -332,6 +342,9 @@ export async function GET(request: NextRequest) {
         iframeUrlObj.searchParams.set('sl_vid', selectedVariant.id);
         iframeUrlObj.searchParams.set('sl_vh', visitorId);
         if (isScan) iframeUrlObj.searchParams.set('sl_scan', '1');
+        // Tells tracker.js on the destination to stay silent — the wrapper's own
+        // snippet is muted, but the destination runs its own copy.
+        if (isPreview) iframeUrlObj.searchParams.set('sl_preview', '1');
         // tracker.js runs inside the iframe, so window.location.href there is the
         // redirect_url — never the wrapper URL the visitor actually sees, which it
         // can't read cross-origin. Hand the wrapper URL down so form leads report
@@ -362,7 +375,7 @@ ${proxyTrackingSnippet}
 </html>`;
 
         // Record server-side pageview (skip for cap, scan, and Open-button previews)
-        if (!overVisitorCap && !isScan && !forcedVh && !isBot) {
+        if (!overVisitorCap && !isScan && !isPreview && !isBot) {
           await db.from('events').insert({
             test_id: test.id,
             variant_id: selectedVariant.id,
@@ -371,7 +384,7 @@ ${proxyTrackingSnippet}
             device_type: getDeviceType(userAgent),
             metadata: { redirect_url: selectedVariant.redirect_url, proxy: true, user_agent: userAgent, ip: clientIp },
           });
-        } else if (isBot && !overVisitorCap && !isScan && !forcedVh) {
+        } else if (isBot && !overVisitorCap && !isScan && !isPreview) {
           await logEvent('event_skip', 'info', 'bot-filtered pageview (proxy)', {
             testId: test.id, variantId: selectedVariant.id, userAgent, ip: clientIp,
           });
@@ -383,8 +396,8 @@ ${proxyTrackingSnippet}
         });
 
         const cookieOptions = { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax' as const, maxAge: 60 * 60 * 24 * 90, path: '/' };
-        if (!existingCookie && !overVisitorCap && !isScan && !forcedVh) proxyResponse.cookies.set(COOKIE_NAME, visitorId, cookieOptions);
-        if (!stickyVariantId && !isScan && !forcedVh) proxyResponse.cookies.set(stickyCookieName, selectedVariant.id, cookieOptions);
+        if (!existingCookie && !overVisitorCap && !isScan && !isPreview) proxyResponse.cookies.set(COOKIE_NAME, visitorId, cookieOptions);
+        if (!stickyVariantId && !isScan && !isPreview) proxyResponse.cookies.set(stickyCookieName, selectedVariant.id, cookieOptions);
 
         return proxyResponse;
       }
@@ -399,6 +412,7 @@ ${proxyTrackingSnippet}
       redirectUrl.searchParams.set('sl_vid', selectedVariant.id);
       redirectUrl.searchParams.set('sl_vh', visitorId);
       if (isScan) redirectUrl.searchParams.set('sl_scan', '1');
+      if (isPreview) redirectUrl.searchParams.set('sl_preview', '1');
       const redirectResponse = NextResponse.redirect(redirectUrl.toString(), 302);
 
       const cookieOptions = {
@@ -409,14 +423,14 @@ ${proxyTrackingSnippet}
         path: '/',
       };
 
-      if (!existingCookie && !overVisitorCap && !isScan && !forcedVh) {
+      if (!existingCookie && !overVisitorCap && !isScan && !isPreview) {
         redirectResponse.cookies.set(COOKIE_NAME, visitorId, cookieOptions);
       }
-      if (!stickyVariantId && !isScan && !forcedVh) {
+      if (!stickyVariantId && !isScan && !isPreview) {
         redirectResponse.cookies.set(stickyCookieName, selectedVariant.id, cookieOptions);
       }
 
-      if (!overVisitorCap && !isScan && !forcedVh && !isBot) {
+      if (!overVisitorCap && !isScan && !isPreview && !isBot) {
         await db.from('events').insert({
           test_id: test.id,
           variant_id: selectedVariant.id,
@@ -425,7 +439,7 @@ ${proxyTrackingSnippet}
           device_type: getDeviceType(userAgent),
           metadata: { redirect_url: selectedVariant.redirect_url, user_agent: userAgent, ip: clientIp },
         });
-      } else if (isBot && !overVisitorCap && !isScan && !forcedVh) {
+      } else if (isBot && !overVisitorCap && !isScan && !isPreview) {
         await logEvent('event_skip', 'info', 'bot-filtered pageview (redirect)', {
           testId: test.id, variantId: selectedVariant.id, userAgent, ip: clientIp,
         });
@@ -519,13 +533,15 @@ ${proxyTrackingSnippet}
 
     // 9. Build tracking snippet (skip for cap, scan, and Open-button previews)
     const visitorHash = visitorId;
-    const trackingSnippet = (overVisitorCap || forcedVh) ? '' : buildTrackingSnippet(
+    // Muted, never omitted — see the proxy branch above for why.
+    const trackingSnippet = buildTrackingSnippet(
       test.id,
       selectedVariant.id,
       visitorHash,
       goals || [],
       APP_URL,
-      customParamNames
+      customParamNames,
+      isPreview ? 'preview' : (overVisitorCap ? 'cap' : '')
     );
 
     // 10. Inject UTM swap script (client-side, reads window.location.search)
@@ -554,7 +570,7 @@ ${proxyTrackingSnippet}
     const finalHtml = injectIntoHtml(htmlWithUtm, headScripts, bodyEndScripts, trackingSnippet);
 
     // 10c. Record pageview (skip for cap, scan, and Open-button previews)
-    if (!overVisitorCap && !isScan && !forcedVh && !isBot) {
+    if (!overVisitorCap && !isScan && !isPreview && !isBot) {
       await db.from('events').insert({
         test_id: test.id,
         variant_id: selectedVariant.id,
@@ -563,7 +579,7 @@ ${proxyTrackingSnippet}
         device_type: getDeviceType(userAgent),
         metadata: { user_agent: userAgent, ip: clientIp },
       });
-    } else if (isBot && !overVisitorCap && !isScan && !forcedVh) {
+    } else if (isBot && !overVisitorCap && !isScan && !isPreview) {
       await logEvent('event_skip', 'info', 'bot-filtered pageview (html)', {
         testId: test.id, variantId: selectedVariant.id, userAgent, ip: clientIp,
       });
@@ -583,11 +599,11 @@ ${proxyTrackingSnippet}
       path: '/',
     };
 
-    if (!existingCookie && !overVisitorCap && !isScan && !forcedVh) {
+    if (!existingCookie && !overVisitorCap && !isScan && !isPreview) {
       response.cookies.set(COOKIE_NAME, visitorId, cookieOptions);
     }
 
-    if (!stickyVariantId && !isScan && !forcedVh) {
+    if (!stickyVariantId && !isScan && !isPreview) {
       response.cookies.set(stickyCookieName, selectedVariant.id, cookieOptions);
     }
 

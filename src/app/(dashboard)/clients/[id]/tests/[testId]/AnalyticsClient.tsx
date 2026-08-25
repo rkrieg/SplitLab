@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef, Fragment } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from "react";
 import {
   LineChart,
   Line,
@@ -60,8 +60,6 @@ import {
   XCircle,
   Eye,
   Activity,
-  Monitor,
-  Smartphone,
   Sparkles,
   MoreHorizontal,
   Archive,
@@ -180,6 +178,9 @@ interface FormLead {
   // Historical rows predate the column and read back as {} via its DB default.
   extra_params: Record<string, string> | null;
   test_variants: { name: string } | null;
+  // Derived server-side from user_agent on every read, not a stored column, so
+  // it is present on historical rows too. See /api/tests/[id]/form-leads.
+  is_bot?: boolean;
 }
 
 interface Props {
@@ -312,31 +313,12 @@ export default function AnalyticsClient({
 }: Props) {
   const [test, setTest] = useState(initialTest);
   const [tab, setTab] = useState<Tab>("overview");
-  const [variantPreview, setVariantPreview] = useState<{ name: string; url: string } | null>(null);
   // Per-row "..." actions menu. Positioned fixed (computed from the button rect)
   // so it isn't clipped by the table's overflow-x-auto wrapper.
   const [actionMenu, setActionMenu] = useState<{ id: string; top: number; right: number } | null>(null);
   const [showArchived, setShowArchived] = useState(false);
-  const [previewViewMode, setPreviewViewMode] = useState<"desktop" | "mobile">("desktop");
-  const [previewIframeLoaded, setPreviewIframeLoaded] = useState(false);
-  const previewWrapRef = useRef<HTMLDivElement>(null);
-  const [previewSize, setPreviewSize] = useState({ width: 0, height: 0 });
   const searchParams = useSearchParams();
   const router = useRouter();
-
-  useEffect(() => {
-    const el = previewWrapRef.current;
-    if (!el || !variantPreview) return;
-    const ro = new ResizeObserver((entries) => {
-      const { width, height } = entries[0].contentRect;
-      setPreviewSize({ width, height });
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [variantPreview]);
-
-  const DESKTOP_PREVIEW_WIDTH = 1440;
-  const previewDesktopScale = previewSize.width > 0 ? Math.min(1, previewSize.width / DESKTOP_PREVIEW_WIDTH) : 1;
 
   // Show success/error toast on return from HubSpot OAuth
   useEffect(() => {
@@ -596,6 +578,9 @@ export default function AnalyticsClient({
   // value in the current leads batch — table only shows columns in use.
   const [formLeadsSystemParamKeys, setFormLeadsSystemParamKeys] = useState<string[]>([]);
   const [formLeadsTotal, setFormLeadsTotal] = useState(0);
+  // Default on: bot submissions are noise in a leads table. Never a delete —
+  // the rows stay in the DB and one click brings them back.
+  const [hideBotLeads, setHideBotLeads] = useState(true);
   const [formLeadsPage, setFormLeadsPage] = useState(1);
   const [formLeadsLoading, setFormLeadsLoading] = useState(false);
   const FORM_LEADS_LIMIT = 50;
@@ -1659,6 +1644,16 @@ export default function AnalyticsClient({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
 
+  // What the table and the CSV both render. Filtering happens on the page the
+  // server returned, so `formLeadsTotal` (the raw query count) intentionally
+  // still counts bots — the two numbers are reported separately below rather
+  // than one silently contradicting the other.
+  const visibleFormLeads = useMemo(
+    () => (hideBotLeads ? formLeads.filter((l) => !l.is_bot) : formLeads),
+    [formLeads, hideBotLeads]
+  );
+  const hiddenBotLeadCount = formLeads.length - visibleFormLeads.length;
+
   // ─── Integrations ────────────────────────────────────────────────────
 
   const fetchIntegrations = useCallback(async () => {
@@ -2215,11 +2210,13 @@ export default function AnalyticsClient({
   }
 
   function exportFormLeadsCsv() {
-    if (formLeads.length === 0) return;
+    // Exports exactly what the table shows — exporting rows the user cannot see
+    // would put bot submissions back into whatever they paste this into.
+    if (visibleFormLeads.length === 0) return;
     const fixedCols = ['submitted_at', 'variant', 'visitor_hash', 'ip_address', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'gclid', 'fbclid', 'user_agent'];
     const allCols = [...fixedCols, ...formLeadsFieldKeys, ...formLeadsExtraParamKeys];
     const extraCols = new Set(formLeadsExtraParamKeys);
-    const rows = formLeads.map((l) => allCols.map((col) => {
+    const rows = visibleFormLeads.map((l) => allCols.map((col) => {
       if (col === 'variant') return l.test_variants?.name ?? '';
       // Checked before `col in l` — an ad param must resolve from extra_params
       // even if it ever collides with a property name on the lead object.
@@ -2297,24 +2294,16 @@ export default function AnalyticsClient({
   }
 
   /**
-   * Redirect variants (non-proxy) 302 the browser away to an external site, which can't
-   * be embedded in an iframe (the destination navigates the top-level window, or blocks
-   * framing outright). For those we keep the existing new-tab behavior. HTML/proxy
-   * variants stay same-origin (served through /api/serve) and can be shown in-modal.
+   * Always a new tab — never an in-dashboard iframe. The modal this replaced
+   * sandboxed the frame without allow-same-origin, and sandbox flags are
+   * inherited by every nested frame, so the previewed page had no origin:
+   * proxy variants couldn't frame their destination at all, and on HTML
+   * variants the post-submit thank-you page (X-Frame-Options: SAMEORIGIN)
+   * was refused, leaving the browser's broken-frame placeholder. A real tab
+   * has no sandbox, so nothing is stripped.
    */
   function openVariantPreview(variant: Variant) {
-    if (variant.redirect_url && !variant.proxy_mode) {
-      openVariant(variant.id);
-      return;
-    }
-    const freshHash = crypto.randomUUID();
-    setVariantPreview({
-      name: variant.name,
-      url: buildVariantUrl(variant.id, { sl_vh: freshHash }),
-    });
-    setPreviewViewMode("desktop");
-    setPreviewIframeLoaded(false);
-    setTimeout(refreshVisitorCap, 1500);
+    openVariant(variant.id);
   }
 
   async function scanPage(variantId: string) {
@@ -4252,13 +4241,25 @@ export default function AnalyticsClient({
                   </button>
                   <button
                     onClick={exportFormLeadsCsv}
-                    disabled={formLeads.length === 0}
+                    disabled={visibleFormLeads.length === 0}
                     className="btn-secondary text-xs"
                   >
                     <Download size={12} /> CSV
                   </button>
                 </div>
               </div>
+              <label className="flex items-center gap-2 mt-3 text-xs text-slate-500 dark:text-slate-400 cursor-pointer select-none w-fit">
+                <input
+                  type="checkbox"
+                  checked={hideBotLeads}
+                  onChange={(e) => setHideBotLeads(e.target.checked)}
+                  className="rounded border-slate-300 dark:border-slate-600"
+                />
+                Hide bot submissions
+                <span className="text-slate-400 dark:text-slate-500">
+                  (crawlers and link previewers, matched on user agent — they are never deleted)
+                </span>
+              </label>
             </div>
 
             {/* Table */}
@@ -4266,13 +4267,27 @@ export default function AnalyticsClient({
               <div className="flex items-center justify-center py-12">
                 <RefreshCw size={20} className="animate-spin text-slate-500 dark:text-slate-400" />
               </div>
-            ) : formLeads.length === 0 ? (
+            ) : visibleFormLeads.length === 0 ? (
               <div className="text-center py-12">
                 <ClipboardList size={32} className="mx-auto text-slate-600 mb-3" />
-                <p className="text-slate-500 dark:text-slate-400 text-sm">No form leads yet.</p>
-                <p className="text-slate-500 text-xs mt-1">
-                  When a visitor submits a form on your test page, it will appear here.
-                </p>
+                {formLeads.length === 0 ? (
+                  <>
+                    <p className="text-slate-500 dark:text-slate-400 text-sm">No form leads yet.</p>
+                    <p className="text-slate-500 text-xs mt-1">
+                      When a visitor submits a form on your test page, it will appear here.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-slate-500 dark:text-slate-400 text-sm">
+                      Every lead on this page is a bot submission.
+                    </p>
+                    <p className="text-slate-500 text-xs mt-1">
+                      Untick &ldquo;Hide bot submissions&rdquo; above to see {formLeads.length} hidden{" "}
+                      {formLeads.length === 1 ? "row" : "rows"}.
+                    </p>
+                  </>
+                )}
               </div>
             ) : (
               <div className="card overflow-hidden">
@@ -4280,6 +4295,11 @@ export default function AnalyticsClient({
                   <p className="text-sm text-slate-500 dark:text-slate-400">
                     {formLeadsTotal} lead{formLeadsTotal !== 1 ? "s" : ""} total
                     {formLeadsTotal > FORM_LEADS_LIMIT && ` — page ${formLeadsPage} of ${Math.ceil(formLeadsTotal / FORM_LEADS_LIMIT)}`}
+                    {hiddenBotLeadCount > 0 && (
+                      <span className="text-slate-400 dark:text-slate-500">
+                        {" "}— {hiddenBotLeadCount} bot {hiddenBotLeadCount === 1 ? "row" : "rows"} hidden on this page
+                      </span>
+                    )}
                   </p>
                   <div className="flex items-center gap-2">
                     <button
@@ -4316,10 +4336,20 @@ export default function AnalyticsClient({
                       </tr>
                     </thead>
                     <tbody>
-                      {formLeads.map((lead, idx) => (
+                      {visibleFormLeads.map((lead, idx) => (
                         <tr key={lead.id} className="border-b border-slate-200 dark:border-slate-800 last:border-0 hover:bg-slate-50 dark:hover:bg-slate-800/40">
                           <td className="px-4 py-2.5 text-slate-400 text-xs">
-                            {(formLeadsPage - 1) * FORM_LEADS_LIMIT + idx + 1}
+                            <span className="inline-flex items-center gap-1.5">
+                              {(formLeadsPage - 1) * FORM_LEADS_LIMIT + idx + 1}
+                              {lead.is_bot && (
+                                <span
+                                  className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 text-[10px] font-medium uppercase tracking-wide"
+                                  title={lead.user_agent ?? 'No user agent sent'}
+                                >
+                                  Bot
+                                </span>
+                              )}
+                            </span>
                           </td>
                           <td className="px-4 py-2.5 text-slate-600 dark:text-slate-300 text-xs whitespace-nowrap">
                             {new Date(lead.submitted_at).toLocaleString()}
@@ -5734,86 +5764,6 @@ export default function AnalyticsClient({
 
       {/* ═══ MODALS ═══ */}
 
-      {variantPreview && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-black/70 backdrop-blur-sm">
-          <div className="flex items-center justify-between px-4 h-14 border-b border-slate-700 bg-slate-900 flex-shrink-0">
-            <div className="text-sm font-medium text-slate-200 truncate">{variantPreview.name}</div>
-            <div className="flex items-center gap-4">
-              <div className="flex items-center gap-0.5 bg-slate-800 rounded-lg p-1 border border-slate-700">
-                <button
-                  onClick={() => setPreviewViewMode("desktop")}
-                  className={`p-1.5 rounded-md transition-colors ${previewViewMode === "desktop" ? "bg-slate-700 text-slate-200 shadow-sm" : "text-slate-500 hover:text-slate-300"}`}
-                  title="Desktop view"
-                >
-                  <Monitor size={14} />
-                </button>
-                <button
-                  onClick={() => setPreviewViewMode("mobile")}
-                  className={`p-1.5 rounded-md transition-colors ${previewViewMode === "mobile" ? "bg-slate-700 text-slate-200 shadow-sm" : "text-slate-500 hover:text-slate-300"}`}
-                  title="Mobile view"
-                >
-                  <Smartphone size={14} />
-                </button>
-              </div>
-              <a
-                href={variantPreview.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-slate-500 hover:text-slate-300 transition-colors"
-                title="Open in new tab"
-              >
-                <ExternalLink size={16} />
-              </a>
-              <button
-                onClick={() => setVariantPreview(null)}
-                className="text-slate-400 hover:text-slate-200 transition-colors"
-                title="Close"
-              >
-                <X size={18} />
-              </button>
-            </div>
-          </div>
-          <div ref={previewWrapRef} className="flex-1 flex items-start justify-center overflow-auto p-5">
-            <div
-              className={`relative bg-white rounded-xl overflow-hidden shadow-xl h-full transition-all duration-300 ${previewViewMode === "mobile" ? "w-[390px]" : "w-full"}`}
-            >
-              {previewViewMode === "desktop" && previewDesktopScale < 1 ? (
-                <iframe
-                  key={variantPreview.url}
-                  src={variantPreview.url}
-                  className="transition-opacity duration-500"
-                  style={{
-                    width: `${DESKTOP_PREVIEW_WIDTH}px`,
-                    height: previewSize.height > 0 ? `${previewSize.height / previewDesktopScale}px` : "100%",
-                    transform: `scale(${previewDesktopScale})`,
-                    transformOrigin: "top left",
-                    border: 0,
-                    opacity: previewIframeLoaded ? 1 : 0,
-                  }}
-                  title="Variant preview"
-                  sandbox="allow-scripts allow-forms allow-popups"
-                  onLoad={() => setPreviewIframeLoaded(true)}
-                />
-              ) : (
-                <iframe
-                  key={variantPreview.url}
-                  src={variantPreview.url}
-                  className="w-full h-full border-0 transition-opacity duration-500"
-                  style={{ opacity: previewIframeLoaded ? 1 : 0 }}
-                  title="Variant preview"
-                  sandbox="allow-scripts allow-forms allow-popups"
-                  onLoad={() => setPreviewIframeLoaded(true)}
-                />
-              )}
-              {!previewIframeLoaded && (
-                <div className="absolute inset-0 bg-slate-100 flex items-center justify-center">
-                  <Loader2 size={20} className="animate-spin text-slate-400" />
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
 
       <Modal
         open={addVariantOpen}

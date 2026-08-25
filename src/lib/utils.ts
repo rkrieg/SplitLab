@@ -42,15 +42,35 @@ export function getDeviceType(userAgent: string | null): 'mobile' | 'desktop' | 
 }
 
 /**
+ * Real device/browser UA strings that contain a bot signature as a substring.
+ * Checked BEFORE the bot pattern and wins outright, because the cost of the two
+ * mistakes is not symmetric: wrongly clearing a bot leaves a junk row someone can
+ * delete, wrongly flagging a human silently destroys real data.
+ *
+ * cubot — Android handset brand; its UA reads "Android 10; CUBOT_X30", so the
+ * bare `bot` alternative below matches every one of its owners. A \b word
+ * boundary cannot separate the two: "CUBOT" has no boundary before BOT, but
+ * neither does "Googlebot", so the boundary would drop the real crawlers too.
+ */
+const BOT_FALSE_POSITIVES = /cubot/i;
+
+/**
  * Conservative non-browser traffic check from the User-Agent header — missing
  * UA (no real browser omits it) or an explicit, well-known bot/script/crawler
  * signature. Deliberately narrow: false positives here silently drop a real
  * visitor's pageview, so this only matches names no real browser UA contains,
  * never generic words that could appear in a legitimate UA string.
+ *
+ * The link-preview fetchers (whatsapp, pinterest, skype) are matched with a
+ * trailing slash on purpose. Those products also ship in-app browsers used by
+ * real people, but those report a plain Chrome/Safari UA — only the server-side
+ * preview fetcher uses the "Name/version" form, so the slash separates the bot
+ * from the human.
  */
 export function isBotRequest(userAgent: string | null): boolean {
   if (!userAgent) return true;
-  return /bot|crawler|spider|facebookexternalhit|meta-externalagent|python-requests|python-urllib|go-http-client|okhttp|libwww-perl|scrapy|headlesschrome|phantomjs|slurp|bingpreview|ahrefsbot|semrushbot|mj12bot|petalbot|dataforseo|curl\/|wget\/|node-fetch|axios\/|postmanruntime/i.test(userAgent);
+  if (BOT_FALSE_POSITIVES.test(userAgent)) return false;
+  return /bot|crawler|spider|facebookexternalhit|meta-externalagent|python-requests|python-urllib|go-http-client|okhttp|libwww-perl|scrapy|headlesschrome|phantomjs|slurp|bingpreview|ahrefsbot|semrushbot|mj12bot|petalbot|dataforseo|curl\/|wget\/|node-fetch|axios\/|postmanruntime|whatsapp\/|pinterest\/|skypeuripreview|chrome-lighthouse|pingdom|statuscake|embedly|iframely|google-inspectiontool|google-read-aloud/i.test(userAgent);
 }
 
 /**

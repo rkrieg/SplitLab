@@ -11,7 +11,20 @@ export function buildTrackingSnippet(
   visitorHash: string,
   goals: ConversionGoal[],
   appUrl: string,
-  customParamNames: string[] = []
+  customParamNames: string[] = [],
+  /**
+   * Why the snippet should stay silent, if it should. The snippet is still
+   * injected and still sets __SL_SNIPPET__ — so a site-wide tracker.js tag
+   * stays dormant — but every send path no-ops. Never suppress the snippet
+   * itself to stop tracking: removing it removes the flag that silences
+   * tracker.js, which then takes over and records the very events we meant
+   * to drop. Whatever this mutes, it mutes for all three signals together:
+   * pageviews, conversions AND form leads.
+   *
+   * 'preview' also sticks for the rest of the tab (see below); 'cap' does not,
+   * since the cap is re-evaluated server-side on every request.
+   */
+  muteMode: '' | 'preview' | 'cap' = ''
 ): string {
   const goalsJson = JSON.stringify(
     goals.map((g) => ({
@@ -42,6 +55,7 @@ export function buildTrackingSnippet(
     customParams: ${JSON.stringify(customParamNames)},
     _sent: {},
     send: function(payload) {
+      if (_mute) return;
       if (navigator.sendBeacon) {
         try {
           var blob = new Blob([payload], { type: 'text/plain' });
@@ -70,7 +84,21 @@ export function buildTrackingSnippet(
     }
   };
 
-  var _isScan = new URLSearchParams(window.location.search).get('sl_scan') === '1';
+  var _slParams = new URLSearchParams(window.location.search);
+  var _isScan = _slParams.get('sl_scan') === '1';
+  // Preview is sticky per TAB: sl_preview only rides the first URL, so without
+  // this a click to a second page (or the post-submit thank-you page) inside the
+  // same preview tab would start recording. sessionStorage is per-tab, so a
+  // normal browsing tab is unaffected.
+  var _isPreview = ${JSON.stringify(muteMode === 'preview')} || _slParams.get('sl_preview') === '1';
+  try {
+    if (_isPreview) sessionStorage.setItem('__sl_preview', '1');
+    else if (sessionStorage.getItem('__sl_preview') === '1') _isPreview = true;
+  } catch(e) {}
+  // Single mute switch for every outbound signal. Scan, preview and the visitor
+  // cap all use it, so none of them can record a pageview, a conversion or a
+  // form lead — the three always move together.
+  var _mute = _isScan || _isPreview || ${JSON.stringify(muteMode === 'cap')};
 
   // ─── Cross-page context persistence ─────────────────────────────────────────
   // Persist this test's context (variant, visitor, url_reached goals) keyed per
@@ -96,6 +124,7 @@ export function buildTrackingSnippet(
   }
 
   function saveCtx() {
+    if (_mute) return;
     try {
       var m = loadCtxMap();
       m[_SL.testId] = {
@@ -115,7 +144,7 @@ export function buildTrackingSnippet(
   // that test. Own-test goals are handled inline by checkUrlGoals().
   var _sentStored = {};
   function checkStoredUrlGoals() {
-    if (_isScan) return;
+    if (_mute) return;
     var m = loadCtxMap();
     var url = window.location.href;
     var pathname = window.location.pathname + window.location.search;
@@ -433,7 +462,7 @@ export function buildTrackingSnippet(
     } catch(e) {}
   }
 
-  if (!_isScan) {
+  if (!_mute) {
     // mousedown precedes every click variant; middle-click fires auxclick
     // (not click) in some browsers — cover all three for new-tab opens
     document.addEventListener('mousedown', decorateFromEvent, true);
@@ -443,8 +472,9 @@ export function buildTrackingSnippet(
     watchNavigations();
   }
 
-  // Auto-track pageview (skip on scan requests — sl_scan=1 means dashboard goal setup)
-  if (!_isScan) {
+  // Auto-track pageview (skipped while muted: scan = dashboard goal setup,
+  // preview = staff looking at their own page)
+  if (!_mute) {
     _SL.track('pageview');
     saveCtx();
   }
@@ -567,6 +597,7 @@ export function buildTrackingSnippet(
   }
 
   function sendFormLead(fields, hiddenParams) {
+    if (_mute) return;
     try {
       // Stored + live URL, then hidden inputs fill any remaining gaps — a live
       // or stored value is more reliable than a possibly-stale hidden field.
@@ -861,7 +892,7 @@ export function buildTrackingSnippet(
 
     // Global form submit — captures all forms (not just goal-targeted ones)
     document.addEventListener('submit', function(e) {
-      if (!_isScan) {
+      if (!_mute) {
         // Order matters: decorateFormForSubmit first, so injectUtmFieldsIntoForm's
         // duplicate-check sees whatever it already added to a GET form's action.
         decorateFormForSubmit(e.target);
@@ -922,7 +953,7 @@ export function buildTrackingSnippet(
   function eagerInjectUtmFields() {
     // Scan mode renders this snippet to detect trackable elements — real
     // captured values don't belong in that DOM pass.
-    if (!_isScan) injectUtmFieldsIntoForms();
+    if (!_mute) injectUtmFieldsIntoForms();
   }
 
   if (document.readyState === 'loading') {

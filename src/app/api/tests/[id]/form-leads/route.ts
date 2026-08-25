@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { resolveTestWorkspaceRole } from '@/lib/workspace-auth';
+import { isBotRequest } from '@/lib/utils';
 
 export const dynamic = 'force-dynamic';
 
@@ -60,6 +61,17 @@ export async function GET(
     return NextResponse.json({ error: 'Query failed' }, { status: 500 });
   }
 
+  // Bot classification is derived here from the user_agent already stored on the
+  // row, never written into the table. Two reasons: it needs no migration, so
+  // there is no window where a deploy could reject a lead insert and lose a real
+  // person's details; and it applies retroactively, so bot leads already sitting
+  // in the table get flagged too. Cost is that `total` below stays the raw row
+  // count — the flag filters the rendered page, not the query.
+  const annotated = (leads ?? []).map((l) => ({
+    ...l,
+    is_bot: isBotRequest((l.user_agent as string | null) ?? null),
+  }));
+
   // Derive all unique field keys across results for dynamic column headers
   const fieldKeys = Array.from(
     new Set(
@@ -86,7 +98,7 @@ export async function GET(
   );
 
   return NextResponse.json({
-    leads: leads ?? [],
+    leads: annotated,
     fieldKeys,
     extraParamKeys,
     systemParamKeys,

@@ -52,6 +52,15 @@ function sanitizeExtraParams(input: unknown): Record<string, string> {
   return out;
 }
 
+function isPreviewSubmission(pageUrl?: string): boolean {
+  if (!pageUrl || typeof pageUrl !== 'string') return false;
+  try {
+    return new URL(pageUrl).searchParams.get('sl_preview') === '1';
+  } catch {
+    return false;
+  }
+}
+
 export async function POST(request: NextRequest) {
   let body: Record<string, unknown>;
   try {
@@ -75,6 +84,25 @@ export async function POST(request: NextRequest) {
   if (!testId || typeof testId !== 'string') {
     return NextResponse.json({ error: 'Missing testId' }, { status: 400 });
   }
+
+  // Server-side backstop for dashboard previews. Both senders already stay
+  // silent while previewing, so nothing should reach here — but a lead is the
+  // one signal that also fires the client's webhooks and CRM sync, so it gets a
+  // second gate that does not depend on the browser behaving. Checked against
+  // the submitting page's own URL, which still carries sl_preview when the
+  // sender is a page we served in preview.
+  if (isPreviewSubmission(pageUrl)) {
+    return NextResponse.json({ ok: true, skipped: 'preview' });
+  }
+
+  // NOTE: deliberately no bot check on this path, unlike /api/event. A lead is a
+  // real person's name and phone number and it also fires the client's webhook
+  // and HubSpot sync, so a single false positive in isBotRequest() would destroy
+  // a customer nobody ever knew existed. Bot leads are instead flagged on read
+  // (see /api/tests/[id]/form-leads) from the user_agent stored below, and hidden
+  // from the table by default — a junk row costs one click to delete, a lost lead
+  // costs a sale. If this ever changes, change /api/event to match or the two
+  // sides will disagree about what counts as tracked traffic.
 
   // Verify test exists and get workspace_id + name for integration lookup
   const { data: test } = await db
