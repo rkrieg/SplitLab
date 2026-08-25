@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/supabase-server';
 import { downloadHtml } from '@/lib/storage';
-import { buildTrackingSnippet, buildScanScript, injectIntoHtml, buildScriptTag, buildFaviconTag, stripFaviconTags, stripSplitLabTrackerTags } from '@/lib/tracking';
+import { buildTrackingSnippet, buildScanScript, injectIntoHtml, buildScriptTag, buildClaritySnippet, buildFaviconTag, stripFaviconTags, stripSplitLabTrackerTags } from '@/lib/tracking';
 import { assignVariant, getDeviceType, isBotRequest } from '@/lib/utils';
 import { logEvent } from '@/lib/log';
 import { getPlanDetails } from '@/lib/plans';
@@ -457,7 +457,7 @@ ${proxyTrackingSnippet}
     html = stripSplitLabTrackerTags(html, APP_URL);
 
     // 7. Fetch workspace scripts + page-scoped scripts + test-scoped scripts + UTM personalization rules
-    const [{ data: workspaceScripts }, { data: pageScripts }, { data: testScripts }, { data: utmRules }, utmPageRow, { data: hubspotIntegration }] = await Promise.all([
+    const [{ data: workspaceScripts }, { data: pageScripts }, { data: testScripts }, { data: utmRules }, utmPageRow, { data: hubspotIntegration }, { data: clarityIntegration }] = await Promise.all([
       db.from('scripts').select('*').eq('workspace_id', workspaceId).eq('is_active', true).is('page_id', null).is('test_id', null),
       selectedVariant.page_id
         ? db.from('scripts').select('*').eq('workspace_id', workspaceId).eq('is_active', true).eq('page_id', selectedVariant.page_id)
@@ -470,6 +470,7 @@ ${proxyTrackingSnippet}
         ? db.from('pages').select('field_selectors_json').eq('id', selectedVariant.page_id).single()
         : Promise.resolve({ data: null }),
       db.from('workspace_integrations').select('config').eq('workspace_id', workspaceId).eq('type', 'hubspot').eq('enabled', true).limit(1),
+      db.from('workspace_integrations').select('config').eq('workspace_id', workspaceId).eq('type', 'clarity').eq('enabled', true).limit(1),
     ]);
     const fieldSelectors = (utmPageRow?.data as { field_selectors_json?: Record<string, { selector: string; type: 'text' | 'image'; label: string }> } | null)?.field_selectors_json ?? null;
     const scripts = [...(workspaceScripts || []), ...(pageScripts || []), ...(testScripts || [])];
@@ -484,6 +485,16 @@ ${proxyTrackingSnippet}
     if (hubId && /^\d+$/.test(String(hubId))) {
       headScripts.push(`<script type="text/javascript" id="hs-script-loader" async defer src="https://js.hs-scripts.com/${hubId}.js"></script>`);
     }
+
+    // Microsoft Clarity connected on this workspace: inject the tag + tag the
+    // session with this variant (sl_variant) so recordings/heatmaps can be
+    // filtered per variant inside Clarity. Hosted HTML variants only — proxy
+    // and redirect variants render a page we don't control.
+    const clarityProjectId = (clarityIntegration?.[0]?.config as { project_id?: string | null } | null)?.project_id;
+    if (clarityProjectId && /^[a-z0-9]+$/i.test(String(clarityProjectId))) {
+      headScripts.push(buildClaritySnippet(String(clarityProjectId), selectedVariant.name));
+    }
+
     const bodyEndScripts: string[] = [];
 
     for (const script of scripts) {

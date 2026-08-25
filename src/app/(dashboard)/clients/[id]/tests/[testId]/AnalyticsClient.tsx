@@ -67,6 +67,8 @@ import {
   Archive,
   ArchiveRestore,
   Zap,
+  Video,
+  Flame,
 } from "lucide-react";
 import Spinner from "@/components/ui/Spinner";
 import Button from "@/components/ui/Button";
@@ -109,6 +111,7 @@ interface Variant {
   speed_mobile?: number | null;
   speed_desktop?: number | null;
   speed_tested_at?: string | null;
+  clarity_share_url?: string | null;
 }
 
 interface Goal {
@@ -621,6 +624,11 @@ export default function AnalyticsClient({
 
   // Integrations sub-tab
   const [integrationsSubTab, setIntegrationsSubTab] = useState<'native' | 'webhooks'>('native');
+
+  // Microsoft Clarity (workspace-level project id; drives per-variant deep links)
+  const [claritySaved, setClaritySaved] = useState<string | null>(null);
+  const [clarityDraft, setClarityDraft] = useState('');
+  const [claritySaving, setClaritySaving] = useState(false);
 
   // Email notifications integration
   const [emailIntegration, setEmailIntegration] = useState<{ id: string; enabled: boolean } | null>(null);
@@ -1657,6 +1665,11 @@ export default function AnalyticsClient({
       setEmailIntegration(em);
       setWebhooks(whs);
 
+      const clRaw = data.integrations?.find(i => i.type === 'clarity') ?? null;
+      const clPid = (clRaw && clRaw.enabled) ? ((clRaw.config as { project_id?: string } | null)?.project_id ?? null) : null;
+      setClaritySaved(clPid);
+      setClarityDraft(clPid ?? '');
+
       // Fetch all test mappings once (covers hubspot + email + webhooks)
       const [mRes, kRes, epRes, cpRes] = await Promise.all([
         fetch(`/api/tests/${test.id}/integrations`),
@@ -1754,6 +1767,72 @@ export default function AnalyticsClient({
       fetchIntegrations();
     }
   }, [tab]);
+
+  // ─── Microsoft Clarity ──────────────────────────────────────────────
+  async function saveClarity() {
+    if (!workspaceId) return;
+    const pid = clarityDraft.trim();
+    if (!/^[a-z0-9]+$/i.test(pid)) {
+      toast.error('Enter your Clarity project ID (the code from your Clarity install snippet).');
+      return;
+    }
+    setClaritySaving(true);
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}/integrations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'clarity', config: { project_id: pid } }),
+      });
+      if (!res.ok) { toast.error('Failed to save Clarity settings'); return; }
+      setClaritySaved(pid);
+      toast.success('Microsoft Clarity connected');
+    } catch {
+      toast.error('Failed to save Clarity settings');
+    } finally {
+      setClaritySaving(false);
+    }
+  }
+
+  async function disconnectClarity() {
+    if (!workspaceId) return;
+    const res = await fetch(`/api/workspaces/${workspaceId}/integrations?type=clarity`, { method: 'DELETE' });
+    if (!res.ok) { toast.error('Failed to disconnect Clarity'); return; }
+    setClaritySaved(null);
+    setClarityDraft('');
+    toast.success('Microsoft Clarity disconnected');
+  }
+
+  // Deep-link to Clarity for a variant. A saved per-variant Share link wins
+  // (opens a pre-filtered view); otherwise open the project view — filter by the
+  // sl_variant custom tag once there.
+  function openClarity(variant: Variant, kind: 'recordings' | 'heatmaps') {
+    const url = variant.clarity_share_url
+      || (claritySaved ? `https://clarity.microsoft.com/projects/view/${claritySaved}/${kind}` : null);
+    if (!url) { toast.error('Connect Microsoft Clarity in the Integrations tab first.'); return; }
+    window.open(url, '_blank', 'noopener');
+  }
+
+  async function setClarityShareLink(variant: Variant) {
+    const current = variant.clarity_share_url ?? '';
+    const input = window.prompt(
+      'Paste a Microsoft Clarity "Share" link to open a pre-filtered view for this variant. Leave blank to clear.',
+      current,
+    );
+    if (input === null) return; // cancelled
+    try {
+      const res = await fetch(`/api/tests/${test.id}/variants/${variant.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clarity_share_url: input.trim() }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) { toast.error(d.error || 'Failed to save link'); return; }
+      toast.success(input.trim() ? 'Filtered Clarity link saved' : 'Filtered link cleared');
+      fetchAnalytics();
+    } catch {
+      toast.error('Failed to save link');
+    }
+  }
 
   async function disconnectHubSpot() {
     if (!workspaceId) return;
@@ -3335,6 +3414,33 @@ export default function AnalyticsClient({
                                     >
                                       <ExternalLink size={13} /> Preview page
                                     </button>
+                                    {(claritySaved || stat.variant.clarity_share_url) && (
+                                      <>
+                                        <div className="my-1 border-t border-slate-100 dark:border-slate-700" />
+                                        <button
+                                          onClick={() => { setActionMenu(null); openClarity(stat.variant, "recordings"); }}
+                                          className="w-full flex items-center gap-2 px-3 py-2 text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                                          title={stat.variant.clarity_share_url ? "Open the saved filtered Clarity view" : `Opens Clarity recordings — filter by sl_variant = "${stat.variant.name}"`}
+                                        >
+                                          <Video size={13} /> Clarity recordings
+                                        </button>
+                                        <button
+                                          onClick={() => { setActionMenu(null); openClarity(stat.variant, "heatmaps"); }}
+                                          className="w-full flex items-center gap-2 px-3 py-2 text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                                          title={stat.variant.clarity_share_url ? "Open the saved filtered Clarity view" : `Opens Clarity heatmaps — filter by sl_variant = "${stat.variant.name}"`}
+                                        >
+                                          <Flame size={13} /> Clarity heatmap
+                                        </button>
+                                        <button
+                                          onClick={() => { setActionMenu(null); setClarityShareLink(stat.variant); }}
+                                          className="w-full flex items-center gap-2 px-3 py-2 text-left text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                                          title="Paste a Clarity Share link to open a pre-filtered view directly"
+                                        >
+                                          <Link2 size={13} /> {stat.variant.clarity_share_url ? "Edit filtered link" : "Set filtered link…"}
+                                        </button>
+                                        <div className="my-1 border-t border-slate-100 dark:border-slate-700" />
+                                      </>
+                                    )}
                                     {stat.variant.pages?.id && (
                                       <Link
                                         href={`/clients/${clientId}/pages/${stat.variant.pages.id}/utm`}
@@ -4589,6 +4695,69 @@ export default function AnalyticsClient({
                   </div>
                 </>
               )}
+            </div>
+
+            {/* ── Microsoft Clarity card ── */}
+            <div className="card overflow-hidden">
+              <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700 flex items-center gap-3">
+                <div className="w-8 h-8 rounded-lg bg-sky-500/15 flex items-center justify-center">
+                  <Flame size={16} className="text-sky-600 dark:text-sky-400" />
+                </div>
+                <div>
+                  <p className="font-semibold text-sm text-slate-800 dark:text-slate-200">Microsoft Clarity</p>
+                  <p className="text-xs text-slate-500">Free heatmaps &amp; session recordings, tagged per variant</p>
+                </div>
+                {claritySaved && (
+                  <span className="ml-auto flex items-center gap-1.5 text-xs font-medium text-green-500">
+                    <CheckCircle2 size={13} /> Connected
+                  </span>
+                )}
+              </div>
+
+              <div className="px-5 py-4 space-y-3">
+                <p className="text-xs text-slate-500">
+                  Paste your Clarity <strong>project ID</strong> (the code in your Clarity install snippet, e.g. <code className="font-mono">abcd1234ef</code>). SplitLab injects Clarity on your hosted variants and tags each session with <code className="font-mono">sl_variant</code>, so you can filter recordings and heatmaps to a single variant. Jump in from the <strong>Clarity recordings / heatmap</strong> actions on each variant row.
+                </p>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={clarityDraft}
+                    onChange={(e) => setClarityDraft(e.target.value)}
+                    placeholder="Clarity project ID"
+                    spellCheck={false}
+                    className="input text-sm flex-1"
+                  />
+                  <button
+                    onClick={saveClarity}
+                    disabled={claritySaving}
+                    className="btn-primary text-sm px-4 py-2 rounded-lg font-medium flex-shrink-0 flex items-center gap-2"
+                  >
+                    {claritySaving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
+                    {claritySaved ? 'Update' : 'Connect'}
+                  </button>
+                  {claritySaved && (
+                    <button
+                      onClick={disconnectClarity}
+                      className="text-xs text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 transition-colors flex items-center gap-1 flex-shrink-0"
+                    >
+                      <XCircle size={13} /> Disconnect
+                    </button>
+                  )}
+                </div>
+                {claritySaved && (
+                  <a
+                    href={`https://clarity.microsoft.com/projects/view/${claritySaved}/dashboard`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 text-xs text-sky-600 dark:text-sky-400 hover:underline"
+                  >
+                    <ExternalLink size={12} /> Open Clarity dashboard
+                  </a>
+                )}
+                <p className="text-[11px] text-slate-400 dark:text-slate-500">
+                  Clarity can&apos;t pre-filter from a link we build, so the variant actions open your project and you filter by <code className="font-mono">sl_variant</code> once — or save a Clarity &ldquo;Share&rdquo; link per variant (row action menu) for a one-click pre-filtered view. Hosted HTML variants only.
+                </p>
+              </div>
             </div>
 
             {/* ── Email Notifications card ── */}
