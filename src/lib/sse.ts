@@ -88,6 +88,17 @@ export type SSEEvent =
       backup_html_url?: string;
       /** External images that failed verification and were left untouched. */
       broken_assets?: number;
+      /**
+       * Link-imported photos (Drive folder / bucket / direct URL) offered to
+       * this build, and how many of them the finished HTML actually embeds.
+       * Sent so the client can name a decline instead of leaving the user to
+       * infer from an empty page that the import broke. Only present when the
+       * turn had an imported library at all.
+       */
+      imported_assets?: number;
+      placed_assets?: number;
+      /** Filenames of the imported files that did not make it onto the page. */
+      unused_asset_names?: string[];
     };
 
 export const SSE_HEADERS = {

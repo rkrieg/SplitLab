@@ -20,6 +20,7 @@ import { extractDesignReferenceCopy } from '@/lib/ai-follow-up-helpers';
 import { MAX_ATTACHMENTS } from '@/lib/ai-edit-intent';
 import { forceAppendMissingDesignCopy } from '@/lib/ai-content-placement';
 import { verifyAndRehostHtmlImages } from '@/lib/ai-asset-integrity';
+import { measureAssetPlacement, type LibraryAsset } from '@/lib/asset-placement';
 import { ensureClickToEditFields } from '@/lib/ai-data-field-stamp';
 import { repairSlMarkers, markerCoverage, markerQuality } from '@/lib/ai-sl-markers';
 import { analyzePageLayout } from '@/lib/ai-page-layout';
@@ -72,6 +73,7 @@ export async function POST(request: NextRequest) {
     reuse_reference_copy: unknown,
     design_copy_sections: unknown,
     minimal_shape: unknown,
+    asset_library: unknown,
     model_requirements: unknown;
 
   try {
@@ -91,6 +93,7 @@ export async function POST(request: NextRequest) {
       reuse_reference_copy,
       design_copy_sections,
       minimal_shape,
+      asset_library,
       requirements: model_requirements,
     } = await request.json());
   } catch {
@@ -438,6 +441,31 @@ export async function POST(request: NextRequest) {
         ? describeUnmet(checkRequirements(html, requirements).filter((r) => r.requirement.kind !== 'text_present'))
         : unmet;
 
+      // Did the user's link-imported photos actually make it onto the page?
+      //
+      // Measured against `html` — what shipped — not against the schema the
+      // model returned, because the builder is a separate AI call and a
+      // generated_image_url it decides to skip never reaches the document.
+      // Nothing is enforced here: a decline can be the right answer (a brief
+      // that bans extra imagery, or files that suit no slot). The count exists
+      // so the client can SAY so, since an unexplained absence reads as the
+      // import having failed.
+      const libraryForPlacement: LibraryAsset[] = Array.isArray(asset_library)
+        ? (asset_library as unknown[]).filter(
+            (a): a is LibraryAsset =>
+              !!a && typeof a === 'object' && typeof (a as { url?: unknown }).url === 'string',
+          )
+        : [];
+      const placement =
+        libraryForPlacement.length > 0 ? measureAssetPlacement(libraryForPlacement, html) : null;
+      if (placement) {
+        console.log('[pages/build] asset library placement', {
+          imported: placement.imported,
+          placed: placement.placed,
+          unused: placement.unusedNames,
+        });
+      }
+
       sendSSE(controller, {
         type: 'done',
         html_url: htmlUrl,
@@ -445,6 +473,9 @@ export async function POST(request: NextRequest) {
         schema_json: enrichedSchema,
         ...(finalUnmet ? { unmet_requirements: finalUnmet } : {}),
         ...(assetScan.broken.length > 0 ? { broken_assets: assetScan.broken.length } : {}),
+        ...(placement
+          ? { imported_assets: placement.imported, placed_assets: placement.placed, unused_asset_names: placement.unusedNames }
+          : {}),
       });
       closeSSE(controller);
     } catch (err) {

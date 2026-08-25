@@ -13,10 +13,19 @@
  */
 
 import { uploadImage, inlineDataUrisToStorage } from '@/lib/storage';
+import { MAX_ASSET_BYTES } from '@/lib/asset-source-resolver';
 
-/** Assets larger than this are almost never a logo/inline image we should inline-host. */
-const MAX_ASSET_BYTES = 8 * 1024 * 1024;
-const FETCH_TIMEOUT_MS = 8000;
+// Assets larger than this are almost never a logo/inline image we should
+// inline-host. Owned by asset-source-resolver so the picker and the fetcher
+// enforce one number — offering a file we then refuse to fetch is a promise we
+// cannot keep.
+export { MAX_ASSET_BYTES } from '@/lib/asset-source-resolver';
+// 20s, not 8s: a file at MAX_ASSET_BYTES only downloads inside 8s on a fast
+// line, and connection setup to some hosts eats several seconds on its own.
+// The import route allows 120s, so this is not the binding constraint — a
+// too-tight value here just turns a slow download into a bogus "couldn't
+// reach it".
+const FETCH_TIMEOUT_MS = 20000;
 
 export interface VerifiedAsset {
   /** Public URL on our own storage — safe to embed. */
@@ -30,6 +39,8 @@ export interface VerifiedAsset {
 export type AssetFailureReason =
   | 'not_http'
   | 'fetch_failed'
+  | 'rate_limited'
+  | 'not_shared'
   | 'bad_status'
   | 'not_an_image'
   | 'too_large'
@@ -58,6 +69,49 @@ function extensionFor(contentType: string, url: string): string {
 }
 
 /**
+ * Split a failed response into a reason the user can act on.
+ *
+ * Every non-200 used to collapse into "not shared publicly", which is actively
+ * misleading: a throttled Google download and a genuinely private file are the
+ * same status code, and telling someone to re-share a file that is already
+ * shared sends them fixing the wrong thing.
+ *
+ * The body is read because status alone cannot separate the two — Drive's
+ * anti-abuse throttle answers 403 with an HTML interstitial, while the API
+ * answers a permission problem with JSON. Error bodies are small, so reading
+ * them costs nothing; the read is guarded because a failed response may have
+ * no readable body at all.
+ */
+async function classifyBadStatus(res: Response): Promise<AssetFailureReason> {
+  // 429 is unambiguous and needs no body.
+  if (res.status === 429) return 'rate_limited';
+
+  let body = '';
+  try {
+    body = (await res.text()).slice(0, 2000);
+  } catch {
+    body = '';
+  }
+
+  // Google's JSON quota reasons, plus the HTML "Sorry..." page it serves when
+  // it decides a client is sending automated queries.
+  if (
+    /rateLimitExceeded|userRateLimitExceeded|quotaExceeded|dailyLimitExceeded/i.test(body) ||
+    /unusual traffic|automated queries|<title>Sorry/i.test(body)
+  ) {
+    return 'rate_limited';
+  }
+
+  // Drive answers 404 (not 403) for a file that exists but is not shared, so
+  // both belong to the same user-facing cause.
+  if (res.status === 401 || res.status === 403 || res.status === 404) {
+    return 'not_shared';
+  }
+
+  return 'bad_status';
+}
+
+/**
  * Fetch + validate a remote asset. Does not upload — use materializeAsset when
  * the asset needs to end up on our storage.
  */
@@ -77,13 +131,23 @@ export async function fetchAssetBytes(
     const res = await fetch(url, {
       signal: controller.signal,
       redirect: 'follow',
+      // Belt-and-braces: we never want a cached copy of a multi-MB image.
+      // Next's fetch patch only caches when a revalidate is set, so this is
+      // inert today — it just keeps it that way if a parent route ever sets one.
+      cache: 'no-store',
       headers: {
         'User-Agent':
           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
         Accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
       },
     });
-    if (!res.ok) return { ok: false, reason: 'bad_status', status: res.status };
+    if (!res.ok) {
+      return {
+        ok: false,
+        reason: await classifyBadStatus(res),
+        status: res.status,
+      };
+    }
 
     const contentType = (res.headers.get('content-type') ?? '').split(';')[0].trim();
     if (!contentType.startsWith('image/')) {
@@ -98,7 +162,11 @@ export async function fetchAssetBytes(
       return { ok: false, reason: 'too_large', contentType, status: res.status };
     }
     return { ok: true, buffer, contentType, bytes: buffer.byteLength };
-  } catch {
+  } catch (err) {
+    // Logged, not swallowed: every distinct cause (abort, DNS, TLS, stream)
+    // collapses into the same user-facing "couldn't reach it", so without this
+    // line the next failure is undiagnosable.
+    console.warn('[fetchAssetBytes] failed', url.slice(0, 200), err);
     return { ok: false, reason: 'fetch_failed' };
   } finally {
     clearTimeout(timeout);
