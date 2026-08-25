@@ -66,6 +66,7 @@ import {
   MoreHorizontal,
   Archive,
   ArchiveRestore,
+  Zap,
 } from "lucide-react";
 import Spinner from "@/components/ui/Spinner";
 import Button from "@/components/ui/Button";
@@ -105,6 +106,9 @@ interface Variant {
   tracking_verified?: boolean | null;
   duplicated_from_id?: string | null;
   archived_at?: string | null;
+  speed_mobile?: number | null;
+  speed_desktop?: number | null;
+  speed_tested_at?: string | null;
 }
 
 interface Goal {
@@ -217,6 +221,73 @@ interface TestMapping {
 }
 
 type Tab = "overview" | "leads" | "form-leads" | "integrations" | "settings";
+
+/** Color a 0-100 PageSpeed grade: green >=90, amber 50-89, red <50. */
+function speedColor(s: number): string {
+  if (s >= 90) return "bg-green-500/15 text-green-700 dark:text-green-400";
+  if (s >= 50) return "bg-amber-500/15 text-amber-700 dark:text-amber-400";
+  return "bg-red-500/15 text-red-700 dark:text-red-400";
+}
+function timeAgo(iso: string): string {
+  const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
+
+/** Per-variant load-speed grade (Google PageSpeed). Mobile-first headline,
+ *  expandable to mobile vs desktop; runs on demand and caches on the variant. */
+function SpeedBadge({ testId, variant }: { testId: string; variant: Variant }) {
+  const [mobile, setMobile] = useState<number | null>(variant.speed_mobile ?? null);
+  const [desktop, setDesktop] = useState<number | null>(variant.speed_desktop ?? null);
+  const [testedAt, setTestedAt] = useState<string | null>(variant.speed_tested_at ?? null);
+  const [loading, setLoading] = useState(false);
+  const [open, setOpen] = useState(false);
+
+  async function run() {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/tests/${testId}/variants/${variant.id}/speed-test`, { method: "POST" });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) { toast.error(d.error || "Speed test failed"); return; }
+      setMobile(d.mobile ?? null); setDesktop(d.desktop ?? null); setTestedAt(d.testedAt ?? null); setOpen(true);
+    } catch { toast.error("Speed test failed"); }
+    finally { setLoading(false); }
+  }
+
+  const grade = mobile ?? desktop;
+
+  if (loading) {
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400">
+        <Loader2 size={10} className="animate-spin" /> Testing speed…
+      </span>
+    );
+  }
+  if (grade == null) {
+    return (
+      <button onClick={run} title="Run a Google PageSpeed load-speed test" className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:border-indigo-400 hover:text-indigo-500 transition-colors">
+        <Zap size={10} /> Test speed
+      </button>
+    );
+  }
+  return (
+    <span className="inline-flex flex-col items-start gap-1">
+      <button onClick={() => setOpen((o) => !o)} title="Load speed (Google PageSpeed). Click for mobile vs desktop." className={`inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded ${speedColor(grade)}`}>
+        <Zap size={10} /> Speed {grade}
+      </button>
+      {open && (
+        <span className="text-[10px] text-slate-500 dark:text-slate-400 flex items-center gap-2 flex-wrap">
+          <span>Mobile {mobile ?? "—"}</span>
+          <span>Desktop {desktop ?? "—"}</span>
+          {testedAt && <span>· {timeAgo(testedAt)}</span>}
+          <button onClick={run} className="underline hover:text-indigo-500">re-test</button>
+        </span>
+      )}
+    </span>
+  );
+}
 
 export default function AnalyticsClient({
   test: initialTest,
@@ -3019,6 +3090,7 @@ export default function AnalyticsClient({
                                   {showEdited && <> · Edited {fmtDate(editedIso)}</>}
                                 </p>
                               )}
+                              <div className="mt-1"><SpeedBadge testId={test.id} variant={stat.variant} /></div>
                               {stat.variant.duplicated_from_id && (
                                 <p className="text-slate-400 dark:text-slate-500 text-[10px] flex items-center gap-1 mt-0.5">
                                   <Copy size={9} className="flex-shrink-0" />
