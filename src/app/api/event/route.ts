@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/supabase-server';
 import { getPlanDetails } from '@/lib/plans';
-import { getDeviceType } from '@/lib/utils';
+import { getDeviceType, isBotRequest } from '@/lib/utils';
 import { logEvent } from '@/lib/log';
 import { z } from 'zod';
 
@@ -29,6 +29,20 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const data = schema.parse(body);
+
+    // Non-browser traffic. /api/serve already drops the bot pageview it renders
+    // server-side, but conversions and the browser-fired pageview arrive here
+    // instead — so without this a bot kept its conversion while its pageview was
+    // discarded, i.e. numerator up, denominator down, CVR inflated. Same UA check
+    // as serve so both sides agree on what a bot is. Dropped, not stored-and-hidden:
+    // an event carries no information a human would miss if we get it wrong.
+    if (isBotRequest(request.headers.get('user-agent'))) {
+      await logEvent('event_skip', 'info', `bot-filtered ${data.type}`, {
+        testId: data.testId, variantId: data.variantId,
+        userAgent: request.headers.get('user-agent'),
+      });
+      return NextResponse.json({ ok: true, bot: true }, { headers });
+    }
 
     // Deduplicate pageviews: one pageview per visitor per test per day
     if (data.type === 'pageview') {

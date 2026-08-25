@@ -95,6 +95,15 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true, skipped: 'preview' });
   }
 
+  // NOTE: deliberately no bot check on this path, unlike /api/event. A lead is a
+  // real person's name and phone number and it also fires the client's webhook
+  // and HubSpot sync, so a single false positive in isBotRequest() would destroy
+  // a customer nobody ever knew existed. Bot leads are instead flagged on read
+  // (see /api/tests/[id]/form-leads) from the user_agent stored below, and hidden
+  // from the table by default — a junk row costs one click to delete, a lost lead
+  // costs a sale. If this ever changes, change /api/event to match or the two
+  // sides will disagree about what counts as tracked traffic.
+
   // Verify test exists and get workspace_id + name for integration lookup
   const { data: test } = await db
     .from('tests')
