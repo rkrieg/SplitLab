@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { isRateLimited } from '@/lib/ai-client';
 import { uploadHtml, downloadHtmlByPath, fileNameFromUrl } from '@/lib/storage';
+import { verifyAndRehostHtmlImages, applyRehostMap } from '@/lib/ai-asset-integrity';
 import { resolveWorkspaceRole, resolveOwnerPlan, resolveWorkspaceOwner } from '@/lib/workspace-auth';
 import { PLAN_LIMITS } from '@/lib/plans';
 import { isTestVariantPage } from '@/lib/page-drafts';
@@ -18,7 +19,11 @@ import { extractPageContent, extractedPageToSchema } from '@/lib/ai-page-extract
 export const dynamic = 'force-dynamic';
 // No model call happens here any more — the rebuild is a transpile that runs in
 // well under a second. The ceiling is for storage uploads on a very large page.
-export const maxDuration = 120;
+// Was 120, sized when this route only rebuilt markup. It now also copies every
+// foreign image into our storage before saving, which is network work
+// proportional to the page's image count, so the old ceiling could kill a
+// rebuild that had already succeeded.
+export const maxDuration = 300;
 
 /**
  * Rebuild a coordinate-layout page as a flow-layout page.
@@ -313,8 +318,39 @@ export async function POST(
 
       sendSSE(controller, { type: 'status', message: 'Saving…' });
 
-      const finalHtml = rebuilt;
-      const finalSchema = schema;
+      // A rebuilt page carries its ORIGINAL <img> URLs across — the rebuild
+      // changes layout, not assets — so a page imported from Unbounce/Webflow
+      // is still pointing at their servers here. This path never touches
+      // schema-from-html's prep, so without this it is the one route to the
+      // editor that leaves foreign URLs in place, and the first edit would
+      // re-host them mid-diff and read the address change as deleted content.
+      //
+      // Schema gets the same map: it stores image URLs for the editor's
+      // thumbnails, and the two must not point at different copies.
+      //
+      // Best-effort — a rebuild that worked must not be lost to a slow host.
+      let finalHtml = rebuilt;
+      let finalSchema = schema;
+      try {
+        const assetScan = await verifyAndRehostHtmlImages({
+          pageSlug: page.slug ?? params.id,
+          html: finalHtml,
+        });
+        finalHtml = assetScan.html;
+        if (Object.keys(assetScan.rehostedMap).length > 0) {
+          finalSchema = JSON.parse(
+            applyRehostMap(JSON.stringify(finalSchema), assetScan.rehostedMap),
+          ) as typeof finalSchema;
+        }
+        if (assetScan.rehosted.length > 0 || assetScan.broken.length > 0) {
+          console.log('[rebuild-flow] asset integrity', {
+            rehosted: assetScan.rehosted.length,
+            broken: assetScan.broken.length,
+          });
+        }
+      } catch (err) {
+        console.warn('[rebuild-flow] asset re-hosting failed — keeping original image URLs', err);
+      }
 
       // Somewhere to go back to. A variant's live HTML is untouched either way
       // (the rebuild lands in the draft), so the backup is for every other page.

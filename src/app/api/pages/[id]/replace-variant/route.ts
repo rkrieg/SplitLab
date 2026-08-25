@@ -5,6 +5,13 @@ import { db } from '@/lib/supabase-server';
 import { resolveWorkspaceRole } from '@/lib/workspace-auth';
 import { replaceVariantLive } from '@/lib/services/pages';
 
+// Taking in HTML now also copies its images into our storage (see
+// takeOwnershipOfHtmlAssets), which is network work proportional to how many
+// images the page has. On the platform default (~10-15s) an image-heavy page
+// would be killed mid-copy, leaving it half-owned. Well under the 800s the AI
+// routes use — this is downloads, not generation.
+export const maxDuration = 300;
+
 // Promotes a variant page's draft (accumulated via AI chat / WYSIWYG edits)
 // onto the live HTML a test is actually serving. This is the only place a
 // variant page's live columns get touched by the AI editor — everything

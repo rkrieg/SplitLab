@@ -74,7 +74,13 @@ export async function classifyPageShapeIntent(
         'full_reference = user wants the page to closely match/replicate the linked site structure.\n' +
         'If both a URL and custom copy appear, prefer minimal_or_custom unless they clearly asked to copy the whole page.',
       messages: [{ role: 'user', content: prompt.slice(0, 4000) }],
-      maxTokens: 200,
+      // Sized for Haiku, which had no thinking overhead. Every call here runs
+      // on Sonnet 5, whose adaptive thinking is billed against this same
+      // ceiling BEFORE the answer starts — so a small budget can be spent
+      // entirely on thinking and truncate the response. Truncation here fails
+      // silently (see the catch below), so the loss is invisible. Costs
+      // nothing: Anthropic bills output actually generated, not this ceiling.
+      maxTokens: 32000,
       label: 'generate:shape-classify',
     });
     let raw = text.trim();

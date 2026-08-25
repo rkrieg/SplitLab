@@ -66,6 +66,9 @@ import {
   MoreHorizontal,
   Archive,
   ArchiveRestore,
+  Zap,
+  Video,
+  Flame,
 } from "lucide-react";
 import Spinner from "@/components/ui/Spinner";
 import Button from "@/components/ui/Button";
@@ -105,6 +108,10 @@ interface Variant {
   tracking_verified?: boolean | null;
   duplicated_from_id?: string | null;
   archived_at?: string | null;
+  speed_mobile?: number | null;
+  speed_desktop?: number | null;
+  speed_tested_at?: string | null;
+  clarity_share_url?: string | null;
 }
 
 interface Goal {
@@ -217,6 +224,81 @@ interface TestMapping {
 }
 
 type Tab = "overview" | "leads" | "form-leads" | "integrations" | "settings";
+
+/** Color a 0-100 PageSpeed grade: green >=90, amber 50-89, red <50. */
+function speedColor(s: number): string {
+  if (s >= 90) return "bg-green-500/15 text-green-700 dark:text-green-400";
+  if (s >= 50) return "bg-amber-500/15 text-amber-700 dark:text-amber-400";
+  return "bg-red-500/15 text-red-700 dark:text-red-400";
+}
+function timeAgo(iso: string): string {
+  const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
+
+/** Per-variant load-speed grade (Google PageSpeed). Shows the grade + mobile vs
+ *  desktop; runs on demand (click) and auto-runs the first time a variant is seen
+ *  and again whenever it's been edited since the last test — so a score is always
+ *  fresh. Auto-runs are silent (no error toast); manual clicks surface errors. */
+function SpeedBadge({ testId, variant, editedAt }: { testId: string; variant: Variant; editedAt?: string | null }) {
+  const [mobile, setMobile] = useState<number | null>(variant.speed_mobile ?? null);
+  const [desktop, setDesktop] = useState<number | null>(variant.speed_desktop ?? null);
+  const [testedAt, setTestedAt] = useState<string | null>(variant.speed_tested_at ?? null);
+  const [loading, setLoading] = useState(false);
+  const runningRef = useRef(false);
+
+  const run = useCallback(async (silent = false) => {
+    if (runningRef.current) return;
+    runningRef.current = true;
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/tests/${testId}/variants/${variant.id}/speed-test`, { method: "POST" });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) { if (!silent) toast.error(d.error || "Speed test failed"); return; }
+      setMobile(d.mobile ?? null); setDesktop(d.desktop ?? null); setTestedAt(d.testedAt ?? null);
+    } catch { if (!silent) toast.error("Speed test failed"); }
+    finally { setLoading(false); runningRef.current = false; }
+  }, [testId, variant.id]);
+
+  // Auto-run when never tested, or when edited since the last test (stale).
+  const stale = !!(testedAt && editedAt && new Date(editedAt).getTime() > new Date(testedAt).getTime());
+  const needsTest = testedAt == null || stale;
+  useEffect(() => {
+    if (needsTest && !loading) run(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [needsTest]);
+
+  const grade = mobile ?? desktop;
+
+  if (loading) {
+    return (
+      <span className="inline-flex items-center justify-end text-slate-400 dark:text-slate-500" title="Measuring load speed…">
+        <Loader2 size={12} className="animate-spin" />
+      </span>
+    );
+  }
+  if (grade == null) {
+    // Not testable yet (no reachable page) — show nothing, like other empty metrics.
+    return <span className="text-slate-400">—</span>;
+  }
+  return (
+    <div className="inline-flex flex-col items-end gap-0.5">
+      <button
+        onClick={() => run()}
+        title={testedAt ? `Load speed (Google PageSpeed) · tested ${timeAgo(testedAt)} · click to re-test` : "Load speed (Google PageSpeed) · click to re-test"}
+        className={`inline-flex items-center gap-1 text-xs font-bold px-1.5 py-0.5 rounded ${speedColor(grade)}`}
+      >
+        <Zap size={11} /> {grade}
+      </button>
+      <span className="text-[10px] text-slate-400 dark:text-slate-500 whitespace-nowrap">
+        M {mobile ?? "—"} · D {desktop ?? "—"}
+      </span>
+    </div>
+  );
+}
 
 export default function AnalyticsClient({
   test: initialTest,
@@ -552,6 +634,11 @@ export default function AnalyticsClient({
 
   // Integrations sub-tab
   const [integrationsSubTab, setIntegrationsSubTab] = useState<'native' | 'webhooks'>('native');
+
+  // Microsoft Clarity (workspace-level project id; drives per-variant deep links)
+  const [claritySaved, setClaritySaved] = useState<string | null>(null);
+  const [clarityDraft, setClarityDraft] = useState('');
+  const [claritySaving, setClaritySaving] = useState(false);
 
   // Email notifications integration
   const [emailIntegration, setEmailIntegration] = useState<{ id: string; enabled: boolean } | null>(null);
@@ -1588,6 +1675,11 @@ export default function AnalyticsClient({
       setEmailIntegration(em);
       setWebhooks(whs);
 
+      const clRaw = data.integrations?.find(i => i.type === 'clarity') ?? null;
+      const clPid = (clRaw && clRaw.enabled) ? ((clRaw.config as { project_id?: string } | null)?.project_id ?? null) : null;
+      setClaritySaved(clPid);
+      setClarityDraft(clPid ?? '');
+
       // Fetch all test mappings once (covers hubspot + email + webhooks)
       const [mRes, kRes, epRes, cpRes] = await Promise.all([
         fetch(`/api/tests/${test.id}/integrations`),
@@ -1685,6 +1777,72 @@ export default function AnalyticsClient({
       fetchIntegrations();
     }
   }, [tab]);
+
+  // ─── Microsoft Clarity ──────────────────────────────────────────────
+  async function saveClarity() {
+    if (!workspaceId) return;
+    const pid = clarityDraft.trim();
+    if (!/^[a-z0-9]+$/i.test(pid)) {
+      toast.error('Enter your Clarity project ID (the code from your Clarity install snippet).');
+      return;
+    }
+    setClaritySaving(true);
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}/integrations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'clarity', config: { project_id: pid } }),
+      });
+      if (!res.ok) { toast.error('Failed to save Clarity settings'); return; }
+      setClaritySaved(pid);
+      toast.success('Microsoft Clarity connected');
+    } catch {
+      toast.error('Failed to save Clarity settings');
+    } finally {
+      setClaritySaving(false);
+    }
+  }
+
+  async function disconnectClarity() {
+    if (!workspaceId) return;
+    const res = await fetch(`/api/workspaces/${workspaceId}/integrations?type=clarity`, { method: 'DELETE' });
+    if (!res.ok) { toast.error('Failed to disconnect Clarity'); return; }
+    setClaritySaved(null);
+    setClarityDraft('');
+    toast.success('Microsoft Clarity disconnected');
+  }
+
+  // Deep-link to Clarity for a variant. A saved per-variant Share link wins
+  // (opens a pre-filtered view); otherwise open the project view — filter by the
+  // sl_variant custom tag once there.
+  function openClarity(variant: Variant, kind: 'recordings' | 'heatmaps') {
+    const url = variant.clarity_share_url
+      || (claritySaved ? `https://clarity.microsoft.com/projects/view/${claritySaved}/${kind}` : null);
+    if (!url) { toast.error('Connect Microsoft Clarity in the Integrations tab first.'); return; }
+    window.open(url, '_blank', 'noopener');
+  }
+
+  async function setClarityShareLink(variant: Variant) {
+    const current = variant.clarity_share_url ?? '';
+    const input = window.prompt(
+      'Paste a Microsoft Clarity "Share" link to open a pre-filtered view for this variant. Leave blank to clear.',
+      current,
+    );
+    if (input === null) return; // cancelled
+    try {
+      const res = await fetch(`/api/tests/${test.id}/variants/${variant.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clarity_share_url: input.trim() }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) { toast.error(d.error || 'Failed to save link'); return; }
+      toast.success(input.trim() ? 'Filtered Clarity link saved' : 'Filtered link cleared');
+      fetchAnalytics();
+    } catch {
+      toast.error('Failed to save link');
+    }
+  }
 
   async function disconnectHubSpot() {
     if (!workspaceId) return;
@@ -2929,6 +3087,9 @@ export default function AnalyticsClient({
                     <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">
                       Conf.
                     </th>
+                    <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">
+                      Speed
+                    </th>
                     <th className="text-center px-3 py-3 text-slate-400 font-medium w-16"></th>
                     <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">
                       Actions
@@ -2939,7 +3100,7 @@ export default function AnalyticsClient({
                   {loading ? (
                     <tr>
                       <td
-                        colSpan={12}
+                        colSpan={13}
                         className="px-5 py-10 text-center text-slate-400"
                       >
                         <RefreshCw
@@ -2952,7 +3113,7 @@ export default function AnalyticsClient({
                   ) : activeStats.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={12}
+                        colSpan={13}
                         className="px-5 py-10 text-center text-slate-400"
                       >
                         No data yet. Publish this page to start collecting
@@ -3181,6 +3342,10 @@ export default function AnalyticsClient({
                                 <span className="text-slate-500">—</span>
                               )}
                             </td>
+                            {/* Load speed (Google PageSpeed) */}
+                            <td className={`px-3 py-3.5 text-right ${rowBg}`}>
+                              <SpeedBadge testId={test.id} variant={stat.variant} editedAt={editedIso ?? createdIso} />
+                            </td>
                             {/* Uplift % */}
                             <td className={`px-3 py-3.5 text-center ${rowBg}`}>
                               {uplift !== null ? (
@@ -3259,6 +3424,33 @@ export default function AnalyticsClient({
                                     >
                                       <ExternalLink size={13} /> Preview page
                                     </button>
+                                    {(claritySaved || stat.variant.clarity_share_url) && (
+                                      <>
+                                        <div className="my-1 border-t border-slate-100 dark:border-slate-700" />
+                                        <button
+                                          onClick={() => { setActionMenu(null); openClarity(stat.variant, "recordings"); }}
+                                          className="w-full flex items-center gap-2 px-3 py-2 text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                                          title={stat.variant.clarity_share_url ? "Open the saved filtered Clarity view" : `Opens Clarity recordings — filter by sl_variant = "${stat.variant.name}"`}
+                                        >
+                                          <Video size={13} /> Clarity recordings
+                                        </button>
+                                        <button
+                                          onClick={() => { setActionMenu(null); openClarity(stat.variant, "heatmaps"); }}
+                                          className="w-full flex items-center gap-2 px-3 py-2 text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                                          title={stat.variant.clarity_share_url ? "Open the saved filtered Clarity view" : `Opens Clarity heatmaps — filter by sl_variant = "${stat.variant.name}"`}
+                                        >
+                                          <Flame size={13} /> Clarity heatmap
+                                        </button>
+                                        <button
+                                          onClick={() => { setActionMenu(null); setClarityShareLink(stat.variant); }}
+                                          className="w-full flex items-center gap-2 px-3 py-2 text-left text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                                          title="Paste a Clarity Share link to open a pre-filtered view directly"
+                                        >
+                                          <Link2 size={13} /> {stat.variant.clarity_share_url ? "Edit filtered link" : "Set filtered link…"}
+                                        </button>
+                                        <div className="my-1 border-t border-slate-100 dark:border-slate-700" />
+                                      </>
+                                    )}
                                     {stat.variant.pages?.id && (
                                       <Link
                                         href={`/clients/${clientId}/pages/${stat.variant.pages.id}/utm`}
@@ -3341,7 +3533,7 @@ export default function AnalyticsClient({
 
                           {stat.variant.pages?.draft_html_content && (
                             <tr className={rowBg}>
-                              <td colSpan={11} className="px-5 py-2">
+                              <td colSpan={12} className="px-5 py-2">
                                 <div className="flex items-center gap-1.5">
                                   <span className="text-xs font-medium text-amber-600 dark:text-amber-500">
                                     Unsaved AI edits for this variant
@@ -3361,7 +3553,7 @@ export default function AnalyticsClient({
                           {isEditing && (
                             <tr>
                               <td
-                                colSpan={12}
+                                colSpan={13}
                                 className="border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 px-6 py-4"
                               >
                                 <div className="grid grid-cols-2 gap-4 max-w-2xl">
@@ -4513,6 +4705,69 @@ export default function AnalyticsClient({
                   </div>
                 </>
               )}
+            </div>
+
+            {/* ── Microsoft Clarity card ── */}
+            <div className="card overflow-hidden">
+              <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700 flex items-center gap-3">
+                <div className="w-8 h-8 rounded-lg bg-sky-500/15 flex items-center justify-center">
+                  <Flame size={16} className="text-sky-600 dark:text-sky-400" />
+                </div>
+                <div>
+                  <p className="font-semibold text-sm text-slate-800 dark:text-slate-200">Microsoft Clarity</p>
+                  <p className="text-xs text-slate-500">Free heatmaps &amp; session recordings, tagged per variant</p>
+                </div>
+                {claritySaved && (
+                  <span className="ml-auto flex items-center gap-1.5 text-xs font-medium text-green-500">
+                    <CheckCircle2 size={13} /> Connected
+                  </span>
+                )}
+              </div>
+
+              <div className="px-5 py-4 space-y-3">
+                <p className="text-xs text-slate-500">
+                  Paste your Clarity <strong>project ID</strong> (the code in your Clarity install snippet, e.g. <code className="font-mono">abcd1234ef</code>). SplitLab injects Clarity on your hosted variants and tags each session with <code className="font-mono">sl_variant</code>, so you can filter recordings and heatmaps to a single variant. Jump in from the <strong>Clarity recordings / heatmap</strong> actions on each variant row.
+                </p>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={clarityDraft}
+                    onChange={(e) => setClarityDraft(e.target.value)}
+                    placeholder="Clarity project ID"
+                    spellCheck={false}
+                    className="input text-sm flex-1"
+                  />
+                  <button
+                    onClick={saveClarity}
+                    disabled={claritySaving}
+                    className="btn-primary text-sm px-4 py-2 rounded-lg font-medium flex-shrink-0 flex items-center gap-2"
+                  >
+                    {claritySaving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
+                    {claritySaved ? 'Update' : 'Connect'}
+                  </button>
+                  {claritySaved && (
+                    <button
+                      onClick={disconnectClarity}
+                      className="text-xs text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 transition-colors flex items-center gap-1 flex-shrink-0"
+                    >
+                      <XCircle size={13} /> Disconnect
+                    </button>
+                  )}
+                </div>
+                {claritySaved && (
+                  <a
+                    href={`https://clarity.microsoft.com/projects/view/${claritySaved}/dashboard`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 text-xs text-sky-600 dark:text-sky-400 hover:underline"
+                  >
+                    <ExternalLink size={12} /> Open Clarity dashboard
+                  </a>
+                )}
+                <p className="text-[11px] text-slate-400 dark:text-slate-500">
+                  Clarity can&apos;t pre-filter from a link we build, so the variant actions open your project and you filter by <code className="font-mono">sl_variant</code> once — or save a Clarity &ldquo;Share&rdquo; link per variant (row action menu) for a one-click pre-filtered view. Hosted HTML variants only.
+                </p>
+              </div>
             </div>
 
             {/* ── Email Notifications card ── */}

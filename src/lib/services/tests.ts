@@ -1,4 +1,5 @@
 import { db } from '@/lib/supabase-server';
+import { takeOwnershipOfHtmlAssets } from '@/lib/ai-asset-integrity';
 import { PLAN_LIMITS } from '@/lib/plans';
 import { uploadHtml, downloadHtml, inlineDataUrisToStorage } from '@/lib/storage';
 import { confidencePercent, findWinner } from '@/lib/stats';
@@ -761,7 +762,7 @@ export async function createVariant(
   let scanHtml: string | null = null;
   if (input.html_content) {
     const newPageId = crypto.randomUUID();
-    const convertedHtml = await inlineDataUrisToStorage(input.html_content, newPageId);
+    const convertedHtml = (await takeOwnershipOfHtmlAssets(input.html_content, newPageId)).html;
     const fileName = `${workspaceId}/${crypto.randomUUID()}.html`;
     const htmlUrl = await uploadHtml(fileName, convertedHtml);
 

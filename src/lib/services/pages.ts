@@ -1,6 +1,7 @@
 import { db } from '@/lib/supabase-server';
 import { uploadHtml, downloadHtmlByPath, fileNameFromUrl, inlineDataUrisToStorage } from '@/lib/storage';
 import { isTestVariantPage, getLinkedVariant } from '@/lib/page-drafts';
+import { takeOwnershipOfHtmlAssets, applyRehostMap } from '@/lib/ai-asset-integrity';
 import { PLAN_LIMITS } from '@/lib/plans';
 import { rescanVariantHtml } from './scan';
 import { ok, fail, ServiceResult } from './types';
@@ -42,7 +43,7 @@ export interface CreatePageInput {
 export async function createPage(input: CreatePageInput): Promise<ServiceResult<unknown>> {
   const pageId = crypto.randomUUID();
   const convertedHtml = typeof input.html_content === 'string'
-    ? await inlineDataUrisToStorage(input.html_content, pageId)
+    ? (await takeOwnershipOfHtmlAssets(input.html_content, pageId)).html
     : input.html_content;
 
   // Every other page-creation path (AI generate/build, raw-HTML paste into a
@@ -125,7 +126,17 @@ export async function updatePageDraftOrLive(
   const { draft, clear_draft, ...data } = input;
 
   if (typeof data.html_content === 'string') {
-    data.html_content = await inlineDataUrisToStorage(data.html_content, pageId);
+    const owned = await takeOwnershipOfHtmlAssets(data.html_content, pageId);
+    data.html_content = owned.html;
+    // A schema arriving in the SAME write stores image URLs of its own (the
+    // editor reads them for "current image" thumbnails). Re-hosting rewrote
+    // those URLs in the html, so the schema has to move with it or the two end
+    // up pointing at different copies of the same picture.
+    if (Object.keys(owned.rehostedMap).length > 0 && data.schema_json !== undefined) {
+      data.schema_json = JSON.parse(
+        applyRehostMap(JSON.stringify(data.schema_json), owned.rehostedMap),
+      );
+    }
   }
 
   const isDraftWrite = draft === true && (await isTestVariantPage(pageId));
@@ -507,9 +518,13 @@ export async function replaceVariantLive(
   if (!linkedVariant) return fail(400, 'This page is not linked to a test variant');
   if (!page.draft_html_content) return fail(400, 'No unsaved changes to replace the variant with');
 
-  // Swap embedded base64 images for real hosted files before this HTML goes
-  // live — see storage.ts's inlineDataUrisToStorage for why.
-  const convertedDraftHtml = await inlineDataUrisToStorage(page.draft_html_content, pageId);
+  // Make this HTML self-contained before it goes live: embedded base64 becomes
+  // hosted files, and any <img> still pointing at another host becomes ours.
+  // Usually a no-op by now (intake and the editor both run this), but a draft
+  // can carry an image the user pasted a URL for mid-edit, and going live is
+  // the last moment to stop depending on someone else's server.
+  const ownedDraft = await takeOwnershipOfHtmlAssets(page.draft_html_content, pageId);
+  const convertedDraftHtml = ownedDraft.html;
   const storagePath = page.html_url ? fileNameFromUrl(page.html_url) : `pages/${pageId}.html`;
   const htmlUrl = await uploadHtml(storagePath, convertedDraftHtml);
 
@@ -521,7 +536,14 @@ export async function replaceVariantLive(
     field_selectors_json: null,
     updated_at: new Date().toISOString(),
   };
-  if (page.draft_schema_json) updatePayload.schema_json = page.draft_schema_json;
+  if (page.draft_schema_json) {
+    // Same map as the html above — the schema's image URLs must not be left
+    // pointing at the copy we just replaced.
+    updatePayload.schema_json =
+      Object.keys(ownedDraft.rehostedMap).length > 0
+        ? JSON.parse(applyRehostMap(JSON.stringify(page.draft_schema_json), ownedDraft.rehostedMap))
+        : page.draft_schema_json;
+  }
 
   await db.from('personalization_rules').delete().eq('page_id', pageId);
 

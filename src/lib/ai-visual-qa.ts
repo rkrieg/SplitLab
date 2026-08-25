@@ -358,7 +358,13 @@ export async function runNavLogoVisualQa(input: VisualQaInput): Promise<VisualQa
     const text = await askAI({
       system: QA_SYSTEM,
       messages: [{ role: 'user', content: blocks }],
-      maxTokens: 1600,
+      // Sized for Haiku, which had no thinking overhead. Every call here runs
+      // on Sonnet 5, whose adaptive thinking is billed against this same
+      // ceiling BEFORE the answer starts — so a small budget can be spent
+      // entirely on thinking and truncate the response. Truncation here fails
+      // silently (see the catch below), so the loss is invisible. Costs
+      // nothing: Anthropic bills output actually generated, not this ceiling.
+      maxTokens: 32000,
       label: input.label ?? 'visual-qa:whole-scroll',
       usage: input.usage ? { ...input.usage, operation: 'route' } : undefined,
     });
@@ -408,7 +414,13 @@ export async function applySectionVisualFix(opts: {
     const text = await askAI({
       system: FIX_SYSTEM,
       messages: [{ role: 'user', content: userContent }],
-      maxTokens: 12_000,
+      // Sized for Haiku, which had no thinking overhead. Every call here runs
+      // on Sonnet 5, whose adaptive thinking is billed against this same
+      // ceiling BEFORE the answer starts — so a small budget can be spent
+      // entirely on thinking and truncate the response. Truncation here fails
+      // silently (see the catch below), so the loss is invisible. Costs
+      // nothing: Anthropic bills output actually generated, not this ceiling.
+      maxTokens: 128000,
       label: opts.label ?? `visual-qa:fix-${opts.section}`,
       usage: opts.usage ? { ...opts.usage, operation: 'build' } : undefined,
     });

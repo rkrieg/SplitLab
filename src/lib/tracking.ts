@@ -1335,3 +1335,23 @@ fbq('track', 'PageView');
       return content;
   }
 }
+
+/**
+ * Microsoft Clarity tag + a per-variant `sl_variant` custom tag so recordings
+ * and heatmaps can be filtered to a single variant inside Clarity. Injected only
+ * on hosted HTML variants (proxy/redirect variants render a page we don't own).
+ * projectId is validated by the caller; variantName is JSON-escaped here.
+ */
+export function buildClaritySnippet(projectId: string, variantName: string): string {
+  const name = JSON.stringify(variantName || '');
+  return `<!-- Microsoft Clarity (SplitLab) -->
+<script type="text/javascript">
+(function(c,l,a,r,i,t,y){
+  c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
+  t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i;
+  y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);
+})(window, document, "clarity", "script", ${JSON.stringify(projectId)});
+try { window.clarity("set", "sl_variant", ${name}); } catch (e) {}
+</script>
+<!-- End Microsoft Clarity -->`;
+}

@@ -6,6 +6,13 @@ import { resolveWorkspaceRole } from '@/lib/workspace-auth';
 import { createVariant } from '@/lib/services/tests';
 import { z } from 'zod';
 
+// Taking in HTML now also copies its images into our storage (see
+// takeOwnershipOfHtmlAssets), which is network work proportional to how many
+// images the page has. On the platform default (~10-15s) an image-heavy page
+// would be killed mid-copy, leaving it half-owned. Well under the 800s the AI
+// routes use — this is downloads, not generation.
+export const maxDuration = 300;
+
 const addVariantSchema = z.object({
   name: z.string().min(1),
   redirect_url: z.string().url().nullable().optional(),
