@@ -275,17 +275,14 @@ function SpeedBadge({ testId, variant, editedAt }: { testId: string; variant: Va
 
   if (loading) {
     return (
-      <span className="inline-flex items-center gap-1 text-[10px] text-slate-500 dark:text-slate-400">
-        <Loader2 size={10} className="animate-spin" /> Testing…
+      <span className="inline-flex items-center justify-end text-slate-400 dark:text-slate-500" title="Measuring load speed…">
+        <Loader2 size={12} className="animate-spin" />
       </span>
     );
   }
   if (grade == null) {
-    return (
-      <button onClick={() => run()} title="Run a Google PageSpeed load-speed test" className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:border-indigo-400 hover:text-indigo-500 transition-colors">
-        <Zap size={10} /> Test
-      </button>
-    );
+    // Not testable yet (no reachable page) — show nothing, like other empty metrics.
+    return <span className="text-slate-400">—</span>;
   }
   return (
     <div className="inline-flex flex-col items-end gap-0.5">

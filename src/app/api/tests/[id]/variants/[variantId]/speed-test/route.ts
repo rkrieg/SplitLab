@@ -22,7 +22,7 @@ async function psiScore(url: string, strategy: 'mobile' | 'desktop'): Promise<nu
   }
 }
 
-export async function POST(_req: NextRequest, { params }: { params: { id: string; variantId: string } }) {
+export async function POST(req: NextRequest, { params }: { params: { id: string; variantId: string } }) {
   const session = await getServerSession(authOptions);
   if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
@@ -43,7 +43,11 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
   // sl_vid forces this exact variant; sl_vh (a throwaway hash) makes it a clean
   // serve — bypasses the visitor cap, records no pageview, sets no cookies, and
   // skips the page-scanner script — so a speed test never pollutes analytics.
-  const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://www.trysplitlab.com';
+  // Use THIS deployment's own origin so a staging dashboard speed-tests the
+  // staging serve route (not whatever NEXT_PUBLIC_APP_URL points at).
+  const proto = req.headers.get('x-forwarded-proto') || 'https';
+  const host = req.headers.get('host');
+  const APP_URL = host ? `${proto}://${host}` : (process.env.NEXT_PUBLIC_APP_URL || 'https://www.trysplitlab.com');
   const vh = crypto.randomUUID();
   let url: string | null = null;
   if (variant.redirect_url) {
