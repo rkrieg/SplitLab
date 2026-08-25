@@ -239,24 +239,37 @@ function timeAgo(iso: string): string {
   return `${Math.floor(s / 86400)}d ago`;
 }
 
-/** Per-variant load-speed grade (Google PageSpeed). Mobile-first headline,
- *  expandable to mobile vs desktop; runs on demand and caches on the variant. */
-function SpeedBadge({ testId, variant }: { testId: string; variant: Variant }) {
+/** Per-variant load-speed grade (Google PageSpeed). Shows the grade + mobile vs
+ *  desktop; runs on demand (click) and auto-runs the first time a variant is seen
+ *  and again whenever it's been edited since the last test — so a score is always
+ *  fresh. Auto-runs are silent (no error toast); manual clicks surface errors. */
+function SpeedBadge({ testId, variant, editedAt }: { testId: string; variant: Variant; editedAt?: string | null }) {
   const [mobile, setMobile] = useState<number | null>(variant.speed_mobile ?? null);
   const [desktop, setDesktop] = useState<number | null>(variant.speed_desktop ?? null);
   const [testedAt, setTestedAt] = useState<string | null>(variant.speed_tested_at ?? null);
   const [loading, setLoading] = useState(false);
+  const runningRef = useRef(false);
 
-  async function run() {
+  const run = useCallback(async (silent = false) => {
+    if (runningRef.current) return;
+    runningRef.current = true;
     setLoading(true);
     try {
       const res = await fetch(`/api/tests/${testId}/variants/${variant.id}/speed-test`, { method: "POST" });
       const d = await res.json().catch(() => ({}));
-      if (!res.ok) { toast.error(d.error || "Speed test failed"); return; }
+      if (!res.ok) { if (!silent) toast.error(d.error || "Speed test failed"); return; }
       setMobile(d.mobile ?? null); setDesktop(d.desktop ?? null); setTestedAt(d.testedAt ?? null);
-    } catch { toast.error("Speed test failed"); }
-    finally { setLoading(false); }
-  }
+    } catch { if (!silent) toast.error("Speed test failed"); }
+    finally { setLoading(false); runningRef.current = false; }
+  }, [testId, variant.id]);
+
+  // Auto-run when never tested, or when edited since the last test (stale).
+  const stale = !!(testedAt && editedAt && new Date(editedAt).getTime() > new Date(testedAt).getTime());
+  const needsTest = testedAt == null || stale;
+  useEffect(() => {
+    if (needsTest && !loading) run(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [needsTest]);
 
   const grade = mobile ?? desktop;
 
@@ -269,7 +282,7 @@ function SpeedBadge({ testId, variant }: { testId: string; variant: Variant }) {
   }
   if (grade == null) {
     return (
-      <button onClick={run} title="Run a Google PageSpeed load-speed test" className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:border-indigo-400 hover:text-indigo-500 transition-colors">
+      <button onClick={() => run()} title="Run a Google PageSpeed load-speed test" className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:border-indigo-400 hover:text-indigo-500 transition-colors">
         <Zap size={10} /> Test
       </button>
     );
@@ -277,7 +290,7 @@ function SpeedBadge({ testId, variant }: { testId: string; variant: Variant }) {
   return (
     <div className="inline-flex flex-col items-end gap-0.5">
       <button
-        onClick={run}
+        onClick={() => run()}
         title={testedAt ? `Load speed (Google PageSpeed) · tested ${timeAgo(testedAt)} · click to re-test` : "Load speed (Google PageSpeed) · click to re-test"}
         className={`inline-flex items-center gap-1 text-xs font-bold px-1.5 py-0.5 rounded ${speedColor(grade)}`}
       >
@@ -3334,7 +3347,7 @@ export default function AnalyticsClient({
                             </td>
                             {/* Load speed (Google PageSpeed) */}
                             <td className={`px-3 py-3.5 text-right ${rowBg}`}>
-                              <SpeedBadge testId={test.id} variant={stat.variant} />
+                              <SpeedBadge testId={test.id} variant={stat.variant} editedAt={editedIso ?? createdIso} />
                             </td>
                             {/* Uplift % */}
                             <td className={`px-3 py-3.5 text-center ${rowBg}`}>
