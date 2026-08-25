@@ -67,6 +67,7 @@ import {
   Zap,
   Video,
   Flame,
+  RotateCcw,
 } from "lucide-react";
 import Spinner from "@/components/ui/Spinner";
 import Button from "@/components/ui/Button";
@@ -510,6 +511,39 @@ export default function AnalyticsClient({
 
   // Delete variant
   const [deleteVariantId, setDeleteVariantId] = useState<string | null>(null);
+
+  // Reset stats (wipe a test's recorded data — misconfigured tracking, etc.)
+  const [resetOpen, setResetOpen] = useState(false);
+  const [resetIncludeLeads, setResetIncludeLeads] = useState(false);
+  const [resetConfirmText, setResetConfirmText] = useState("");
+  const [resetting, setResetting] = useState(false);
+
+  async function resetStats() {
+    setResetting(true);
+    try {
+      const res = await fetch(`/api/tests/${test.id}/reset-stats`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ includeLeads: resetIncludeLeads }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) { toast.error(d.error || "Failed to reset stats"); return; }
+      toast.success(
+        `Stats reset — ${d.eventsDeleted} event${d.eventsDeleted === 1 ? "" : "s"} cleared` +
+        (resetIncludeLeads ? `, ${d.leadsDeleted} lead${d.leadsDeleted === 1 ? "" : "s"} deleted` : "")
+      );
+      setResetOpen(false);
+      setResetConfirmText("");
+      setResetIncludeLeads(false);
+      fetchAnalytics();
+      if (reportingLoaded) fetchReporting();
+      if (tab === "form-leads") fetchFormLeads(1);
+    } catch {
+      toast.error("Failed to reset stats");
+    } finally {
+      setResetting(false);
+    }
+  }
   const [deletingVariant, setDeletingVariant] = useState(false);
 
   // URL change confirmation (clears scan results)
@@ -3038,6 +3072,15 @@ export default function AnalyticsClient({
               <button onClick={exportCsv} className="btn-secondary ml-auto">
                 <Download size={14} /> Export
               </button>
+              {userRole !== "viewer" && (
+                <button
+                  onClick={() => setResetOpen(true)}
+                  className="btn-secondary text-red-600 dark:text-red-400 hover:border-red-400 dark:hover:border-red-500"
+                  title="Delete this test's recorded stats — use when tracking was misconfigured"
+                >
+                  <RotateCcw size={14} /> Reset stats
+                </button>
+              )}
             </div>
 
             <div className="card overflow-x-auto">
@@ -5899,6 +5942,52 @@ export default function AnalyticsClient({
         description="This will permanently delete the variant and its event data. Linked pages and UTM rules will be archived. Traffic weights will be redistributed equally among the remaining variants."
         loading={deletingVariant}
       />
+
+      {/* Reset stats — wipe recorded data for this test (misconfigured tracking, etc.) */}
+      <Modal open={resetOpen} onClose={() => !resetting && setResetOpen(false)} title="Reset test statistics" size="sm">
+        <div className="space-y-4">
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            This permanently deletes <strong>all recorded view &amp; conversion data</strong> for{" "}
+            <strong className="text-slate-700 dark:text-slate-200">{test.name}</strong> — views, unique visitors,
+            conversions, CVR, goals, confidence, and the mobile/desktop split. Use this when tracking was
+            misconfigured and the numbers are unreliable. <strong className="text-red-600 dark:text-red-400">This cannot be undone.</strong>
+          </p>
+          <label className="flex items-start gap-2 text-sm text-slate-600 dark:text-slate-300 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={resetIncludeLeads}
+              onChange={(e) => setResetIncludeLeads(e.target.checked)}
+              className="mt-0.5"
+            />
+            <span>Also delete captured form leads (the Leads tab)</span>
+          </label>
+          <div>
+            <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">
+              Type <span className="font-mono text-slate-700 dark:text-slate-200">RESET</span> to confirm
+            </label>
+            <input
+              type="text"
+              value={resetConfirmText}
+              onChange={(e) => setResetConfirmText(e.target.value)}
+              placeholder="RESET"
+              autoComplete="off"
+              spellCheck={false}
+              className="input text-sm w-full"
+            />
+          </div>
+          <div className="flex items-center justify-end gap-3 pt-1">
+            <Button variant="secondary" onClick={() => setResetOpen(false)} disabled={resetting}>Cancel</Button>
+            <Button
+              variant="danger"
+              onClick={resetStats}
+              loading={resetting}
+              disabled={resetConfirmText.trim().toUpperCase() !== "RESET"}
+            >
+              Reset stats
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       <ConfirmDialog
         open={!!urlChangeConfirmId}
