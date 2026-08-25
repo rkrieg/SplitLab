@@ -302,6 +302,16 @@ function SpeedBadge({ testId, variant, editedAt }: { testId: string; variant: Va
   );
 }
 
+interface AiInsights {
+  generatedAt?: string;
+  generatedBy?: string | null;
+  clarityUsed?: boolean;
+  summary?: string;
+  variants?: { id: string; name: string; observation: string }[];
+  recommendations?: { title: string; detail: string; priority?: "high" | "medium" | "low" }[];
+  clarityNote?: string;
+}
+
 export default function AnalyticsClient({
   test: initialTest,
   appUrl,
@@ -657,7 +667,29 @@ export default function AnalyticsClient({
   // Microsoft Clarity (workspace-level project id; drives per-variant deep links)
   const [claritySaved, setClaritySaved] = useState<string | null>(null);
   const [clarityDraft, setClarityDraft] = useState('');
+  const [clarityTokenDraft, setClarityTokenDraft] = useState('');
   const [claritySaving, setClaritySaving] = useState(false);
+
+  // AI Insights (per-variant read + recommendations from our data + optional Clarity)
+  const _initialInsights = ((initialTest as unknown) as { ai_insights?: AiInsights }).ai_insights ?? null;
+  const [aiInsights, setAiInsights] = useState<AiInsights | null>(_initialInsights);
+  const [aiInsightsLoading, setAiInsightsLoading] = useState(false);
+  const [aiInsightsOpen, setAiInsightsOpen] = useState(!!_initialInsights);
+
+  async function generateInsights() {
+    setAiInsightsLoading(true);
+    try {
+      const res = await fetch(`/api/tests/${test.id}/ai-insights`, { method: "POST" });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) { toast.error(d.error || "Failed to generate insights"); return; }
+      setAiInsights(d.insights ?? null);
+      setAiInsightsOpen(true);
+    } catch {
+      toast.error("Failed to generate insights");
+    } finally {
+      setAiInsightsLoading(false);
+    }
+  }
 
   // Email notifications integration
   const [emailIntegration, setEmailIntegration] = useState<{ id: string; enabled: boolean } | null>(null);
@@ -1705,9 +1737,10 @@ export default function AnalyticsClient({
       setWebhooks(whs);
 
       const clRaw = data.integrations?.find(i => i.type === 'clarity') ?? null;
-      const clPid = (clRaw && clRaw.enabled) ? ((clRaw.config as { project_id?: string } | null)?.project_id ?? null) : null;
-      setClaritySaved(clPid);
-      setClarityDraft(clPid ?? '');
+      const clCfg = (clRaw && clRaw.enabled) ? (clRaw.config as { project_id?: string; api_token?: string } | null) : null;
+      setClaritySaved(clCfg?.project_id ?? null);
+      setClarityDraft(clCfg?.project_id ?? '');
+      setClarityTokenDraft(clCfg?.api_token ?? '');
 
       // Fetch all test mappings once (covers hubspot + email + webhooks)
       const [mRes, kRes, epRes, cpRes] = await Promise.all([
@@ -1815,12 +1848,15 @@ export default function AnalyticsClient({
       toast.error('Enter your Clarity project ID (the code from your Clarity install snippet).');
       return;
     }
+    const token = clarityTokenDraft.trim();
     setClaritySaving(true);
     try {
+      const config: Record<string, string> = { project_id: pid };
+      if (token) config.api_token = token;
       const res = await fetch(`/api/workspaces/${workspaceId}/integrations`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'clarity', config: { project_id: pid } }),
+        body: JSON.stringify({ type: 'clarity', config }),
       });
       if (!res.ok) { toast.error('Failed to save Clarity settings'); return; }
       setClaritySaved(pid);
@@ -3802,6 +3838,80 @@ export default function AnalyticsClient({
               )}
             </div>
 
+            {/* ── AI INSIGHTS ── */}
+            <div className="card overflow-hidden">
+              <div className="flex items-center justify-between px-5 py-4 gap-3">
+                <button onClick={() => setAiInsightsOpen((o) => !o)} className="flex items-center gap-2.5 text-left min-w-0">
+                  <Sparkles size={16} className="text-indigo-600 dark:text-indigo-400 flex-shrink-0" />
+                  <span className="font-semibold text-sm text-slate-800 dark:text-slate-200">AI Insights</span>
+                  {aiInsights?.generatedAt && (
+                    <span className="text-xs text-slate-400 font-normal">updated {timeAgo(aiInsights.generatedAt)}</span>
+                  )}
+                  <ChevronDown size={16} className={`text-slate-400 transition-transform duration-200 flex-shrink-0 ${aiInsightsOpen ? "rotate-180" : ""}`} />
+                </button>
+                {userRole !== "viewer" && (
+                  <button
+                    onClick={generateInsights}
+                    disabled={aiInsightsLoading}
+                    className="btn-secondary text-xs flex-shrink-0"
+                  >
+                    {aiInsightsLoading
+                      ? <><Loader2 size={13} className="animate-spin" /> Analyzing…</>
+                      : <><Sparkles size={13} /> {aiInsights ? "Regenerate" : "Generate insights"}</>}
+                  </button>
+                )}
+              </div>
+              {aiInsightsOpen && (
+                <div className="px-5 pb-5 border-t border-slate-200 dark:border-slate-700 pt-4 space-y-4">
+                  {!aiInsights ? (
+                    <p className="text-sm text-slate-500 dark:text-slate-400">
+                      Get an AI read of this test — what&apos;s happening across your variants and what to do next. Uses your conversion data{claritySaved ? " plus Microsoft Clarity behavioral signals" : ""}. Click <strong>Generate insights</strong>.
+                    </p>
+                  ) : (
+                    <>
+                      {aiInsights.summary && (
+                        <p className="text-sm text-slate-700 dark:text-slate-200 leading-relaxed">{aiInsights.summary}</p>
+                      )}
+                      {aiInsights.variants && aiInsights.variants.length > 0 && (
+                        <div className="space-y-1.5">
+                          {aiInsights.variants.map((v) => (
+                            <p key={v.id} className="text-sm">
+                              <span className="font-semibold text-slate-800 dark:text-slate-200">{v.name}:</span>{" "}
+                              <span className="text-slate-600 dark:text-slate-300">{v.observation}</span>
+                            </p>
+                          ))}
+                        </div>
+                      )}
+                      {aiInsights.recommendations && aiInsights.recommendations.length > 0 && (
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-2">Recommendations</p>
+                          <div className="space-y-2.5">
+                            {aiInsights.recommendations.map((rec, i) => (
+                              <div key={i} className="flex gap-2.5 items-start">
+                                <span className={`mt-0.5 text-[10px] font-bold uppercase px-1.5 py-0.5 rounded flex-shrink-0 ${rec.priority === "high" ? "bg-red-500/15 text-red-600 dark:text-red-400" : rec.priority === "low" ? "bg-slate-500/15 text-slate-500 dark:text-slate-400" : "bg-amber-500/15 text-amber-600 dark:text-amber-400"}`}>
+                                  {rec.priority || "med"}
+                                </span>
+                                <div className="min-w-0">
+                                  <p className="text-sm font-medium text-slate-800 dark:text-slate-200">{rec.title}</p>
+                                  <p className="text-xs text-slate-500 dark:text-slate-400">{rec.detail}</p>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {aiInsights.clarityNote && (
+                        <p className="text-[11px] text-slate-400 dark:text-slate-500 border-t border-slate-100 dark:border-slate-800 pt-2">{aiInsights.clarityNote}</p>
+                      )}
+                      <p className="text-[11px] text-slate-400 dark:text-slate-500">
+                        AI-generated from your test data{aiInsights.clarityUsed ? " + Clarity behavioral signals" : ""} — sanity-check before acting.
+                      </p>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+
             {/* ── PAGE REPORTING ── */}
             <div className="card overflow-hidden">
               {/* Header / toggle */}
@@ -4826,6 +4936,23 @@ export default function AnalyticsClient({
                       <XCircle size={13} /> Disconnect
                     </button>
                   )}
+                </div>
+                <div>
+                  <label className="block text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1">
+                    Data Export API token <span className="font-normal text-slate-400">(optional — powers AI Insights)</span>
+                  </label>
+                  <input
+                    type="password"
+                    value={clarityTokenDraft}
+                    onChange={(e) => setClarityTokenDraft(e.target.value)}
+                    placeholder="Clarity → Settings → Data Export → Generate new API token"
+                    spellCheck={false}
+                    autoComplete="off"
+                    className="input text-sm w-full"
+                  />
+                  <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">
+                    Lets SplitLab pull site-wide behavioral signals (rage/dead clicks, scroll depth, JS errors) into the AI Insights pane. Aggregate, last 3 days, ~10 pulls/day. Click <strong>Update</strong> after entering it.
+                  </p>
                 </div>
                 {claritySaved && (
                   <a
