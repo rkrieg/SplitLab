@@ -52,6 +52,15 @@ function sanitizeExtraParams(input: unknown): Record<string, string> {
   return out;
 }
 
+function isPreviewSubmission(pageUrl?: string): boolean {
+  if (!pageUrl || typeof pageUrl !== 'string') return false;
+  try {
+    return new URL(pageUrl).searchParams.get('sl_preview') === '1';
+  } catch {
+    return false;
+  }
+}
+
 export async function POST(request: NextRequest) {
   let body: Record<string, unknown>;
   try {
@@ -74,6 +83,16 @@ export async function POST(request: NextRequest) {
 
   if (!testId || typeof testId !== 'string') {
     return NextResponse.json({ error: 'Missing testId' }, { status: 400 });
+  }
+
+  // Server-side backstop for dashboard previews. Both senders already stay
+  // silent while previewing, so nothing should reach here — but a lead is the
+  // one signal that also fires the client's webhooks and CRM sync, so it gets a
+  // second gate that does not depend on the browser behaving. Checked against
+  // the submitting page's own URL, which still carries sl_preview when the
+  // sender is a page we served in preview.
+  if (isPreviewSubmission(pageUrl)) {
+    return NextResponse.json({ ok: true, skipped: 'preview' });
   }
 
   // Verify test exists and get workspace_id + name for integration lookup

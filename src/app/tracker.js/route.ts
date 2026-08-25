@@ -47,6 +47,13 @@ function buildTrackerScript(appUrl: string): string {
   var _sent = {};
   var _ctx = null;
   var _scanMode = false;
+  // Dashboard preview (?sl_preview=1). Like _scanMode this is "run, but stay
+  // silent" — never "don't load the script". The three outbound signals move
+  // together: no pageview, no conversion, no form lead, and no context written
+  // to localStorage (a stored preview context would keep mis-attributing this
+  // browser on later real visits).
+  var _previewMode = false;
+  function muted() { return _scanMode || _previewMode; }
   // Proxy mode only: the wrapper URL the visitor sees, handed down via ?sl_purl
   // because this script runs inside the iframe and can't read the parent URL.
   // Deliberately NOT stored with _ctx — _ctx is persisted to localStorage and
@@ -65,6 +72,7 @@ function buildTrackerScript(appUrl: string): string {
   }
 
   function send(payload) {
+    if (muted()) return;
     try {
       var body = JSON.stringify(payload);
       if (navigator.sendBeacon) {
@@ -116,6 +124,7 @@ function buildTrackerScript(appUrl: string): string {
   }
 
   function store(ctx) {
+    if (muted()) return;
     try {
       if (!ctx || !ctx.tid || !ctx.vid || !ctx.vh) return;
       var m = loadMap();
@@ -1036,7 +1045,7 @@ function buildTrackerScript(appUrl: string): string {
   }
 
   function captureFormLead(form) {
-    if (!_ctx) return;
+    if (!_ctx || muted()) return;
     try {
       // Start with accumulated data from previous steps, then overlay current DOM fields
       var fields = {};
@@ -1103,7 +1112,7 @@ function buildTrackerScript(appUrl: string): string {
   var _leadSent = false; // deduplicate — only send once per page session
 
   function captureFormLeadFromAccumulated() {
-    if (!_ctx || _leadSent) return;
+    if (!_ctx || _leadSent || muted()) return;
     var hasData = false;
     for (var k in _accumulatedFormData) {
       if (_accumulatedFormData.hasOwnProperty(k) && _accumulatedFormData[k]) { hasData = true; break; }
@@ -1434,6 +1443,15 @@ function buildTrackerScript(appUrl: string): string {
     var params = new URLSearchParams(window.location.search);
     var isScan = params.get("sl_scan") === "1";
     _scanMode = isScan;
+    // Preview is sticky for the rest of the TAB: sl_preview only rides the first
+    // URL, so without this a second page — or the post-submit thank-you page —
+    // inside the same preview tab would start recording. sessionStorage is
+    // per-tab, so ordinary browsing tabs are unaffected.
+    _previewMode = params.get("sl_preview") === "1";
+    try {
+      if (_previewMode) sessionStorage.setItem("__sl_preview", "1");
+      else if (sessionStorage.getItem("__sl_preview") === "1") _previewMode = true;
+    } catch(e) {}
     // Read before any cleanUrl() below strips it back out of the address bar.
     _purl = params.get("sl_purl") || null;
 
@@ -1442,7 +1460,7 @@ function buildTrackerScript(appUrl: string): string {
     var vid = params.get("sl_vid");
     var vh  = params.get("sl_vh");
     if (tid && vid && vh) {
-      cleanUrl(["sl_tid", "sl_vid", "sl_vh", "sl_scan", "sl_purl"]);
+      cleanUrl(["sl_tid", "sl_vid", "sl_vh", "sl_scan", "sl_preview", "sl_purl"]);
       // Boot immediately with no goals, then fill them in. Blocking here on
       // /api/resolve (~1s) would delay every redirect-mode pageview and lose it
       // outright on a fast bounce. fetchGoalsLate() re-checks url_reached once
@@ -1454,7 +1472,7 @@ function buildTrackerScript(appUrl: string): string {
 
     // Method 2: Variant ID only (?sl_vid=xxx) — resolve test ID + goals via API
     if (vid && !tid) {
-      cleanUrl(["sl_vid", "sl_scan", "sl_purl"]);
+      cleanUrl(["sl_vid", "sl_scan", "sl_preview", "sl_purl"]);
       if (isScan) showScanBanner();
       var tempVh = vh || uuid();
       var xhr = new XMLHttpRequest();
@@ -1494,7 +1512,7 @@ function buildTrackerScript(appUrl: string): string {
     // Method 3: Shorthand (?sl_variant=xxx)
     var variantId = params.get("sl_variant");
     if (variantId) {
-      cleanUrl(["sl_variant", "sl_scan", "sl_purl"]);
+      cleanUrl(["sl_variant", "sl_scan", "sl_preview", "sl_purl"]);
       var xhr2 = new XMLHttpRequest();
       xhr2.open("GET", RESOLVE_URL + "?vid=" + encodeURIComponent(variantId), true);
       xhr2.withCredentials = false;
