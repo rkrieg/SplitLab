@@ -40,10 +40,16 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
   if (!role || role === 'viewer') return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
   // Resolve a publicly reachable URL PageSpeed can load.
+  // sl_vid forces this exact variant; sl_vh (a throwaway hash) makes it a clean
+  // serve — bypasses the visitor cap, records no pageview, sets no cookies, and
+  // skips the page-scanner script — so a speed test never pollutes analytics.
+  const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://www.trysplitlab.com';
+  const vh = crypto.randomUUID();
   let url: string | null = null;
   if (variant.redirect_url) {
     url = variant.redirect_url;
   } else if (variant.page_id) {
+    const path = test.url_path || '/';
     const { data: dom } = await db
       .from('domains')
       .select('domain')
@@ -52,14 +58,15 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
       .limit(1)
       .maybeSingle();
     if (dom?.domain) {
-      const path = test.url_path || '/';
       const sep = path.includes('?') ? '&' : '?';
-      // sl_vid forces this specific variant; sl_scan=1 bypasses the visitor cap.
-      url = `https://${dom.domain}${path}${sep}sl_vid=${variant.id}&sl_scan=1`;
+      url = `https://${dom.domain}${path}${sep}sl_vid=${variant.id}&sl_vh=${vh}`;
+    } else {
+      // No custom domain — use the app's own public serve URL for this variant.
+      url = `${APP_URL}/api/serve?preview_test_id=${params.id}&sl_vid=${variant.id}&sl_vh=${vh}`;
     }
   }
   if (!url) {
-    return NextResponse.json({ error: 'Connect a verified custom domain to speed-test hosted variants.' }, { status: 400 });
+    return NextResponse.json({ error: 'This variant has no page to speed-test yet.' }, { status: 400 });
   }
 
   const [mobile, desktop] = await Promise.all([psiScore(url, 'mobile'), psiScore(url, 'desktop')]);

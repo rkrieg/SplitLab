@@ -19,6 +19,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { createClient } from '@supabase/supabase-js';
 
@@ -39,6 +40,7 @@ if (fs.existsSync(envPath)) {
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const PSI_KEY = process.env.PAGESPEED_API_KEY;
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://www.trysplitlab.com';
 const RETEST_ALL = process.argv.includes('--all');
 
 if (!SUPABASE_URL || !SERVICE_KEY) {
@@ -68,6 +70,8 @@ async function resolveUrl(variant) {
   if (!variant.page_id) return null;
   const wsId = variant.tests?.workspace_id;
   if (!wsId) return null;
+  const vh = crypto.randomUUID();
+  const p = variant.tests?.url_path || '/';
   const { data: dom } = await db
     .from('domains')
     .select('domain')
@@ -75,16 +79,18 @@ async function resolveUrl(variant) {
     .eq('verified', true)
     .limit(1)
     .maybeSingle();
-  if (!dom?.domain) return null;
-  const p = variant.tests?.url_path || '/';
-  const sep = p.includes('?') ? '&' : '?';
-  return `https://${dom.domain}${p}${sep}sl_vid=${variant.id}&sl_scan=1`;
+  if (dom?.domain) {
+    const sep = p.includes('?') ? '&' : '?';
+    return `https://${dom.domain}${p}${sep}sl_vid=${variant.id}&sl_vh=${vh}`;
+  }
+  // No custom domain — use the app's own public serve URL.
+  return `${APP_URL}/api/serve?preview_test_id=${variant.tests?.id || variant.test_id}&sl_vid=${variant.id}&sl_vh=${vh}`;
 }
 
 async function main() {
   let query = db
     .from('test_variants')
-    .select('id, name, redirect_url, page_id, speed_tested_at, archived_at, tests!inner(url_path, workspace_id)')
+    .select('id, name, test_id, redirect_url, page_id, speed_tested_at, archived_at, tests!inner(id, url_path, workspace_id)')
     .is('archived_at', null);
   if (!RETEST_ALL) query = query.is('speed_tested_at', null);
 
