@@ -7,10 +7,11 @@ import {
   Wand2, Layout, Palette, RefreshCw, Monitor, Smartphone,
   ExternalLink, RotateCcw, Plus, Download, Lock, ArrowRight,
   Sliders, Trash2, AlertTriangle, MoreHorizontal, MousePointer2, ChevronDown,
-  FileCode2,
+  FileCode2, Link2,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { cn } from '@/lib/utils';
+import AssetSourceModal, { type ImportedAsset } from '@/components/pages/AssetSourceModal';
 import { VERTICAL_LABELS } from '@/lib/ai-page-verticals';
 import { SAMPLE_PROMPTS } from '@/lib/ai-page-sample-prompts';
 import { readSSEStream, type SSEEvent } from '@/lib/use-sse-stream';
@@ -63,7 +64,7 @@ interface InitialPage {
   name: string;
   vertical: string;
   schema_json: unknown;
-  conversation_json: { role: string; content: string; image_urls?: string[] }[] | null;
+  conversation_json: { role: string; content: string; image_urls?: string[]; asset_library?: { url: string; name?: string }[] }[] | null;
   html_url: string | null;
   slug: string | null;
   is_published: boolean;
@@ -295,12 +296,14 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   const [iframeSrc, setIframeSrc] = useState<string | null>(null);
   const [iframeLoaded, setIframeLoaded] = useState(false);
   const [schemaJson, setSchemaJson] = useState<unknown>(null);
-  const [conversationJson, setConversationJson] = useState<{ role: string; content: string; image_urls?: string[]; clarify?: boolean }[]>([]);
+  const [conversationJson, setConversationJson] = useState<{ role: string; content: string; image_urls?: string[]; asset_library?: { url: string; name?: string }[]; clarify?: boolean }[]>([]);
   const [publishedUrl, setPublishedUrl] = useState<string | null>(null);
   const [urlCopied, setUrlCopied] = useState(false);
   const [publishConfirmOpen, setPublishConfirmOpen] = useState(false);
   /** Survives generate → questions → generate so create screenshots aren't dropped. */
   const createAttachUrlsRef = useRef<string[]>([]);
+  /** Same, for images imported from a link — see runGenerate. */
+  const createLibraryRef = useRef<ImportedAsset[]>([]);
   const createDesignCopyRef = useRef<string[]>([]);
   const createRequirementsRef = useRef<unknown[]>([]);
   /** Schema pass's verdict on whether the reference's words belong on the page. */
@@ -412,6 +415,194 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   }
   const chatImageInputRef = useRef<HTMLInputElement>(null);
   const [isDraggingChatImage, setIsDraggingChatImage] = useState(false);
+
+  // Images pulled in from a pasted link (Drive folder, shared file, any page).
+  // Already downloaded and re-hosted on our storage by /import-assets, so these
+  // are plain URLs — no File objects, and nothing left to upload at send time.
+  //
+  // Kept separate from chatImages rather than merged into it: chatImages is
+  // capped at 3 because each one costs vision context, while on the create path
+  // these are described to the schema step as a named URL list with no such
+  // cost. Merging them would force the smaller cap onto both.
+  const [assetSourceOpen, setAssetSourceOpen] = useState(false);
+  /** Link found in the user's own prompt, handed to the picker to auto-open. */
+  const [assetSourceLink, setAssetSourceLink] = useState<string | null>(null);
+  const [scanningPrompt, setScanningPrompt] = useState(false);
+  // Links we already offered to pull in. Without this, a PRD that stays in the
+  // prompt box gets rescanned on every clarifying-answer round and re-imports
+  // the same folder.
+  const scannedLinksRef = useRef<Set<string>>(new Set());
+  const [linkedAssets, setLinkedAssets] = useState<ImportedAsset[]>([]);
+  // Same synchronous-read problem as chatImagesRef: runGenerate → runBuild both
+  // close over state that setLinkedAssets only updates on the NEXT render.
+  const linkedAssetsRef = useRef<ImportedAsset[]>([]);
+  useEffect(() => { linkedAssetsRef.current = linkedAssets; }, [linkedAssets]);
+  /** Read the linked assets and clear them in the same tick. */
+  function takeLinkedAssets() {
+    const pending = linkedAssetsRef.current;
+    linkedAssetsRef.current = [];
+    setLinkedAssets([]);
+    return pending;
+  }
+  function removeLinkedAsset(index: number) {
+    setLinkedAssets(prev => prev.filter((_, i) => i !== index));
+  }
+
+  /**
+   * Look for an asset source (Drive folder, bucket, direct image) inside the
+   * text the user just typed, and pull the images in before generating.
+   *
+   * This is how the links actually arrive: pasted inside a PRD, not typed into
+   * a separate field. A folder link sitting in their own brief that the builder
+   * ignores is indistinguishable from the feature being broken.
+   *
+   * Small enough to use as-is -> imported silently, so the common case is
+   * paste-and-go. Bigger than we can use -> the picker opens prefilled so the
+   * choice is theirs rather than ours. Returns true when the caller should wait
+   * for the user instead of generating now.
+   */
+  async function pullAssetsFromPromptText(text: string): Promise<boolean> {
+    if (!pageId || !text.trim()) return false;
+    setScanningPrompt(true);
+    try {
+      const res = await fetch('/api/asset-sources/resolve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text,
+          workspace_id: workspaceId,
+          // Only on the create path. During an edit the follow-up route finds
+          // and attaches bare image URLs itself, so asking for them here too
+          // would embed the same picture twice.
+          include_images: phase !== 'editing',
+        }),
+      });
+      if (!res.ok) return false;
+      const data = await res.json();
+      const sourceUrl: string | null = data.sourceUrl ?? null;
+      if (!sourceUrl || data.kind === 'none') return false;
+      if (scannedLinksRef.current.has(sourceUrl)) return false;
+      scannedLinksRef.current.add(sourceUrl);
+
+      // Drive key missing, folder not public, bucket listing off — say what
+      // happened rather than building with invented imagery and no warning.
+      if (data.error) {
+        toast.error(`Found a link in your brief but couldn't use it — ${String(data.error).replace(/^./, (c: string) => c.toLowerCase())}`);
+        return false;
+      }
+
+      const found: { url: string; name: string }[] = data.assets ?? [];
+      if (found.length === 0) {
+        toast('Found a link in your brief, but there were no images in it.');
+        return false;
+      }
+
+      // One cap for both paths now that edits carry the library as a URL list
+      // rather than through the 3-attachment routing. Counts linked assets
+      // only: images attached with the + button ride the separate 3-slot
+      // vision budget, so charging them against this one would shrink the
+      // library for no reason.
+      const room = Math.max(0, 20 - linkedAssetsRef.current.length);
+      if (found.length > room || data.truncated) {
+        setAssetSourceLink(sourceUrl);
+        setAssetSourceOpen(true);
+        toast(`Found ${found.length} images in your brief's link — pick the ones you want.`);
+        return true;
+      }
+
+      // The server preselects against its own default cap; trim to what this
+      // phase can actually use so we never import more than we will send.
+      const preselected: string[] = (data.preselected ?? []).slice(0, room);
+      const chosen = found.filter((a) => preselected.includes(a.url));
+      if (chosen.length === 0) {
+        setAssetSourceLink(sourceUrl);
+        setAssetSourceOpen(true);
+        return true;
+      }
+
+      const importRes = await fetch(`/api/pages/${pageId}/import-assets`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ assets: chosen.map((a) => ({ url: a.url, name: a.name })) }),
+      });
+      if (!importRes.ok) return false;
+      const imported = await importRes.json();
+      const assets: ImportedAsset[] = imported.imported ?? [];
+      const skipped: { name: string; reason: string }[] = imported.failed ?? [];
+      // Named and held on screen, not dropped. This path imports without the
+      // user ever opening the picker, so a silent skip means they never learn
+      // an image from their brief is missing until they read the built page.
+      if (skipped.length > 0) {
+        toast.error(
+          `${skipped.length} image${skipped.length === 1 ? '' : 's'} from your brief couldn't be added:\n` +
+            skipped.map((f) => `• ${f.name} — ${f.reason}`).join('\n'),
+          { duration: 12000, style: { whiteSpace: 'pre-line' } },
+        );
+      }
+      if (assets.length > 0) {
+        const fresh = assets.filter((a) => !linkedAssetsRef.current.some((p) => p.url === a.url));
+        // The ref is written by hand as well as through state: its useEffect
+        // only runs on the NEXT render, and runGenerate reads the ref inside
+        // this same tick. Without this the images would be imported, shown,
+        // and then not sent.
+        linkedAssetsRef.current = [...linkedAssetsRef.current, ...fresh];
+        setLinkedAssets((prev) => {
+          const seen = new Set(prev.map((a) => a.url));
+          return [...prev, ...fresh.filter((a) => !seen.has(a.url))];
+        });
+        const others: string[] = data.otherSources ?? [];
+        toast.success(
+          `Pulled ${fresh.length} image${fresh.length === 1 ? '' : 's'} from the link in your brief.` +
+            (others.length > 0
+              ? ` Your brief has ${others.length} more link${others.length === 1 ? '' : 's'} — add ${others.length === 1 ? 'it' : 'them'} with the link button.`
+              : ''),
+        );
+      }
+      return false;
+    } catch {
+      return false;
+    } finally {
+      setScanningPrompt(false);
+    }
+  }
+
+  /** Thumbnail row for images pulled in from a link. Same shape as the
+   *  chatImages row so the two read as one attachment area. */
+  function renderLinkedAssetStrip() {
+    if (linkedAssets.length === 0) return null;
+    return (
+      <div className="px-3.5 pt-2.5">
+        <p className="text-[10px] text-slate-400 dark:text-slate-500 mb-1.5">
+          {linkedAssets.length} image{linkedAssets.length === 1 ? '' : 's'} from your link
+        </p>
+        <div className="flex items-center gap-2 flex-wrap">
+          {linkedAssets.map((asset, i) => (
+            <div key={asset.url} className="relative group w-14 h-14 rounded-lg overflow-hidden border border-indigo-300 dark:border-indigo-700 shrink-0">
+              <button
+                type="button"
+                onClick={() => setChatImageLightboxUrl(asset.url)}
+                className="absolute inset-0 p-0 border-0 bg-transparent"
+                title={asset.name}
+                aria-label={`View ${asset.name} full size`}
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={asset.url} alt="" className="w-full h-full object-cover cursor-zoom-in" />
+              </button>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); removeLinkedAsset(i); }}
+                className="absolute top-0.5 right-0.5 z-10 w-5 h-5 rounded-full bg-black/70 text-white text-[10px] font-bold opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
+                title="Remove"
+                aria-label={`Remove ${asset.name}`}
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
   // Full-size preview for chat thumbnails (message history + composer)
   const [chatImageLightboxUrl, setChatImageLightboxUrl] = useState<string | null>(null);
 
@@ -1156,7 +1347,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
 
   // ── Generate → Build ──────────────────────────────────────────────────────
 
-  async function runGenerate(userPrompt: string, history: { role: string; content: string; image_urls?: string[] }[]) {
+  async function runGenerate(userPrompt: string, history: { role: string; content: string; image_urls?: string[]; asset_library?: { url: string; name?: string }[] }[]) {
     setPhase('generating');
 
     // Upload create-time attachments before schema gen so generate/build both see them
@@ -1195,6 +1386,20 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       }
     }
 
+    // Consumed here, not in runBuild: the schema step writes these URLs onto
+    // generated_image_url, and build reads them off the schema it is handed.
+    //
+    // Parked on a ref for the same reason as createAttachUrlsRef. When the
+    // model comes back with clarifying questions this function returns early
+    // and is called again with the answers — reading straight from state would
+    // hand the second call an empty library and quietly rebuild the page with
+    // invented imagery, which is the exact failure this feature exists to stop.
+    const pendingLibrary = takeLinkedAssets();
+    if (pendingLibrary.length > 0) {
+      createLibraryRef.current = [...createLibraryRef.current, ...pendingLibrary];
+    }
+    const libraryAssets = createLibraryRef.current;
+
     const res = await fetch('/api/pages/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1204,6 +1409,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         conversation_json: history,
         workspace_id: workspaceId,
         ...(createImageUrls.length > 0 ? { image_urls: createImageUrls } : {}),
+        ...(libraryAssets.length > 0 ? { asset_library: libraryAssets } : {}),
       }),
     });
     if (!res.ok) {
@@ -1269,7 +1475,17 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     addMessage({ role: 'assistant', content: `Got it! Building your ${VERTICAL_LABELS[vertical]} page now…` });
     const updatedHistory = [
       ...history,
-      { role: 'user', content: userPrompt, ...(createImageUrls.length > 0 ? { image_urls: createImageUrls } : {}) },
+      {
+        role: 'user',
+        content: userPrompt,
+        ...(createImageUrls.length > 0 ? { image_urls: createImageUrls } : {}),
+        // Link-imported files recorded on the turn that brought them in, the
+        // same way attachments are. Without this the build's own images are
+        // absent from conversation_json, so the first follow-up ("swap the
+        // hero for the second one") reaches a model that has never seen a
+        // filename or a URL for any of them.
+        ...(libraryAssets.length > 0 ? { asset_library: libraryAssets } : {}),
+      },
       { role: 'assistant', content: JSON.stringify(data.schema) },
     ];
     setConversationJson(updatedHistory);
@@ -1290,6 +1506,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       freshMinimalShape,
     );
     createAttachUrlsRef.current = [];
+    createLibraryRef.current = [];
     createDesignCopyRef.current = [];
     createRequirementsRef.current = [];
     createReuseRefCopyRef.current = null;
@@ -1299,7 +1516,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
 
   async function runBuild(
     schema: unknown,
-    history: { role: string; content: string; image_urls?: string[] }[],
+    history: { role: string; content: string; image_urls?: string[]; asset_library?: { url: string; name?: string }[] }[],
     freshScreenshots?: string[] | null,
     freshCssTokens?: string | null,
     freshPageContent?: string | null,
@@ -1467,7 +1684,17 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       toast.error(`Your prompt is ${prompt.length - MAX_PROMPT_LENGTH} characters over the limit — please shorten it.`);
       return;
     }
-    const previewUrls = chatImagesRef.current.map(img => img.preview);
+    // Before anything else: if their brief contains a Drive folder / bucket /
+    // image link, pull those images in so the schema step can place real
+    // photography instead of inventing it. Returns true when it opened the
+    // picker, in which case the user drives from here.
+    const waitingOnPicker = await pullAssetsFromPromptText(prompt);
+    if (waitingOnPicker) return;
+
+    const previewUrls = [
+      ...chatImagesRef.current.map(img => img.preview),
+      ...linkedAssetsRef.current.map(a => a.url),
+    ];
     addMessage({ role: 'user', content: prompt, ...(previewUrls.length > 0 ? { image_urls: previewUrls } : {}) });
     await runGenerate(prompt, []);
   }
@@ -1592,7 +1819,13 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     silent = false
   ) {
     if (!silent) {
-      const previewUrls = images.map(img => img.preview);
+      // Linked assets are already hosted, so their real URL doubles as the
+      // thumbnail — without this the message bubble shows the typed images and
+      // silently omits the ones that came from the link.
+      const previewUrls = [
+        ...images.map(img => img.preview),
+        ...linkedAssetsRef.current.map(a => a.url),
+      ];
       addMessage({ role: 'user', content: instruction, ...(previewUrls.length > 0 ? { image_urls: previewUrls } : {}) });
     }
     setPhase('generating');
@@ -1634,6 +1867,12 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
 
     setFollowUpEvents([]);
 
+    // Linked assets travel as asset_library, NOT as image_urls. image_urls is
+    // the per-image role-routing path and is hard-capped at 3; the library is a
+    // named URL list the route appends to the instruction, so an imported
+    // folder reaches an edit intact instead of being trimmed to the first 3.
+    const linkedForEdit = takeLinkedAssets();
+
     const res = await fetch(`/api/pages/${pid}/follow-up`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1641,6 +1880,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         prompt: instruction,
         current_schema: schemaRef.current,
         ...(image_urls.length > 0 ? { image_urls } : {}),
+        ...(linkedForEdit.length > 0 ? { asset_library: linkedForEdit } : {}),
       }),
     });
 
@@ -1763,7 +2003,11 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     }
     setConversationJson(prev => [
       ...prev,
-      { role: 'user', content: instruction },
+      {
+        role: 'user',
+        content: instruction,
+        ...(linkedForEdit.length > 0 ? { asset_library: linkedForEdit } : {}),
+      },
       { role: 'assistant', content: JSON.stringify(done) },
     ]);
     setPhase('editing');
@@ -1773,8 +2017,14 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     e.preventDefault();
     // A rebuild rewrites the whole document and the whole schema; an edit landing
     // mid-rebuild would be applied to markup that is about to be replaced.
-    if ((!followUpInput.trim() && chatImages.length === 0) || !pageId || preparingSchema || rebuilding || rebuildPending || schemaPrepFailed) return;
+    if ((!followUpInput.trim() && chatImages.length === 0 && linkedAssets.length === 0) || !pageId || preparingSchema || rebuilding || rebuildPending || schemaPrepFailed) return;
     const instruction = followUpInput.trim() || 'Please incorporate these reference images into the page.';
+    // Same intake as the create path — an edit like "use the photos in
+    // <drive link> for the gallery" has to work, not be silently ignored.
+    // Runs before the input is cleared so the picker can reopen on the same
+    // text if the folder turns out to be too big to take wholesale.
+    const waitingOnPicker = await pullAssetsFromPromptText(instruction);
+    if (waitingOnPicker) return;
     const attachedImages = takePendingChatImages();
     setFollowUpInput('');
     if (followUpRef.current) followUpRef.current.style.height = 'auto';
@@ -2245,6 +2495,12 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                 </span>
               </div>
               <SamplePromptChip vertical={vertical} onUse={p => setPrompt(p)} />
+              {scanningPrompt && (
+                <div className="flex items-center gap-1.5 text-[11px] text-indigo-600 dark:text-indigo-400">
+                  <Loader2 size={11} className="animate-spin" />
+                  <span>Checking the links in your brief for images…</span>
+                </div>
+              )}
               {/https?:\/\/[^\s]+/i.test(prompt) && (
                 <div className="flex items-center gap-1.5 text-[11px] text-indigo-600 dark:text-indigo-400">
                   <Globe size={11} />
@@ -2287,6 +2543,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                     ))}
                   </div>
                 )}
+                {renderLinkedAssetStrip()}
                 <textarea
                   value={prompt}
                   onChange={e => {
@@ -2306,15 +2563,25 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                   onPaste={handleChatImagePaste}
                 />
                 <div className="flex items-center justify-between px-3 pb-2.5">
-                  <button
-                    type="button"
-                    disabled={chatImages.length >= 3}
-                    onClick={() => chatImageInputRef.current?.click()}
-                    className="text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                    title="Attach image (max 3)"
-                  >
-                    <Plus size={16} />
-                  </button>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      disabled={chatImages.length >= 3}
+                      onClick={() => chatImageInputRef.current?.click()}
+                      className="text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                      title="Attach image (max 3)"
+                    >
+                      <Plus size={16} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAssetSourceOpen(true)}
+                      className="text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 transition-colors"
+                      title="Add images from a link (Google Drive folder, shared file, or any page)"
+                    >
+                      <Link2 size={15} />
+                    </button>
+                  </div>
                   <span
                     className={cn(
                       'text-[11px] tabular-nums font-medium',
@@ -2329,7 +2596,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                   </span>
                   <button
                     type="submit"
-                    disabled={!prompt.trim() || !pageName.trim() || prompt.length > MAX_PROMPT_LENGTH}
+                    disabled={!prompt.trim() || !pageName.trim() || prompt.length > MAX_PROMPT_LENGTH || scanningPrompt}
                     className="w-7 h-7 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-30 disabled:cursor-not-allowed rounded-full flex items-center justify-center transition-colors"
                   >
                     <Send size={13} className="text-white" />
@@ -2405,6 +2672,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                     ))}
                   </div>
                 )}
+                {renderLinkedAssetStrip()}
                 <textarea
                   ref={followUpRef}
                   value={followUpInput}
@@ -2435,11 +2703,20 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                     >
                       <Plus size={15} />
                     </button>
+                    <button
+                      type="button"
+                      disabled={isLoading || preparingSchema || rebuilding || rebuildPending || schemaPrepFailed}
+                      onClick={() => setAssetSourceOpen(true)}
+                      className="p-1.5 text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                      title="Add images from a link (Google Drive folder, shared file, or any page)"
+                    >
+                      <Link2 size={15} />
+                    </button>
                   </div>
                   <div className="flex items-center gap-1.5">
                     <button
                       type="submit"
-                      disabled={(!followUpInput.trim() && chatImages.length === 0) || isLoading || preparingSchema || rebuilding || rebuildPending || schemaPrepFailed}
+                      disabled={(!followUpInput.trim() && chatImages.length === 0 && linkedAssets.length === 0) || isLoading || scanningPrompt || preparingSchema || rebuilding || rebuildPending || schemaPrepFailed}
                       className="w-7 h-7 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-30 disabled:cursor-not-allowed rounded-full flex items-center justify-center transition-colors"
                     >
                       <Send size={12} className="text-white" />
@@ -2750,6 +3027,29 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
           )}
         </div>
       </div>
+
+      {/*
+        Link → images picker. 20 on both paths: create passes the library to the
+        schema step, edit appends it to the instruction as a URL list. Neither
+        goes through the 3-attachment vision routing, which is why the old
+        split cap is gone. The modal subtracts what is already attached.
+      */}
+      <AssetSourceModal
+        open={assetSourceOpen}
+        onClose={() => { setAssetSourceOpen(false); setAssetSourceLink(null); }}
+        initialLink={assetSourceLink}
+        pageId={pageId}
+        workspaceId={workspaceId}
+        selectionCap={20}
+        alreadyAttached={linkedAssets.length}
+        onImported={(assets) => setLinkedAssets(prev => {
+          // Importing the same folder twice is an easy thing to do, and a
+          // duplicate URL would be described to the model as two separate
+          // files — inviting it to place the same photo in two slots.
+          const seen = new Set(prev.map(a => a.url));
+          return [...prev, ...assets.filter(a => !seen.has(a.url))];
+        })}
+      />
 
       {/* Chat image lightbox — click thumbnail in messages/composer to open */}
       {chatImageLightboxUrl && (

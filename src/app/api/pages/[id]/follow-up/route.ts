@@ -13,6 +13,7 @@ import { PLAN_LIMITS } from '@/lib/plans';
 import { checkAiAllowance, type UsageContext } from '@/lib/ai-usage';
 import { reportAiOverageUsage } from '@/lib/ai-overage-billing';
 import { extractUrls, isEmbedAssetUrl, scrapeCompetitorUrl, fetchLogoAssets, fetchContentImageAssets } from '@/lib/ai-competitor-scrape';
+import { classifyAssetSource } from '@/lib/asset-source-resolver';
 import { buildHtmlFromSchema } from '@/lib/ai-page-builder';
 import { buildFontFollowUpBlock } from '@/lib/ai-page-fonts';
 import { createSSEStream, sendSSE, closeSSE, SSE_HEADERS, type SSEEvent } from '@/lib/sse';
@@ -83,6 +84,15 @@ import {
   REQUIREMENT_EXTRACTION_INSTRUCTION,
   type PageRequirement,
 } from '@/lib/ai-page-requirements';
+
+/**
+ * Ceiling on the link-imported asset list shown to the model, counting both
+ * this turn's imports and ones carried forward from earlier turns.
+ *
+ * Same number the create path uses (generate/route.ts), so a folder that
+ * survived intact into the first build does not get trimmed on the first edit.
+ */
+const MAX_LIBRARY_ASSETS = 20;
 
 export const dynamic = 'force-dynamic';
 // Large full-page rewrites can run several minutes; raised well past the old
@@ -518,6 +528,8 @@ What this builder can actually do right now, so you never overpromise:
 - Add brand-new sections, remove sections, reorder sections.
 - Match a look from an attached screenshot or a reference site (design_reference), and fetch a real logo or content photos from a given site URL.
 - Generate real photography for sections via AI image generation.
+- Import the client's own images from a link — a public Google Drive folder, an S3/public bucket, a direct image URL, or any web page — using the link button next to the chat box. The files are re-hosted by SplitLab and can then be placed on the page. Never tell a user you have no way to pull from Google Drive or a bucket; you do.
+- Use images imported earlier in this same conversation. If the user supplied files on a previous turn, they are listed for you by filename and URL and are still usable — do not claim they are gone or ask for a re-upload.
 - Every form submission on a live page is automatically captured into SplitLab's own Leads for that test — no setup needed. Workspace-level integrations (HubSpot, email notification, or a webhook to a third-party URL) can be turned on per test in the workspace's Integrations settings, and any lead captured there gets forwarded automatically.
 - What it CANNOT do yet: wire an arbitrary custom submission endpoint directly into the page's own code from a chat instruction (forms don't POST anywhere on their own — delivery goes through the Leads/Integrations path above instead). No built-in confirmation-email-on-submit beyond what the email integration sends.
 
@@ -2242,12 +2254,14 @@ export async function POST(
 
   // Parse body
   let prompt: string, current_schema: unknown, current_html: string | undefined, image_urls: string[] | undefined;
+  let asset_library: { url: string; name?: string }[] | undefined;
   try {
     const body = await request.json();
     prompt = body.prompt;
     current_schema = body.current_schema;
     current_html = body.current_html;
     image_urls = body.image_urls;
+    asset_library = body.asset_library;
   } catch {
     return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
   }
@@ -2255,6 +2269,15 @@ export async function POST(
   if (!prompt || typeof prompt !== 'string') {
     return NextResponse.json({ error: 'prompt is required' }, { status: 400 });
   }
+
+  // What the USER typed, frozen before the asset-library block below appends to
+  // `prompt`. Every conversation_json write stores this, not the mutated value:
+  // the augmented text was going into history verbatim, so reopening a page
+  // showed the raw "## Real assets the user supplied..." block sitting inside
+  // the user's own chat bubble. The asset list now rides along as structured
+  // `asset_library` on the same entry, which replays cleanly and reads as
+  // nothing at all.
+  const rawPrompt = prompt;
   if (image_urls !== undefined && (!Array.isArray(image_urls) || image_urls.length > 3)) {
     return NextResponse.json({ error: 'image_urls must be an array of at most 3 URLs' }, { status: 400 });
   }
@@ -2341,8 +2364,16 @@ export async function POST(
   const preEditLogoUrl = extractPrimaryLogoUrlFromHtml(html);
 
   // Prepare synchronous data
-  const history: { role: 'user' | 'assistant'; content: string; image_urls?: string[]; clarify?: boolean }[] =
-    Array.isArray(page.conversation_json) ? page.conversation_json : [];
+  const history: {
+    role: 'user' | 'assistant';
+    content: string;
+    image_urls?: string[];
+    // Link-imported files (Drive folder / bucket / page scrape) from an earlier
+    // turn. Stored separately from image_urls because they take the other lane
+    // in — see the asset library block below.
+    asset_library?: { url: string; name?: string }[];
+    clarify?: boolean;
+  }[] = Array.isArray(page.conversation_json) ? page.conversation_json : [];
   // If our own last turn was a clarifying question, this message is the
   // user's ANSWER to it — never ask another clarifying question back to
   // back. Whatever they say next (even "you decide" / "that's what I want
@@ -2364,7 +2395,12 @@ export async function POST(
   const promptImageUrls = mentionedUrls.filter((_, i) => mentionedUrlImageFlags[i]);
   // Video/media embed CDN URLs (e.g. a Mux/Vimeo/YouTube embed link) are never a
   // "clone this site" competitor reference — exclude them the same way generate/route.ts does.
-  const competitorUrls = mentionedUrls.filter((u, i) => !mentionedUrlImageFlags[i] && !isEmbedAssetUrl(u));
+  // Asset sources (Drive folder/file, a bucket listing) are excluded for the
+  // same reason as embed CDNs: they are where the pictures live, never a design
+  // to copy. Scraping one returns the host's own marketing chrome.
+  const competitorUrls = mentionedUrls.filter(
+    (u, i) => !mentionedUrlImageFlags[i] && !isEmbedAssetUrl(u) && classifyAssetSource(u) === 'webpage',
+  );
 
   // Merge prompt-detected image URLs in with any client-attached ones so the
   // model can embed them exactly like an uploaded image attachment. Capped at
@@ -2520,6 +2556,74 @@ export async function POST(
       : [],
   );
 
+  // ── Real assets the user imported from a link ────────────────────────────
+  //
+  // Appended to `prompt` itself, and deliberately AFTER intent classification
+  // so a list of URLs cannot skew what the classifier thinks was asked for.
+  // Every branch below — patch, structural, insert_section, image_generate —
+  // builds its own call off `prompt`, so this single injection reaches all of
+  // them without touching each one.
+  //
+  // Carried as text, not as image attachments: attachments here are routed
+  // per-image by role (imageRolesFromIntent picks attachedAssets[0] for a logo
+  // swap, and so on), that routing is positional and built for a handful of
+  // images, and image_urls is hard-capped at MAX_ATTACHMENTS. A named URL list
+  // sidesteps all of it, so an imported folder is not silently trimmed to 3.
+  //
+  // Carried across turns, not just this one. The pool of earlier IMAGE
+  // ATTACHMENTS above already does this for chat uploads, and the two lanes
+  // looked equivalent — but every persistence site writes `image_urls` and
+  // only `image_urls`, so a linked import lived for exactly one request. Import
+  // four photos from a Drive folder, then say "put the second one in the hero"
+  // on the next turn, and the model had never heard of them: no names, no URLs,
+  // nothing. It correctly answered that it couldn't, which read as the import
+  // having failed. Routing the library around the MAX_ATTACHMENTS cap also
+  // routed it around the memory, which was never the intent.
+  //
+  // Replayed as text only — no vision blocks — for the same reason the current
+  // turn's library is text: an imported folder is up to 20 files, and putting
+  // that many pictures through vision on every subsequent turn would eat the
+  // window the page HTML needs. Names and URLs are enough to place a file.
+  const normalizeLibrary = (raw: unknown): { url: string; name: string }[] =>
+    Array.isArray(raw)
+      ? raw
+          .filter((a): a is { url: string; name?: string } =>
+            !!a && typeof a === 'object' && typeof (a as { url?: unknown }).url === 'string' &&
+            /^https?:\/\//i.test((a as { url: string }).url))
+          .map((a) => ({ url: a.url, name: typeof a.name === 'string' && a.name ? a.name : 'image' }))
+      : [];
+
+  // This turn's imports first, then older ones most-recent-first, so the cap
+  // sheds the files least likely to be the ones meant.
+  const seenLibraryUrls = new Set<string>();
+  const libraryAssets: { url: string; name: string }[] = [];
+  const pushLibrary = (assets: { url: string; name: string }[]) => {
+    for (const a of assets) {
+      if (libraryAssets.length >= MAX_LIBRARY_ASSETS) return;
+      if (seenLibraryUrls.has(a.url)) continue;
+      seenLibraryUrls.add(a.url);
+      libraryAssets.push(a);
+    }
+  };
+  pushLibrary(normalizeLibrary(asset_library));
+  const currentTurnLibraryCount = libraryAssets.length;
+  for (let i = history.length - 1; i >= 0 && libraryAssets.length < MAX_LIBRARY_ASSETS; i--) {
+    const entry = history[i];
+    if (!entry || entry.role !== 'user') continue;
+    pushLibrary(normalizeLibrary(entry.asset_library));
+  }
+
+  if (libraryAssets.length > 0) {
+    prompt = `${prompt}\n\n## Real assets the user supplied for this page (already hosted, safe to embed)\nThese were imported from a link the user gave — this turn or earlier in this conversation. They are still available and still theirs to use.\n${libraryAssets
+      .map((a, i) => `${i + 1}. ${a.name} — ${a.url}`)
+      .join('\n')}\n\nWhen this edit needs one of these, use the EXACT URL above in src and do NOT generate a new image for that slot. Pick by filename and by what the instruction asks for. A logo file belongs in nav/footer, a headshot on a person. Only generate an image when NONE of these fit.\n`;
+    console.log('[pages/follow-up] asset library', {
+      count: libraryAssets.length,
+      thisTurn: currentTurnLibraryCount,
+      carried: libraryAssets.length - currentTurnLibraryCount,
+    });
+  }
+
   // Intent failed (timeout / truncate / bad JSON). That is OUR outage, not a
   // badly-worded request — so say so and let them retry, instead of asking the
   // user to re-explain a perfectly clear message (and instead of regex-routing,
@@ -2605,8 +2709,12 @@ export async function POST(
     void (async () => {
       try {
         const reply = await answerFollowUpQuestion(prompt);
-        const userEntry: Record<string, unknown> = { role: 'user', content: prompt };
+        const userEntry: Record<string, unknown> = { role: 'user', content: rawPrompt };
         if (Array.isArray(image_urls) && image_urls.length > 0) userEntry.image_urls = image_urls;
+        // Only THIS turn's imports. The merged list above also holds files carried
+        // forward from older entries; re-storing those would copy the whole library
+        // onto every turn and grow conversation_json without bound.
+        if (currentTurnLibraryCount > 0) userEntry.asset_library = libraryAssets.slice(0, currentTurnLibraryCount);
         await db
           .from('pages')
           .update({
@@ -2864,8 +2972,12 @@ export async function POST(
        * whatever the user says next ("no, it really isn't there").
        */
       const reportNoChange = async (reason: string) => {
-        const userEntry: Record<string, unknown> = { role: 'user', content: prompt };
+        const userEntry: Record<string, unknown> = { role: 'user', content: rawPrompt };
         if (Array.isArray(image_urls) && image_urls.length > 0) userEntry.image_urls = image_urls;
+        // Only THIS turn's imports. The merged list above also holds files carried
+        // forward from older entries; re-storing those would copy the whole library
+        // onto every turn and grow conversation_json without bound.
+        if (currentTurnLibraryCount > 0) userEntry.asset_library = libraryAssets.slice(0, currentTurnLibraryCount);
         await db
           .from('pages')
           .update({
@@ -3089,8 +3201,12 @@ export async function POST(
           // The model decided it needs to ask. Surface it verbatim and stop —
           // this is not a failure and must not be retried around.
           if (result && result.kind === 'question') {
-            const userEntry: Record<string, unknown> = { role: 'user', content: prompt };
+            const userEntry: Record<string, unknown> = { role: 'user', content: rawPrompt };
             if (Array.isArray(image_urls) && image_urls.length > 0) userEntry.image_urls = image_urls;
+            // Only THIS turn's imports. The merged list above also holds files carried
+            // forward from older entries; re-storing those would copy the whole library
+            // onto every turn and grow conversation_json without bound.
+            if (currentTurnLibraryCount > 0) userEntry.asset_library = libraryAssets.slice(0, currentTurnLibraryCount);
             await db
               .from('pages')
               .update({
@@ -3795,8 +3911,12 @@ export async function POST(
           // SCOPED_REGION_SYSTEM_PROMPT.
           if (plan.mode === 'clarify' && !forceDecidePlan) {
             const question = plan.question;
-            const userEntry: Record<string, unknown> = { role: 'user', content: prompt };
+            const userEntry: Record<string, unknown> = { role: 'user', content: rawPrompt };
             if (Array.isArray(image_urls) && image_urls.length > 0) userEntry.image_urls = image_urls;
+            // Only THIS turn's imports. The merged list above also holds files carried
+            // forward from older entries; re-storing those would copy the whole library
+            // onto every turn and grow conversation_json without bound.
+            if (currentTurnLibraryCount > 0) userEntry.asset_library = libraryAssets.slice(0, currentTurnLibraryCount);
             const updatedConversation = [
               ...history,
               userEntry,
@@ -4529,8 +4649,12 @@ export async function POST(
               forceFaqVsFormClarify,
               question,
             });
-            const userEntry: Record<string, unknown> = { role: 'user', content: prompt };
+            const userEntry: Record<string, unknown> = { role: 'user', content: rawPrompt };
             if (Array.isArray(image_urls) && image_urls.length > 0) userEntry.image_urls = image_urls;
+            // Only THIS turn's imports. The merged list above also holds files carried
+            // forward from older entries; re-storing those would copy the whole library
+            // onto every turn and grow conversation_json without bound.
+            if (currentTurnLibraryCount > 0) userEntry.asset_library = libraryAssets.slice(0, currentTurnLibraryCount);
             const updatedConversation = [
               ...history,
               userEntry,
@@ -4680,8 +4804,12 @@ export async function POST(
             // Single-instruction turn, nothing applied yet — a question here is
             // as legitimate as it is on the primary path.
             if (regionResult && regionResult.kind === 'question') {
-              const userEntry: Record<string, unknown> = { role: 'user', content: prompt };
+              const userEntry: Record<string, unknown> = { role: 'user', content: rawPrompt };
               if (Array.isArray(image_urls) && image_urls.length > 0) userEntry.image_urls = image_urls;
+              // Only THIS turn's imports. The merged list above also holds files carried
+              // forward from older entries; re-storing those would copy the whole library
+              // onto every turn and grow conversation_json without bound.
+              if (currentTurnLibraryCount > 0) userEntry.asset_library = libraryAssets.slice(0, currentTurnLibraryCount);
               await db
                 .from('pages')
                 .update({
@@ -6127,8 +6255,12 @@ export async function POST(
       const assistantReply = partialMessage
         ? `Partly done (not fully finished). ${partialMessage}${pageNotes.length > 0 ? ` ${pageNotes.join(' ')}` : ''}`
         : `${doneHeadline}${pageNotes.length > 0 ? ` ${pageNotes.join(' ')}` : ''}`;
-      const userEntry: Record<string, unknown> = { role: 'user', content: prompt };
+      const userEntry: Record<string, unknown> = { role: 'user', content: rawPrompt };
       if (Array.isArray(image_urls) && image_urls.length > 0) userEntry.image_urls = image_urls;
+      // Only THIS turn's imports. The merged list above also holds files carried
+      // forward from older entries; re-storing those would copy the whole library
+      // onto every turn and grow conversation_json without bound.
+      if (currentTurnLibraryCount > 0) userEntry.asset_library = libraryAssets.slice(0, currentTurnLibraryCount);
       const updatedConversation = [
         ...history,
         userEntry,

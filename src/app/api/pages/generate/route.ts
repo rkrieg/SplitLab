@@ -8,6 +8,7 @@ import { SECTION_VOCABULARY, VERTICAL_PRIORITY_HINTS } from '@/lib/ai-page-vocab
 import { resolveWorkspaceRole, resolveOwnerPlan } from '@/lib/workspace-auth';
 import { PLAN_LIMITS } from '@/lib/plans';
 import { extractUrls, isEmbedAssetUrl, scrapeCompetitorUrl } from '@/lib/ai-competitor-scrape';
+import { classifyAssetSource } from '@/lib/asset-source-resolver';
 import {
   injectBrandAssetsIntoSchema,
   classifyPageShapeIntent,
@@ -22,6 +23,23 @@ import {
   parseModelRequirements,
 } from '@/lib/ai-page-requirements';
 import { buildConversationContext, classifyEditIntent, MAX_ATTACHMENTS } from '@/lib/ai-edit-intent';
+
+/**
+ * Ceiling on client-supplied images the schema step both SEES and receives
+ * URLs for.
+ *
+ * Matches the picker's own selection cap, so every image a user was allowed to
+ * tick actually reaches the model — a lower number here would drop images the
+ * UI had already promised to use.
+ *
+ * Deliberately NOT MAX_ATTACHMENTS. That constant caps images sent to the
+ * classifier calls (intent, OCR, edit routing), and it stays at 3: those calls
+ * decide "is this a design reference or a photo to place", which a filename
+ * already answers, so paying vision cost times eight call sites buys nothing.
+ * Only THIS call — the one that decides what goes in which slot — needs to
+ * look at the photographs, so only this one pays for it.
+ */
+const MAX_LIBRARY_ASSETS = 20;
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 800;
@@ -159,7 +177,7 @@ export async function POST(request: NextRequest) {
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   try {
-    const { prompt, vertical, conversation_json, workspace_id, image_urls } = await request.json();
+    const { prompt, vertical, conversation_json, workspace_id, image_urls, asset_library } = await request.json();
 
     if (!workspace_id || typeof workspace_id !== 'string') {
       return NextResponse.json({ error: 'workspace_id is required' }, { status: 400 });
@@ -208,7 +226,14 @@ export async function POST(request: NextRequest) {
     // steers the schema and flips keepProof below. The classifier already
     // returns intent for the create path — ask it whether the URL is a
     // reference to copy before scraping.
-    const urls = extractUrls(prompt).filter((u) => !isEmbedAssetUrl(u));
+    // An asset SOURCE in the brief is not a site to clone. A Drive folder link
+    // pasted into a PRD would otherwise be handed to the scraper, which returns
+    // Google Drive's own chrome — nav, colors, footer — and that context then
+    // steers the schema, exactly the way a Mux embed URL once produced
+    // "© Mux, Inc." in a client's footer. Same class of bug, different host.
+    const urls = extractUrls(prompt).filter(
+      (u) => !isEmbedAssetUrl(u) && classifyAssetSource(u) === 'webpage',
+    );
     const competitorContext = urls.length > 0 ? await scrapeCompetitorUrl(urls[0]) : null;
     let minimalOrCustom = false;
     if (competitorContext) {
@@ -334,19 +359,71 @@ export async function POST(request: NextRequest) {
         ? `${attachedNote}\n## REQUIRED copy from attached screenshot (use verbatim in matching sections)\n${designCopyLines.map((l, i) => `${i + 1}. ${l}`).join('\n')}\nPut these into footer/nav/hero (or the section the user named). Each line once — if several attachments are the same screenshot, do not repeat blocks. Do not invent substitute legal/contact lines when these are present.\n`
         : attachedNote;
 
-    const finalUserText = prompt + competitorNote + multiNote + constraintNote + designNote;
+    // Real client photos pulled from a Drive folder / page link the user gave
+    // us, already re-hosted on our storage by /api/pages/[id]/import-assets.
+    //
+    // NOT sent as vision attachments: those are capped at MAX_ATTACHMENTS (3)
+    // in every classifier on this path, so a 20-image folder would lose 17 of
+    // them silently. A named URL list has no such cap and is what the schema
+    // step actually needs — it places URLs, it does not need to look at them.
+    //
+    // The instruction targets generated_image_url specifically because that is
+    // the one image field with teeth on both ends: generatePageImages() skips
+    // DALL-E for any node that already has one (ai-client.ts), and the builder
+    // prompt forbids ignoring one (ai-page-builder.ts). Writing a real photo
+    // there is therefore what stops an invented image replacing it.
+    const libraryAssets = Array.isArray(asset_library)
+      ? (asset_library as unknown[])
+          .filter((a): a is { url: string; name?: string } =>
+            !!a && typeof a === 'object' && typeof (a as { url?: unknown }).url === 'string')
+          .map((a) => ({ url: a.url, name: typeof a.name === 'string' ? a.name : 'image' }))
+          .slice(0, MAX_LIBRARY_ASSETS)
+      : [];
+
+    // Vision accepts JPEG/PNG/GIF/WebP only. An SVG logo — extremely common in
+    // a client asset folder — would make the whole schema call fail, taking the
+    // page build down with it. Split rather than drop: viewable files are shown
+    // AND listed, the rest are still listed by name and URL so they can be
+    // placed, just chosen by filename instead of by sight.
+    const VIEWABLE_EXT_RE = /\.(png|jpe?g|webp|gif)(?:\?|#|$)/i;
+    const viewableAssets = libraryAssets.filter((a) => VIEWABLE_EXT_RE.test(a.url));
+    const unviewableAssets = libraryAssets.filter((a) => !VIEWABLE_EXT_RE.test(a.url));
+
+    const assetLibraryNote =
+      libraryAssets.length > 0
+        ? `\n\n## The client's own images — USE THESE, do not invent replacements\nThese ${libraryAssets.length} file(s) are real photos/logos the user supplied for this page. They are already hosted and safe to embed.\n` +
+          (viewableAssets.length > 0
+            ? `\nYou can SEE these: the last ${viewableAssets.length} image(s) attached to this message are these files, in exactly this order.\n${viewableAssets
+                .map((a, i) => `${i + 1}. ${a.name} — ${a.url}`)
+                .join('\n')}\n`
+            : '') +
+          (unviewableAssets.length > 0
+            ? `\nThese you CANNOT see (vector/other format) — judge them by filename alone:\n${unviewableAssets
+                .map((a, i) => `${i + 1}. ${a.name} — ${a.url}`)
+                .join('\n')}\n`
+            : '') +
+          `\nRules:\n- For the files you can see, decide where each belongs by LOOKING at it. What the photo actually shows outranks its filename — "IMG_4821.jpg" means nothing, and a file named "hero" may not suit the hero.\n- When one of these fits a slot, set "generated_image_url" on that schema node to the EXACT URL above and do NOT also write an "image_prompt" for that node — an image_prompt there would have us draw a fake photo over a real one.\n- A logo belongs on nav/footer logo_url, never as a content photo. A headshot belongs on a person, not a hero.\n- Only write image_prompt for slots NONE of these files fit.\n- Never alter these URLs, and never reuse the same file for two different slots unless the page genuinely needs it twice.\n- If the user's instruction says where a specific file goes, that beats what you infer from the picture.\n`
+        : '';
+
+    const finalUserText = prompt + competitorNote + multiNote + constraintNote + designNote + assetLibraryNote;
 
     const historyMessages: AIMessage[] = history.map((m) => ({
       role: m.role,
       content: m.content,
     }));
 
+    // Library images go AFTER the user's own attachments and in the same order
+    // as the numbered list in assetLibraryNote — that ordering is the only way
+    // the model can tell which picture belongs to which URL, so both must be
+    // built from viewableAssets and nothing else.
+    const visionBlocks: AIContentBlock[] = [
+      ...attachedImageUrls.map((url): AIContentBlock => ({ type: 'image', url })),
+      ...viewableAssets.map((a): AIContentBlock => ({ type: 'image', url: a.url })),
+    ];
+
     const lastUserContent: AIContent =
-      attachedImageUrls.length > 0
-        ? [
-            ...attachedImageUrls.map((url): AIContentBlock => ({ type: 'image', url })),
-            { type: 'text', text: finalUserText },
-          ]
+      visionBlocks.length > 0
+        ? [...visionBlocks, { type: 'text', text: finalUserText }]
         : finalUserText;
 
     const messages: AIMessage[] = [
