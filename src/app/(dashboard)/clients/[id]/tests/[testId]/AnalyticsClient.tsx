@@ -5226,6 +5226,57 @@ export default function AnalyticsClient({
         {/* ─── SETTINGS TAB ─── */}
         {tab === "settings" && (
           <>
+            {/* UTM & ad-click forwarding (always on — informational) */}
+            <div className="card overflow-hidden border-green-500/30 bg-green-500/5">
+              <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700 flex items-center gap-3">
+                <div className="w-8 h-8 rounded-lg bg-green-500/20 flex items-center justify-center">
+                  <CheckCircle2 size={16} className="text-green-600 dark:text-green-400" />
+                </div>
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <p className="font-medium text-slate-800 dark:text-slate-200 text-sm">UTM &amp; ad-click forwarding</p>
+                    <span className="flex items-center gap-1 text-xs font-medium text-green-500">
+                      <CheckCircle2 size={12} /> On
+                    </span>
+                  </div>
+                  <p className="text-slate-500 dark:text-slate-400 text-xs mt-0.5">
+                    Automatically captured and passed through — no setup needed
+                  </p>
+                </div>
+              </div>
+              <div className="px-5 py-4 space-y-3 text-sm text-slate-600 dark:text-slate-300">
+                <p>
+                  When a visitor lands with tracking parameters (e.g. from a Facebook or Google ad),
+                  SplitLab captures them and carries them forward automatically:
+                </p>
+                <ul className="space-y-1.5 text-xs">
+                  <li className="flex gap-2">
+                    <CheckCircle2 size={13} className="text-green-500 flex-shrink-0 mt-0.5" />
+                    <span><strong>Into lead forms</strong> — added as hidden fields, so every submitted lead keeps its attribution.</span>
+                  </li>
+                  <li className="flex gap-2">
+                    <CheckCircle2 size={13} className="text-green-500 flex-shrink-0 mt-0.5" />
+                    <span><strong>Onto outbound clicks</strong> — appended to links, buttons, and JS redirects that leave the page (both same-domain and cross-domain), so the next URL keeps the params. Ideal for click-outs with no form.</span>
+                  </li>
+                  <li className="flex gap-2">
+                    <CheckCircle2 size={13} className="text-green-500 flex-shrink-0 mt-0.5" />
+                    <span><strong>Through redirect variants</strong> — forwarded onto the destination URL.</span>
+                  </li>
+                </ul>
+                <div>
+                  <p className="text-xs text-slate-400 dark:text-slate-500 mb-1.5">Parameters carried:</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {["utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term", "gclid", "fbclid"].map((p) => (
+                      <span key={p} className="font-mono text-[11px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">{p}</span>
+                    ))}
+                  </div>
+                </div>
+                <p className="text-[11px] text-slate-400 dark:text-slate-500">
+                  Applies to real visitor traffic. The dashboard&apos;s Preview mode intentionally skips it so staff clicks aren&apos;t recorded — so test with the live link, not Preview.
+                </p>
+              </div>
+            </div>
+
             {/* Global Tracking Snippet */}
             {(() => {
               const trackerComplete = !anyTrackerMissing && variants.some(v => getVerifiedStatus(v) === true);
