@@ -140,9 +140,10 @@ Rules:
 - Judge statistical confidence: 95%+ = significant; 80-94% = trending, needs more data; <80% or low sample = inconclusive. Never call a winner below 95%.
 - If total conversions or visitors are very low, say the test needs more data and avoid over-claiming.
 - Clarity data (when present) is SITE-WIDE and last-3-days only — it cannot be attributed to a specific variant. Use it as behavioral color (rage/dead clicks, scroll depth, JS errors), never as per-variant proof.
-- Recommendations must be things the user can actually do (adjust traffic split, keep running, ship a winner, fix a slow/low-scroll page, investigate rage clicks, etc.).
+- Give EACH variant its own observation AND its own 1-4 recommendations, specific to that variant (adjust its traffic split, ship it, fix its slow/low-scroll page, investigate its rage clicks, add a challenger, etc.). Recommendations are per-variant, not global.
+- Return one entry in "variants" for EVERY variant passed in, using its exact id and name.
 - Respond with ONLY valid JSON, no markdown, matching exactly:
-{"summary": string, "variants": [{"id": string, "name": string, "observation": string}], "recommendations": [{"title": string, "detail": string, "priority": "high"|"medium"|"low"}], "clarityNote": string}`;
+{"summary": string, "variants": [{"id": string, "name": string, "observation": string, "recommendations": [{"title": string, "detail": string, "priority": "high"|"medium"|"low"}]}], "clarityNote": string}`;
 
   const payload = {
     test: { name: test.name, path: test.url_path, totalUniqueVisitors: totalUnique, totalConversions },
