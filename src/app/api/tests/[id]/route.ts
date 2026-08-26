@@ -33,6 +33,7 @@ const updateSchema = z.object({
   url_path: z.string().min(1).max(500).optional(),
   status: z.enum(['draft', 'active', 'paused', 'completed']).optional(),
   head_scripts: z.string().nullable().optional(),
+  forward_url_params: z.boolean().optional(),
   goals: z.array(goalSchema).optional(),
   weights: z.array(weightSchema).optional(),
   variant_updates: z.array(variantUpdateSchema).optional(),

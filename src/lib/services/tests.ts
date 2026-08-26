@@ -68,6 +68,7 @@ export interface UpdateTestInput {
   url_path?: string;
   status?: 'draft' | 'active' | 'paused' | 'completed';
   head_scripts?: string | null;
+  forward_url_params?: boolean;
   goals?: GoalInput[];
   weights?: WeightInput[];
   variant_updates?: VariantUpdateInput[];

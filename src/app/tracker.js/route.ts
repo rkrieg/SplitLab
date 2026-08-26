@@ -307,19 +307,24 @@ function buildTrackerScript(appUrl: string): string {
       var u = new URL(String(url), window.location.href);
       // Correctness guards — these apply to BOTH payloads below.
       if (u.protocol !== "http:" && u.protocol !== "https:") return url;
-      if (u.hostname === window.location.hostname) return url;
-      // Already tagged. This guard is what stops SplitLab.go and
-      // watchNavigations double-appending — do not weaken it.
-      if (u.searchParams.get("sl_vid") || u.searchParams.get("sl_tid")) return url;
+      var sameHost = (u.hostname === window.location.hostname);
 
       var changed = false;
 
-      // Variant context genuinely needs _ctx — the values ARE _ctx.
-      if (_ctx) {
-        u.searchParams.set("sl_tid", _ctx.tid);
-        u.searchParams.set("sl_vid", _ctx.vid);
-        u.searchParams.set("sl_vh", _ctx.vh);
-        changed = true;
+      // Variant context (sl_*) is CROSS-DOMAIN ONLY — localStorage can't cross
+      // origins, so tracker.js on another host rebuilds it from these. Never add
+      // them same-host: sl_vh mutes tracking on the next page and sl_vid pins a
+      // variant. Ad params below still ride same-domain click-outs.
+      if (!sameHost) {
+        // Already tagged. This guard is what stops SplitLab.go and
+        // watchNavigations double-appending — do not weaken it.
+        if (u.searchParams.get("sl_vid") || u.searchParams.get("sl_tid")) return url;
+        if (_ctx) {
+          u.searchParams.set("sl_tid", _ctx.tid);
+          u.searchParams.set("sl_vid", _ctx.vid);
+          u.searchParams.set("sl_vh", _ctx.vh);
+          changed = true;
+        }
       }
 
       // Tracking params do NOT need _ctx — they live in localStorage. Gating
@@ -483,8 +488,13 @@ function buildTrackerScript(appUrl: string): string {
           if (e.navigationType !== "push" && e.navigationType !== "replace") return;
           var dest = e.destination && e.destination.url;
           if (!dest) return;
-          // decorate() early-returns on same-hostname, non-http(s) and
-          // already-tagged URLs, so same-domain navigation never gets cancelled.
+          // Cross-domain only: same-host JS navigations keep context via
+          // localStorage, and cancelling/re-issuing them could fight the page's
+          // own client-side routing. Same-host anchor clicks/forms still get
+          // UTMs via decorate() on their own paths.
+          try {
+            if (new URL(dest, window.location.href).hostname === window.location.hostname) return;
+          } catch(e2) {}
           // Links are already decorated on mousedown, so they land here as
           // dec === dest and pass straight through — no double navigation.
           var dec = decorate(dest);

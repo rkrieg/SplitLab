@@ -67,6 +67,7 @@ import {
   Zap,
   Video,
   Flame,
+  RotateCcw,
 } from "lucide-react";
 import Spinner from "@/components/ui/Spinner";
 import Button from "@/components/ui/Button";
@@ -301,6 +302,16 @@ function SpeedBadge({ testId, variant, editedAt }: { testId: string; variant: Va
   );
 }
 
+interface AiRecommendation { title: string; detail: string; priority?: "high" | "medium" | "low" }
+interface AiInsights {
+  generatedAt?: string;
+  generatedBy?: string | null;
+  clarityUsed?: boolean;
+  summary?: string;
+  variants?: { id: string; name: string; observation: string; recommendations?: AiRecommendation[] }[];
+  clarityNote?: string;
+}
+
 export default function AnalyticsClient({
   test: initialTest,
   appUrl,
@@ -510,6 +521,39 @@ export default function AnalyticsClient({
 
   // Delete variant
   const [deleteVariantId, setDeleteVariantId] = useState<string | null>(null);
+
+  // Reset stats (wipe a test's recorded data — misconfigured tracking, etc.)
+  const [resetOpen, setResetOpen] = useState(false);
+  const [resetIncludeLeads, setResetIncludeLeads] = useState(false);
+  const [resetConfirmText, setResetConfirmText] = useState("");
+  const [resetting, setResetting] = useState(false);
+
+  async function resetStats() {
+    setResetting(true);
+    try {
+      const res = await fetch(`/api/tests/${test.id}/reset-stats`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ includeLeads: resetIncludeLeads }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) { toast.error(d.error || "Failed to reset stats"); return; }
+      toast.success(
+        `Stats reset — ${d.eventsDeleted} event${d.eventsDeleted === 1 ? "" : "s"} cleared` +
+        (resetIncludeLeads ? `, ${d.leadsDeleted} lead${d.leadsDeleted === 1 ? "" : "s"} deleted` : "")
+      );
+      setResetOpen(false);
+      setResetConfirmText("");
+      setResetIncludeLeads(false);
+      fetchAnalytics();
+      if (reportingLoaded) fetchReporting();
+      if (tab === "form-leads") fetchFormLeads(1);
+    } catch {
+      toast.error("Failed to reset stats");
+    } finally {
+      setResetting(false);
+    }
+  }
   const [deletingVariant, setDeletingVariant] = useState(false);
 
   // URL change confirmation (clears scan results)
@@ -623,7 +667,56 @@ export default function AnalyticsClient({
   // Microsoft Clarity (workspace-level project id; drives per-variant deep links)
   const [claritySaved, setClaritySaved] = useState<string | null>(null);
   const [clarityDraft, setClarityDraft] = useState('');
+  const [clarityTokenDraft, setClarityTokenDraft] = useState('');
   const [claritySaving, setClaritySaving] = useState(false);
+
+  // UTM & ad-click forwarding toggle (per-test, default ON)
+  const [forwardParams, setForwardParams] = useState<boolean>(
+    ((initialTest as unknown) as { forward_url_params?: boolean }).forward_url_params !== false,
+  );
+  const [savingForwardParams, setSavingForwardParams] = useState(false);
+
+  async function toggleForwardParams(next: boolean) {
+    setForwardParams(next); // optimistic
+    setSavingForwardParams(true);
+    try {
+      const res = await fetch(`/api/tests/${test.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ forward_url_params: next }),
+      });
+      if (!res.ok) { setForwardParams(!next); toast.error("Failed to update setting"); return; }
+      toast.success(next ? "UTM forwarding enabled" : "UTM forwarding disabled");
+    } catch {
+      setForwardParams(!next);
+      toast.error("Failed to update setting");
+    } finally {
+      setSavingForwardParams(false);
+    }
+  }
+
+  // AI Insights (per-variant read + recommendations from our data + optional Clarity)
+  const _initialInsights = ((initialTest as unknown) as { ai_insights?: AiInsights }).ai_insights ?? null;
+  const [aiInsights, setAiInsights] = useState<AiInsights | null>(_initialInsights);
+  const [aiInsightsLoading, setAiInsightsLoading] = useState(false);
+  // Which variant's inline insight pane is expanded (only one at a time).
+  const [openInsightVariantId, setOpenInsightVariantId] = useState<string | null>(null);
+  const insightFor = (variantId: string) => aiInsights?.variants?.find((v) => v.id === variantId) ?? null;
+
+  async function generateInsights() {
+    setAiInsightsLoading(true);
+    try {
+      const res = await fetch(`/api/tests/${test.id}/ai-insights`, { method: "POST" });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) { toast.error(d.error || "Failed to generate insights"); return; }
+      setAiInsights(d.insights ?? null);
+      toast.success("AI Insights updated — expand a variant to view");
+    } catch {
+      toast.error("Failed to generate insights");
+    } finally {
+      setAiInsightsLoading(false);
+    }
+  }
 
   // Email notifications integration
   const [emailIntegration, setEmailIntegration] = useState<{ id: string; enabled: boolean } | null>(null);
@@ -1671,9 +1764,10 @@ export default function AnalyticsClient({
       setWebhooks(whs);
 
       const clRaw = data.integrations?.find(i => i.type === 'clarity') ?? null;
-      const clPid = (clRaw && clRaw.enabled) ? ((clRaw.config as { project_id?: string } | null)?.project_id ?? null) : null;
-      setClaritySaved(clPid);
-      setClarityDraft(clPid ?? '');
+      const clCfg = (clRaw && clRaw.enabled) ? (clRaw.config as { project_id?: string; api_token?: string } | null) : null;
+      setClaritySaved(clCfg?.project_id ?? null);
+      setClarityDraft(clCfg?.project_id ?? '');
+      setClarityTokenDraft(clCfg?.api_token ?? '');
 
       // Fetch all test mappings once (covers hubspot + email + webhooks)
       const [mRes, kRes, epRes, cpRes] = await Promise.all([
@@ -1781,12 +1875,15 @@ export default function AnalyticsClient({
       toast.error('Enter your Clarity project ID (the code from your Clarity install snippet).');
       return;
     }
+    const token = clarityTokenDraft.trim();
     setClaritySaving(true);
     try {
+      const config: Record<string, string> = { project_id: pid };
+      if (token) config.api_token = token;
       const res = await fetch(`/api/workspaces/${workspaceId}/integrations`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'clarity', config: { project_id: pid } }),
+        body: JSON.stringify({ type: 'clarity', config }),
       });
       if (!res.ok) { toast.error('Failed to save Clarity settings'); return; }
       setClaritySaved(pid);
@@ -3035,9 +3132,30 @@ export default function AnalyticsClient({
                 />{" "}
                 Refresh
               </button>
-              <button onClick={exportCsv} className="btn-secondary ml-auto">
+              {userRole !== "viewer" && (
+                <button
+                  onClick={generateInsights}
+                  disabled={aiInsightsLoading}
+                  className="btn-secondary ml-auto"
+                  title="Generate an AI read for each variant — expand a variant row to view it"
+                >
+                  {aiInsightsLoading
+                    ? <><Loader2 size={14} className="animate-spin" /> Analyzing…</>
+                    : <><Sparkles size={14} /> {aiInsights ? "Regenerate AI Insights" : "AI Insights"}</>}
+                </button>
+              )}
+              <button onClick={exportCsv} className={`btn-secondary${userRole === "viewer" ? " ml-auto" : ""}`}>
                 <Download size={14} /> Export
               </button>
+              {userRole !== "viewer" && (
+                <button
+                  onClick={() => setResetOpen(true)}
+                  className="btn-secondary text-red-600 dark:text-red-400 hover:border-red-400 dark:hover:border-red-500"
+                  title="Delete this test's recorded stats — use when tracking was misconfigured"
+                >
+                  <RotateCcw size={14} /> Reset stats
+                </button>
+              )}
             </div>
 
             <div className="card overflow-x-auto">
@@ -3169,6 +3287,35 @@ export default function AnalyticsClient({
                                   {showEdited && <> · Edited {fmtDate(editedIso)}</>}
                                 </p>
                               )}
+                              {userRole !== "viewer" && (() => {
+                                const hasInsight = !!insightFor(stat.variant.id);
+                                const isOpen = openInsightVariantId === stat.variant.id;
+                                const geningThis = aiInsightsLoading && isOpen && !hasInsight;
+                                return (
+                                  <button
+                                    onClick={() => {
+                                      if (hasInsight) {
+                                        setOpenInsightVariantId(isOpen ? null : stat.variant.id);
+                                      } else {
+                                        setOpenInsightVariantId(stat.variant.id); // open when it arrives
+                                        generateInsights();
+                                      }
+                                    }}
+                                    disabled={aiInsightsLoading}
+                                    className="mt-1.5 inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-md bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 dark:hover:bg-indigo-500/20 transition-colors disabled:opacity-50"
+                                    title={hasInsight ? "Show/hide AI insights for this variant" : "Generate AI insights for this test"}
+                                  >
+                                    {geningThis ? (
+                                      <><Loader2 size={11} className="animate-spin" /> Analyzing…</>
+                                    ) : (
+                                      <>
+                                        <Sparkles size={11} /> AI Insights
+                                        {hasInsight && <ChevronDown size={11} className={`transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`} />}
+                                      </>
+                                    )}
+                                  </button>
+                                );
+                              })()}
                               {stat.variant.duplicated_from_id && (
                                 <p className="text-slate-400 dark:text-slate-500 text-[10px] flex items-center gap-1 mt-0.5">
                                   <Copy size={9} className="flex-shrink-0" />
@@ -3519,6 +3666,51 @@ export default function AnalyticsClient({
                               )}
                             </td>
                           </tr>
+
+                          {/* Inline AI Insights for this variant — pushes the rows below down */}
+                          {openInsightVariantId === stat.variant.id && insightFor(stat.variant.id) && (() => {
+                            const vi = insightFor(stat.variant.id)!;
+                            return (
+                              <tr className="bg-indigo-50/40 dark:bg-indigo-500/[0.06]">
+                                <td colSpan={13} className="px-5 py-4 border-t border-indigo-100 dark:border-indigo-500/20">
+                                  <div className="space-y-3 max-w-3xl">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <Sparkles size={14} className="text-indigo-600 dark:text-indigo-400" />
+                                      <span className="text-xs font-semibold uppercase tracking-wide text-indigo-600 dark:text-indigo-400">AI Insights · {stat.variant.name}</span>
+                                      {aiInsights?.generatedAt && (
+                                        <span className="text-xs text-slate-400 dark:text-slate-500">updated {timeAgo(aiInsights.generatedAt)}</span>
+                                      )}
+                                    </div>
+                                    {vi.observation && (
+                                      <p className="text-sm text-slate-700 dark:text-slate-200 leading-relaxed">{vi.observation}</p>
+                                    )}
+                                    {vi.recommendations && vi.recommendations.length > 0 && (
+                                      <div className="space-y-2.5">
+                                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Recommendations</p>
+                                        {vi.recommendations.map((rec, i) => (
+                                          <div key={i} className="flex gap-2.5 items-start">
+                                            <span className={`mt-0.5 text-[10px] font-bold uppercase px-1.5 py-0.5 rounded flex-shrink-0 ${rec.priority === "high" ? "bg-red-500/15 text-red-600 dark:text-red-400" : rec.priority === "low" ? "bg-slate-500/15 text-slate-500 dark:text-slate-400" : "bg-amber-500/15 text-amber-600 dark:text-amber-400"}`}>
+                                              {rec.priority || "med"}
+                                            </span>
+                                            <div className="min-w-0">
+                                              <p className="text-sm font-medium text-slate-800 dark:text-slate-200">{rec.title}</p>
+                                              <p className="text-xs text-slate-500 dark:text-slate-400">{rec.detail}</p>
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                    {aiInsights?.clarityNote && (
+                                      <p className="text-[11px] text-slate-400 dark:text-slate-500 border-t border-slate-100 dark:border-slate-800 pt-2">{aiInsights.clarityNote}</p>
+                                    )}
+                                    <p className="text-[11px] text-slate-400 dark:text-slate-500">
+                                      AI-generated from this variant&apos;s data{aiInsights?.clarityUsed ? " + site-wide Clarity signals" : ""} — sanity-check before acting.
+                                    </p>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })()}
 
                           {stat.variant.pages?.draft_html_content && (
                             <tr className={rowBg}>
@@ -4756,33 +4948,54 @@ export default function AnalyticsClient({
 
               <div className="px-5 py-4 space-y-3">
                 <p className="text-xs text-slate-500">
-                  Paste your Clarity <strong>project ID</strong> (the code in your Clarity install snippet, e.g. <code className="font-mono">abcd1234ef</code>). SplitLab injects Clarity on your hosted variants and tags each session with <code className="font-mono">sl_variant</code>, so you can filter recordings and heatmaps to a single variant. Jump in from the <strong>Clarity recordings / heatmap</strong> actions on each variant row.
+                  SplitLab injects Clarity on your hosted variants and tags each session with <code className="font-mono">sl_variant</code>, so you can filter recordings and heatmaps to a single variant. Enter your Clarity <strong>Project ID</strong> below (and, optionally, a Data Export token to power AI Insights).
                 </p>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    value={clarityDraft}
-                    onChange={(e) => setClarityDraft(e.target.value)}
-                    placeholder="Clarity project ID"
-                    spellCheck={false}
-                    className="input text-sm flex-1"
-                  />
-                  <button
-                    onClick={saveClarity}
-                    disabled={claritySaving}
-                    className="btn-primary text-sm px-4 py-2 rounded-lg font-medium flex-shrink-0 flex items-center gap-2"
-                  >
-                    {claritySaving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
-                    {claritySaved ? 'Update' : 'Connect'}
-                  </button>
-                  {claritySaved && (
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200 mb-1">Project ID <span className="text-red-500">*</span></label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={clarityDraft}
+                      onChange={(e) => setClarityDraft(e.target.value)}
+                      placeholder="e.g. abcd1234ef — from your Clarity install snippet"
+                      spellCheck={false}
+                      className="input text-sm flex-1"
+                    />
                     <button
-                      onClick={disconnectClarity}
-                      className="text-xs text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 transition-colors flex items-center gap-1 flex-shrink-0"
+                      onClick={saveClarity}
+                      disabled={claritySaving}
+                      className="btn-primary text-sm px-4 py-2 rounded-lg font-medium flex-shrink-0 flex items-center gap-2"
                     >
-                      <XCircle size={13} /> Disconnect
+                      {claritySaving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
+                      {claritySaved ? 'Update' : 'Connect'}
                     </button>
-                  )}
+                    {claritySaved && (
+                      <button
+                        onClick={disconnectClarity}
+                        className="text-xs text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 transition-colors flex items-center gap-1 flex-shrink-0"
+                      >
+                        <XCircle size={13} /> Disconnect
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">Find it in Clarity → Settings → Overview, or in your install snippet.</p>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200 mb-1">
+                    Data Export API token <span className="font-normal text-slate-400">(optional — powers AI Insights)</span>
+                  </label>
+                  <input
+                    type="password"
+                    value={clarityTokenDraft}
+                    onChange={(e) => setClarityTokenDraft(e.target.value)}
+                    placeholder="Paste the token here"
+                    spellCheck={false}
+                    autoComplete="off"
+                    className="input text-sm w-full"
+                  />
+                  <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">
+                    Get it in Clarity → Settings → Data Export → Generate new API token. Lets SplitLab pull site-wide behavioral signals (rage/dead clicks, scroll depth, JS errors) into AI Insights. Click <strong>Update</strong> after entering it.
+                  </p>
                 </div>
                 {claritySaved && (
                   <a
@@ -5183,6 +5396,66 @@ export default function AnalyticsClient({
         {/* ─── SETTINGS TAB ─── */}
         {tab === "settings" && (
           <>
+            {/* UTM & ad-click forwarding (per-test toggle, default ON) */}
+            <div className={`card overflow-hidden ${forwardParams ? "border-green-500/30 bg-green-500/5" : ""}`}>
+              <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700 flex items-center gap-3">
+                <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${forwardParams ? "bg-green-500/20" : "bg-slate-200 dark:bg-slate-700"}`}>
+                  <ArrowRight size={16} className={forwardParams ? "text-green-600 dark:text-green-400" : "text-slate-400"} />
+                </div>
+                <div className="flex-1">
+                  <p className="font-medium text-slate-800 dark:text-slate-200 text-sm">UTM &amp; ad-click forwarding</p>
+                  <p className="text-slate-500 dark:text-slate-400 text-xs mt-0.5">
+                    {forwardParams
+                      ? "On — captured and passed through automatically, no setup needed"
+                      : "Off — ad params are not forwarded to outbound destinations"}
+                  </p>
+                </div>
+                {userRole !== "viewer" && (
+                  <button
+                    role="switch"
+                    aria-checked={forwardParams}
+                    aria-label="Toggle UTM & ad-click forwarding"
+                    disabled={savingForwardParams}
+                    onClick={() => toggleForwardParams(!forwardParams)}
+                    className={`relative inline-flex h-6 w-11 flex-shrink-0 rounded-full transition-colors disabled:opacity-50 ${forwardParams ? "bg-green-500" : "bg-slate-300 dark:bg-slate-600"}`}
+                  >
+                    <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform mt-0.5 ${forwardParams ? "translate-x-[22px]" : "translate-x-0.5"}`} />
+                  </button>
+                )}
+              </div>
+              <div className="px-5 py-4 space-y-3 text-sm text-slate-600 dark:text-slate-300">
+                <p>
+                  When a visitor lands with tracking parameters (e.g. from a Facebook or Google ad),
+                  SplitLab captures them and carries them forward automatically:
+                </p>
+                <ul className="space-y-1.5 text-xs">
+                  <li className="flex gap-2">
+                    <CheckCircle2 size={13} className="text-green-500 flex-shrink-0 mt-0.5" />
+                    <span><strong>Into lead forms</strong> — added as hidden fields, so every submitted lead keeps its attribution.</span>
+                  </li>
+                  <li className="flex gap-2">
+                    <CheckCircle2 size={13} className="text-green-500 flex-shrink-0 mt-0.5" />
+                    <span><strong>Onto outbound clicks</strong> — appended to links, buttons, and JS redirects that leave the page (both same-domain and cross-domain), so the next URL keeps the params. Ideal for click-outs with no form.</span>
+                  </li>
+                  <li className="flex gap-2">
+                    <CheckCircle2 size={13} className="text-green-500 flex-shrink-0 mt-0.5" />
+                    <span><strong>Through redirect variants</strong> — forwarded onto the destination URL.</span>
+                  </li>
+                </ul>
+                <div>
+                  <p className="text-xs text-slate-400 dark:text-slate-500 mb-1.5">Parameters carried:</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {["utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term", "gclid", "fbclid"].map((p) => (
+                      <span key={p} className="font-mono text-[11px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">{p}</span>
+                    ))}
+                  </div>
+                </div>
+                <p className="text-[11px] text-slate-400 dark:text-slate-500">
+                  Applies to real visitor traffic. The dashboard&apos;s Preview mode intentionally skips it so staff clicks aren&apos;t recorded — so test with the live link, not Preview.
+                </p>
+              </div>
+            </div>
+
             {/* Global Tracking Snippet */}
             {(() => {
               const trackerComplete = !anyTrackerMissing && variants.some(v => getVerifiedStatus(v) === true);
@@ -5899,6 +6172,52 @@ export default function AnalyticsClient({
         description="This will permanently delete the variant and its event data. Linked pages and UTM rules will be archived. Traffic weights will be redistributed equally among the remaining variants."
         loading={deletingVariant}
       />
+
+      {/* Reset stats — wipe recorded data for this test (misconfigured tracking, etc.) */}
+      <Modal open={resetOpen} onClose={() => !resetting && setResetOpen(false)} title="Reset test statistics" size="sm">
+        <div className="space-y-4">
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            This permanently deletes <strong>all recorded view &amp; conversion data</strong> for{" "}
+            <strong className="text-slate-700 dark:text-slate-200">{test.name}</strong> — views, unique visitors,
+            conversions, CVR, goals, confidence, and the mobile/desktop split. Use this when tracking was
+            misconfigured and the numbers are unreliable. <strong className="text-red-600 dark:text-red-400">This cannot be undone.</strong>
+          </p>
+          <label className="flex items-start gap-2 text-sm text-slate-600 dark:text-slate-300 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={resetIncludeLeads}
+              onChange={(e) => setResetIncludeLeads(e.target.checked)}
+              className="mt-0.5"
+            />
+            <span>Also delete captured form leads (the Leads tab)</span>
+          </label>
+          <div>
+            <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">
+              Type <span className="font-mono text-slate-700 dark:text-slate-200">RESET</span> to confirm
+            </label>
+            <input
+              type="text"
+              value={resetConfirmText}
+              onChange={(e) => setResetConfirmText(e.target.value)}
+              placeholder="RESET"
+              autoComplete="off"
+              spellCheck={false}
+              className="input text-sm w-full"
+            />
+          </div>
+          <div className="flex items-center justify-end gap-3 pt-1">
+            <Button variant="secondary" onClick={() => setResetOpen(false)} disabled={resetting}>Cancel</Button>
+            <Button
+              variant="danger"
+              onClick={resetStats}
+              loading={resetting}
+              disabled={resetConfirmText.trim().toUpperCase() !== "RESET"}
+            >
+              Reset stats
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       <ConfirmDialog
         open={!!urlChangeConfirmId}

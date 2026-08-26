@@ -37,7 +37,7 @@ if (fs.existsSync(envPath)) {
   }
 }
 
-const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_URL = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const PSI_KEY = process.env.PAGESPEED_API_KEY;
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://www.trysplitlab.com';
@@ -97,28 +97,31 @@ async function main() {
   const { data: variants, error } = await query;
   if (error) { console.error('Query failed:', error.message); process.exit(1); }
 
-  console.log(`Found ${variants.length} variant(s) to process${RETEST_ALL ? ' (--all: re-testing everything)' : ' (untested only)'}.`);
-  if (!PSI_KEY) console.log('No PAGESPEED_API_KEY set — using anonymous quota (slower, may rate-limit).');
+  const CONCURRENCY = Number(process.env.SPEED_CONCURRENCY) || 5;
+  console.log(`Found ${variants.length} variant(s) to process${RETEST_ALL ? ' (--all: re-testing everything)' : ' (untested only)'}. Concurrency ${CONCURRENCY}.`);
+  if (!PSI_KEY) console.log('No PAGESPEED_API_KEY set — using anonymous quota (will rate-limit fast).');
 
-  let tested = 0, skipped = 0, failed = 0;
-  for (const v of variants) {
+  let tested = 0, skipped = 0, failed = 0, done = 0;
+
+  async function processOne(v) {
     const url = await resolveUrl(v);
-    if (!url) { skipped++; console.log(`  skip   ${v.name} (${v.id}) — no public URL`); continue; }
-
-    const [mobile, desktop] = await Promise.all([psiScore(url, 'mobile'), psiScore(url, 'desktop')]);
-    if (mobile == null && desktop == null) {
-      failed++;
-      console.log(`  fail   ${v.name} (${v.id}) — ${url}`);
-      await sleep(1500);
-      continue;
-    }
+    if (!url) { skipped++; console.log(`  skip   ${v.name} — no public URL`); return; }
+    const [m, d] = await Promise.all([psiScore(url, 'mobile'), psiScore(url, 'desktop')]);
+    if (m == null && d == null) { failed++; console.log(`  fail   ${v.name} — ${url}`); return; }
     await db
       .from('test_variants')
-      .update({ speed_mobile: mobile, speed_desktop: desktop, speed_tested_at: new Date().toISOString() })
+      .update({ speed_mobile: m, speed_desktop: d, speed_tested_at: new Date().toISOString() })
       .eq('id', v.id);
     tested++;
-    console.log(`  ok     ${v.name} — mobile ${mobile ?? '—'} / desktop ${desktop ?? '—'}`);
-    await sleep(1500); // be gentle on the PSI quota
+    console.log(`  ok     ${v.name} — mobile ${m ?? '—'} / desktop ${d ?? '—'}`);
+  }
+
+  for (let i = 0; i < variants.length; i += CONCURRENCY) {
+    const batch = variants.slice(i, i + CONCURRENCY);
+    await Promise.all(batch.map(processOne));
+    done += batch.length;
+    console.log(`  … ${done}/${variants.length}`);
+    await sleep(300);
   }
 
   console.log(`\nDone. Tested ${tested}, skipped ${skipped} (no URL), failed ${failed}.`);
