@@ -5,6 +5,7 @@ import { db } from '@/lib/supabase-server';
 import { deleteHtmlFile, deletePageImages, fileNameFromUrl } from '@/lib/storage';
 import { resolveWorkspaceRole } from '@/lib/workspace-auth';
 import { updatePageDraftOrLive, getPageWithContent } from '@/lib/services/pages';
+import { savePageSkills } from '@/lib/skills/persistence';
 import { z } from 'zod';
 
 // Taking in HTML now also copies its images into our storage (see
@@ -33,6 +34,11 @@ const updateSchema = z.object({
   draft: z.boolean().optional(),
   // See UpdatePageInput.clear_draft in services/pages.ts — live write only.
   clear_draft: z.boolean().optional(),
+  // AI builder Skills + Style. Written through savePageSkills below rather
+  // than the main update, because their columns arrive in migration 062 and a
+  // missing column would otherwise fail the entire page update.
+  skills: z.array(z.string()).max(20).optional(),
+  style: z.string().max(64).nullable().optional(),
 });
 
 export async function GET(
@@ -66,7 +72,16 @@ export async function PATCH(
 
   try {
     const body = await request.json();
-    const input = updateSchema.parse(body);
+    const { skills, style, ...input } = updateSchema.parse(body);
+
+    // Separate, non-fatal write — see src/lib/skills/persistence.ts.
+    if (skills !== undefined || style !== undefined) {
+      // Spread, not `?? null` — sending only `skills` must not wipe `style`.
+      await savePageSkills(params.id, {
+        ...(skills !== undefined ? { skills } : {}),
+        ...(style !== undefined ? { style } : {}),
+      });
+    }
 
     const result = await updatePageDraftOrLive(params.id, { html_url: pageMeta.html_url, schema_json: pageMeta.schema_json }, input);
     if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.status });

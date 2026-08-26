@@ -24,7 +24,15 @@ export function buildTrackingSnippet(
    * 'preview' also sticks for the rest of the tab (see below); 'cap' does not,
    * since the cap is re-evaluated server-side on every request.
    */
-  muteMode: '' | 'preview' | 'cap' = ''
+  muteMode: '' | 'preview' | 'cap' = '',
+  /**
+   * Per-test switch (tests.forward_url_params). When false, UTM / ad-click params
+   * are NOT appended to outbound link clicks or redirects. The sl_* tracking
+   * context (needed for cross-domain conversion attribution) and lead-form
+   * hidden-field capture are unaffected — only the pass-through to the next URL
+   * is disabled. Default true.
+   */
+  forwardParams: boolean = true
 ): string {
   const goalsJson = JSON.stringify(
     goals.map((g) => ({
@@ -99,6 +107,10 @@ export function buildTrackingSnippet(
   // cap all use it, so none of them can record a pageview, a conversion or a
   // form lead — the three always move together.
   var _mute = _isScan || _isPreview || ${JSON.stringify(muteMode === 'cap')};
+  // Per-test switch: forward UTM/ad-click params onto outbound destinations.
+  // Off = don't append them to links/redirects (sl_* context still rides
+  // cross-domain for tracking; lead-form capture is unaffected).
+  var _forwardParams = ${JSON.stringify(forwardParams)};
 
   // ─── Cross-page context persistence ─────────────────────────────────────────
   // Persist this test's context (variant, visitor, url_reached goals) keyed per
@@ -291,27 +303,41 @@ export function buildTrackingSnippet(
       if (!url) return url;
       var u = new URL(String(url), window.location.href);
       if (u.protocol !== 'http:' && u.protocol !== 'https:') return url;
-      if (u.hostname === window.location.hostname) return url;
-      // Already tagged — this guard stops watchNavigations double-appending.
-      if (u.searchParams.get('sl_vid') || u.searchParams.get('sl_tid')) return url;
-      u.searchParams.set('sl_tid', _SL.testId);
-      u.searchParams.set('sl_vid', _SL.variantId);
-      u.searchParams.set('sl_vh', _SL.visitorHash);
+      var sameHost = (u.hostname === window.location.hostname);
+      // sl_* context is CROSS-DOMAIN ONLY: localStorage can't cross origins, so
+      // tracker.js on another domain rebuilds context from these params. Never
+      // add them same-host — sl_vh would mute tracking on the next page and
+      // sl_vid would pin a variant. The ad params (UTMs / click IDs) below ride
+      // EVERY outbound click, same-domain click-outs included, so a page that
+      // links to another page/checkout on the same domain still forwards them.
+      if (!sameHost) {
+        // Already tagged — this guard stops watchNavigations double-appending.
+        if (u.searchParams.get('sl_vid') || u.searchParams.get('sl_tid')) return url;
+        u.searchParams.set('sl_tid', _SL.testId);
+        u.searchParams.set('sl_vid', _SL.variantId);
+        u.searchParams.set('sl_vh', _SL.visitorHash);
+      }
 
-      // Carry the visitor's ad params across the origin boundary too —
-      // localStorage cannot, so the URL is the only channel.
-      var p = trackingParams(), k;
+      // Carry the visitor's ad params (utm_*, gclid, fbclid, custom) onto the
+      // destination URL — the whole point of the forwarding. Gated by the
+      // per-test switch; sl_* above still rides so tracking is never affected.
+      var p = _forwardParams ? trackingParams() : {}, k;
       var len = u.toString().length;
+      var added = false;
       for (k in p) {
         if (!p.hasOwnProperty(k)) continue;
         if (u.searchParams.has(k)) continue; // explicit beats inherited
         var cost = k.length + p[k].length + 2;
-        // Tracking integrity beats attribution completeness — sl_* is already
-        // set, so an over-long URL drops extras and keeps context.
+        // Tracking integrity beats attribution completeness — an over-long URL
+        // drops extras and keeps whatever's already set.
         if (len + cost > MAX_DECORATED_URL) break;
         u.searchParams.set(k, p[k]);
         len += cost;
+        added = true;
       }
+      // Same-host with nothing to add: leave the URL untouched so we never
+      // trigger a needless re-navigation or history churn.
+      if (sameHost && !added) return url;
       return u.toString();
     } catch(e) { return url; }
   }
@@ -444,10 +470,15 @@ export function buildTrackingSnippet(
           if (e.navigationType !== 'push' && e.navigationType !== 'replace') return;
           var dest = e.destination && e.destination.url;
           if (!dest) return;
-          // decorate() early-returns on same-hostname, non-http(s) and
-          // already-tagged URLs, so same-domain navigation is never cancelled,
-          // and links decorated on mousedown arrive here as dec === dest and
-          // pass through — no double navigation.
+          // Cross-domain only: same-host JS navigations keep context via
+          // localStorage, and cancelling/re-issuing them could fight a page's
+          // own client-side routing. Same-host anchor clicks, form posts and
+          // window.open still get UTMs via decorate() on their own paths.
+          try {
+            if (new URL(dest, window.location.href).hostname === window.location.hostname) return;
+          } catch(e2) {}
+          // Links decorated on mousedown arrive here already tagged, so
+          // decorate() returns dec === dest and they pass through — no double nav.
           var dec = decorate(dest);
           if (dec === dest) return;
           e.preventDefault();

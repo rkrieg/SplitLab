@@ -20,8 +20,21 @@ export interface CompetitorContext {
 }
 
 export function extractUrls(text: string): string[] {
-  const matches = text.match(/https?:\/\/[^\s"'<>)]+/gi) ?? [];
-  return Array.from(new Set(matches));
+  const found = new Set<string>();
+  const re = /https?:\/\/[^\s"'<>)]+/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    // A URL immediately followed by "<" in the source wasn't a real URL — it
+    // was a template like ".../logos/<name>.webp" and the char class above cut
+    // off at the placeholder. What's left looks like a real webpage URL (no
+    // file extension) and used to sail past classifyAssetSource's image check,
+    // getting scraped as a "competitor site" — which is how a literal
+    // Access-Denied page for an asset folder ended up steering page design.
+    const next = text[m.index + m[0].length];
+    if (next === '<') continue;
+    found.add(m[0]);
+  }
+  return Array.from(found);
 }
 
 // Video/media embed CDNs — a URL to one of these in a prompt/PRD is almost always a

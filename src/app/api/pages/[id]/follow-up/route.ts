@@ -15,6 +15,9 @@ import { reportAiOverageUsage } from '@/lib/ai-overage-billing';
 import { extractUrls, isEmbedAssetUrl, scrapeCompetitorUrl, fetchLogoAssets, fetchContentImageAssets } from '@/lib/ai-competitor-scrape';
 import { classifyAssetSource } from '@/lib/asset-source-resolver';
 import { buildHtmlFromSchema } from '@/lib/ai-page-builder';
+import { resolveSkills } from '@/lib/skills';
+import { loadPageSkills } from '@/lib/skills/persistence';
+import { isStyleTag } from '@/lib/ai-page-exemplars';
 import { buildFontFollowUpBlock } from '@/lib/ai-page-fonts';
 import { createSSEStream, sendSSE, closeSSE, SSE_HEADERS, type SSEEvent } from '@/lib/sse';
 import { isTestVariantPage, getLinkedVariant } from '@/lib/page-drafts';
@@ -38,6 +41,7 @@ import {
   extractLogoUrlFromSection,
   extractInlineLogoSvg,
   sectionHasLogoAsset,
+  classifyCompetitorReferenceUrl,
 } from '@/lib/ai-brand-assets';
 import {
   extractPrimaryHeadlineFromHtml,
@@ -2196,6 +2200,18 @@ export async function POST(
 
   if (!page) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
+  // Skills the page was BUILT with, so an edit obeys the same rules the
+  // original build did. Loaded in its own query on purpose — see
+  // skills/persistence.ts; folding these columns into the SELECT above would
+  // make this route 404 everywhere until migration 062 is applied.
+  //
+  // Only the full-rebuild path uses them (a structural follow-up regenerates
+  // the whole document). Surgical edits splice into HTML that already embodies
+  // the skills, so re-stating them there would be prompt weight for nothing.
+  const savedSkillState = await loadPageSkills(params.id);
+  const savedSkills = resolveSkills(savedSkillState.skills);
+  const savedStyle = isStyleTag(savedSkillState.style) ? savedSkillState.style : null;
+
   // Variant pages are drafted: edits accumulate in draft_* columns and never
   // touch the live HTML a test is actually serving until the user explicitly
   // replaces it or forks a copy (see "Edit with AI" revision, 2026-07-27).
@@ -2399,9 +2415,21 @@ export async function POST(
   // Asset sources (Drive folder/file, a bucket listing) are excluded for the
   // same reason as embed CDNs: they are where the pictures live, never a design
   // to copy. Scraping one returns the host's own marketing chrome.
-  const competitorUrls = mentionedUrls.filter(
+  //
+  // Shape alone stops here — it can only rule OUT urls that definitely are not
+  // a competitor (an image, an embed, a Drive/bucket link). It cannot rule one
+  // IN: a shape-shaped "webpage" URL is just as often an asset folder, a docs
+  // page, or a site the prompt explicitly says NOT to clone. Same bug class
+  // that hit generate/route.ts (see classifyCompetitorReferenceUrl) — a URL
+  // surviving this filter used to become THE competitor reference by default.
+  const shapeQualifiedUrls = mentionedUrls.filter(
     (u, i) => !mentionedUrlImageFlags[i] && !isEmbedAssetUrl(u) && classifyAssetSource(u) === 'webpage',
   );
+  const classifiedReferenceUrl =
+    shapeQualifiedUrls.length > 0
+      ? await classifyCompetitorReferenceUrl(prompt, shapeQualifiedUrls)
+      : null;
+  const competitorUrls = classifiedReferenceUrl ? [classifiedReferenceUrl] : [];
 
   // Merge prompt-detected image URLs in with any client-attached ones so the
   // model can embed them exactly like an uploaded image attachment. Capped at
@@ -5341,6 +5369,8 @@ export async function POST(
             userPrompt: prompt,
             imageUrls: routingImageUrls,
             styleReferenceNote,
+            skills: savedSkills,
+            styleTag: savedStyle,
             callerLabel: 'follow-up:structural',
             onChunk: (chunk) => {
               statusBuffer += chunk;

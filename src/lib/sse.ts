@@ -99,6 +99,37 @@ export type SSEEvent =
       placed_assets?: number;
       /** Filenames of the imported files that did not make it onto the page. */
       unused_asset_names?: string[];
+      /**
+       * Which Skills the build actually ran with, resolved SERVER-side — the
+       * mandatory one is always in here even when the client sent nothing.
+       * Ids for persistence, names for the "Built with" line.
+       */
+      skills_applied?: string[];
+      skills_applied_names?: string[];
+      /**
+       * The style tag the build actually used — including the one the design
+       * brief chose when the user left it on "Auto". Null only when no style
+       * tag was in play at all (a competitor clone, or a follow-up told to
+       * preserve the page's existing look).
+       */
+      style_applied?: string | null;
+      /** True when `style_applied` was the model's pick rather than the user's. */
+      style_auto?: boolean;
+      /**
+       * Per-check results of the selected skills, read from the finished HTML.
+       *
+       * DISPLAY ONLY. Nothing downstream reads this, no save is gated on it,
+       * and a check that could not decide is simply absent rather than shown as
+       * a failure — a wrong cross costs more trust than a missing row.
+       */
+      skill_scores?: {
+        skillId: string;
+        skillName: string;
+        id: string;
+        label: string;
+        passed: boolean;
+        detail: string;
+      }[];
     };
 
 export const SSE_HEADERS = {
