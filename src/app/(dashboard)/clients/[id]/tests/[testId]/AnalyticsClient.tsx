@@ -3287,16 +3287,35 @@ export default function AnalyticsClient({
                                   {showEdited && <> · Edited {fmtDate(editedIso)}</>}
                                 </p>
                               )}
-                              {insightFor(stat.variant.id) && (
-                                <button
-                                  onClick={() => setOpenInsightVariantId(openInsightVariantId === stat.variant.id ? null : stat.variant.id)}
-                                  className="mt-1 inline-flex items-center gap-1 text-[11px] font-medium text-indigo-600 dark:text-indigo-400 hover:underline"
-                                  title="Show AI insights for this variant"
-                                >
-                                  <Sparkles size={11} /> AI Insights
-                                  <ChevronDown size={11} className={`transition-transform duration-200 ${openInsightVariantId === stat.variant.id ? "rotate-180" : ""}`} />
-                                </button>
-                              )}
+                              {userRole !== "viewer" && (() => {
+                                const hasInsight = !!insightFor(stat.variant.id);
+                                const isOpen = openInsightVariantId === stat.variant.id;
+                                const geningThis = aiInsightsLoading && isOpen && !hasInsight;
+                                return (
+                                  <button
+                                    onClick={() => {
+                                      if (hasInsight) {
+                                        setOpenInsightVariantId(isOpen ? null : stat.variant.id);
+                                      } else {
+                                        setOpenInsightVariantId(stat.variant.id); // open when it arrives
+                                        generateInsights();
+                                      }
+                                    }}
+                                    disabled={aiInsightsLoading}
+                                    className="mt-1.5 inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-md bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 dark:hover:bg-indigo-500/20 transition-colors disabled:opacity-50"
+                                    title={hasInsight ? "Show/hide AI insights for this variant" : "Generate AI insights for this test"}
+                                  >
+                                    {geningThis ? (
+                                      <><Loader2 size={11} className="animate-spin" /> Analyzing…</>
+                                    ) : (
+                                      <>
+                                        <Sparkles size={11} /> AI Insights
+                                        {hasInsight && <ChevronDown size={11} className={`transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`} />}
+                                      </>
+                                    )}
+                                  </button>
+                                );
+                              })()}
                               {stat.variant.duplicated_from_id && (
                                 <p className="text-slate-400 dark:text-slate-500 text-[10px] flex items-center gap-1 mt-0.5">
                                   <Copy size={9} className="flex-shrink-0" />
@@ -4929,49 +4948,53 @@ export default function AnalyticsClient({
 
               <div className="px-5 py-4 space-y-3">
                 <p className="text-xs text-slate-500">
-                  Paste your Clarity <strong>project ID</strong> (the code in your Clarity install snippet, e.g. <code className="font-mono">abcd1234ef</code>). SplitLab injects Clarity on your hosted variants and tags each session with <code className="font-mono">sl_variant</code>, so you can filter recordings and heatmaps to a single variant. Jump in from the <strong>Clarity recordings / heatmap</strong> actions on each variant row.
+                  SplitLab injects Clarity on your hosted variants and tags each session with <code className="font-mono">sl_variant</code>, so you can filter recordings and heatmaps to a single variant. Enter your Clarity <strong>Project ID</strong> below (and, optionally, a Data Export token to power AI Insights).
                 </p>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    value={clarityDraft}
-                    onChange={(e) => setClarityDraft(e.target.value)}
-                    placeholder="Clarity project ID"
-                    spellCheck={false}
-                    className="input text-sm flex-1"
-                  />
-                  <button
-                    onClick={saveClarity}
-                    disabled={claritySaving}
-                    className="btn-primary text-sm px-4 py-2 rounded-lg font-medium flex-shrink-0 flex items-center gap-2"
-                  >
-                    {claritySaving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
-                    {claritySaved ? 'Update' : 'Connect'}
-                  </button>
-                  {claritySaved && (
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200 mb-1">Project ID <span className="text-red-500">*</span></label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={clarityDraft}
+                      onChange={(e) => setClarityDraft(e.target.value)}
+                      placeholder="e.g. abcd1234ef — from your Clarity install snippet"
+                      spellCheck={false}
+                      className="input text-sm flex-1"
+                    />
                     <button
-                      onClick={disconnectClarity}
-                      className="text-xs text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 transition-colors flex items-center gap-1 flex-shrink-0"
+                      onClick={saveClarity}
+                      disabled={claritySaving}
+                      className="btn-primary text-sm px-4 py-2 rounded-lg font-medium flex-shrink-0 flex items-center gap-2"
                     >
-                      <XCircle size={13} /> Disconnect
+                      {claritySaving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
+                      {claritySaved ? 'Update' : 'Connect'}
                     </button>
-                  )}
+                    {claritySaved && (
+                      <button
+                        onClick={disconnectClarity}
+                        className="text-xs text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 transition-colors flex items-center gap-1 flex-shrink-0"
+                      >
+                        <XCircle size={13} /> Disconnect
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">Find it in Clarity → Settings → Overview, or in your install snippet.</p>
                 </div>
                 <div>
-                  <label className="block text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1">
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200 mb-1">
                     Data Export API token <span className="font-normal text-slate-400">(optional — powers AI Insights)</span>
                   </label>
                   <input
                     type="password"
                     value={clarityTokenDraft}
                     onChange={(e) => setClarityTokenDraft(e.target.value)}
-                    placeholder="Clarity → Settings → Data Export → Generate new API token"
+                    placeholder="Paste the token here"
                     spellCheck={false}
                     autoComplete="off"
                     className="input text-sm w-full"
                   />
                   <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">
-                    Lets SplitLab pull site-wide behavioral signals (rage/dead clicks, scroll depth, JS errors) into the AI Insights pane. Aggregate, last 3 days, ~10 pulls/day. Click <strong>Update</strong> after entering it.
+                    Get it in Clarity → Settings → Data Export → Generate new API token. Lets SplitLab pull site-wide behavioral signals (rage/dead clicks, scroll depth, JS errors) into AI Insights. Click <strong>Update</strong> after entering it.
                   </p>
                 </div>
                 {claritySaved && (

@@ -64,7 +64,7 @@
     @apply bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl;
   }
 
-  .input-base {
+  .input-base, .input {
     @apply bg-slate-100 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2 text-slate-900 dark:text-slate-100
            placeholder-slate-400 dark:placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500
            focus:border-transparent transition-colors w-full text-sm;
