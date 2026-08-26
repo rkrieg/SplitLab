@@ -156,24 +156,7 @@ A PRD/brief that spells out many trust signals (badges, a phone line, multiple m
 - Self-check before finalizing the hero: mentally lay out the headline at its column's actual pixel width. If it exceeds 3 lines, shrink that variant's clamp() or shorten the line — do not let the section just grow taller to absorb it.
 
 ## Hero layout — choose based on business type, never default to centered single-column
-Pick the layout that best fits the business — vary it, don't always pick the same one:
-
-1. SPLIT TWO-COLUMN — text left, proof element right (results card, mockup, dashboard screenshot placeholder, stat block)
-   Best for: law firms, SaaS, finance, professional services
-   grid-template-columns: 1fr 1fr or 1.1fr 0.9fr
-
-2. ASYMMETRIC OVERSIZED — massive headline bleeds right edge, subhead and CTA bottom-left
-   Best for: agencies, bold brands, portfolios, streetwear
-   Headline: font-size up to clamp(72px, 11vw, 160px), overflow: hidden on container
-
-3. CENTERED WITH STRONG VISUAL BELOW — headline + CTA centered, full-width visual underneath (terminal, app mockup, before/after, stats row)
-   Best for: dev tools, AI products, productivity apps
-
-4. FULL-BLEED EDITORIAL — large image/gradient left panel, content right panel, full viewport height
-   Best for: luxury, hospitality, restaurants, fashion
-
-5. STACKED BOLD — oversized colored number or icon top, then headline below, asymmetric layout
-   Best for: playful consumer apps, fitness, food delivery
+Design the hero layout freehand, based on what actually fits the business and the content available (copy length, whether there's a proof element/image, brand mood). Don't reuse the same shape you'd reach for by default — a law firm, a fitness app, and a luxury brand should not end up with the same hero skeleton. Whatever you land on, follow the mandatory rules above (line-count cap, viewport-fit, above-the-fold budget).
 
 ## Anti-patterns — never write these
 - NEVER: box-shadow: 0 4px 6px rgba(0,0,0,0.1) on every card — use either no shadow or a strong deliberate one
@@ -216,6 +199,15 @@ styling to options the copy describes as unequal — mark the favored one:
 Only apply this when the content genuinely implies a favorite — do not invent a
 "winner" among options the schema/copy presents as equal choices.
 
+## Native/structural elements — mandatory
+Never leave a multi-part or interactive element at its raw browser-default appearance — style it from the page's own tokens (--bg-surface, --accent, --border, --radius) the same way cards and buttons already are. This applies to (not limited to): tables/comparison grids, <select> dropdowns, checkboxes, radio buttons, progress bars/stepper indicators, blockquotes, badges/tags, star ratings.
+Comparison tables and feature matrices specifically:
+- The table MUST set 'width: 100%' (and its wrapper too, if it sits in one). A '<table>' sizes itself to its content by default, so without this it renders narrower than the column it sits in — the heading above it spans the full width while the table stops short, leaving a ragged right edge that reads as broken. This applies to the table element only; it is not a licence to stretch anything else.
+- Header row/column gets a deliberate background (var(--bg-surface) or a dark/accent fill) — never a plain transparent row with just a border-bottom
+- A highlighted row/column (the favored plan, your product vs. competitors) gets a visible tint across its full height, using the Emphasis shadows treatment above — not just a checkmark
+- Status glyphs (✓/✗) get real color (success/accent vs. --text-muted) — never flat black on both
+- The whole component sits in a container with --radius + overflow: hidden so corners are clean, not a raw table bleeding to its cell edges
+
 ## Text density — mandatory
 Real visitors skim landing pages, they don't read them: they scan H1s, glance at images/icons, and scroll. Text-heavy sections lose them.
 - Body paragraphs inside sections must be 1-2 sentences max. Never write 3+ sentence paragraphs.
@@ -223,43 +215,8 @@ Real visitors skim landing pages, they don't read them: they scan H1s, glance at
 - Prefer layouts that give visuals equal or greater weight than text: alternating image/text rows, bento grids with photo cards, icon-led numbered lists. Avoid stacking multiple plain 3-column text-only cards in a row.
 - If a section in the schema has no generated_image_url and isn't inherently list-like (FAQ, pricing, stats), lean on a strong icon + short label instead of a paragraph-heavy card.
 
-## Section layout varieties — for every section in the schema, pick the variant that best fits the business
-Never default to the same layout for every section. Vary layouts across the page.
-
-FEATURES / BENEFITS section — pick one:
-  A) Bento grid — asymmetric mix of large + small cards, visually interesting, use when 4-8 features
-  B) Alternating rows — icon/visual left + text right, then flipped, use when 3-5 features with depth
-  C) Numbered showcase — oversized number accent (01, 02, 03), bold title, description beside it
-  D) Three-column icon cards — only when 6+ short features, never as default first choice
-
-TESTIMONIALS section — pick one:
-  A) Masonry card wall — 3 columns, varying card heights, star rating + quote + author + role
-  B) Single hero quote — full-width, large italic pull quote, author photo beside or below
-  C) Two-up cards — 2 columns, clean card per testimonial with avatar, name, company
-
-STATS / SOCIAL PROOF section — pick one:
-  A) Big number row — 3-4 oversized numbers with labels, horizontal, high visual impact
-  B) Logo ticker strip — scrolling or static row of client/partner logos, CSS animation
-  C) Stat + context cards — number prominently displayed, one-line context below per card
-
-FAQ section — pick one:
-  A) Accordion — each question clickable, answer expands, chevron rotates (CSS only using <details>/<summary>)
-  B) Two-column Q&A — questions column left, answers column right, clean typographic treatment
-  C) Numbered list — all Q&As visible, no toggle, large number accent per item
-
-PRICING section — pick one:
-  A) Side-by-side tier cards — 2-3 tiers, middle card highlighted with accent border + "Most Popular" badge
-  B) Feature comparison table — rows of features, tick/cross per tier, sticky header
-  C) Single focus — one plan only, large price display, feature list below CTA
-
-CONTACT / CTA section — pick one:
-  A) Split layout — form left, contact info + trust signals right
-  B) Centered card — form in a surface card, centered, clean and minimal
-  C) Full-width bold banner — large headline, single CTA button, no form (for low-friction CTAs)
-
-TEAM section — pick one:
-  A) Grid cards — photo + name + role + optional social link
-  B) Alternating feature rows — larger treatment per person, photo + bio + highlights
+## Section layout varieties — for every section in the schema, design the variant that best fits the business
+Never default to the same layout for every section, and never default to the same shape you'd reach for on any other page. Design each section (Features/Benefits, Testimonials, Stats/Social proof, FAQ, Pricing, Contact/CTA, Team) freehand based on its actual content — how many items, whether images exist, what the business is — rather than a fixed template. Vary layouts across the page.
 
 CUSTOM_BLOCK section — build exactly what "description" specifies, not a generic card/list layout
   This type exists for content that doesn't fit any pattern above — most often a diagram, schematic, or bespoke widget. Read "description" literally and build it:
@@ -329,7 +286,7 @@ Common, easy-to-miss mistakes — check every generated page against this list b
 ## Navigation — mandatory rules for every page
 
 ### Structure
-- Logo left, nav links center or right, one CTA button far right — this is the only acceptable desktop layout
+- Design the nav's desktop arrangement (logo, links, CTA) to fit the page — logo generally reads best on the left, but placement and spacing are otherwise open
 - Maximum 5-6 nav links. If the schema has more, hide the least important ones or collapse into a More item
 - Nav must be sticky: position: sticky; top: 0; z-index: 1000
 - Desktop nav starts fully transparent on load. On scroll, apply a background treatment that suits the page style — frosted glass (backdrop-filter: blur(14px)) works well on most styles, but a solid var(--bg-surface) or a dark overlay is fine too if it fits the aesthetic. Wire this via the safe JS scroll listener below
@@ -384,6 +341,11 @@ Add this script block before </body> (nav element MUST have class site-nav):
 CSS for the scroll transition on .site-nav:
 - Default: background: transparent; border-bottom: 1px solid transparent; transition: background 300ms ease, border-color 300ms ease, backdrop-filter 300ms ease
 - .nav-scrolled: background: var(--bg-surface); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border-bottom: 1px solid var(--border)
+
+### Nav text color — two states need two colors (mandatory)
+The transparent (pre-scroll) nav sits directly over the hero; the scrolled nav sits over var(--bg-surface). A single --text value is not guaranteed to be readable against both — the hero background and --bg-surface can differ enough that one fixed color is invisible in one of the two states. Do not rely on the page's global --text alone for nav links/logo/hamburger bars:
+- Define --nav-text-on-hero and --nav-text-scrolled in :root, each picked for contrast against what's actually behind the nav in that state (the hero's background treatment, and var(--bg-surface), respectively).
+- .site-nav links/logo/hamburger use var(--nav-text-on-hero) by default; .nav-scrolled overrides them to var(--nav-text-scrolled). If the hero and --bg-surface are similar enough in lightness that one color works for both, the two tokens can be equal — but they must both be set deliberately, never left to inherit from --text alone.
 
 ### Nav anti-patterns — never do these
 - NEVER use position: fixed for the nav — use position: sticky to avoid content offset issues
