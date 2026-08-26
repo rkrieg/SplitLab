@@ -21,6 +21,11 @@ import { LiveProgressPanel } from '@/components/ai/LiveProgressPanel';
 // pasted HTML instantly and for free, before ever touching the network.
 import { analyzePageLayout } from '@/lib/ai-page-layout';
 import { describeAssetPlacement } from '@/lib/asset-placement';
+import SkillPicker from '@/components/pages/SkillPicker';
+import StylePicker from '@/components/pages/StylePicker';
+import SkillScorePanel, { type SkillScoreRow } from '@/components/pages/SkillScorePanel';
+import { DEFAULT_SKILL_IDS, MANDATORY_SKILL_IDS, SKILL_CARDS } from '@/lib/skills';
+import { STYLE_OPTIONS } from '@/lib/ai-page-exemplars';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -87,6 +92,13 @@ interface Props {
   // "test / variant" instead of just "test".
   variantName?: string;
   initialPage?: InitialPage | null;
+  /**
+   * Skills/style this page was last built with. Loaded by the route in its own
+   * tolerant query (see skills/persistence.ts), so an environment without
+   * migration 062 simply gets an empty list rather than a broken editor.
+   */
+  initialSkills?: string[];
+  initialStyle?: string | null;
   backPath?: string;
   canUseAI?: boolean;
   // True when this page is the html source for a test_variants row.
@@ -216,7 +228,7 @@ function AiCreditsMeter() {
   );
 }
 
-export default function AIBuilderClient({ workspaceId, clientId, clientName, variantName, initialPage, backPath, canUseAI = true, isTestVariantPage = false, canPublish = true }: Props) {
+export default function AIBuilderClient({ workspaceId, clientId, clientName, variantName, initialPage, initialSkills, initialStyle, backPath, canUseAI = true, isTestVariantPage = false, canPublish = true }: Props) {
   const router = useRouter();
 
   // Variant pages ask the preview route for the in-progress draft; every
@@ -265,6 +277,24 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   const [phase, setPhase] = useState<Phase>('prompt');
   const [pageName, setPageName] = useState('');
   const [vertical, setVertical] = useState<string>('lead_gen');
+  // Skills + Style the user picked for THIS page.
+  //
+  // Seeded with the mandatory skill so the very first render already shows it
+  // ticked — the server adds it regardless, and a UI that showed it off while
+  // the server had it on would be lying about what built the page.
+  const [selectedSkills, setSelectedSkills] = useState<string[]>(
+    initialSkills && initialSkills.length > 0
+      ? Array.from(new Set([...MANDATORY_SKILL_IDS, ...initialSkills]))
+      : [...DEFAULT_SKILL_IDS],
+  );
+  const [selectedStyle, setSelectedStyle] = useState<string | null>(initialStyle ?? null);
+  // What the finished build reports back. Server-resolved, not what was ticked.
+  const [skillScores, setSkillScores] = useState<SkillScoreRow[]>([]);
+  const [appliedSkillNames, setAppliedSkillNames] = useState<string[]>([]);
+  const [appliedStyle, setAppliedStyle] = useState<string | null>(null);
+  // Whether appliedStyle was the model's pick or the user's — the strip says
+  // "(auto)" for the former, which is the only way to see what Auto chose.
+  const [appliedStyleAuto, setAppliedStyleAuto] = useState(false);
   const [prompt, setPrompt] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [followUpInput, setFollowUpInput] = useState('');
@@ -735,6 +765,17 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     setPageId(initialPage.id);
     setPageName(initialPage.name);
     setVertical(initialPage.vertical);
+    // Names, not ids, for the "Built with" strip. Scores are NOT restored:
+    // they are measured against the HTML a build produced, and reopening a
+    // page does not re-measure it. Showing a stale tick would be worse than
+    // showing none.
+    if (initialSkills && initialSkills.length > 0) {
+      setAppliedSkillNames(
+        SKILL_CARDS.filter((c) => c.mandatory || initialSkills.includes(c.id)).map((c) => c.name),
+      );
+      setAppliedStyle(initialStyle ?? null);
+      setAppliedStyleAuto(false);
+    }
 
     // Fresh page (just created from modal) — no HTML yet, stay in prompt phase
     if (!initialPage.html_url) return;
@@ -1407,6 +1448,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       body: JSON.stringify({
         prompt: userPrompt,
         vertical,
+        skills: selectedSkills,
         conversation_json: history,
         workspace_id: workspaceId,
         ...(createImageUrls.length > 0 ? { image_urls: createImageUrls } : {}),
@@ -1577,6 +1619,8 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         schema_json: schema,
         user_prompt: prompt,
         workspace_id: workspaceId,
+        skills: selectedSkills,
+        ...(selectedStyle ? { style: selectedStyle } : {}),
         ...(image_urls.length > 0 ? { image_urls } : {}),
         ...(designCopyLines && designCopyLines.length > 0 ? { design_copy_lines: designCopyLines } : {}),
         ...(typeof reuseReferenceCopy === 'boolean' ? { reuse_reference_copy: reuseReferenceCopy } : {}),
@@ -1611,6 +1655,8 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     let unmetRequirements: string | null = null;
     let brokenAssets = 0;
     let assetPlacementNote: string | null = null;
+    let builtSkillIds: string[] | null = null;
+    let builtStyle: string | null = null;
 
     await readSSEStream(res, (event) => {
       setBuildEvents(prev => [...prev, event]);
@@ -1620,6 +1666,14 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         finalSchema = event.schema_json ?? schema;
         unmetRequirements = event.unmet_requirements ?? null;
         brokenAssets = event.broken_assets ?? 0;
+        // Server-resolved, so this is what ACTUALLY built the page — the
+        // panel must never show what was ticked if the two disagree.
+        builtSkillIds = event.skills_applied ?? null;
+        builtStyle = event.style_applied ?? null;
+        setAppliedSkillNames(event.skills_applied_names ?? []);
+        setAppliedStyle(event.style_applied ?? null);
+        setAppliedStyleAuto(event.style_auto === true);
+        setSkillScores(event.skill_scores ?? []);
         // Only sent when this build had link-imported files at all, so an
         // ordinary build never produces a note about images it never had.
         if (typeof event.imported_assets === 'number' && typeof event.placed_assets === 'number') {
@@ -1659,6 +1713,11 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         html_url: htmlUrl,
         schema_json: finalSchema,
         conversation_json: historyWithImages,
+        // Saved so a later "Edit with AI" rebuild obeys the same rules. Written
+        // through a separate, non-fatal query server-side (skills/persistence),
+        // so a missing migration cannot fail this PATCH.
+        skills: builtSkillIds ?? selectedSkills,
+        style: builtStyle ?? selectedStyle,
       }),
     });
     if (!patchRes.ok) {
@@ -1945,6 +2004,12 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     await readSSEStream(res, (event) => {
       setFollowUpEvents(prev => prev ? [...prev, event] : [event]);
       if (event.type === 'done') {
+        // The edit changed the HTML, so every score was measured against a
+        // document that no longer exists. The follow-up route does not
+        // re-score (it has no cheap way to for a surgical splice), so the
+        // rows are cleared rather than left showing a stale tick. The
+        // "Built with" line stays — the skills did not change.
+        setSkillScores([]);
         doneData = {
           html_url: event.html_url,
           schema_json: event.schema_json,
@@ -2268,6 +2333,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
 
 
   const isLoading = phase === 'generating' || phase === 'building' || phase === 'publishing' || uploadingImage;
+
   const showPreview = !!iframeSrc;
 
   return (
@@ -2434,7 +2500,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                 ) : (
                   <div className="flex items-center gap-2 text-xs text-slate-400 dark:text-slate-500">
                     <Loader2 size={11} className="animate-spin text-indigo-600 dark:text-indigo-400" />
-                    {phase === 'publishing' ? 'Publishing…' : uploadingImage ? 'Uploading image…' : phase === 'generating' && /https?:\/\/[^\s]+/i.test(prompt) ? 'Fetching reference site…' : 'Thinking…'}
+                    {phase === 'publishing' ? 'Publishing…' : uploadingImage ? 'Uploading image…' : 'Thinking…'}
                   </div>
                 )}
               </div>
@@ -2486,8 +2552,14 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
           )}
         </div>
 
-        {/* ── Input area ── */}
-        <div className="p-3 border-t border-slate-200 dark:border-slate-800 flex-shrink-0">
+        {/* ── Input area ──
+            Scrolls itself instead of overflowing the column. On the first
+            prompt this block holds the page name, vertical, Skills, Style AND a
+            textarea that grows to 240px — together taller than the panel on a
+            short window, which pushed the chat above it to zero height and
+            shoved the name field off the top of the screen. Both dropdowns are
+            portalled, so an overflow rule here cannot clip them. */}
+        <div className="p-3 border-t border-slate-200 dark:border-slate-800 flex-shrink-0 max-h-[70%] overflow-y-auto">
           <input
             ref={chatImageInputRef}
             type="file"
@@ -2514,17 +2586,21 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                   {VERTICAL_LABELS[vertical] ?? vertical}
                 </span>
               </div>
+              <SkillPicker
+                selected={selectedSkills}
+                onChange={setSelectedSkills}
+                disabled={isLoading}
+              />
+              <StylePicker
+                value={selectedStyle}
+                onChange={setSelectedStyle}
+                disabled={isLoading}
+              />
               <SamplePromptChip vertical={vertical} onUse={p => setPrompt(p)} />
               {scanningPrompt && (
                 <div className="flex items-center gap-1.5 text-[11px] text-indigo-600 dark:text-indigo-400">
                   <Loader2 size={11} className="animate-spin" />
                   <span>Checking the links in your brief for images…</span>
-                </div>
-              )}
-              {/https?:\/\/[^\s]+/i.test(prompt) && (
-                <div className="flex items-center gap-1.5 text-[11px] text-indigo-600 dark:text-indigo-400">
-                  <Globe size={11} />
-                  <span>We&apos;ll reference that site for inspiration</span>
                 </div>
               )}
               <div
@@ -2655,6 +2731,15 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
           {/* Follow-up / editing input */}
           {phase === 'editing' && (
             <form onSubmit={handleFollowUp}>
+              {/* No Skills/Style picker here on purpose.
+                  Skills are saved at build time and reloaded by the follow-up
+                  route, so a structural rebuild already obeys them — there is
+                  nothing for the user to re-pick. Style is stronger still: a
+                  follow-up rebuild is told to MAINTAIN this page's existing
+                  look, which outranks any style tag, so a dropdown here would
+                  save a value that could never take effect. The read-only
+                  "Built with" strip under the preview says what built the page
+                  instead. */}
               <div
                 onDragOver={handleChatImageDragOver}
                 onDragLeave={handleChatImageDragLeave}
@@ -3046,6 +3131,20 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
             </div>
           )}
         </div>
+
+        {/* Built with + skill checks — display only, never gates a save. */}
+        {phase === 'editing' && appliedSkillNames.length > 0 && (
+          <SkillScorePanel
+            scores={skillScores}
+            skillNames={appliedSkillNames}
+            verticalLabel={VERTICAL_LABELS[vertical] ?? null}
+            styleLabel={
+              appliedStyle
+                ? `${STYLE_OPTIONS.find((o) => o.value === appliedStyle)?.label ?? appliedStyle}${appliedStyleAuto ? ' (auto)' : ''}`
+                : null
+            }
+          />
+        )}
       </div>
 
       {/*

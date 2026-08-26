@@ -43,17 +43,59 @@ export function userWantsLogoFromReference(prompt: string): boolean {
   );
 }
 
+
 /**
- * DEAD — no live callers. Replaced in follow-up/route.ts by
- * `competitorUrls.length > 0 && intent.assetSource === 'logo'`.
+ * Which (if any) of the webpage URLs in a create-path brief the user actually
+ * wants scraped as a design reference to clone from.
  *
- * Note the `|| /\blogo\b/` below: with a URL anywhere in the message, merely
- * saying the word "logo" committed the turn to scraping that site. That is the
- * failure mode the classifier's `assetSource` exists to prevent.
+ * Replaces "any surviving URL is a competitor" (generate/route.ts used to take
+ * urls[0] unconditionally). That blind rule had no way to tell "clone this
+ * site's design" from "here's our own asset folder, don't copy the site it
+ * lives on" — a brief that says "do not clone simplesale.com" still got
+ * simplesale.com scraped, because the sentence never reached the code that
+ * decided to scrape. No keyword fallback here either, same reason as
+ * classifyPageShapeIntent below: guessing which URL a paragraph meant from
+ * punctuation is exactly the failure mode this replaces.
+ *
+ * Fails closed: null on any classification failure means "scrape nothing",
+ * not "fall back to urls[0]" — a missed reference costs a worse-looking page,
+ * a wrong one costs a page styled off a stranger's site.
  */
-export function isLogoSwapFromUrlIntent(prompt: string, hasCompetitorUrl: boolean): boolean {
-  if (!hasCompetitorUrl) return false;
-  return userWantsLogoFromReference(prompt) || /\blogo\b/i.test(prompt);
+export async function classifyCompetitorReferenceUrl(
+  prompt: string,
+  urls: string[],
+): Promise<string | null> {
+  if (urls.length === 0) return null;
+  try {
+    const text = await askAI({
+      system:
+        'A landing-page brief mentions one or more URLs. Decide if ANY of them is a site the user wants scraped and used as a DESIGN reference to clone/match (colors, layout, structure).\n' +
+        'Return JSON only: {"referenceUrl": "<one of the given URLs>"} or {"referenceUrl": null}.\n' +
+        'Pick a URL only when the brief clearly wants that site\'s design copied or closely matched.\n' +
+        'Return null when: the URLs are just asset links (images/logos to embed, a folder of files to use), the brief explicitly says NOT to clone/copy that site, or a URL is only named as inspiration/context with no instruction to replicate it.',
+      messages: [
+        {
+          role: 'user',
+          content: `URLs found in the brief:\n${urls.map((u) => `- ${u}`).join('\n')}\n\nBrief:\n${prompt.slice(0, 6000)}`,
+        },
+      ],
+      maxTokens: 32000,
+      label: 'generate:competitor-url-classify',
+    });
+    let raw = text.trim();
+    if (raw.startsWith('```')) raw = raw.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
+    const start = raw.indexOf('{');
+    const end = raw.lastIndexOf('}');
+    if (start >= 0 && end > start) raw = raw.slice(start, end + 1);
+    const parsed = JSON.parse(raw) as { referenceUrl?: string | null };
+    if (typeof parsed.referenceUrl === 'string' && urls.includes(parsed.referenceUrl)) {
+      return parsed.referenceUrl;
+    }
+    return null;
+  } catch (err) {
+    console.error('[classifyCompetitorReferenceUrl] failed — treating as no reference', err);
+    return null;
+  }
 }
 
 /**

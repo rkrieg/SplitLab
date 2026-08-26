@@ -6,6 +6,8 @@ import { uploadHtml } from '@/lib/storage';
 import { resolveWorkspaceRole, resolveOwnerPlan } from '@/lib/workspace-auth';
 import { PLAN_LIMITS } from '@/lib/plans';
 import { buildHtmlFromSchema } from '@/lib/ai-page-builder';
+import { resolveSkills, runSkillChecks, skillIds, skillNames } from '@/lib/skills';
+import { isStyleTag } from '@/lib/ai-page-exemplars';
 import { createSSEStream, sendSSE, closeSSE, SSE_HEADERS } from '@/lib/sse';
 import {
   injectBrandAssetsIntoSchema,
@@ -74,6 +76,8 @@ export async function POST(request: NextRequest) {
     design_copy_sections: unknown,
     minimal_shape: unknown,
     asset_library: unknown,
+    selected_skills: unknown,
+    selected_style: unknown,
     model_requirements: unknown;
 
   try {
@@ -94,6 +98,8 @@ export async function POST(request: NextRequest) {
       design_copy_sections,
       minimal_shape,
       asset_library,
+      skills: selected_skills,
+      style: selected_style,
       requirements: model_requirements,
     } = await request.json());
   } catch {
@@ -121,6 +127,12 @@ export async function POST(request: NextRequest) {
   }
 
   const pageSlug = (slug as string | undefined) ?? crypto.randomUUID();
+
+  // Server-side validation of both picks. Unknown skill ids are dropped rather
+  // than rejected, and an unknown style falls back to "Auto" (today's
+  // design-brief call) — neither should ever fail a build the user is watching.
+  const activeSkills = resolveSkills(selected_skills);
+  const activeStyle = isStyleTag(selected_style) ? selected_style : null;
 
   // ── Open SSE stream — no NextResponse.json after this point ───────────────
 
@@ -205,6 +217,10 @@ export async function POST(request: NextRequest) {
 
       let statusBuffer = '';
       let html: string;
+      // What the build ACTUALLY styled with. On "Auto" this is the design
+      // brief's pick, which was previously reported nowhere at all.
+      let resolvedStyle: string | null = activeStyle;
+      let styleWasAuto = activeStyle === null;
       try {
         html = await buildHtmlFromSchema(enrichedSchema, {
           competitorScreenshots: Array.isArray(competitor_screenshots) ? competitor_screenshots as string[] : [],
@@ -215,6 +231,12 @@ export async function POST(request: NextRequest) {
           imageUrls: attachedImageUrls,
           designReferenceCopy: designCopyLines,
           minimalShape: minimal_shape === true,
+          skills: activeSkills,
+          styleTag: activeStyle,
+          onStyleResolved: (tag, source) => {
+            resolvedStyle = tag;
+            styleWasAuto = source === 'auto';
+          },
           callerLabel: 'build',
           onStreamRestart: () => {
             statusBuffer = '';
@@ -466,9 +488,36 @@ export async function POST(request: NextRequest) {
         });
       }
 
+      // Skill scores — display only.
+      //
+      // Read-only by construction (every check takes html and returns a
+      // verdict; none of them return HTML), and wrapped here as well as inside
+      // runSkillChecks. A number the user never sees is worth nothing next to a
+      // build that completes: if this whole block throws, the page still saves
+      // and the done event simply carries no scores.
+      let skillScores: ReturnType<typeof runSkillChecks> = [];
+      try {
+        skillScores = runSkillChecks(activeSkills, html);
+        console.log('[pages/build] skill scores', {
+          skills: skillIds(activeSkills),
+          style: resolvedStyle ?? 'none',
+          stylePickedBy: styleWasAuto ? 'auto' : 'user',
+          passed: skillScores.filter((r) => r.passed).length,
+          failed: skillScores.filter((r) => !r.passed).map((r) => r.id),
+        });
+      } catch (err) {
+        console.error('[pages/build] skill scoring failed, continuing without a score', err);
+        skillScores = [];
+      }
+
       sendSSE(controller, {
         type: 'done',
         html_url: htmlUrl,
+        skills_applied: skillIds(activeSkills),
+        skills_applied_names: skillNames(activeSkills),
+        style_applied: resolvedStyle,
+        style_auto: styleWasAuto,
+        ...(skillScores.length > 0 ? { skill_scores: skillScores } : {}),
         slug: pageSlug,
         schema_json: enrichedSchema,
         ...(finalUnmet ? { unmet_requirements: finalUnmet } : {}),

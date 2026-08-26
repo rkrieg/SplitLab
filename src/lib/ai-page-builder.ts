@@ -1,5 +1,6 @@
 import { askAI, askAIStream, type AIContent, type AIContentBlock } from '@/lib/ai-client';
-import { STYLE_EXEMPLARS, type StyleTag } from '@/lib/ai-page-exemplars';
+import { STYLE_EXEMPLARS, isStyleTag, type StyleTag } from '@/lib/ai-page-exemplars';
+import { assembleSystemPrompt, LOCKED_RULES_BUILD, type Skill } from '@/lib/skills';
 // DEAD IMPORT — never called in this file. Page shape arrives already decided
 // as `options.minimalShape`, forwarded from the schema pass. This used to
 // re-derive the same answer from keywords here and could contradict it.
@@ -14,7 +15,7 @@ const DESIGN_BRIEF_SYSTEM_PROMPT = `You are a design-direction classifier for an
 Return JSON only. No explanation, no markdown fences.
 
 {
-  "style_tag": "minimal_editorial" | "bold_maximalist" | "corporate_trust" | "playful_funky" | "luxury_premium" | "technical_dark" | "warm_clinical" | "friendly_local" | "warm_authority",
+  "style_tag": "minimal_editorial" | "bold_maximalist" | "corporate_trust" | "playful_funky" | "luxury_premium" | "technical_dark" | "warm_clinical" | "friendly_local" | "warm_authority" | "quiet_minimalism" | "bauhaus_geometric" | "brutalist_raw",
   "palette_direction": "specific color direction for THIS business — 1 sentence, not generic",
   "layout_rhythm": "specific layout/spacing direction for THIS business — 1 sentence",
   "copy_tone": "specific tone-of-voice direction for THIS business — 1 sentence",
@@ -35,6 +36,9 @@ Return JSON only. No explanation, no markdown fences.
   - Gyms, fitness, streetwear, supplements, sports, events, lead gen, info products → bold_maximalist
   - Consumer apps, food delivery, e-learning for students, children products → playful_funky
   - Design studios, portfolios, boutique retail, artisan food & beverage → minimal_editorial
+  - Wellness brands, skincare, tea/ceramics/craft goods, high-end product reveals, retreats → quiet_minimalism
+  - Arts programming, festivals, cultural institutions, bold consumer campaigns, music/events → bauhaus_geometric
+  - Tools-for-thought, indie developer products, text-forward publications, technical newsletters → brutalist_raw
   - Hospitality & travel: use luxury_premium for upscale hotels/resorts, bold_maximalist for adventure/budget travel
 - Never default to the same tag regardless of business — vary based on what's actually being built.`;
 
@@ -582,7 +586,28 @@ const AESTHETIC_REFERENCES: Record<StyleTag, string> = {
   warm_clinical: 'Think Headspace, One Medical, Hims/Hers, Noom — clean light backgrounds, soft teal or sage accent, human photography, reassuring copy that never feels cold or sterile',
   friendly_local: 'Think a well-designed local bakery, neighbourhood gym, or family law office — warm amber or terracotta accents, approachable rounded type, feels like a real person runs it, not a corporation',
   warm_authority: 'Think MasterClass, Khan Academy, Compass Real Estate — editorial serif headlines for credibility, clean body text, credential badges, testimonials from real people, confident but never intimidating',
+  quiet_minimalism: 'Think MUJI, Aesop, Kinfolk — 70% empty space, warm off-white ground, warm ink instead of black, two type sizes at most, a single object given room to breathe',
+  bauhaus_geometric: 'Think Paula Scher for the Public Theater, Mueller-Brockmann Tonhalle posters — flat primary colour blocks, circles and hard diagonals as structure, type set as shape, zero gradients or shadows',
+  brutalist_raw: 'Think Are.na, Bloomberg terminal, Craigslist done deliberately — monospace, visible hairline borders, real tables, zero border-radius, link-blue accents, no polish anywhere',
+  // User-pick-only. Absent from the style_tag union in
+  // DESIGN_BRIEF_SYSTEM_PROMPT above, so "Auto" can never select these — but
+  // they still need an entry here, because a user CAN select them and this
+  // record is what styleNoteFromTag() reads.
+  dieter_industrial: 'Think Braun catalogues, Vitsoe, pre-2010 Apple — monochrome greys with one functional accent, a single product given room, hairline grid rules, nothing decorative anywhere',
+  zine_riso: 'Think independent zines, Rough Trade gig posters, skate-culture print — risograph spot colours, halftone texture, hand-placed collage, deliberate misregistration where blocks overlap',
 };
+
+/**
+ * The closing line of every style reference, taken almost verbatim from the
+ * client's design-styles source: "A style done at 30% reads as hesitant; at 80%
+ * it reads as deliberate."
+ *
+ * It exists because averaging is the model's default failure mode here. Given a
+ * style plus several blocks of restraint rules, it hedges — and a hedged style
+ * is exactly the generic output this whole feature was built to stop. The
+ * instruction pushes the other way.
+ */
+const COMMIT_TO_THE_STYLE = `\nCommit to this system at full strength. A style applied at 30% reads as hesitant and generic; applied at 80% it reads as deliberate. Where you are unsure, do MORE of what defines this style, not less. Every value above is the anchor — if you need something the system does not cover, extend it in the style's own logic rather than falling back on a neutral default.`;
 
 async function getDesignBrief(
   schema: unknown,
@@ -601,6 +626,12 @@ async function getDesignBrief(
     const text = await askAI({
       system: DESIGN_BRIEF_SYSTEM_PROMPT,
       messages: [{ role: 'user', content: briefContent }],
+      // Opus, not the default Sonnet. This one call decides the entire visual
+      // direction of the page from a free-text brief — "understated but not
+      // boring", "like Stripe but warmer" — which is judgement, not a lookup.
+      // It is also cheap to upgrade: short JSON in, short JSON out, and it only
+      // runs when the user left Style on "Auto".
+      model: 'claude-opus-5',
       maxTokens: 128000,
       label: 'build-html:design-brief',
     });
@@ -613,11 +644,63 @@ async function getDesignBrief(
     const parsed = JSON.parse(raw);
     if (typeof parsed.style_tag !== 'string' || !(parsed.style_tag in STYLE_EXEMPLARS)) return null;
 
+    console.log('[buildHtmlFromSchema] design brief picked style', {
+      styleTag: parsed.style_tag,
+      referenceObject: typeof parsed.reference_object === 'string' ? parsed.reference_object : '',
+      wildcard: typeof parsed.wildcard_element === 'string' ? parsed.wildcard_element : '',
+    });
     return { styleTag: parsed.style_tag as StyleTag, brief: parsed };
   } catch (err) {
     console.error('[buildHtmlFromSchema] design-brief step failed, continuing without style reference', err);
     return null;
   }
+}
+
+/**
+ * The same "## Style reference" block the design brief produces, built from a
+ * style the USER picked instead of from a model call.
+ *
+ * Deliberately shorter than the brief's version: the brief invents
+ * business-specific palette/tone/motion sentences, and inventing those on top
+ * of an explicit user choice would water the choice down. The exemplar's own
+ * mood, layout notes and motion style ARE the direction here.
+ */
+function styleNoteFromTag(styleTag: StyleTag): string {
+  const exemplar = STYLE_EXEMPLARS[styleTag];
+  return (
+    `\n\n## Style reference (chosen by the user — follow it, do not substitute a different aesthetic)\n` +
+    `Style: ${exemplar.label} — ${exemplar.mood}\n` +
+    `Palette direction: background ${exemplar.palette.background}, text ${exemplar.palette.text}, accent ${exemplar.palette.accent}` +
+    (exemplar.palette.secondaryAccent ? `, secondary ${exemplar.palette.secondaryAccent}` : '') +
+    ` — use these as the anchor, adapting only as far as the business genuinely requires.\n` +
+    // The remaining :root tokens the system prompt demands, handed over as a
+    // ready-to-paste block. Prose ("soft rounded cards") left ten tokens to
+    // invention on every build; exact values leave none.
+    `Use EXACTLY these values for the rest of the token block — do not substitute your own:\n` +
+    `  --bg: ${exemplar.palette.background};\n` +
+    `  --bg-surface: ${exemplar.tokens.surface};\n` +
+    `  --bg-elevated: ${exemplar.tokens.elevated};\n` +
+    `  --text: ${exemplar.palette.text};\n` +
+    `  --text-muted: ${exemplar.tokens.textMuted};\n` +
+    `  --border: ${exemplar.tokens.border};\n` +
+    `  --accent: ${exemplar.palette.accent};\n` +
+    `  --radius: ${exemplar.tokens.radius};\n` +
+    `  --radius-lg: ${exemplar.tokens.radiusLg};\n` +
+    `  --radius-pill: ${exemplar.tokens.radiusPill};\n` +
+    `  --section-py: ${exemplar.tokens.sectionPy};\n` +
+    `  --container: ${exemplar.tokens.container};\n` +
+    `  --shadow: ${exemplar.tokens.shadow};\n` +
+    `  --shadow-lg: ${exemplar.tokens.shadowLg};\n` +
+    `Typography: headline ${exemplar.typography.headline}, body ${exemplar.typography.body}\n` +
+    `Type scale: ${exemplar.typeScale}\n` +
+    `Geometry (corners, borders, shadows): ${exemplar.geometry}\n` +
+    `Layout rhythm: ${exemplar.layoutNotes}\n` +
+    `Signature moves — at least two of these MUST appear on the page: ${exemplar.signatureMoves}\n` +
+    `Do NOT use, in this style: ${exemplar.avoid}\n` +
+    `Motion style: ${exemplar.motionStyle}\n` +
+    `Aesthetic target: ${AESTHETIC_REFERENCES[styleTag] ?? ''}\n` +
+    COMMIT_TO_THE_STYLE
+  );
 }
 
 export interface BuildHtmlOptions {
@@ -656,6 +739,37 @@ export interface BuildHtmlOptions {
   onStreamRestart?: () => void;
   /** Identifies the calling route for ai-client logs, e.g. "build" or "follow-up:structural". */
   callerLabel?: string;
+  /**
+   * Skills the user ticked. Their buildBlocks are appended AFTER the LOCKED
+   * rules, so a skill can override a base default but never a lock.
+   *
+   * Empty/absent still gets the LOCKED block — that block restates rules the
+   * base prompt already carries, so no page changes shape because of it, but
+   * it is NOT "byte-identical to before".
+   */
+  skills?: Skill[];
+  /**
+   * Style the user picked. When set, the design-brief AI call is skipped
+   * entirely and this style is used as-is. When absent, the brief runs and
+   * picks — which is what every page has done until now.
+   */
+  styleTag?: StyleTag | null;
+  /**
+   * Reports which style the build actually used, and whether the user chose it
+   * or the design brief did.
+   *
+   * A callback rather than a changed return type: the value is known before the
+   * multi-minute HTML call even starts, and both existing callers assign the
+   * return straight to a string. On "Auto" the pick used to be invisible —
+   * logged nowhere, absent from the done event — so nobody could answer "which
+   * style did it choose?" for the pages that did not have one picked, which is
+   * most of them.
+   *
+   * Not called when a caller supplies its own styleReferenceNote (a follow-up
+   * preserving the page's existing look) or when a competitor's CSS tokens
+   * define the palette — in neither case is a style tag in play.
+   */
+  onStyleResolved?: (styleTag: StyleTag, source: 'user' | 'auto') => void;
 }
 
 /**
@@ -694,7 +808,17 @@ export async function buildHtmlFromSchema(
   // 1. Caller-provided note (follow-up non-URL case) — use as-is, skip design brief
   // 2. Competitor context exists — skip design brief (CSS tokens define the palette)
   // 3. Neither — run design brief
+  //
+  // 1b was added with the style picker: an explicit user choice skips the
+  // design-brief model call outright. It does NOT apply when a competitor page
+  // is being matched — there the scraped CSS tokens define the palette, and
+  // overriding them with a style tag would break the clone the user asked for.
   let styleReferenceNote = callerStyleNote ?? '';
+  const chosenStyle = isStyleTag(options.styleTag) ? options.styleTag : null;
+  if (!styleReferenceNote && !hasCompetitorContext && chosenStyle) {
+    styleReferenceNote = styleNoteFromTag(chosenStyle);
+    options.onStyleResolved?.(chosenStyle, 'user');
+  }
   if (!styleReferenceNote && !hasCompetitorContext) {
     const designBrief = await getDesignBrief(
       schema,
@@ -702,17 +826,20 @@ export async function buildHtmlFromSchema(
       hasImages ? imageUrls : [],
     );
     if (designBrief) {
-      const exemplar = STYLE_EXEMPLARS[designBrief.styleTag];
+      options.onStyleResolved?.(designBrief.styleTag, 'auto');
       const b = designBrief.brief;
       const referenceObject = typeof b.reference_object === 'string' ? b.reference_object.trim() : '';
       const wildcardElement = typeof b.wildcard_element === 'string' ? b.wildcard_element.trim() : '';
+      // Base on the same hardcoded tokens the manual picker uses (exact hex
+      // codes, exact font names, exact layout notes) — without these the model
+      // has no concrete anchor and drifts to generic/default fonts and colors.
+      // The brief's freeform sentences layer business-specific refinement on
+      // top of that anchor, they don't replace it.
       styleReferenceNote =
-        `\n\n## Style reference\nStyle: ${exemplar.label} — ${exemplar.mood}\n` +
-        `Palette direction: ${b.palette_direction ?? ''}\n` +
-        `Layout rhythm: ${b.layout_rhythm ?? ''}\n` +
+        styleNoteFromTag(designBrief.styleTag) +
+        `\nBusiness-specific palette direction: ${b.palette_direction ?? ''}\n` +
+        `Business-specific layout rhythm: ${b.layout_rhythm ?? ''}\n` +
         `Copy tone: ${b.copy_tone ?? ''}\n` +
-        `Motion style: ${b.motion_style ?? exemplar.motionStyle}\n` +
-        `Aesthetic target: ${AESTHETIC_REFERENCES[designBrief.styleTag] ?? ''}` +
         (referenceObject ? `\nReal-world reference: ${referenceObject} — let this genuinely inform color/type/layout choices, don't just namedrop it` : '') +
         (wildcardElement ? `\nWildcard detail: ${wildcardElement}` : '');
     }
@@ -753,9 +880,21 @@ export async function buildHtmlFromSchema(
     { type: 'text' as const, text: textContent },
   ];
 
-  const systemPrompt = hasCompetitorContext
+  const baseSystemPrompt = hasCompetitorContext
     ? COMPETITOR_SYSTEM_PROMPT + (minimalShape ? COMPETITOR_MINIMAL_ADDENDUM : '')
     : SYSTEM_PROMPT;
+
+  // base -> LOCKED -> skills. Order is the override model, so it is assembled
+  // in one pure function rather than concatenated by hand at each call site.
+  // With no skills this returns base + LOCKED, and LOCKED restates rules the
+  // base prompt already carries — no page changes shape because of it.
+  const systemPrompt = assembleSystemPrompt({
+    base: baseSystemPrompt,
+    locked: LOCKED_RULES_BUILD,
+    // Style lives in the user message alongside the schema, as it always has.
+    skills: options.skills ?? [],
+    stage: 'build',
+  });
 
   const label = `build-html:${options.callerLabel ?? 'unknown-caller'}`;
   const aiOptions = {
@@ -769,7 +908,7 @@ export async function buildHtmlFromSchema(
     label,
   };
 
-  console.log(`[buildHtmlFromSchema] label=${label} hasCompetitorContext=${hasCompetitorContext} hasImages=${hasImages} schemaBytes=${JSON.stringify(schema).length} streaming=${Boolean(options.onChunk)}`);
+  console.log(`[buildHtmlFromSchema] label=${label} hasCompetitorContext=${hasCompetitorContext} hasImages=${hasImages} schemaBytes=${JSON.stringify(schema).length} streaming=${Boolean(options.onChunk)} skills=${(options.skills ?? []).map(sk => sk.id).join(',') || 'none'} style=${chosenStyle ?? 'auto'}`);
 
   const text = options.onChunk
     ? await askAIStream(

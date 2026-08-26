@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth';
 import { jsonrepair } from 'jsonrepair';
 import { askAIStream, isRateLimited, AIResponseTruncatedError } from '@/lib/ai-client';
 import { VERTICAL_VALUES } from '@/lib/ai-page-verticals';
+import { assembleSystemPrompt, resolveSkills, skillIds, LOCKED_RULES_GENERATE } from '@/lib/skills';
 import { SECTION_VOCABULARY, VERTICAL_PRIORITY_HINTS } from '@/lib/ai-page-vocabulary';
 import { resolveWorkspaceRole, resolveOwnerPlan } from '@/lib/workspace-auth';
 import { PLAN_LIMITS } from '@/lib/plans';
@@ -12,6 +13,7 @@ import { classifyAssetSource } from '@/lib/asset-source-resolver';
 import {
   injectBrandAssetsIntoSchema,
   classifyPageShapeIntent,
+  classifyCompetitorReferenceUrl,
   stripUnpromptedSocialProof,
 } from '@/lib/ai-brand-assets';
 import {
@@ -177,7 +179,7 @@ export async function POST(request: NextRequest) {
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   try {
-    const { prompt, vertical, conversation_json, workspace_id, image_urls, asset_library } = await request.json();
+    const { prompt, vertical, conversation_json, workspace_id, image_urls, asset_library, skills } = await request.json();
 
     if (!workspace_id || typeof workspace_id !== 'string') {
       return NextResponse.json({ error: 'workspace_id is required' }, { status: 400 });
@@ -207,9 +209,21 @@ export async function POST(request: NextRequest) {
     const selectedVertical: string | null = VERTICAL_VALUES.includes(vertical) ? vertical : null;
     const priorityHint = selectedVertical ? VERTICAL_PRIORITY_HINTS[selectedVertical] : null;
 
-    const systemPrompt = selectedVertical
-      ? `${SYSTEM_PROMPT}\n\nThe user selected vertical: ${selectedVertical}.${priorityHint ? ` ${priorityHint}` : ''}`
-      : SYSTEM_PROMPT;
+    // Unknown ids are dropped, not rejected: a stale tab or a page saved under
+    // a renamed skill must still generate rather than 400.
+    const selectedSkills = resolveSkills(skills);
+
+    // base -> LOCKED -> vertical -> skills. Assembled in one pure function so
+    // the order (which IS the override model) cannot drift by hand-editing.
+    const systemPrompt = assembleSystemPrompt({
+      base: SYSTEM_PROMPT,
+      locked: LOCKED_RULES_GENERATE,
+      verticalNote: selectedVertical
+        ? `The user selected vertical: ${selectedVertical}.${priorityHint ? ` ${priorityHint}` : ''}`
+        : null,
+      skills: selectedSkills,
+      stage: 'generate',
+    });
 
     const history: { role: 'user' | 'assistant'; content: string }[] = Array.isArray(conversation_json)
       ? conversation_json
@@ -218,23 +232,21 @@ export async function POST(request: NextRequest) {
     // Scrape competitor site if the prompt contains a URL — must complete BEFORE schema generation
     // so the schema reflects the competitor's actual section count and order.
     //
-    // LIVE GATE, and the last purely code-decided one on the create path: ANY
-    // URL in the brief is treated as a site to clone from. No model is asked
-    // whether that was the point. Someone linking their own site as background
-    // ("we're like example.com but for dentists"), a docs page, or a Figma
-    // link pays a scrape they did not want, and the scraped context then
-    // steers the schema and flips keepProof below. The classifier already
-    // returns intent for the create path — ask it whether the URL is a
-    // reference to copy before scraping.
     // An asset SOURCE in the brief is not a site to clone. A Drive folder link
     // pasted into a PRD would otherwise be handed to the scraper, which returns
     // Google Drive's own chrome — nav, colors, footer — and that context then
     // steers the schema, exactly the way a Mux embed URL once produced
     // "© Mux, Inc." in a client's footer. Same class of bug, different host.
-    const urls = extractUrls(prompt).filter(
+    const candidateUrls = extractUrls(prompt).filter(
       (u) => !isEmbedAssetUrl(u) && classifyAssetSource(u) === 'webpage',
     );
-    const competitorContext = urls.length > 0 ? await scrapeCompetitorUrl(urls[0]) : null;
+    // No longer "urls[0] wins by default": which URL (if any) is actually a
+    // design reference to clone is a judgement call, not a positional one —
+    // see classifyCompetitorReferenceUrl's own comment for why urls[0] used to
+    // get scraped even when the brief explicitly said not to clone it.
+    const referenceUrl =
+      candidateUrls.length > 0 ? await classifyCompetitorReferenceUrl(prompt, candidateUrls) : null;
+    const competitorContext = referenceUrl ? await scrapeCompetitorUrl(referenceUrl) : null;
     let minimalOrCustom = false;
     if (competitorContext) {
       // Model-decided, with no keyword fallback either side of it. If the model
@@ -287,8 +299,8 @@ export async function POST(request: NextRequest) {
 
     const competitorNote = competitorContext
       ? minimalOrCustom
-        ? `\n\n## Reference site context — STYLE + ASSETS ONLY (user asked for a custom/minimal page)\nReference URL: ${urls[0]}\nThe user's instruction OVERRIDES full-page cloning. Follow THEIR shape (e.g. confirmation/hero-only, no CTAs) even if the reference site has many sections.\nUse the reference for: colors/fonts (CSS tokens), logo, optional KPIs/stats they mentioned, flat background feel.\nDo NOT copy every section, nav links, or CTAs from the reference unless the user asked for them.\n\n${competitorContext.cssTokens ? `CSS token analysis:\n${competitorContext.cssTokens}\n\n` : ''}${competitorContext.pageContent ? `Reference site HTML (extract logo text, KPI numbers, colors, footer contact — NOT a full section clone):\n${competitorContext.pageContent.slice(0, 20_000)}\n\n` : ''}${logoNote}${footerNote}${referenceImagesNote}${tasteNote}CRITICAL:\n- Page shape follows the USER prompt first\n- If they said no buttons / no CTAs — schema must have none\n- If they gave exact headline copy — use it verbatim\n- Prefer hero (+ optional stats/KPIs + simple footer) when they asked for a simple confirmation page\n- Do NOT invent fake KPIs — only use numbers present in the reference HTML or user prompt`
-        : `\n\n## Reference site context — MANDATORY\nThe user wants a page that closely replicates: ${urls[0]}\n\n${competitorContext.cssTokens ? `CSS token analysis:\n${competitorContext.cssTokens}\n\n` : ''}${competitorContext.pageContent ? `Reference site HTML (use to extract real copy, nav links, headlines, CTAs, section structure):\n${competitorContext.pageContent}\n\n` : ''}${logoNote}${footerNote}${referenceImagesNote}CRITICAL SCHEMA RULES when a reference site is provided AND the user did not ask for a minimal/custom shape:\n- Read the HTML above and extract the REAL headline text, subheadline, CTA button text, nav links, feature titles, testimonial copy — use the actual words from the site, not invented placeholders\n- Match the SECTION ORDER and TYPES from the reference unless the user explicitly removed sections\n- Replicate the nav link labels exactly as they appear on the reference site\n- Use the reference site's actual CTA button text, not generic "Get Started"\n- ALWAYS use the REAL LOGO ASSET URL above for nav/footer — never a screenshot thumbnail\n- Do NOT invent fake statistics — use real numbers from the reference HTML or omit`
+        ? `\n\n## Reference site context — STYLE + ASSETS ONLY (user asked for a custom/minimal page)\nReference URL: ${referenceUrl}\nThe user's instruction OVERRIDES full-page cloning. Follow THEIR shape (e.g. confirmation/hero-only, no CTAs) even if the reference site has many sections.\nUse the reference for: colors/fonts (CSS tokens), logo, optional KPIs/stats they mentioned, flat background feel.\nDo NOT copy every section, nav links, or CTAs from the reference unless the user asked for them.\n\n${competitorContext.cssTokens ? `CSS token analysis:\n${competitorContext.cssTokens}\n\n` : ''}${competitorContext.pageContent ? `Reference site HTML (extract logo text, KPI numbers, colors, footer contact — NOT a full section clone):\n${competitorContext.pageContent.slice(0, 20_000)}\n\n` : ''}${logoNote}${footerNote}${referenceImagesNote}${tasteNote}CRITICAL:\n- Page shape follows the USER prompt first\n- If they said no buttons / no CTAs — schema must have none\n- If they gave exact headline copy — use it verbatim\n- Prefer hero (+ optional stats/KPIs + simple footer) when they asked for a simple confirmation page\n- Do NOT invent fake KPIs — only use numbers present in the reference HTML or user prompt`
+        : `\n\n## Reference site context — MANDATORY\nThe user wants a page that closely replicates: ${referenceUrl}\n\n${competitorContext.cssTokens ? `CSS token analysis:\n${competitorContext.cssTokens}\n\n` : ''}${competitorContext.pageContent ? `Reference site HTML (use to extract real copy, nav links, headlines, CTAs, section structure):\n${competitorContext.pageContent}\n\n` : ''}${logoNote}${footerNote}${referenceImagesNote}CRITICAL SCHEMA RULES when a reference site is provided AND the user did not ask for a minimal/custom shape:\n- Read the HTML above and extract the REAL headline text, subheadline, CTA button text, nav links, feature titles, testimonial copy — use the actual words from the site, not invented placeholders\n- Match the SECTION ORDER and TYPES from the reference unless the user explicitly removed sections\n- Replicate the nav link labels exactly as they appear on the reference site\n- Use the reference site's actual CTA button text, not generic "Get Started"\n- ALWAYS use the REAL LOGO ASSET URL above for nav/footer — never a screenshot thumbnail\n- Do NOT invent fake statistics — use real numbers from the reference HTML or omit`
       : '';
 
     const attachedImageUrls = Array.isArray(image_urls)
@@ -525,6 +537,10 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       ...parsed,
+      // Echoed back so build and the page record use the SERVER's validated
+      // list, not whatever the tab happened to have ticked. Always includes the
+      // mandatory skill even if the client sent nothing.
+      skills: skillIds(selectedSkills),
       ...(competitorContext?.screenshots?.length ? { competitor_screenshots: competitorContext.screenshots } : {}),
       ...(competitorContext?.cssTokens ? { competitor_css_tokens: competitorContext.cssTokens } : {}),
       ...(competitorContext?.pageContent ? { competitor_page_content: competitorContext.pageContent } : {}),

@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { resolveWorkspaceRole } from '@/lib/workspace-auth';
 import { PLAN_LIMITS } from '@/lib/plans';
+import { loadPageSkills } from '@/lib/skills/persistence';
 import AIBuilderClient from '../../pages/new/AIBuilderClient';
 
 interface PageProps {
@@ -50,6 +51,11 @@ export default async function AIBuilderPage({ params, searchParams }: PageProps)
 
   if (!initialPage) notFound();
 
+  // Own query, never throws — the skills/style columns arrive in migration 062
+  // and folding them into the SELECT above would blank this whole editor page
+  // on any environment that has not applied it yet.
+  const savedSkillState = await loadPageSkills(initialPage.id);
+
   // Pages reached via a test variant's "Edit using AI" button are already
   // live on that test the moment they're saved (served directly from this
   // same pages row) — Publish would just create an unrelated, unused
@@ -93,6 +99,8 @@ export default async function AIBuilderPage({ params, searchParams }: PageProps)
       clientName={isTestVariantPage && testName ? testName : (client?.name ?? 'Client')}
       variantName={isTestVariantPage ? linkedVariant.name : undefined}
       initialPage={initialPage}
+      initialSkills={savedSkillState.skills}
+      initialStyle={savedSkillState.style}
       backPath={backPath}
       canUseAI={canUseAI}
       isTestVariantPage={isTestVariantPage}
