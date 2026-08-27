@@ -13,7 +13,7 @@ export interface GrowthPoint {
 export default function AdminGrowthCharts({ data }: { data: GrowthPoint[] }) {
   return (
     <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5">
-      <h2 className="text-sm font-semibold mb-4">User growth (last 90 days)</h2>
+      <h2 className="text-sm font-semibold mb-4">Account growth (last 90 days)</h2>
       <div style={{ width: '100%', height: 280 }}>
         <ResponsiveContainer>
           <ComposedChart data={data} margin={{ top: 5, right: 8, left: -12, bottom: 0 }}>
@@ -32,8 +32,8 @@ export default function AdminGrowthCharts({ data }: { data: GrowthPoint[] }) {
               labelStyle={{ fontWeight: 600 }}
             />
             <Legend wrapperStyle={{ fontSize: 12 }} />
-            <Area yAxisId="right" type="monotone" dataKey="cumulative" name="Total users" stroke="#6366f1" strokeWidth={2} fill="url(#cumFill)" />
-            <Bar yAxisId="left" dataKey="newUsers" name="New signups" fill="#22c55e" radius={[3, 3, 0, 0]} maxBarSize={14} />
+            <Area yAxisId="right" type="monotone" dataKey="cumulative" name="Total accounts" stroke="#6366f1" strokeWidth={2} fill="url(#cumFill)" />
+            <Bar yAxisId="left" dataKey="newUsers" name="New accounts" fill="#22c55e" radius={[3, 3, 0, 0]} maxBarSize={14} />
           </ComposedChart>
         </ResponsiveContainer>
       </div>

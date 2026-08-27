@@ -35,8 +35,13 @@ export default async function AdminDashboard() {
 
   const u = users ?? [];
   const total = u.length;
-  const new7 = u.filter((x) => x.created_at >= iso(days(7))).length;
-  const new30 = u.filter((x) => x.created_at >= iso(days(30))).length;
+
+  // An ACCOUNT = a user who owns a client (signup creates one). Members who
+  // joined via invite own none — we track account signups, not those.
+  const owners = new Set((clients ?? []).map((c) => c.owner_id).filter(Boolean));
+  const isAccount = (x: { id: string }) => owners.has(x.id);
+  const newAccounts7 = u.filter((x) => isAccount(x) && x.created_at >= iso(days(7))).length;
+  const newAccounts30 = u.filter((x) => isAccount(x) && x.created_at >= iso(days(30))).length;
 
   const byPlan: Record<string, number> = {};
   for (const x of u) byPlan[x.plan ?? 'free'] = (byPlan[x.plan ?? 'free'] ?? 0) + 1;
@@ -45,7 +50,6 @@ export default async function AdminDashboard() {
   const activeSubs = u.filter((x) => x.subscription_status === 'active');
   const mrr = activeSubs.reduce((sum, x) => sum + (PLAN_DETAILS[(x.plan as PlanId)]?.monthlyPrice ?? 0), 0);
 
-  const owners = new Set((clients ?? []).map((c) => c.owner_id).filter(Boolean));
   const engaged = owners.size;
 
   const clientCount = (clients ?? []).length;
@@ -66,6 +70,7 @@ export default async function AdminDashboard() {
   const buckets = new Map<string, number>();
   let beforeCount = 0;
   for (const x of u) {
+    if (!isAccount(x)) continue; // count new ACCOUNTS/day, not invited members
     const d = new Date(x.created_at);
     if (d < windowStart) { beforeCount++; continue; }
     const key = d.toISOString().slice(0, 10);
@@ -96,9 +101,9 @@ export default async function AdminDashboard() {
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatCard label="Total users" value={total.toLocaleString()} />
-        <StatCard label="New (7 days)" value={new7.toLocaleString()} sub={`${new30.toLocaleString()} in last 30`} />
-        <StatCard label="Engaged users" value={engaged.toLocaleString()} sub="created a client" />
+        <StatCard label="Total users" value={total.toLocaleString()} sub={`${engaged.toLocaleString()} accounts`} />
+        <StatCard label="New accounts (7 days)" value={newAccounts7.toLocaleString()} sub={`${newAccounts30.toLocaleString()} in last 30`} />
+        <StatCard label="Accounts" value={engaged.toLocaleString()} sub="signed up (own a client)" />
         <StatCard label="Paid (by plan flag)" value={paid.toLocaleString()} sub={`${activeSubs.length} active subs`} />
         <StatCard label="MRR (active)" value={revOverview.available ? fmtMoney(revOverview.currentMrrCents) : `~$${mrr.toLocaleString()}`} sub={revOverview.available ? 'from Stripe' : 'estimated (no Stripe here)'} />
         <StatCard label="Total billed" value={revenue.available ? fmtMoney(revenue.totalCents) : '—'} sub={revenue.available ? 'all-time (Stripe)' : 'Stripe not configured'} />

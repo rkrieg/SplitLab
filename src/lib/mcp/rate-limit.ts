@@ -22,15 +22,28 @@ export interface RateLimitResult {
 }
 
 export function checkMcpRateLimit(tokenId: string): RateLimitResult {
+  return checkRateLimit(`mcp:${tokenId}`, MAX_REQUESTS_PER_WINDOW);
+}
+
+/**
+ * Same fixed-window bucket, reusable by any credentialed surface — the v1
+ * reporting API (/api/v1/*) shares it rather than standing up a second copy
+ * of the same Map. Buckets are namespaced by the caller's prefix so an MCP
+ * token and an API key can never collide on one counter.
+ *
+ * Same caveat as above: in-memory, so multi-instance deploys under-count,
+ * which only ever makes the limit more permissive.
+ */
+export function checkRateLimit(bucketKey: string, max: number): RateLimitResult {
   const now = Date.now();
-  const bucket = buckets.get(tokenId);
+  const bucket = buckets.get(bucketKey);
 
   if (!bucket || now - bucket.windowStart >= WINDOW_MS) {
-    buckets.set(tokenId, { count: 1, windowStart: now });
+    buckets.set(bucketKey, { count: 1, windowStart: now });
     return { allowed: true };
   }
 
-  if (bucket.count >= MAX_REQUESTS_PER_WINDOW) {
+  if (bucket.count >= max) {
     const retryAfterSeconds = Math.ceil((bucket.windowStart + WINDOW_MS - now) / 1000);
     return { allowed: false, retryAfterSeconds };
   }
