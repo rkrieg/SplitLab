@@ -23,6 +23,7 @@ import {
   Sparkles,
   Trash2,
   Gift,
+  Plug2,
 } from 'lucide-react';
 import { cn, slugify } from '@/lib/utils';
 import { PLAN_LIMITS } from '@/lib/plans';
@@ -62,6 +63,7 @@ function getClientNavItems(clientId: string, isViewer: boolean) {
     { href: `/clients/${clientId}/ai-pages`,      label: 'AI Pages',    icon: Sparkles },
     { href: `/clients/${clientId}/scripts`,      label: 'Scripts',     icon: Code2 },
     { href: `/clients/${clientId}/domains`,      label: 'Domains',     icon: Globe },
+    { href: `/clients/${clientId}/integrations`, label: 'Integrations', icon: Plug2 },
     { href: '/team',                             label: 'Team',        icon: Users },
     { href: '/billing',                          label: 'Billing',     icon: CreditCard },
     { href: `/clients/${clientId}/settings`,     label: 'Settings',    icon: Settings },
