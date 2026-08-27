@@ -8,7 +8,8 @@ import { assembleSystemPrompt, resolveSkills, skillIds, LOCKED_RULES_GENERATE } 
 import { SECTION_VOCABULARY, VERTICAL_PRIORITY_HINTS } from '@/lib/ai-page-vocabulary';
 import { resolveWorkspaceRole, resolveOwnerPlan } from '@/lib/workspace-auth';
 import { PLAN_LIMITS } from '@/lib/plans';
-import { extractUrls, isEmbedAssetUrl, scrapeCompetitorUrl } from '@/lib/ai-competitor-scrape';
+import { extractUrls, isEmbedAssetUrl, scrapeCompetitorUrl, describeScrapeGaps } from '@/lib/ai-competitor-scrape';
+import { remainingInputChars } from '@/lib/ai-context-budget';
 import { classifyAssetSource } from '@/lib/asset-source-resolver';
 import {
   injectBrandAssetsIntoSchema,
@@ -288,19 +289,113 @@ export async function POST(request: NextRequest) {
         ? `\nFOOTER CONTACT (use these exact strings when the user wants a footer):\n${JSON.stringify(competitorContext.footerContact)}\n`
         : '';
 
+    // "optional" is what put a fabricated stock photo on a client's page.
+    //
+    // These are the reference site's REAL photographs, already extracted. The
+    // note used to open with "(optional — only when the user wants real
+    // headshots/product photos)", nothing enforced it, and the schema model
+    // reasonably read that as permission to skip them. It wrote an image_prompt
+    // instead and we paid an image model to invent a lawyer sitting in a fake
+    // office — on a page whose whole purpose was to look like that firm's site.
+    //
+    // Still not a hard requirement, because declining CAN be right: a photo may
+    // suit no slot on the page being built. What changed is the default. Use
+    // the real one unless there is a reason not to, and generating over the top
+    // of a real photo of the actual business is called out as the error it is.
     const referenceImagesNote =
       competitorContext && competitorContext.referenceImageUrls.length > 0
-        ? `\nREAL SITE PHOTOS (optional — only when the user wants real headshots/product photos from the site; prefer these exact URLs over inventing image_prompt for those slots):\n${competitorContext.referenceImageUrls.map((u, i) => `${i + 1}. ${u}`).join('\n')}\nPut the URL on the schema field as image_url / photo_url when using one. Do NOT use these as the logo.\n`
+        ? `\n## REAL PHOTOS FROM THE REFERENCE SITE — prefer these over generating any image\nThese ${competitorContext.referenceImageUrls.length} file(s) are the actual photographs on the site being referenced: its real people, its real premises, its real products.\n${competitorContext.referenceImageUrls.map((u, i) => `${i + 1}. ${u}`).join('\n')}\nRules:\n- Before writing ANY image_prompt, check whether one of these fits the slot. A real photo of the actual business always beats a generated stand-in, and generating a fake photo of a business whose real photos you were handed is a visible error the user will spot straight away.\n- When one fits, set "generated_image_url" on that schema node to the EXACT URL and do NOT also write an "image_prompt" for that node — an image_prompt there would draw a fake photo over a real one.\n- Only write image_prompt for slots that NONE of these fit.\n- Do NOT use any of these as the logo, and never alter the URLs.\n`
         : '';
 
     const tasteNote = minimalOrCustom
       ? `\nMINIMAL PAGE TASTE:\n- Strong hierarchy: one clear H1, short supporting line, generous whitespace, flat or near-flat background\n- No decorative card chrome, no competing CTAs, no mid-page clutter\n- Type scale slightly calmer than a full marketing LP (still clamp()-based)\n`
       : '';
 
+    // Vision attachments cost window whether or not they are the user's own —
+    // counted here so the reference budget below is honest about them.
+    const attachedImagesForBudget = Array.isArray(image_urls)
+      ? Math.min((image_urls as unknown[]).length, MAX_ATTACHMENTS)
+      : 0;
+
+    // ── How much of the reference site can this call actually carry? ────────
+    //
+    // The scraper no longer truncates (it cannot know what else this call has
+    // to send). The number that used to live there — 30,000 characters, with
+    // no comment and no arithmetic behind it — silently cut a twelve-section
+    // site off after about section eight, and the model, believing it had
+    // reached the end of the page, invented an FAQ to fill the space. Four
+    // real sections were lost that way on one build.
+    //
+    // The layers are budgeted in priority order, because they are not equally
+    // replaceable:
+    //   1. palette + gaps — tiny, and nothing else carries exact colour values
+    //   2. markdown — the only layer that reliably fits WHOLE, so it is what
+    //      guarantees the bottom of the page (footer, final CTA, a second
+    //      city) is present at all
+    //   3. html — richest, first to be trimmed, and its loss is survivable
+    //      because the screenshot shows structure better than markup does
+    const scrapeGaps = competitorContext ? describeScrapeGaps(competitorContext.stats) : '';
+    const paletteBlock = competitorContext?.palette
+      ? `\n\n## The reference site's ACTUAL colours and fonts (measured from its stylesheets)\n${competitorContext.palette}\n`
+      : '';
+    const referenceBudget = competitorContext
+      ? remainingInputChars({
+          usedChars:
+            prompt.length +
+            systemPrompt.length +
+            paletteBlock.length +
+            (competitorContext.cssTokens?.length ?? 0) +
+            history.reduce((n, h) => n + (h.content?.length ?? 0), 0),
+          reservedOutputTokens: 128_000,
+          images: attachedImagesForBudget,
+        })
+      : 0;
+
+    let referenceMarkdown = competitorContext?.markdown ?? '';
+    let referenceHtml = competitorContext?.pageContent ?? '';
+    let referenceTruncated = false;
+    if (competitorContext) {
+      // Markdown first. If even markdown does not fit, the site is genuinely
+      // enormous — trim it, but say so rather than letting the model believe
+      // the page ended where our budget did.
+      if (referenceMarkdown.length > referenceBudget) {
+        referenceMarkdown = referenceMarkdown.slice(0, Math.max(0, referenceBudget));
+        referenceHtml = '';
+        referenceTruncated = true;
+      } else {
+        const left = referenceBudget - referenceMarkdown.length;
+        if (referenceHtml.length > left) {
+          referenceHtml = left > 4_000 ? referenceHtml.slice(0, left) : '';
+          referenceTruncated = true;
+        }
+      }
+      console.log('[pages/generate] reference budget', {
+        budgetChars: referenceBudget,
+        markdownChars: referenceMarkdown.length,
+        htmlChars: referenceHtml.length,
+        truncated: referenceTruncated,
+        of: { markdown: competitorContext.markdown.length, html: competitorContext.pageContent.length },
+      });
+    }
+
+    // Stated as a fact and handed over, never acted on here. Whether an
+    // incomplete read means "build from what you have" or "ask the user which
+    // parts of that site matter" is a judgement about the request, and this
+    // call can already answer with clarifying questions — so the decision
+    // belongs to it, not to a threshold in code.
+    const truncationNote = referenceTruncated
+      ? `\n\nHOW MUCH OF THE SITE YOU CAN SEE: this reference site is larger than one pass can read in full, so the text below is cut short — there is more page after it that you have NOT been shown. The screenshot shows the whole page, so use it to see what is down there. If what is missing is material to the brief, either build what you can see and say plainly which parts you could not read, or ask the user which sections of that site matter most. Do not silently invent sections to fill the end of the page.\n`
+      : '';
+
+    const referenceContentBlock = [
+      referenceMarkdown ? `Reference site content (markdown — the complete copy, headings, links and image URLs):\n${referenceMarkdown}` : '',
+      referenceHtml ? `Reference site HTML (structure and markup detail):\n${referenceHtml}` : '',
+    ].filter(Boolean).join('\n\n');
+
     const competitorNote = competitorContext
       ? minimalOrCustom
-        ? `\n\n## Reference site context — STYLE + ASSETS ONLY (user asked for a custom/minimal page)\nReference URL: ${referenceUrl}\nThe user's instruction OVERRIDES full-page cloning. Follow THEIR shape (e.g. confirmation/hero-only, no CTAs) even if the reference site has many sections.\nUse the reference for: colors/fonts (CSS tokens), logo, optional KPIs/stats they mentioned, flat background feel.\nDo NOT copy every section, nav links, or CTAs from the reference unless the user asked for them.\n\n${competitorContext.cssTokens ? `CSS token analysis:\n${competitorContext.cssTokens}\n\n` : ''}${competitorContext.pageContent ? `Reference site HTML (extract logo text, KPI numbers, colors, footer contact — NOT a full section clone):\n${competitorContext.pageContent.slice(0, 20_000)}\n\n` : ''}${logoNote}${footerNote}${referenceImagesNote}${tasteNote}CRITICAL:\n- Page shape follows the USER prompt first\n- If they said no buttons / no CTAs — schema must have none\n- If they gave exact headline copy — use it verbatim\n- Prefer hero (+ optional stats/KPIs + simple footer) when they asked for a simple confirmation page\n- Do NOT invent fake KPIs — only use numbers present in the reference HTML or user prompt`
-        : `\n\n## Reference site context — MANDATORY\nThe user wants a page that closely replicates: ${referenceUrl}\n\n${competitorContext.cssTokens ? `CSS token analysis:\n${competitorContext.cssTokens}\n\n` : ''}${competitorContext.pageContent ? `Reference site HTML (use to extract real copy, nav links, headlines, CTAs, section structure):\n${competitorContext.pageContent}\n\n` : ''}${logoNote}${footerNote}${referenceImagesNote}CRITICAL SCHEMA RULES when a reference site is provided AND the user did not ask for a minimal/custom shape:\n- Read the HTML above and extract the REAL headline text, subheadline, CTA button text, nav links, feature titles, testimonial copy — use the actual words from the site, not invented placeholders\n- Match the SECTION ORDER and TYPES from the reference unless the user explicitly removed sections\n- Replicate the nav link labels exactly as they appear on the reference site\n- Use the reference site's actual CTA button text, not generic "Get Started"\n- ALWAYS use the REAL LOGO ASSET URL above for nav/footer — never a screenshot thumbnail\n- Do NOT invent fake statistics — use real numbers from the reference HTML or omit`
+        ? `\n\n## Reference site context — STYLE + ASSETS ONLY (user asked for a custom/minimal page)\nReference URL: ${referenceUrl}\nThe user's instruction OVERRIDES full-page cloning. Follow THEIR shape (e.g. confirmation/hero-only, no CTAs) even if the reference site has many sections.\nUse the reference for: colors/fonts (see the palette below), logo, optional KPIs/stats they mentioned, flat background feel.\nDo NOT copy every section, nav links, or CTAs from the reference unless the user asked for them.\n\n${competitorContext.cssTokens ? `Layout tokens:\n${competitorContext.cssTokens}\n\n` : ''}${paletteBlock}${scrapeGaps ? `\n${scrapeGaps}\n` : ''}${referenceContentBlock ? `${referenceContentBlock}\n\n` : ''}${truncationNote}${logoNote}${footerNote}${referenceImagesNote}${tasteNote}CRITICAL:\n- Page shape follows the USER prompt first\n- If they said no buttons / no CTAs — schema must have none\n- If they gave exact headline copy — use it verbatim\n- Prefer hero (+ optional stats/KPIs + simple footer) when they asked for a simple confirmation page\n- Do NOT invent fake KPIs — only use numbers present in the reference content or user prompt`
+        : `\n\n## Reference site context — MANDATORY\nThe user wants a page that closely replicates: ${referenceUrl}\n\n${competitorContext.cssTokens ? `Layout tokens:\n${competitorContext.cssTokens}\n\n` : ''}${paletteBlock}${scrapeGaps ? `\n${scrapeGaps}\n` : ''}${referenceContentBlock ? `${referenceContentBlock}\n\n` : ''}${truncationNote}${logoNote}${footerNote}${referenceImagesNote}CRITICAL SCHEMA RULES when a reference site is provided AND the user did not ask for a minimal/custom shape:\n- Read the reference content above and extract the REAL headline text, subheadline, CTA button text, nav links, feature titles, testimonial copy — use the actual words from the site, not invented placeholders\n- Match the SECTION ORDER and TYPES from the reference unless the user explicitly removed sections. Include EVERY section the reference has, including the ones near the bottom of the page — footers, closing CTAs, review/testimonial strips and community/about blocks are part of the page, not optional extras\n- If the site serves more than one location, market or audience, carry ALL of them into the schema. Dropping one is a content error, not a simplification\n- Do NOT add sections the reference does not have (an FAQ it never wrote, a generic CTA) to pad the page out\n- Replicate the nav link labels exactly as they appear on the reference site\n- Use the reference site's actual CTA button text, not generic "Get Started"\n- ALWAYS use the REAL LOGO ASSET URL above for nav/footer — never a screenshot thumbnail\n- Do NOT invent fake statistics — use real numbers from the reference content or omit`
       : '';
 
     const attachedImageUrls = Array.isArray(image_urls)
@@ -543,7 +638,15 @@ export async function POST(request: NextRequest) {
       skills: skillIds(selectedSkills),
       ...(competitorContext?.screenshots?.length ? { competitor_screenshots: competitorContext.screenshots } : {}),
       ...(competitorContext?.cssTokens ? { competitor_css_tokens: competitorContext.cssTokens } : {}),
-      ...(competitorContext?.pageContent ? { competitor_page_content: competitorContext.pageContent } : {}),
+      // The measured colours/fonts. Build needs these more than generate does —
+      // it is the call that writes :root — and re-scraping there would double
+      // the cost of every build for the same bytes.
+      ...(competitorContext?.palette ? { competitor_palette: competitorContext.palette } : {}),
+      // Budgeted to what the BUILD call can carry, not to what this one sent.
+      // Passing the raw page through would have the client POST a megabyte
+      // back to us for a call that cannot use most of it.
+      ...(referenceContentBlock ? { competitor_page_content: referenceContentBlock.slice(0, 150_000) } : {}),
+      ...(scrapeGaps ? { competitor_scrape_gaps: scrapeGaps } : {}),
       ...(competitorContext?.logoUrl ? { competitor_logo_url: competitorContext.logoUrl } : {}),
       ...(competitorContext?.logoSvgMarkup ? { competitor_logo_svg: competitorContext.logoSvgMarkup } : {}),
       ...(competitorContext?.footerContact && Object.keys(competitorContext.footerContact).length > 0

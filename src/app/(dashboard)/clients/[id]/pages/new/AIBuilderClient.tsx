@@ -693,6 +693,12 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   const [answers, setAnswers] = useState<string[]>([]);
   const [competitorScreenshots, setCompetitorScreenshots] = useState<string[] | null>(null);
   const [competitorCssTokens, setCompetitorCssTokens] = useState<string | null>(null);
+  // Survives the clarifying-questions round trip the same way the other
+  // competitor fields do — generate returns early on questions and is called
+  // again with the answers, and a palette lost in between would have the build
+  // invent a colour scheme for a site we had already measured.
+  const [competitorPalette, setCompetitorPalette] = useState<string | null>(null);
+  const [competitorScrapeGaps, setCompetitorScrapeGaps] = useState<string | null>(null);
   const [competitorPageContent, setCompetitorPageContent] = useState<string | null>(null);
   const [competitorLogoUrl, setCompetitorLogoUrl] = useState<string | null>(null);
   const [competitorLogoSvg, setCompetitorLogoSvg] = useState<string | null>(null);
@@ -1469,6 +1475,8 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     // Store competitor context for questions round trip (state persists across re-renders)
     if (data.competitor_screenshots) setCompetitorScreenshots(data.competitor_screenshots as string[]);
     if (data.competitor_css_tokens) setCompetitorCssTokens(data.competitor_css_tokens);
+    if (data.competitor_palette) setCompetitorPalette(data.competitor_palette as string);
+    if (data.competitor_scrape_gaps) setCompetitorScrapeGaps(data.competitor_scrape_gaps as string);
     if (data.competitor_page_content) setCompetitorPageContent(data.competitor_page_content);
     if (data.competitor_logo_url) setCompetitorLogoUrl(data.competitor_logo_url as string);
     if (data.competitor_logo_svg) setCompetitorLogoSvg(data.competitor_logo_svg as string);
@@ -1478,6 +1486,11 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     // state immediately after set would still return the old null values.
     const freshCompetitorScreenshots = (data.competitor_screenshots as string[]) ?? null;
     const freshCompetitorCssTokens = (data.competitor_css_tokens as string) ?? null;
+    // Measured colours/fonts + any note about what the scrape missed. Captured
+    // from the response rather than read back off state for the same reason as
+    // every other fresh* here: setState has not flushed yet.
+    const freshCompetitorPalette = (data.competitor_palette as string) ?? null;
+    const freshCompetitorScrapeGaps = (data.competitor_scrape_gaps as string) ?? null;
     const freshCompetitorPageContent = (data.competitor_page_content as string) ?? null;
     const freshCompetitorLogoUrl = (data.competitor_logo_url as string) ?? null;
     const freshCompetitorLogoSvg = (data.competitor_logo_svg as string) ?? null;
@@ -1540,6 +1553,8 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       updatedHistory,
       freshCompetitorScreenshots,
       freshCompetitorCssTokens,
+      freshCompetitorPalette,
+      freshCompetitorScrapeGaps,
       freshCompetitorPageContent,
       freshCompetitorLogoUrl,
       freshCompetitorFooter,
@@ -1565,6 +1580,8 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     history: { role: string; content: string; image_urls?: string[]; asset_library?: { url: string; name?: string }[] }[],
     freshScreenshots?: string[] | null,
     freshCssTokens?: string | null,
+    freshPalette?: string | null,
+    freshScrapeGaps?: string | null,
     freshPageContent?: string | null,
     freshLogoUrl?: string | null,
     freshFooter?: Record<string, string> | null,
@@ -1637,6 +1654,8 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         ...(modelRequirements && modelRequirements.length > 0 ? { requirements: modelRequirements } : {}),
         ...((freshScreenshots ?? competitorScreenshots)?.length ? { competitor_screenshots: freshScreenshots ?? competitorScreenshots } : {}),
         ...(((freshCssTokens ?? competitorCssTokens)) ? { competitor_css_tokens: freshCssTokens ?? competitorCssTokens } : {}),
+        ...(((freshPalette ?? competitorPalette)) ? { competitor_palette: freshPalette ?? competitorPalette } : {}),
+        ...(((freshScrapeGaps ?? competitorScrapeGaps)) ? { competitor_scrape_gaps: freshScrapeGaps ?? competitorScrapeGaps } : {}),
         ...(((freshPageContent ?? competitorPageContent)) ? { competitor_page_content: freshPageContent ?? competitorPageContent } : {}),
         ...(((freshLogoUrl ?? competitorLogoUrl)) ? { competitor_logo_url: freshLogoUrl ?? competitorLogoUrl } : {}),
         ...(((freshLogoSvg ?? competitorLogoSvg)) ? { competitor_logo_svg: freshLogoSvg ?? competitorLogoSvg } : {}),

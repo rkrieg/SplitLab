@@ -90,7 +90,7 @@ Never use fixed px font sizes for headings.
 - h1: font-size: clamp(44px, 6.5vw, 92px) | font-weight: 700-800 | letter-spacing: -0.03em to -0.04em | line-height: 1.02-1.08
 - h2: font-size: clamp(30px, 3.8vw, 54px) | font-weight: 600-700 | letter-spacing: -0.02em | line-height: 1.1-1.2
 - h3: font-size: clamp(18px, 1.8vw, 24px) | font-weight: 600 | line-height: 1.3
-- body/p: font-size: clamp(15px, 1.1vw, 17px) | line-height: 1.65 | max-width: 58ch on body copy
+- body/p: start from font-size: clamp(16px, 1.25vw, 18px) | line-height: 1.65 | max-width: 58ch on body copy. Adjust the curve to suit the brand — denser/tighter for data-heavy B2B, larger/airier for premium or lifestyle. The 16px floor is the one part that never moves: body copy must never compute below 16px at 360px wide.
 - labels/eyebrows: font-size: 11-13px | letter-spacing: 0.1em-0.2em | text-transform: uppercase | font-weight: 500-600
 - Never set body copy wider than 68ch
 - The ch width cap is for body copy ONLY. Never put a max-width in ch units (or any narrow max-width) on an h1/h2/h3 or its wrapper (e.g. a section's heading container like .sec-head) — a bold 24-54px headline in a 20-22ch box wraps to 4-5 cramped lines. If a heading's wrapper needs a max-width to keep it from stretching edge-to-edge, use a px or percent value wide enough for the actual heading copy at its actual font-size (e.g. max-width: 720px), verified against the longest headline on the page — never copy the body-copy ch value onto a heading.
@@ -463,24 +463,35 @@ export const COMPETITOR_SYSTEM_PROMPT = SYSTEM_PROMPT + `
 
 ## Competitor reference — STRICT replication rules (OVERRIDES ALL palette, font, and style inference above)
 
-You have been given a competitor/reference site as a full-page screenshot AND a CSS token block.
-These two inputs have different jobs — follow this division strictly:
+You have been given a reference site as: a full-page SCREENSHOT, a measured PALETTE of the colours and fonts its stylesheets actually declare, its CONTENT, and a LAYOUT TOKEN block.
 
-### CSS TOKEN BLOCK = single source of truth for ALL colors and typography
-- Copy every hex code VERBATIM into :root — do NOT adjust, lighten, darken, or "harmonize" them
-- Copy every font family VERBATIM — do NOT substitute with a similar font or a system font
-- The token block beats everything: it beats the style reference, the color system rules above, and what you think looks good
-- If the token block says --bg: #F4F1EC, that is the background. If it says --accent: #C8A96E, that is the CTA color.
-- NEVER derive colors visually from the screenshot — JPEG compression shifts colors. The token block has the real values.
+These are four views of one site and they are meant to be read TOGETHER. Each is authoritative about a different thing, and none of them is complete on its own:
 
-### SCREENSHOT = LAYOUT REFERENCE (unless user asked for a minimal/custom page)
-- Use the screenshot to understand: section order, grid columns, card shapes, spacing density, hero layout type, whether sections are full-bleed or contained, border radii feel (sharp vs rounded), visual weight distribution
+### The division of labour — read this carefully
+- **The SCREENSHOT tells you WHICH colour goes WHERE.** It is the only input that shows composition: that one word in the headline is gold, that the hero sits on deep teal, that red appears on one strip and the buttons and nowhere else. Use it to decide what each colour's ROLE is — background, accent, highlight, chrome — and how much of the page each one is allowed to own.
+- **The PALETTE gives you the EXACT VALUE.** Once the screenshot has told you a colour's role, take its hex from the palette list rather than eyedropping it off the image — JPEG compression shifts colours by a few percent and the palette holds the true value.
+- Put plainly: **look at the screenshot to decide, read the palette to be precise.** Never do either job with the other input.
+
+### Using the palette
+- The palette is a LIST OF FACTS, not a ranking. It is ordered by how many times each colour appears in the CSS, which is a usage count — a page's background will naturally top that list and is usually NOT the brand colour. Do not read position as importance.
+- A brand very often has MORE THAN ONE accent colour. If the screenshot shows two or three colours doing brand work — say a red and a gold — carry ALL of them into :root as separate variables and use each where the screenshot uses it. Collapsing a multi-colour brand down to one accent is a serious error: it is what makes a page look monotonous and off-brand, and the user will notice immediately.
+- CSS variables in the palette are named by the site's own developers (--brand-gold, --primary). Those names are strong evidence of intent — weigh them heavily.
+- Copy hex values VERBATIM. Do not lighten, darken, "harmonize" or substitute a similar colour.
+- Copy font families VERBATIM, with the same fallback stack. Never substitute a system font for a named typeface. If the palette lists no font at all, that means none could be read — say so in your work rather than silently defaulting to system-ui, and pick a typeface that genuinely matches what you can see in the screenshot.
+- If the screenshot clearly shows a colour that has NO close match anywhere in the palette, use your eye for it and prefer it over leaving the page monochrome — an approximate gold beats no gold. The palette is the precise source, not the permitted set.
+
+### The screenshot for structure
+- Use it for: section order, grid columns, card shapes, spacing density, hero layout type, full-bleed vs contained, border radii feel, visual weight distribution.
+- Match the hero layout type when it aligns with the schema (split two-column, centered, full-bleed image, etc.)
 - If the schema / Original user request describes a minimal or confirmation page, build ONLY what the schema contains — do NOT add every section visible in the screenshot
 - Otherwise match structure from the screenshot and schema together
-- Match the hero layout type when it aligns with the schema (split two-column, centered, full-bleed image, etc.)
-- Do NOT use the screenshot for color decisions — trust the token block exclusively
+- Build EVERY section the schema carries, including the ones at the bottom of the page. Closing CTAs, review strips, community/about blocks and multi-location callouts are part of the page — dropping them because the page already feels long enough is a content error.
+- Do NOT invent sections the reference does not have in order to pad the page out.
 - STICKY NAV RULE: The navigation bar is sticky and will appear at the top of every screenshot chunk. It is the SAME nav repeated — build it exactly ONCE. Never create duplicate nav elements.
 - NEVER use a screenshot crop/thumbnail as the logo image. If schema.brand_logo_url / nav.logo_url / logo_src is present, that EXACT URL must be the <img src> for the logo (transparent background, no dark box behind it).
+
+### If you were told something could not be scraped
+A "SCRAPE GAPS" note means part of the reference could not be read. Work from what you do have, lean harder on the screenshot for anything the missing layer would have covered, and do not pretend to a fidelity you could not achieve.
 
 ### LOGO + FOOTER
 - Prefer schema.brand_logo_url / nav.logo_url / footer.logo_url for all logo <img> tags
@@ -634,6 +645,19 @@ function styleNoteFromTag(styleTag: StyleTag): string {
 export interface BuildHtmlOptions {
   competitorScreenshots?: string[];
   competitorCssTokens?: string;
+  /**
+   * The measured colours and fonts of the reference site — every value its
+   * stylesheets declare, with the selectors carrying them.
+   *
+   * Separate from competitorCssTokens on purpose. That block is a model's
+   * reading of the site's layout; this one is arithmetic. Merging them would
+   * put a judgement and a measurement behind the same label, and the prompt
+   * needs to tell the model which is which — it is allowed to disagree with a
+   * reading, never with a count.
+   */
+  competitorPalette?: string;
+  /** Plain-English note about anything the scrape could not retrieve. */
+  competitorScrapeGaps?: string;
   competitorPageContent?: string;
   /** Real logo URL from scrape — must appear as <img src> in nav/footer */
   realLogoUrl?: string;
@@ -715,6 +739,8 @@ export async function buildHtmlFromSchema(
   const {
     competitorScreenshots = [],
     competitorCssTokens,
+    competitorPalette,
+    competitorScrapeGaps,
     competitorPageContent,
     realLogoUrl,
     userPrompt,
@@ -725,7 +751,8 @@ export async function buildHtmlFromSchema(
 
   const hasCompetitorContext =
     competitorScreenshots.length > 0 ||
-    (typeof competitorCssTokens === 'string' && competitorCssTokens.length > 0);
+    (typeof competitorCssTokens === 'string' && competitorCssTokens.length > 0) ||
+    (typeof competitorPalette === 'string' && competitorPalette.length > 0);
   const hasImages = imageUrls.length > 0;
   // Decided upstream by the model (generate's shape classification, forwarded
   // through build). A keyword test here disagreed with that decision whenever
@@ -786,11 +813,23 @@ export async function buildHtmlFromSchema(
       : '';
   const competitorTokenNote =
     typeof competitorCssTokens === 'string' && competitorCssTokens.trim()
-      ? `## Competitor CSS token block — use these EXACT values\n${competitorCssTokens}\n\n`
+      ? `## Reference site — layout tokens and section order\n${competitorCssTokens}\n\n`
       : '';
   const competitorContentNote =
     typeof competitorPageContent === 'string' && competitorPageContent.trim()
-      ? `## Competitor page HTML — extract real copy, nav links, section structure and layout from this\nUse the actual text, headings, CTA labels, nav items, and section order visible in this HTML. Do not invent generic copy.\n${competitorPageContent}\n\n`
+      ? `## Reference site content — extract real copy, nav links, section structure and layout from this\nUse the actual text, headings, CTA labels, nav items, and section order visible below. Do not invent generic copy. Content near the END of this block is as load-bearing as the start — closing CTAs, review strips and multi-location callouts belong on the page.\n${competitorPageContent}\n\n`
+      : '';
+  // Placed BEFORE the content block in the message: this is what :root gets
+  // built from, and it is short. The content block can run to six figures of
+  // characters, and a decisive instruction buried behind that much text is one
+  // the model has to hold across the whole read.
+  const competitorPaletteNote =
+    typeof competitorPalette === 'string' && competitorPalette.trim()
+      ? `## Reference site — MEASURED colours and fonts (exact values from its own stylesheets)\nRead these together with the screenshot: the screenshot tells you which colour plays which role and where it belongs, this list tells you the exact value to write. Carry EVERY colour the screenshot shows doing brand work — a brand with two or three accent colours must keep all of them.\n${competitorPalette}\n\n`
+      : '';
+  const scrapeGapsNote =
+    typeof competitorScrapeGaps === 'string' && competitorScrapeGaps.trim()
+      ? `## ${competitorScrapeGaps}\n\n`
       : '';
   const realLogoNote = realLogoUrl
     ? `## REAL LOGO URL (mandatory)\nUse EXACTLY this URL for every logo <img src> in nav and footer. Never substitute a screenshot, generated image, or different URL:\n${realLogoUrl}\nNo background box behind the logo — transparent / sits on the page background.\n\n`
@@ -799,7 +838,7 @@ export async function buildHtmlFromSchema(
       : '';
 
   const textContent =
-    `${competitorTokenNote}${competitorContentNote}${realLogoNote}Build the landing page for this schema:\n\n` +
+    `${competitorPaletteNote}${competitorTokenNote}${scrapeGapsNote}${competitorContentNote}${realLogoNote}Build the landing page for this schema:\n\n` +
     `${JSON.stringify(schema, null, 2)}${imageList}${styleReferenceNote}${promptNote}${designCopyNote}`;
 
   const userContent: AIContent = [
