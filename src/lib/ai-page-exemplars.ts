@@ -53,12 +53,26 @@ export interface StyleExemplar {
    * Plain-language "who this is for", shown next to the label in the style
    * dropdown so a user can pick without knowing what "Bauhaus" means.
    *
-   * MIRRORS the business-type mapping table inside DESIGN_BRIEF_SYSTEM_PROMPT
-   * (ai-page-builder.ts) — that table is what the classifier reads when Style
-   * is left on "Auto". Change one and change the other, or the picker will
-   * promise something different from what Auto does.
+   * Also read by the design-brief call when Style is left on "Auto": this and
+   * `mood` are built into the style catalogue that call chooses from, so the
+   * picker and Auto now read the same text rather than being two lists that
+   * have to be kept in sync by hand.
+   *
+   * Write it as who the style suits, not as a list of industries to keyword
+   * match — Auto is told to judge the buyer, and a bare vertical list invites
+   * exactly the pattern-matching that put streetwear styling on a B2B service.
    */
   bestFor: string;
+  /**
+   * Hidden from "Auto" — the design-brief call never sees this style and can
+   * never land on it, but a user can still choose it in the picker.
+   *
+   * For styles whose failure mode is embarrassing rather than merely bland: a
+   * deliberately low-fidelity or novelty look applied to a business that needed
+   * to seem trustworthy costs far more than a dull style does. Judgement lowers
+   * the odds of that mistake; it does not lower its cost.
+   */
+  userPickOnly?: boolean;
   palette: { background: string; text: string; accent: string; secondaryAccent?: string };
   /**
    * The rest of the `:root` block the build prompt demands, pre-decided.
@@ -473,16 +487,17 @@ export const STYLE_EXEMPLARS: Record<StyleTag, StyleExemplar> = {
   },
 
   // ── User-pick-only styles (2026-08-26) ───────────────────────────────────
-  // Deliberately ABSENT from the style_tag union and the business-type mapping
-  // table inside DESIGN_BRIEF_SYSTEM_PROMPT (ai-page-builder.ts), which means
-  // "Auto" can never land on them. They are here because a user who wants them
-  // should be able to ask, not because a classifier should ever guess them for
-  // a plumber. This is the one intentional exception to the "bestFor MIRRORS
-  // the design-brief mapping table" rule documented on the interface above —
-  // do not "fix" the drift by adding them to that table.
+  // Marked `userPickOnly` below, which keeps them out of the style_tag union
+  // and the style catalogue the design-brief call reads, so "Auto" can never
+  // land on them — while the picker still offers them to a user who asks.
+  // They are here because a user who wants them should be able to ask, not
+  // because Auto should ever land one on a plumber. The exclusion is now
+  // derived from that flag rather than from a hand-maintained list, so there
+  // is no longer a second place to keep in sync.
 
   dieter_industrial: {
     label: 'Industrial / Functional',
+    userPickOnly: true,
     bestFor: 'Hardware, tools, furniture, physical products, understated engineering brands',
     mood: 'Useful, honest, unobtrusive. Nothing decorative survives — the Braun / Vitsoe lineage. Confidence through function, never through persuasion.',
     palette: { background: '#F2F2F0', text: '#1C1C1C', accent: '#D8451E', secondaryAccent: '#7A7A78' },
@@ -511,6 +526,7 @@ export const STYLE_EXEMPLARS: Record<StyleTag, StyleExemplar> = {
 
   zine_riso: {
     label: 'Zine / Risograph',
+    userPickOnly: true,
     bestFor: 'Music, culture, indie brands, merch drops, events, "made by humans" positioning',
     mood: 'Handmade, immediate, low-fidelity on purpose. Looks printed in someone\'s kitchen — the independent zine / Rough Trade poster lineage.',
     palette: { background: '#F4F1E8', text: '#1B1B1B', accent: '#FF4D8D', secondaryAccent: '#0E7C7B' },
@@ -557,6 +573,18 @@ export const STYLE_OPTIONS: { value: StyleTag; label: string; mood: string; best
     mood: STYLE_EXEMPLARS[value].mood,
     bestFor: STYLE_EXEMPLARS[value].bestFor,
   }));
+
+/**
+ * The styles "Auto" is allowed to choose from — everything except the
+ * `userPickOnly` ones.
+ *
+ * The design-brief call builds both its style_tag union and its style
+ * catalogue from this, so a style is hidden from Auto by setting one flag on
+ * the exemplar and nowhere else.
+ */
+export const AUTO_STYLE_TAGS: StyleTag[] = STYLE_TAG_VALUES.filter(
+  (tag) => !STYLE_EXEMPLARS[tag].userPickOnly,
+);
 
 export function isStyleTag(value: unknown): value is StyleTag {
   return typeof value === 'string' && value in STYLE_EXEMPLARS;

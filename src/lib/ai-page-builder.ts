@@ -1,5 +1,5 @@
 import { askAI, askAIStream, type AIContent, type AIContentBlock } from '@/lib/ai-client';
-import { STYLE_EXEMPLARS, isStyleTag, type StyleTag } from '@/lib/ai-page-exemplars';
+import { STYLE_EXEMPLARS, AUTO_STYLE_TAGS, isStyleTag, type StyleTag } from '@/lib/ai-page-exemplars';
 import { assembleSystemPrompt, LOCKED_RULES_BUILD, type Skill } from '@/lib/skills';
 // DEAD IMPORT — never called in this file. Page shape arrives already decided
 // as `options.minimalShape`, forwarded from the schema pass. This used to
@@ -10,12 +10,29 @@ import { buildFontLibraryBlock } from '@/lib/ai-page-fonts';
 import { buildIconLibraryBlock } from '@/lib/ai-page-icons';
 import { attachedImagesInstructionNote } from '@/lib/ai-edit-intent';
 
-const DESIGN_BRIEF_SYSTEM_PROMPT = `You are a design-direction classifier for an AI landing page builder. Given a business schema and the user's original request, produce a short creative brief that will guide the HTML/CSS generation step that runs after you.
+/**
+ * The styles Auto may choose from, as a JSON-union string and as a readable
+ * catalogue.
+ *
+ * Both are generated from AUTO_STYLE_TAGS so the union, the catalogue and the
+ * picker cannot drift apart, and so a `userPickOnly` style is absent from all
+ * of them by virtue of one flag. Before this the union was a hardcoded string
+ * and the only description of each style was a business-vertical lookup table,
+ * which is what taught the call to keyword-match instead of judge.
+ */
+const AUTO_STYLE_UNION = AUTO_STYLE_TAGS.map((tag) => `"${tag}"`).join(' | ');
+
+const AUTO_STYLE_CATALOGUE = AUTO_STYLE_TAGS.map((tag) => {
+  const ex = STYLE_EXEMPLARS[tag];
+  return `- ${tag} (${ex.label})\n    Mood: ${ex.mood}\n    Suits: ${ex.bestFor}`;
+}).join('\n');
+
+const DESIGN_BRIEF_SYSTEM_PROMPT = `You are the design director for an AI landing page builder. Given a business schema and the user's original request, produce a short creative brief that will guide the HTML/CSS generation step that runs after you. You are making a judgement call about this specific business, not sorting it into a bucket.
 
 Return JSON only. No explanation, no markdown fences.
 
 {
-  "style_tag": "minimal_editorial" | "bold_maximalist" | "corporate_trust" | "playful_funky" | "luxury_premium" | "technical_dark" | "warm_clinical" | "friendly_local" | "warm_authority" | "quiet_minimalism" | "bauhaus_geometric" | "brutalist_raw",
+  "style_tag": ${AUTO_STYLE_UNION},
   "palette_direction": "specific color direction for THIS business — 1 sentence, not generic",
   "layout_rhythm": "specific layout/spacing direction for THIS business — 1 sentence",
   "copy_tone": "specific tone-of-voice direction for THIS business — 1 sentence",
@@ -25,21 +42,18 @@ Return JSON only. No explanation, no markdown fences.
 }
 
 ## How to pick style_tag
-- If the user's request uses explicit style words ("funky", "sleek", "minimal", "corporate", "luxury", "techy", "bold", "playful", etc.), map to the closest tag.
-- Otherwise infer from the business vertical using these mappings as a strong default:
-  - Healthcare, wellness, therapy, mental health, medical clinics, nutrition → warm_clinical
-  - Local services, tradespeople, community businesses, nonprofits, charities → friendly_local
-  - Education, online courses, coaching, real estate, financial advisory → warm_authority
-  - Law firms, enterprise SaaS, compliance, HR software, B2B → corporate_trust
-  - Dev tools, AI products, technical B2B, APIs, infrastructure → technical_dark
-  - Luxury goods, premium hospitality, fine dining, high fashion, jewellery → luxury_premium
-  - Gyms, fitness, streetwear, supplements, sports, events, lead gen, info products → bold_maximalist
-  - Consumer apps, food delivery, e-learning for students, children products → playful_funky
-  - Design studios, portfolios, boutique retail, artisan food & beverage → minimal_editorial
-  - Wellness brands, skincare, tea/ceramics/craft goods, high-end product reveals, retreats → quiet_minimalism
-  - Arts programming, festivals, cultural institutions, bold consumer campaigns, music/events → bauhaus_geometric
-  - Tools-for-thought, indie developer products, text-forward publications, technical newsletters → brutalist_raw
-  - Hospitality & travel: use luxury_premium for upscale hotels/resorts, bold_maximalist for adventure/budget travel
+- If the user's request uses explicit style words ("funky", "sleek", "minimal", "corporate", "luxury", "techy", "bold", "playful", etc.), map to the closest tag and stop there — an explicit ask wins over your own judgement.
+- Otherwise DECIDE it, do not classify it. The industry a business sits in does not determine how its page should feel — its buyer does. Two businesses in the same vertical routinely need opposite styles, and a page that converts one actively loses the other. Reason from the schema and the request:
+  - WHO is buying — a consumer browsing on their phone, or a business owner spending significant money on a considered purchase?
+  - WHAT IT COSTS and how much deliberation it takes — an impulse buy, or something researched, compared and signed off?
+  - HOW THE COPY ITSELF SOUNDS — the brief's own tone, the proof it leans on, the claims it makes. Content built on revenue figures, contract terms and client outcomes is not the same brand as content built on urgency and exclamation marks, even when both sit under the same industry label.
+  - WHAT A WRONG STYLE WOULD COST — the more expensive and considered the purchase, the more a loud, novelty or low-fidelity style undermines the trust the page needs to build. When genuinely torn between a safe style and a striking one for a high-price, high-trust offer, take the safe one.
+- Then choose the tag whose mood honestly matches that buyer, reading the catalogue below. Judge on the mood — "Suits" is a hint about who tends to fit, never a lookup key.
+
+## The styles you may choose from
+${AUTO_STYLE_CATALOGUE}
+
+- Never pick a tag merely because the business's industry appears somewhere in its bestFor list. That is pattern-matching on a keyword, and it is exactly what produces loud consumer styling on a serious B2B service, or corporate restraint on a brand that needed personality.
 - Never default to the same tag regardless of business — vary based on what's actually being built.`;
 
 const FONT_LIBRARY_BLOCK = buildFontLibraryBlock();
