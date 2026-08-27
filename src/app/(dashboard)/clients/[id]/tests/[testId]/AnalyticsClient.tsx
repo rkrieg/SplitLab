@@ -4987,6 +4987,14 @@ export default function AnalyticsClient({
                   </button>
                 </div>
 
+                <div className="flex items-start gap-1.5 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 px-3 py-2 text-xs text-slate-500 dark:text-slate-400">
+                  <Info size={13} className="flex-shrink-0 mt-0.5" />
+                  <span>
+                    These webhooks fire only for <strong>this test</strong>. To send <strong>every</strong> lead from this client to one place (e.g. Zapier), add a global webhook on the{" "}
+                    <Link href={`/clients/${clientId}/integrations`} className="text-indigo-600 dark:text-indigo-400 hover:underline">Integrations page</Link>.
+                  </span>
+                </div>
+
                 {/* Webhook list */}
                 {webhooks.length === 0 ? (
                   <div className="card px-6 py-10 text-center">
