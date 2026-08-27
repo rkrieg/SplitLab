@@ -664,11 +664,9 @@ export default function AnalyticsClient({
   // Integrations sub-tab
   const [integrationsSubTab, setIntegrationsSubTab] = useState<'native' | 'webhooks'>('native');
 
-  // Microsoft Clarity (workspace-level project id; drives per-variant deep links)
+  // Microsoft Clarity project id (managed on the client Integrations page).
+  // Kept here only to drive the per-variant "Clarity recordings/heatmap" deep links.
   const [claritySaved, setClaritySaved] = useState<string | null>(null);
-  const [clarityDraft, setClarityDraft] = useState('');
-  const [clarityTokenDraft, setClarityTokenDraft] = useState('');
-  const [claritySaving, setClaritySaving] = useState(false);
 
   // UTM & ad-click forwarding toggle (per-test, default ON)
   const [forwardParams, setForwardParams] = useState<boolean>(
@@ -1764,10 +1762,8 @@ export default function AnalyticsClient({
       setWebhooks(whs);
 
       const clRaw = data.integrations?.find(i => i.type === 'clarity') ?? null;
-      const clCfg = (clRaw && clRaw.enabled) ? (clRaw.config as { project_id?: string; api_token?: string } | null) : null;
+      const clCfg = (clRaw && clRaw.enabled) ? (clRaw.config as { project_id?: string } | null) : null;
       setClaritySaved(clCfg?.project_id ?? null);
-      setClarityDraft(clCfg?.project_id ?? '');
-      setClarityTokenDraft(clCfg?.api_token ?? '');
 
       // Fetch all test mappings once (covers hubspot + email + webhooks)
       const [mRes, kRes, epRes, cpRes] = await Promise.all([
@@ -1867,42 +1863,9 @@ export default function AnalyticsClient({
     }
   }, [tab]);
 
-  // ─── Microsoft Clarity ──────────────────────────────────────────────
-  async function saveClarity() {
-    if (!workspaceId) return;
-    const pid = clarityDraft.trim();
-    if (!/^[a-z0-9]+$/i.test(pid)) {
-      toast.error('Enter your Clarity project ID (the code from your Clarity install snippet).');
-      return;
-    }
-    const token = clarityTokenDraft.trim();
-    setClaritySaving(true);
-    try {
-      const config: Record<string, string> = { project_id: pid };
-      if (token) config.api_token = token;
-      const res = await fetch(`/api/workspaces/${workspaceId}/integrations`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'clarity', config }),
-      });
-      if (!res.ok) { toast.error('Failed to save Clarity settings'); return; }
-      setClaritySaved(pid);
-      toast.success('Microsoft Clarity connected');
-    } catch {
-      toast.error('Failed to save Clarity settings');
-    } finally {
-      setClaritySaving(false);
-    }
-  }
-
-  async function disconnectClarity() {
-    if (!workspaceId) return;
-    const res = await fetch(`/api/workspaces/${workspaceId}/integrations?type=clarity`, { method: 'DELETE' });
-    if (!res.ok) { toast.error('Failed to disconnect Clarity'); return; }
-    setClaritySaved(null);
-    setClarityDraft('');
-    toast.success('Microsoft Clarity disconnected');
-  }
+  // Microsoft Clarity connect/disconnect now lives on the client Integrations
+  // page (/clients/[id]/integrations). Here we only read claritySaved to drive
+  // the per-variant recordings/heatmap deep links.
 
   // Deep-link to Clarity for a variant. A saved per-variant Share link wins
   // (opens a pre-filtered view); otherwise open the project view — filter by the
@@ -4929,88 +4892,26 @@ export default function AnalyticsClient({
               )}
             </div>
 
-            {/* ── Microsoft Clarity card ── */}
+            {/* ── Microsoft Clarity (managed at the client level) ── */}
             <div className="card overflow-hidden">
-              <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700 flex items-center gap-3">
-                <div className="w-8 h-8 rounded-lg bg-sky-500/15 flex items-center justify-center">
+              <div className="px-5 py-4 flex items-center gap-3">
+                <div className="w-8 h-8 rounded-lg bg-sky-500/15 flex items-center justify-center flex-shrink-0">
                   <Flame size={16} className="text-sky-600 dark:text-sky-400" />
                 </div>
-                <div>
+                <div className="flex-1 min-w-0">
                   <p className="font-semibold text-sm text-slate-800 dark:text-slate-200">Microsoft Clarity</p>
-                  <p className="text-xs text-slate-500">Free heatmaps &amp; session recordings, tagged per variant</p>
+                  <p className="text-xs text-slate-500">Managed for this whole client — heatmaps &amp; recordings, tagged per variant. The per-variant <strong>Clarity recordings / heatmap</strong> row actions use it.</p>
                 </div>
-                {claritySaved && (
-                  <span className="ml-auto flex items-center gap-1.5 text-xs font-medium text-green-500">
+                {claritySaved ? (
+                  <span className="flex items-center gap-1.5 text-xs font-medium text-green-500 flex-shrink-0">
                     <CheckCircle2 size={13} /> Connected
                   </span>
+                ) : (
+                  <span className="text-xs text-slate-400 flex-shrink-0">Not connected</span>
                 )}
-              </div>
-
-              <div className="px-5 py-4 space-y-3">
-                <p className="text-xs text-slate-500">
-                  SplitLab injects Clarity on your hosted variants and tags each session with <code className="font-mono">sl_variant</code>, so you can filter recordings and heatmaps to a single variant. Enter your Clarity <strong>Project ID</strong> below (and, optionally, a Data Export token to power AI Insights).
-                </p>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200 mb-1">Project ID <span className="text-red-500">*</span></label>
-                  <input
-                    type="text"
-                    value={clarityDraft}
-                    onChange={(e) => setClarityDraft(e.target.value)}
-                    placeholder="e.g. abcd1234ef — from your Clarity install snippet"
-                    spellCheck={false}
-                    className="input text-sm w-full"
-                  />
-                  <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">Find it in Clarity → Settings → Overview, or in your install snippet.</p>
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200 mb-1">
-                    Data Export API token <span className="font-normal text-slate-400">(optional — powers AI Insights)</span>
-                  </label>
-                  <input
-                    type="password"
-                    value={clarityTokenDraft}
-                    onChange={(e) => setClarityTokenDraft(e.target.value)}
-                    placeholder="Paste the token here"
-                    spellCheck={false}
-                    autoComplete="off"
-                    className="input text-sm w-full"
-                  />
-                  <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">
-                    Get it in Clarity → Settings → Data Export → Generate new API token. Lets SplitLab pull site-wide behavioral signals (rage/dead clicks, scroll depth, JS errors) into AI Insights.
-                  </p>
-                </div>
-                {/* Single save action for BOTH fields, at the bottom so it's clear it saves everything above */}
-                <div className="flex items-center gap-3 pt-1">
-                  <button
-                    onClick={saveClarity}
-                    disabled={claritySaving}
-                    className="btn-primary text-sm px-4 py-2 rounded-lg font-medium flex items-center gap-2"
-                  >
-                    {claritySaving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
-                    {claritySaved ? 'Update connection' : 'Connect Clarity'}
-                  </button>
-                  {claritySaved && (
-                    <button
-                      onClick={disconnectClarity}
-                      className="text-xs text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 transition-colors flex items-center gap-1"
-                    >
-                      <XCircle size={13} /> Disconnect
-                    </button>
-                  )}
-                </div>
-                {claritySaved && (
-                  <a
-                    href={`https://clarity.microsoft.com/projects/view/${claritySaved}/dashboard`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 text-xs text-sky-600 dark:text-sky-400 hover:underline"
-                  >
-                    <ExternalLink size={12} /> Open Clarity dashboard
-                  </a>
-                )}
-                <p className="text-[11px] text-slate-400 dark:text-slate-500">
-                  Clarity can&apos;t pre-filter from a link we build, so the variant actions open your project and you filter by <code className="font-mono">sl_variant</code> once — or save a Clarity &ldquo;Share&rdquo; link per variant (row action menu) for a one-click pre-filtered view. Hosted HTML variants only.
-                </p>
+                <Link href={`/clients/${clientId}/integrations`} className="btn-secondary text-xs flex-shrink-0">
+                  Manage <ExternalLink size={12} />
+                </Link>
               </div>
             </div>
 
