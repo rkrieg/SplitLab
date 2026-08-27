@@ -21,8 +21,11 @@ import { LiveProgressPanel } from '@/components/ai/LiveProgressPanel';
 // pasted HTML instantly and for free, before ever touching the network.
 import { analyzePageLayout } from '@/lib/ai-page-layout';
 import { describeAssetPlacement } from '@/lib/asset-placement';
-import SkillPicker from '@/components/pages/SkillPicker';
-import StylePicker from '@/components/pages/StylePicker';
+// Skills + Style pickers — commented out with the controls they render (see
+// the "Initial prompt form" below). The components themselves are untouched
+// and still compile; only this file stopped mounting them.
+// import SkillPicker from '@/components/pages/SkillPicker';
+// import StylePicker from '@/components/pages/StylePicker';
 import SkillScorePanel, { type SkillScoreRow } from '@/components/pages/SkillScorePanel';
 import { DEFAULT_SKILL_IDS, MANDATORY_SKILL_IDS, SKILL_CARDS } from '@/lib/skills';
 import { STYLE_OPTIONS } from '@/lib/ai-page-exemplars';
@@ -2586,6 +2589,23 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                   {VERTICAL_LABELS[vertical] ?? vertical}
                 </span>
               </div>
+              {/* Skills + Style pickers — hidden at the client's request.
+                  The controls are commented out, NOT the logic: the state they
+                  used to drive still runs and still reaches the build.
+
+                  Style stays on `null`, which is Auto — the design-brief call
+                  picks the style from the business, which is the behaviour the
+                  client asked for.
+
+                  Skills stay on DEFAULT_SKILL_IDS, which is the mandatory
+                  Landing Page Generator plus every `defaultOn` skill — five in
+                  total, which is also RECOMMENDED_SKILLS. Nothing below this
+                  point needed changing to get that; it is what the builder has
+                  always opened with.
+
+                  To bring the controls back, uncomment this block and the two
+                  imports at the top of the file. */}
+              {/*
               <SkillPicker
                 selected={selectedSkills}
                 onChange={setSelectedSkills}
@@ -2596,6 +2616,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                 onChange={setSelectedStyle}
                 disabled={isLoading}
               />
+              */}
               <SamplePromptChip vertical={vertical} onUse={p => setPrompt(p)} />
               {scanningPrompt && (
                 <div className="flex items-center gap-1.5 text-[11px] text-indigo-600 dark:text-indigo-400">
