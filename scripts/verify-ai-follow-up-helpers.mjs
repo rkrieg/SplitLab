@@ -633,7 +633,12 @@ assert('generate drops forced 4-7', !gen.includes('Pick 4-7 sections beyond hero
 assert('generate has flexible shape', gen.includes('Page shape follows the user'));
 assert('generate no fake proof default', gen.includes('Do NOT invent fake statistics'));
 assert('generate you decide', gen.includes('you decide'));
-assert('generate has minimal competitor branch', gen.includes('STYLE + ASSETS ONLY'));
+assert('generate has ONE reference block', !gen.includes('STYLE + ASSETS ONLY') && !gen.includes('Reference site context — MANDATORY'));
+assert('generate defers fidelity to the user', gen.includes('### How close to stay') && gen.includes("Read the user's own words above and judge it yourself"));
+assert('generate does not force every section', !gen.includes('a content error, not a simplification'));
+assert('generate guards credibility when condensing', gen.includes('What not to lose when you condense'));
+assert('generate keeps reference weight proportional', gen.includes('Weight, not just presence'));
+assert('generate keeps base design rules alive', gen.includes('The base design rules still apply'));
 assert('generate returns competitor_logo_url', gen.includes('competitor_logo_url'));
 assert('generate returns competitor_logo_svg', gen.includes('competitor_logo_svg'));
 assert('generate classifyPageShapeIntent', gen.includes('classifyPageShapeIntent'));
@@ -730,7 +735,7 @@ assert('follow-up REQUIRED visible copy', follow.includes('REQUIRED visible copy
 assert('follow-up Retrying step', follow.includes('Retrying step'));
 
 assert('generate stripUnpromptedSocialProof', gen.includes('stripUnpromptedSocialProof'));
-assert('generate REAL SITE PHOTOS', gen.includes('REAL SITE PHOTOS'));
+assert('generate REAL SITE PHOTOS', gen.includes('REAL PHOTOS FROM THE REFERENCE SITE'));
 assert('generate MINIMAL PAGE TASTE', gen.includes('MINIMAL PAGE TASTE'));
 
 const build = readFileSync(join(__dirname, '../src/app/api/pages/build/route.ts'), 'utf8');

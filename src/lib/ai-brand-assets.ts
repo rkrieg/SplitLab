@@ -99,8 +99,20 @@ export async function classifyCompetitorReferenceUrl(
 }
 
 /**
- * AI classify when regex is unsure. Prefer user custom/minimal over full clone
- * when unclear — cloning a whole LP against a confirmation prompt is the worse failure.
+ * Does the user want a DIFFERENT, smaller page, or a version of this one?
+ *
+ * Narrower than it used to be. This no longer picks between two prompt
+ * branches — the reference block in generate/route.ts is a single block now,
+ * and how closely to follow the site is left to the user's own words. All this
+ * still decides is whether the build gets the minimal-page addendum, and
+ * whether the proof-strip safety net is allowed to run.
+ *
+ * The distinction that matters, and the one the old wording got wrong: "make a
+ * modern version of this" is NOT a minimal page. It is a redesign of the same
+ * page — same proof, same substance, built better. A confirmation or thank-you
+ * page is a genuinely different page, and that is what `minimal_or_custom`
+ * means. Getting that backwards deletes content the user expected to keep,
+ * which is why the tie-break now points at full_reference instead.
  */
 export async function classifyPageShapeIntent(
   prompt: string,
@@ -111,10 +123,11 @@ export async function classifyPageShapeIntent(
   try {
     const text = await askAI({
       system:
-        'Classify landing-page build intent. Return JSON only: {"shape":"minimal_or_custom"|"full_reference"}.\n' +
-        'minimal_or_custom = confirmation/thank-you/hero-only/dead-end/no CTAs/custom text that should NOT clone every section of a reference URL.\n' +
-        'full_reference = user wants the page to closely match/replicate the linked site structure.\n' +
-        'If both a URL and custom copy appear, prefer minimal_or_custom unless they clearly asked to copy the whole page.',
+        'Decide whether the user wants a DIFFERENT, smaller page or a version of the SAME page. Return JSON only: {"shape":"minimal_or_custom"|"full_reference"}.\n' +
+        'minimal_or_custom = a different, deliberately small page: confirmation, thank-you, dead-end, hero-only, a single offer, or custom copy that stands on its own. The linked site is only a source of branding.\n' +
+        'full_reference = a version of the linked page itself. This INCLUDES redesigns: "modern version", "cleaner version", "better version", "rebuild this", "improve this" are all full_reference — the user wants that same page, built well. It is NOT limited to exact clones.\n' +
+        'Judge by the page the user ends up with, not by how much creative freedom they gave you. Freedom to redesign is still full_reference.\n' +
+        'When genuinely unclear, answer full_reference: treating a redesign as a minimal page strips out the proof and content the user expected to keep.',
       messages: [{ role: 'user', content: prompt.slice(0, 4000) }],
       // Sized for Haiku, which had no thinking overhead. Every call here runs
       // on Sonnet 5, whose adaptive thinking is billed against this same
