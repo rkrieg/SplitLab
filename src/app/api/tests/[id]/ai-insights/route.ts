@@ -46,7 +46,10 @@ async function fetchClarity(apiToken: string): Promise<{ ok: boolean; note: stri
 }
 
 async function loadTest(id: string, userId: string, role: string) {
-  const { data: test } = await db.from('tests').select('id, name, url_path, workspace_id, ai_insights').eq('id', id).single();
+  // Minimal existence check — deliberately NOT selecting ai_insights, so this
+  // still works on a DB where migration 062 hasn't been applied (otherwise a
+  // missing column would make the whole select error out as "Test not found").
+  const { data: test } = await db.from('tests').select('id, name, url_path, workspace_id').eq('id', id).single();
   if (!test) return { error: 'Test not found', status: 404 as const };
   const wsRole = await resolveWorkspaceRole(test.workspace_id, userId, role);
   if (!wsRole || wsRole === 'viewer') return { error: 'Forbidden', status: 403 as const };
@@ -59,7 +62,9 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
   if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const r = await loadTest(params.id, session.user.id, session.user.role);
   if ('error' in r) return NextResponse.json({ error: r.error }, { status: r.status });
-  return NextResponse.json({ insights: (r.test as { ai_insights?: unknown }).ai_insights ?? null });
+  // Best-effort cached read — returns null if migration 062 isn't applied yet.
+  const { data: cached } = await db.from('tests').select('ai_insights').eq('id', params.id).maybeSingle();
+  return NextResponse.json({ insights: (cached as { ai_insights?: unknown } | null)?.ai_insights ?? null });
 }
 
 // POST: (re)generate insights from our per-variant stats + optional Clarity.
