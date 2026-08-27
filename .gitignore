@@ -47,3 +47,5 @@ stripe.exe
 docs/titan.html
 
 *.html
+
+/docs
