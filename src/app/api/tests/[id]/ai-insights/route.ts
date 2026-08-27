@@ -79,8 +79,18 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
   const [{ data: rpcStats }, { data: rpcDevice }, { data: variantRows }] = await Promise.all([
     db.rpc('test_variant_stats', { p_test_id: test.id, p_from: null, p_to: null }),
     db.rpc('test_variant_device_stats', { p_test_id: test.id, p_from: null, p_to: null }).then(res => res, () => ({ data: null })),
-    db.from('test_variants').select('id, name, is_control, speed_mobile, speed_desktop, archived_at').eq('test_id', test.id),
+    // Core columns only — resilient to a DB without migration 060 (speed cols).
+    db.from('test_variants').select('id, name, is_control, archived_at').eq('test_id', test.id),
   ]);
+
+  // Speed scores best-effort (migration 060 may be absent on this DB).
+  const speedById = new Map<string, { m: number | null; d: number | null }>();
+  const { data: speedRows } = await db.from('test_variants')
+    .select('id, speed_mobile, speed_desktop').eq('test_id', test.id)
+    .then(res => res, () => ({ data: null }));
+  for (const s of (speedRows as { id: string; speed_mobile: number | null; speed_desktop: number | null }[] | null) ?? []) {
+    speedById.set(s.id, { m: s.speed_mobile, d: s.speed_desktop });
+  }
 
   const statsById = new Map<string, { views: number; unique_visitors: number; conversions: number }>();
   for (const s of (rpcStats as { variant_id: string; views: number; unique_visitors: number; conversions: number }[] | null) ?? []) {
@@ -94,7 +104,7 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
     deviceById.set(d.variant_id, cur);
   }
 
-  const variants = ((variantRows as { id: string; name: string; is_control: boolean; speed_mobile: number | null; speed_desktop: number | null; archived_at: string | null }[]) ?? [])
+  const variants = ((variantRows as { id: string; name: string; is_control: boolean; archived_at: string | null }[]) ?? [])
     .filter(v => !v.archived_at);
   const control = variants.find(v => v.is_control) ?? variants[0];
   const controlStat = control ? statsById.get(control.id) : undefined;
@@ -116,8 +126,8 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
       cvr: Math.round(cvr * 100) / 100,
       desktopCvr: dev && dev.d_u > 0 ? Math.round((dev.d_c / dev.d_u) * 10000) / 100 : null,
       mobileCvr: dev && dev.m_u > 0 ? Math.round((dev.m_c / dev.m_u) * 10000) / 100 : null,
-      speedMobile: v.speed_mobile ?? null,
-      speedDesktop: v.speed_desktop ?? null,
+      speedMobile: speedById.get(v.id)?.m ?? null,
+      speedDesktop: speedById.get(v.id)?.d ?? null,
       confidence,
     };
   });
