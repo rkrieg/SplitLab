@@ -134,10 +134,11 @@ Never hardcode any of these values outside :root. Every element references a CSS
 - If content is dense, reduce padding — never push the CTA below the fold
 - On mobile (max-width: 768px): min-height: auto; padding: 80px 24px 60px — never use 100vh on mobile hero
 
-### Account for the nav sitting above the hero (mandatory)
-The sticky nav (see Navigation rules below) sits in normal document flow directly above .hero — it is NOT removed from layout, so a flat min-height: 100vh on .hero plus the nav's own height together exceed one viewport every time, even with light hero content. Do not change the nav's position: sticky behavior to fix this (that pattern is required — see Navigation rules). Instead, size the hero to leave room for it:
-- Define a --nav-h custom property in :root matching the nav's actual rendered height (max 72px per the nav rules below, so --nav-h: 72px is a safe default; use a smaller value if the nav is visibly shorter).
-- On desktop, set the hero to min-height: calc(100vh - var(--nav-h)) instead of a flat 100vh.
+### Account for the nav (mandatory)
+The nav and the hero share the first viewport, so a flat min-height: 100vh on .hero overflows the fold every time, even with light hero content. Size the hero to account for however you built the nav (see Navigation rules below — the mechanism is yours to choose):
+- Define a --nav-h custom property in :root, and give the nav an explicit height (or a height you can compute exactly from its own padding + content line-height) that MATCHES that token. Set the height deliberately rather than letting the nav size itself to its contents and then guessing --nav-h — if the two disagree, the hero is off the fold by the difference. Keep the nav compact; anything much past ~72px on desktop eats the hero's budget.
+- If the nav sits in normal document flow above .hero (not removed from layout), set the hero to min-height: calc(100vh - var(--nav-h)) on desktop instead of a flat 100vh.
+- If the nav instead overlays the hero, the hero can keep min-height: 100vh, but give it padding-top: var(--nav-h) so hero content never sits underneath the nav.
 - On mobile the hero already uses min-height: auto, so this does not apply there.
 
 ### When hero content is dense (mandatory — do not let this lose to "never override PRD content")
@@ -283,76 +284,27 @@ Common, easy-to-miss mistakes — check every generated page against this list b
 - A transform (including a hover transform) on any ancestor of a position: fixed element re-anchors that fixed element to the ancestor instead of the viewport — avoid transform on elements that wrap fixed-position children (e.g. a mobile sticky CTA bar).
 - On notched/modern mobile devices, a fixed/sticky full-width bar (mobile nav, sticky CTA bar) should respect safe-area insets: padding-bottom: env(safe-area-inset-bottom) etc. Requires viewport-fit=cover in the viewport meta tag to have any effect.
 
-## Navigation — mandatory rules for every page
+## Navigation — mandatory outcomes for every page (design the mechanism yourself)
+The nav's arrangement, its background treatment, whether and how it reacts to scroll, whether it sits in flow or overlays the hero, and how it collapses on mobile are all yours to design, to fit this business and this page. Don't reach for the same header you'd build by default — a law firm, a dev tool and a luxury brand should not ship the same nav. What follows are outcomes that must hold whatever mechanism you pick, not a template to copy.
 
-### Structure
-- Design the nav's desktop arrangement (logo, links, CTA) to fit the page — logo generally reads best on the left, but placement and spacing are otherwise open
-- Maximum 5-6 nav links. If the schema has more, hide the least important ones or collapse into a More item
-- Nav must be sticky: position: sticky; top: 0; z-index: 1000
-- Desktop nav starts fully transparent on load. On scroll, apply a background treatment that suits the page style — frosted glass (backdrop-filter: blur(14px)) works well on most styles, but a solid var(--bg-surface) or a dark overlay is fine too if it fits the aesthetic. Wire this via the safe JS scroll listener below
-- Add a subtle bottom border on scroll: border-bottom: 1px solid var(--border)
-- Nav CTA button must match the page primary button exactly — same accent color, same border-radius, same font weight
-- The nav CTA button is required (see above) even when the hero also has its own primary CTA — that duplication is expected and fine, since the nav CTA is what stays reachable once the user scrolls past the hero. The one thing to avoid is a phone/contact number appearing as its OWN separate stacked line inside the hero content when it's already shown in the nav — that's pure duplicate vertical space with nothing gained, since the nav is visible at the same time as the hero on first paint. Keep the phone number in the nav (or in a slim strip below the hero per "When hero content is dense" above) rather than as an extra block inside the hero's text column.
+### Readability in every state — the most-violated outcome
+Every nav element (logo, links, phone number, the mobile control) must be clearly readable against whatever is ACTUALLY painted behind it, in every state the nav has.
+- Work out what is behind the nav in each state before picking its colors. A nav in normal document flow occupies its own band above the hero, so leaving it transparent there shows the PAGE background (var(--bg)) — not the hero. A nav that overlays the hero shows the hero's own background. Those are usually different colors, and assuming the wrong one is exactly what renders a nav invisible.
+- If the nav's background changes on scroll, that's two different backgrounds, so budget two deliberate text colors as :root tokens. They may be equal only once you've checked both backgrounds are close enough in lightness for one color to work — never left to inherit the page's global --text and called done.
+- The logo has the same failure mode: a white-knockout wordmark on a light band is as invisible as white text. Choose the logo variant, or the band behind it, so the logo reads in every state.
 
-### Mobile drawer — CSS-only checkbox pattern (mandatory, no JS)
-Use the checkbox hack. Nav HTML structure must be:
-- input[type=checkbox][id=nav-toggle][class=nav-toggle-input] — hidden, drives open/close state
-- label[for=nav-toggle][class=nav-hamburger][aria-label=Toggle menu] containing exactly 3 empty span elements — the 3 bars
-- div.nav-menu containing the nav links and CTA — the slide-down drawer on mobile
-- Wrap all of the above in a div.nav-inner inside nav.site-nav
+### Layout and content
+- Maximum 5-6 nav links. If the schema has more, hide the least important ones or collapse into a More item.
+- Exactly one CTA button in the nav, matching the page's primary button exactly — same accent color, border-radius and font weight. It is required even when the hero has its own primary CTA: that duplication is the point, since the nav CTA is what stays reachable once the user scrolls past the hero.
+- Keep a phone/contact number in the nav (or in a slim strip below the hero per "When hero content is dense" above) rather than as its own stacked line inside the hero's text column — the nav is already visible alongside the hero on first paint, so that line is pure duplicate vertical space.
+- The nav must not overlap or obscure page content, and must leave the hero fitting in the first viewport (see "Account for the nav" above).
 
-### Hamburger — 3 CSS bars that morph into X (mandatory)
-The 3 span elements inside .nav-hamburger form the hamburger icon. Style rules:
-- Each span: display: block; width: 22px; height: 2px; background: var(--text); border-radius: 2px; transform-origin: center; transition: transform 280ms cubic-bezier(0.4,0,0.2,1), opacity 200ms ease
-- .nav-hamburger: display: none on desktop; on mobile (max-width: 768px): display: flex; flex-direction: column; gap: 5px; width: 32px; height: 32px; cursor: pointer; z-index: 1001; align-items: center; justify-content: center
-- .nav-toggle-input: always display: none
-
-X morph on :checked (sibling combinator — input must come BEFORE label in DOM):
-- .nav-toggle-input:checked ~ .nav-hamburger span:nth-child(1): transform: translateY(7px) rotate(45deg)
-- .nav-toggle-input:checked ~ .nav-hamburger span:nth-child(2): opacity: 0; transform: scaleX(0)
-- .nav-toggle-input:checked ~ .nav-hamburger span:nth-child(3): transform: translateY(-7px) rotate(-45deg)
-
-Mobile menu open state:
-- Default: transform: translateY(-8px); opacity: 0; pointer-events: none; transition: transform 260ms cubic-bezier(0.4,0,0.2,1), opacity 220ms ease
-- .nav-toggle-input:checked ~ .nav-menu: transform: translateY(0); opacity: 1; pointer-events: all
-
-Mobile menu layout at max-width: 768px — position: fixed; top: 60px; left: 0; right: 0; background: var(--bg-surface); backdrop-filter: blur(16px); border-bottom: 1px solid var(--border); display: flex; flex-direction: column; align-items: center; padding: 16px 0 24px
-
-### Scroll transparency — safe JS listener (mandatory)
-Add this script block before </body> (nav element MUST have class site-nav):
-
-<script>
-(function () {
-  try {
-    var nav = document.querySelector('.site-nav');
-    if (!nav) return;
-    function onScroll() {
-      try {
-        if (window.scrollY > 10) { nav.classList.add('nav-scrolled'); }
-        else { nav.classList.remove('nav-scrolled'); }
-      } catch (e) {}
-    }
-    window.addEventListener('scroll', onScroll, { passive: true });
-    onScroll();
-  } catch (e) {}
-})();
-</script>
-
-CSS for the scroll transition on .site-nav:
-- Default: background: transparent; border-bottom: 1px solid transparent; transition: background 300ms ease, border-color 300ms ease, backdrop-filter 300ms ease
-- .nav-scrolled: background: var(--bg-surface); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border-bottom: 1px solid var(--border)
-
-### Nav text color — two states need two colors (mandatory)
-The transparent (pre-scroll) nav sits directly over the hero; the scrolled nav sits over var(--bg-surface). A single --text value is not guaranteed to be readable against both — the hero background and --bg-surface can differ enough that one fixed color is invisible in one of the two states. Do not rely on the page's global --text alone for nav links/logo/hamburger bars:
-- Define --nav-text-on-hero and --nav-text-scrolled in :root, each picked for contrast against what's actually behind the nav in that state (the hero's background treatment, and var(--bg-surface), respectively).
-- .site-nav links/logo/hamburger use var(--nav-text-on-hero) by default; .nav-scrolled overrides them to var(--nav-text-scrolled). If the hero and --bg-surface are similar enough in lightness that one color works for both, the two tokens can be equal — but they must both be set deliberately, never left to inherit from --text alone.
-
-### Nav anti-patterns — never do these
-- NEVER use position: fixed for the nav — use position: sticky to avoid content offset issues
-- NEVER use a Font Awesome icon for the default hamburger — it cannot animate into an X. Use the 3-span CSS bar pattern unless the user explicitly requests a different icon style
-- NEVER toggle the mobile menu with display none/block — always use the opacity + transform slide animation
-- NEVER make the nav taller than 72px on desktop
-- NEVER put more than one CTA button in the nav
+### Mobile
+- The nav must collapse on narrow viewports behind an open/close control whose current state is obvious at a glance.
+- Opening and closing MUST NOT depend on JavaScript running successfully — drive the open/closed state in CSS (a hidden checkbox + :checked sibling selector, :target, <details>/<summary>, the popover attribute, or your own equivalent). A generated page can end up with its JS blocked or erroring, and a mobile menu that dies with it strands the visitor with no navigation at all. JS may enhance the menu; it may never be the only thing that opens it.
+- Opening and closing must actually work and must be animated (opacity + transform), never a bare display: none/block swap.
+- If the control uses an icon, it must be able to show both states — an icon-font glyph that can't animate or swap between them is not acceptable. A few elements you style yourself (bars morphing into an X, or your own equivalent) is the reliable route.
+- Any JS you add for nav behavior must be wrapped in try/catch, and any scroll listener must be passive and run once on load so the nav is correct before the first scroll.
 
 ## data-field attributes
 Every piece of editable text or image must have a data-field attribute matching its schema key.
@@ -481,7 +433,7 @@ Do NOT add SL markers to <script> tags.
 ## Progress markers — REQUIRED
 Before writing each major HTML section, emit a status comment on its own line immediately before that section's opening tag:
 <!-- STATUS: Writing navigation bar -->
-<nav class="site-nav">...
+<nav>...
 <!-- STATUS: Building hero section -->
 <section class="hero">...
 
