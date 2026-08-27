@@ -3,7 +3,7 @@ import { waitUntil } from '@vercel/functions';
 import { db } from '@/lib/supabase-server';
 import { syncLeadToHubSpot, getValidAccessToken } from '@/lib/integrations/hubspot';
 import { sendLeadNotificationEmail, type EmailConfig } from '@/lib/integrations/email';
-import { fireWebhook, type WebhookConfig, type WebhookFieldMappings } from '@/lib/integrations/webhook';
+import { fireWebhook, SYSTEM_FIELD_KEYS, type WebhookConfig, type WebhookFieldMappings } from '@/lib/integrations/webhook';
 
 export const dynamic = 'force-dynamic';
 
@@ -226,17 +226,6 @@ async function dispatchIntegrationsBackground(params: DispatchParams) {
 
     if (!workspaceIntegrations || workspaceIntegrations.length === 0) return;
 
-    // Fetch all enabled test-level mappings for this test in one query
-    const integrationIds = workspaceIntegrations.map(i => i.id);
-    const { data: mappings } = await db
-      .from('test_integration_mappings')
-      .select('id, workspace_integration_id, field_mappings')
-      .eq('test_id', params.testId)
-      .eq('enabled', true)
-      .in('workspace_integration_id', integrationIds);
-
-    if (!mappings || mappings.length === 0) return;
-
     // Resolve variant name once (shared across all integrations)
     let variantName: string | undefined;
     if (params.variantId) {
@@ -248,11 +237,34 @@ async function dispatchIntegrationsBackground(params: DispatchParams) {
       variantName = variant?.name;
     }
 
+    // Global webhooks (config.global) fire for EVERY test in this workspace —
+    // no per-test mapping required. Set up once on the client Integrations page
+    // (e.g. a Zapier Catch Hook). Must run before the per-test early-return below.
+    const globalWebhooks = workspaceIntegrations.filter(
+      i => i.type === 'webhook' && (i.config as { global?: boolean } | null)?.global === true
+    );
+    if (globalWebhooks.length > 0) {
+      await Promise.allSettled(globalWebhooks.map(i => handleGlobalWebhook(params, i, variantName)));
+    }
+
+    // Fetch all enabled test-level mappings for this test in one query
+    const integrationIds = workspaceIntegrations.map(i => i.id);
+    const { data: mappings } = await db
+      .from('test_integration_mappings')
+      .select('id, workspace_integration_id, field_mappings')
+      .eq('test_id', params.testId)
+      .eq('enabled', true)
+      .in('workspace_integration_id', integrationIds);
+
+    if (!mappings || mappings.length === 0) return;
+
     // Dispatch each mapping to the correct integration handler
     await Promise.allSettled(
       mappings.map(async (mapping) => {
         const integration = workspaceIntegrations.find(i => i.id === mapping.workspace_integration_id);
         if (!integration) return;
+        // Global webhooks already fired above — never double-send if one also has a mapping.
+        if (integration.type === 'webhook' && (integration.config as { global?: boolean } | null)?.global === true) return;
 
         if (integration.type === 'hubspot') {
           await handleHubSpot(params, mapping, integration, variantName);
@@ -380,4 +392,42 @@ async function handleWebhook(
     console.error('[webhook] failed:', result.error, result.statusCode);
     await db.rpc('increment_integration_failed', { p_mapping_id: mapping.id });
   }
+}
+
+// Global (client-level) webhook: fires on every test, with no per-test field
+// mapping. Sends every form field + all system values under their own names —
+// the "send everything to Zapier/Make/CRM" case. No mapping id, so no per-mapping
+// sync counters (best-effort; failures are logged).
+async function handleGlobalWebhook(
+  params: DispatchParams,
+  integration: { id: string; config: unknown },
+  variantName: string | undefined,
+) {
+  const config = integration.config as WebhookConfig;
+  if (!config?.url) return;
+
+  const systemValues: Record<string, string | null | undefined> = {
+    ip_address:   params.systemData.ip_address,
+    submitted_at: params.systemData.submitted_at,
+    test_id:      params.testId,
+    test_name:    params.testName,
+    variant_id:   params.variantId,
+    variant_name: variantName,
+    utm_source:   params.systemData.utm_source,
+    utm_medium:   params.systemData.utm_medium,
+    utm_campaign: params.systemData.utm_campaign,
+    utm_content:  params.systemData.utm_content,
+    utm_term:     params.systemData.utm_term,
+    gclid:        params.systemData.gclid,
+    fbclid:       params.systemData.fbclid,
+  };
+
+  // Identity mapping = pass every field through under its own key.
+  const mappings: WebhookFieldMappings = {
+    formFields: Object.fromEntries(Object.keys(params.formFields).map(k => [k, k])),
+    systemFields: Object.fromEntries(SYSTEM_FIELD_KEYS.map(k => [k, k])),
+  };
+
+  const result = await fireWebhook({ config, mappings, formFields: params.formFields, systemValues });
+  if (!result.ok) console.error('[global-webhook] failed:', result.error, result.statusCode);
 }

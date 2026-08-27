@@ -637,7 +637,6 @@ export default function AnalyticsClient({
 
   // Integrations
   const [hsIntegration, setHsIntegration] = useState<{ id: string; enabled: boolean; hub_id?: string | null } | null>(null);
-  const [hsDisconnecting, setHsDisconnecting] = useState(false);
   const [hsProperties, setHsProperties] = useState<HubSpotProperty[]>([]);
   const [hsPropsLoading, setHsPropsLoading] = useState(false);
   const [hsForms, setHsForms] = useState<HubSpotForm[]>([]);
@@ -1899,23 +1898,8 @@ export default function AnalyticsClient({
     }
   }
 
-  async function disconnectHubSpot() {
-    if (!workspaceId) return;
-    setHsDisconnecting(true);
-    try {
-      const res = await fetch(`/api/workspaces/${workspaceId}/integrations?type=hubspot`, { method: 'DELETE' });
-      if (!res.ok) { toast.error('Failed to disconnect HubSpot'); return; }
-      setHsIntegration(null);
-      setTestMapping({ enabled: true, field_mappings: {} });
-      setHsProperties([]);
-      setIntegrationsLoaded(false);
-      toast.success('HubSpot disconnected');
-    } catch {
-      toast.error('Failed to disconnect HubSpot');
-    } finally {
-      setHsDisconnecting(false);
-    }
-  }
+  // HubSpot connect/disconnect now lives on the client Integrations page
+  // (/clients/[id]/integrations). The per-test view only maps fields.
 
   function openEmailModal() {
     // Pre-fill from existing config if editing
@@ -4614,32 +4598,23 @@ export default function AnalyticsClient({
 
               <div className="px-5 py-4">
                 {!hsIntegration ? (
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-3">
                     <p className="text-xs text-slate-500">
-                      Connect your HubSpot account to automatically sync form leads to your CRM.
+                      HubSpot isn&apos;t connected for this client yet. Connect it once on the{" "}
+                      <Link href={`/clients/${clientId}/integrations`} className="text-indigo-600 dark:text-indigo-400 hover:underline">Integrations page</Link>, then map this test&apos;s form fields here.
                     </p>
-                    <a
-                      href={workspaceId ? `/api/integrations/hubspot/connect?workspaceId=${workspaceId}&returnTo=${encodeURIComponent(window.location.pathname + '?tab=integrations&hs_connected=1')}` : '#'}
-                      className="btn-primary text-sm flex items-center gap-2 px-4 py-2 rounded-lg font-medium no-underline"
-                    >
-                      <svg width="14" height="14" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
-                        <path d="M326.4 173.5v-51.7a43.5 43.5 0 0 0 25.2-39.3V80.9C351.6 57.4 332.7 38 309.2 38h-1.4c-23.5 0-42.4 19.4-42.4 42.9v1.6a43.5 43.5 0 0 0 25.2 39.3v51.7c-24.5 3.7-46.9 13.9-65.2 28.8L107 110.1a38.9 38.9 0 1 0-21.6 19.5l113.2 91.6c-16.7 22.4-26.6 50.2-26.6 80.4 0 73.3 59.5 132.8 132.8 132.8S437.6 374.9 437.6 301.6c0-69-52.6-125.7-120-131.8l8.8-.3zM304.8 392.4c-50 0-90.5-40.5-90.5-90.5s40.5-90.5 90.5-90.5 90.5 40.5 90.5 90.5-40.5 90.5-90.5 90.5z" fill="white"/>
-                      </svg>
-                      Connect HubSpot
-                    </a>
+                    <Link href={`/clients/${clientId}/integrations`} className="btn-secondary text-xs flex-shrink-0">
+                      Integrations <ExternalLink size={12} />
+                    </Link>
                   </div>
                 ) : (
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-3">
                     <p className="text-xs text-slate-500">
-                      HubSpot is connected. Map your form fields to HubSpot contact properties below.
+                      HubSpot is connected for this client. Map this test&apos;s form fields to HubSpot contact properties below.
                     </p>
-                    <button
-                      onClick={disconnectHubSpot}
-                      disabled={hsDisconnecting}
-                      className="text-xs text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 transition-colors flex items-center gap-1"
-                    >
-                      <XCircle size={13} /> {hsDisconnecting ? 'Disconnecting…' : 'Disconnect'}
-                    </button>
+                    <Link href={`/clients/${clientId}/integrations`} className="text-xs text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 transition-colors flex items-center gap-1 flex-shrink-0">
+                      Manage <ExternalLink size={12} />
+                    </Link>
                   </div>
                 )}
               </div>
