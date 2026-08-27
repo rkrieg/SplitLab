@@ -31,10 +31,15 @@ interface VariantStat {
 // our sl_variant tag, so this is page/site-level color, not per-variant.
 async function fetchClarity(apiToken: string): Promise<{ ok: boolean; note: string; data?: unknown }> {
   try {
+    // Hard timeout — the Data Export API can hang, and without this it could run
+    // the whole request past its maxDuration and 504 the insight generation.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
     const res = await fetch('https://www.clarity.ms/export-data/api/v1/project-live-insights?numOfDays=3', {
       headers: { Authorization: `Bearer ${apiToken}`, 'Content-Type': 'application/json' },
       cache: 'no-store',
-    });
+      signal: controller.signal,
+    }).finally(() => clearTimeout(timer));
     if (res.status === 429) return { ok: false, note: 'Clarity rate limit reached (10/day) — behavioral data skipped this run.' };
     if (res.status === 401 || res.status === 403) return { ok: false, note: 'Clarity API token invalid — behavioral data skipped.' };
     if (!res.ok) return { ok: false, note: `Clarity API error ${res.status} — behavioral data skipped.` };
@@ -75,6 +80,7 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
   if ('error' in r) return NextResponse.json({ error: r.error }, { status: r.status });
   const test = r.test as { id: string; name: string; url_path: string; workspace_id: string };
 
+  try {
   // 1. Per-variant stats (all-time) via the same RPCs the analytics page uses.
   const [{ data: rpcStats }, { data: rpcDevice }, { data: variantRows }] = await Promise.all([
     db.rpc('test_variant_stats', { p_test_id: test.id, p_from: null, p_to: null }),
@@ -196,7 +202,16 @@ Rules:
     ...(parsed as Record<string, unknown>),
   };
 
-  await db.from('tests').update({ ai_insights: insights } as never).eq('id', test.id);
+  // Best-effort cache — a DB without migration 062 just won't persist it.
+  const { error: cacheErr } = await db.from('tests').update({ ai_insights: insights } as never).eq('id', test.id);
+  if (cacheErr) console.warn('[ai-insights] not cached (run migration 062?):', cacheErr.message);
 
   return NextResponse.json({ insights });
+  } catch (err) {
+    console.error('[ai-insights] generate failed:', err);
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : 'Failed to generate insights' },
+      { status: 500 },
+    );
+  }
 }
