@@ -30,11 +30,30 @@ export default async function AdminUsers({
 
   const { data: users, count } = await query.range(from, to);
 
-  // Per-user client counts (one query, mapped in memory).
+  // Per-user client counts (one query, mapped in memory). Owning ≥1 client = a
+  // top-level ACCOUNT (signup creates a client owned by the user). Owning none =
+  // a MEMBER who joined an existing account via invite.
   const { data: clients } = await db.from('clients').select('owner_id');
   const clientCounts = new Map<string, number>();
   for (const c of clients ?? []) {
     if (c.owner_id) clientCounts.set(c.owner_id, (clientCounts.get(c.owner_id) ?? 0) + 1);
+  }
+  const accountsTotal = clientCounts.size; // distinct account owners
+
+  // For the members on this page (0 clients), resolve which account they joined.
+  const memberIds = (users ?? []).filter(u => (clientCounts.get(u.id) ?? 0) === 0).map(u => u.id);
+  const accountByMember = new Map<string, string>();
+  if (memberIds.length) {
+    const { data: memberships } = await db
+      .from('workspace_members')
+      .select('user_id, workspaces(clients(name))')
+      .in('user_id', memberIds);
+    for (const m of (memberships ?? []) as { user_id: string; workspaces: unknown }[]) {
+      if (accountByMember.has(m.user_id)) continue;
+      const ws = Array.isArray(m.workspaces) ? m.workspaces[0] : m.workspaces;
+      const cl = ws ? (Array.isArray((ws as { clients?: unknown }).clients) ? (ws as { clients: { name?: string }[] }).clients[0] : (ws as { clients?: { name?: string } }).clients) : null;
+      if (cl?.name) accountByMember.set(m.user_id, cl.name);
+    }
   }
 
   // Actual billed revenue per Stripe customer (real payers stand out from test accounts).
@@ -48,7 +67,9 @@ export default async function AdminUsers({
       <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-xl font-semibold">Users</h1>
-          <p className="text-sm text-slate-500 dark:text-slate-400">{(count ?? 0).toLocaleString()} total</p>
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            <span className="font-medium text-slate-700 dark:text-slate-300">{accountsTotal.toLocaleString()} accounts</span> · {(count ?? 0).toLocaleString()} total users
+          </p>
         </div>
         <form className="relative" action="/admin/users" method="GET">
           <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -67,6 +88,7 @@ export default async function AdminUsers({
           <thead>
             <tr className="text-left text-xs text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-800">
               <th className="px-5 py-2.5 font-medium">User</th>
+              <th className="px-5 py-2.5 font-medium">Account</th>
               <th className="px-5 py-2.5 font-medium">Role</th>
               <th className="px-5 py-2.5 font-medium">Type</th>
               <th className="px-5 py-2.5 font-medium">Plan</th>
@@ -89,6 +111,18 @@ export default async function AdminUsers({
                     <span className="block text-xs text-slate-500 dark:text-slate-400">{u.email}</span>
                   </Link>
                 </td>
+                <td className="px-5 py-3">
+                  {(clientCounts.get(u.id) ?? 0) > 0 ? (
+                    <span className="text-[11px] px-2 py-0.5 rounded-full font-medium bg-indigo-500/15 text-indigo-700 dark:text-indigo-400">Account</span>
+                  ) : (
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[11px] px-2 py-0.5 rounded-full font-medium bg-slate-400/15 text-slate-500 dark:text-slate-400 w-fit">Member</span>
+                      {accountByMember.get(u.id) && (
+                        <span className="text-[10px] text-slate-400 dark:text-slate-500">under {accountByMember.get(u.id)}</span>
+                      )}
+                    </div>
+                  )}
+                </td>
                 <td className="px-5 py-3 capitalize text-slate-600 dark:text-slate-300">{u.role}</td>
                 <td className="px-5 py-3">
                   <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${meta.badge}`}>{meta.label}</span>
@@ -107,7 +141,7 @@ export default async function AdminUsers({
               );
             })}
             {(users ?? []).length === 0 && (
-              <tr><td colSpan={8} className="px-5 py-10 text-center text-slate-400">No users found{q ? ` for “${q}”` : ''}.</td></tr>
+              <tr><td colSpan={9} className="px-5 py-10 text-center text-slate-400">No users found{q ? ` for “${q}”` : ''}.</td></tr>
             )}
           </tbody>
         </table>
