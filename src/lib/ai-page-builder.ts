@@ -90,7 +90,7 @@ Never use fixed px font sizes for headings.
 - h1: font-size: clamp(44px, 6.5vw, 92px) | font-weight: 700-800 | letter-spacing: -0.03em to -0.04em | line-height: 1.02-1.08
 - h2: font-size: clamp(30px, 3.8vw, 54px) | font-weight: 600-700 | letter-spacing: -0.02em | line-height: 1.1-1.2
 - h3: font-size: clamp(18px, 1.8vw, 24px) | font-weight: 600 | line-height: 1.3
-- body/p: font-size: clamp(15px, 1.1vw, 17px) | line-height: 1.65 | max-width: 58ch on body copy
+- body/p: start from font-size: clamp(16px, 1.25vw, 18px) | line-height: 1.65 | max-width: 58ch on body copy. Adjust the curve to suit the brand — denser/tighter for data-heavy B2B, larger/airier for premium or lifestyle. The 16px floor is the one part that never moves: body copy must never compute below 16px at 360px wide.
 - labels/eyebrows: font-size: 11-13px | letter-spacing: 0.1em-0.2em | text-transform: uppercase | font-weight: 500-600
 - Never set body copy wider than 68ch
 - The ch width cap is for body copy ONLY. Never put a max-width in ch units (or any narrow max-width) on an h1/h2/h3 or its wrapper (e.g. a section's heading container like .sec-head) — a bold 24-54px headline in a 20-22ch box wraps to 4-5 cramped lines. If a heading's wrapper needs a max-width to keep it from stretching edge-to-edge, use a px or percent value wide enough for the actual heading copy at its actual font-size (e.g. max-width: 720px), verified against the longest headline on the page — never copy the body-copy ch value onto a heading.
