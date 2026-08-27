@@ -5136,7 +5136,9 @@ export async function POST(
       if (request.signal.aborted) { closeSSE(controller); return; }
 
       const hasCompetitorContext =
-        (competitorContext?.screenshots?.length ?? 0) > 0 || !!competitorContext?.cssTokens;
+        (competitorContext?.screenshots?.length ?? 0) > 0 ||
+        !!competitorContext?.cssTokens ||
+        !!competitorContext?.palette;
 
       // Emit status before Pass 1
       sendSSE(controller, {
@@ -5145,10 +5147,17 @@ export async function POST(
       });
 
       // Build Pass 1 message content
-      const competitorTokenNote = competitorContext?.cssTokens
-        ? `## Competitor CSS token block — use these EXACT values\n${competitorContext.cssTokens}\n\n`
+      // The measured colours/fonts reach the edit path too. An edit that
+      // references a site ("match their branding") is the same job as a build
+      // that does, and sending only the layout tokens here would leave this
+      // call inventing a palette for a site we had already measured.
+      const competitorPaletteNote = competitorContext?.palette
+        ? `## Reference site — MEASURED colours and fonts (exact values from its own stylesheets)\nRead these together with the screenshot: the screenshot tells you which colour plays which role and where, this list tells you the exact value. Carry EVERY colour the screenshot shows doing brand work — a brand with two or three accents must keep all of them.\n${competitorContext.palette}\n\n`
         : '';
-      const textContent = `${competitorTokenNote}Current schema:\n${JSON.stringify(schema, null, 2)}\n\nCurrent HTML:\n${htmlForModel}\n\nInstruction: ${prompt}`;
+      const competitorTokenNote = competitorContext?.cssTokens
+        ? `## Reference site — layout tokens and section order\n${competitorContext.cssTokens}\n\n`
+        : '';
+      const textContent = `${competitorPaletteNote}${competitorTokenNote}Current schema:\n${JSON.stringify(schema, null, 2)}\n\nCurrent HTML:\n${htmlForModel}\n\nInstruction: ${prompt}`;
 
       const userContent: AIContent = [
         ...(competitorContext?.screenshots ?? []).map(data => ({ type: 'image_base64' as const, data, mediaType: 'image/jpeg' })),
@@ -5364,6 +5373,7 @@ export async function POST(
           finalHtml = await buildHtmlFromSchema(enrichedSchema, {
             competitorScreenshots: competitorContext?.screenshots ?? [],
             competitorCssTokens: competitorContext?.cssTokens ?? undefined,
+            competitorPalette: competitorContext?.palette ?? undefined,
             competitorPageContent: competitorContext?.pageContent ?? undefined,
             realLogoUrl: materializedLogoUrl ?? undefined,
             userPrompt: prompt,
