@@ -4952,32 +4952,14 @@ export default function AnalyticsClient({
                 </p>
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200 mb-1">Project ID <span className="text-red-500">*</span></label>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      value={clarityDraft}
-                      onChange={(e) => setClarityDraft(e.target.value)}
-                      placeholder="e.g. abcd1234ef — from your Clarity install snippet"
-                      spellCheck={false}
-                      className="input text-sm flex-1"
-                    />
-                    <button
-                      onClick={saveClarity}
-                      disabled={claritySaving}
-                      className="btn-primary text-sm px-4 py-2 rounded-lg font-medium flex-shrink-0 flex items-center gap-2"
-                    >
-                      {claritySaving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
-                      {claritySaved ? 'Update' : 'Connect'}
-                    </button>
-                    {claritySaved && (
-                      <button
-                        onClick={disconnectClarity}
-                        className="text-xs text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 transition-colors flex items-center gap-1 flex-shrink-0"
-                      >
-                        <XCircle size={13} /> Disconnect
-                      </button>
-                    )}
-                  </div>
+                  <input
+                    type="text"
+                    value={clarityDraft}
+                    onChange={(e) => setClarityDraft(e.target.value)}
+                    placeholder="e.g. abcd1234ef — from your Clarity install snippet"
+                    spellCheck={false}
+                    className="input text-sm w-full"
+                  />
                   <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">Find it in Clarity → Settings → Overview, or in your install snippet.</p>
                 </div>
                 <div>
@@ -4994,8 +4976,27 @@ export default function AnalyticsClient({
                     className="input text-sm w-full"
                   />
                   <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">
-                    Get it in Clarity → Settings → Data Export → Generate new API token. Lets SplitLab pull site-wide behavioral signals (rage/dead clicks, scroll depth, JS errors) into AI Insights. Click <strong>Update</strong> after entering it.
+                    Get it in Clarity → Settings → Data Export → Generate new API token. Lets SplitLab pull site-wide behavioral signals (rage/dead clicks, scroll depth, JS errors) into AI Insights.
                   </p>
+                </div>
+                {/* Single save action for BOTH fields, at the bottom so it's clear it saves everything above */}
+                <div className="flex items-center gap-3 pt-1">
+                  <button
+                    onClick={saveClarity}
+                    disabled={claritySaving}
+                    className="btn-primary text-sm px-4 py-2 rounded-lg font-medium flex items-center gap-2"
+                  >
+                    {claritySaving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
+                    {claritySaved ? 'Update connection' : 'Connect Clarity'}
+                  </button>
+                  {claritySaved && (
+                    <button
+                      onClick={disconnectClarity}
+                      className="text-xs text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 transition-colors flex items-center gap-1"
+                    >
+                      <XCircle size={13} /> Disconnect
+                    </button>
+                  )}
                 </div>
                 {claritySaved && (
                   <a
