@@ -1,5 +1,14 @@
 import type { Skill } from './types';
-import { attrValue, distinctCssValues, sectionNameAt, stripCode, styleText } from './check-utils';
+import {
+  attrValue,
+  directChildTags,
+  distinctCssValues,
+  gridTrackCount,
+  heroRegion,
+  sectionNameAt,
+  stripCode,
+  styleText,
+} from './check-utils';
 
 /**
  * Distilled from the client's `frontend-design` SKILL.md and
@@ -32,6 +41,135 @@ function isDiagram(svg: string, sectionName: string | null): boolean {
   return /<title\b/i.test(svg) || /<desc\b/i.test(svg);
 }
 
+/**
+ * Selectors that would put `text-wrap: balance` on the hero H1 — either by
+ * targeting it directly (`.hero h1`, `.hero-copy h1`) or by styling every h1
+ * on the page (`h1`, `h1,h2`), which the hero's H1 inherits too.
+ *
+ * Balance equalises line lengths, so it moves a word to the next line even
+ * when it still fits on the current one. In a hero that reads as a broken
+ * phrase ("It's Not About / the Injury"), so it is banned there specifically.
+ */
+function balancedHeroH1Selectors(css: string): string[] {
+  const out: string[] = [];
+  // Strip comments so a commented-out rule never trips the check.
+  const clean = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const RULE = /([^{}]+)\{([^{}]*)\}/g;
+  let m: RegExpExecArray | null;
+  while ((m = RULE.exec(clean))) {
+    const selector = m[1].trim();
+    const body = m[2];
+    if (!/text-wrap\s*:\s*balance/i.test(body)) continue;
+    // At-rule preludes (@media, @supports) carry no selector of their own.
+    if (selector.startsWith('@')) continue;
+    const hitsHeroH1 = selector.split(',').some((partRaw) => {
+      const part = partRaw.trim();
+      if (!part) return false;
+      // Ends in h1 (or an h1 with pseudo/class suffix) — `h1`, `.hero h1`,
+      // `.hero-copy > h1`, `h1.title`.
+      const targetsH1 = /(^|[\s>+~])h1(\b|[.:#[])/i.test(part) || /^h1(\b|[.:#[])/i.test(part);
+      if (!targetsH1) return false;
+      // A bare/global h1 rule reaches the hero H1 as well.
+      const scoped = /[.#][\w-]+/.test(part.replace(/h1[\w.:#[\]()-]*\s*$/i, ''));
+      if (!scoped) return true;
+      return /hero|banner|masthead|above-?fold|opening/i.test(part);
+    });
+    if (hitsHeroH1) out.push(selector.replace(/\s+/g, ' '));
+  }
+  return out.filter((sel, i) => out.indexOf(sel) === i);
+}
+
+/**
+ * Sentences in a hero headline, ignoring the abbreviations that would otherwise
+ * split one sentence in two ("J.D.", "U.S.", "Inc."). A fragment only counts as
+ * its own sentence when it carries at least two words, so "Stop guessing. Start
+ * winning." reads as two sentences while a stray initial does not.
+ */
+function headlineSentences(text: string): string[] {
+  const DOT = '\u0000';
+  const guarded = text
+    // Initialisms: J.D., U.S., U.S.A. — neutralise every dot in the run.
+    .replace(/\b(?:[A-Za-z]\.){2,}/g, (run) => run.replace(/\./g, DOT))
+    // Common title/suffix abbreviations.
+    .replace(/\b(Mr|Mrs|Ms|Dr|Prof|Jr|Sr|St|Inc|Ltd|Co|vs|etc|No|Est)\./gi, `$1${DOT}`);
+  return guarded
+    .split(/(?<=[.!?])["'\u201d\u2019]?\s+/)
+    .map((part) => part.split(DOT).join('.').trim())
+    .filter((part) => part.split(/\s+/).filter(Boolean).length >= 2);
+}
+
+/**
+ * Grid rows whose direct children outnumber their column tracks.
+ *
+ * Grid auto-placement puts the overflow children on the next row starting at
+ * COLUMN 1. On the common "icon/number + text" row — `grid-template-columns:
+ * 46px 1fr` with children .dot, h3, p — that drops the paragraph into the 46px
+ * track, so it renders at icon width with one word per line. It reads as a
+ * responsive bug but it is a placement bug, and it survives review because it
+ * looks fine until the viewport narrows.
+ *
+ * Deliberately conservative — it only reports a class when ALL of these hold,
+ * so a deliberate multi-row grid is never flagged:
+ *  - the track count is statically knowable (no repeat(auto-fit), no var())
+ *  - the first track is narrow-fixed (<= 80px) or `auto`, i.e. the icon shape
+ *  - nothing in the CSS places children explicitly for that class
+ *  - an element with that class really does carry more children than tracks
+ */
+function gridOverflowRows(html: string, css: string): string[] {
+  const clean = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const offenders: string[] = [];
+  const RULE = /([^{}]+)\{([^{}]*)\}/g;
+  let m: RegExpExecArray | null;
+  while ((m = RULE.exec(clean))) {
+    const selector = m[1].trim();
+    const body = m[2];
+    if (selector.startsWith('@')) continue;
+    const cols = /grid-template-columns\s*:\s*([^;]+)/i.exec(body)?.[1];
+    if (!cols) continue;
+    // A column-flowing grid places items down, not across — the trap does not apply.
+    if (/grid-auto-flow\s*:\s*column/i.test(body)) continue;
+    const tracks = gridTrackCount(cols);
+    if (!tracks || tracks < 2) continue;
+
+    // Only the icon/number + content shape: a narrow fixed or auto first track.
+    // Read it off the expanded list so repeat(2, auto) is judged on `auto`,
+    // not on the literal string "repeat(2,".
+    const expandedCols = cols.replace(/repeat\(\s*(\d+)\s*,([^()]*(?:\([^()]*\)[^()]*)*)\)/gi, (_a, n, t) =>
+      Array.from({ length: Number(n) }, () => String(t).trim()).join(' '),
+    );
+    const firstTrack = (expandedCols.trim().match(/^[^\s]+/) ?? [''])[0];
+    const px = /^(\d+(?:\.\d+)?)px$/i.exec(firstTrack);
+    const narrowFirst = firstTrack.toLowerCase() === 'auto' || (px !== null && Number(px[1]) <= 80);
+    if (!narrowFirst) continue;
+
+    // Single-class selectors only — compound/descendant selectors are ambiguous
+    // about which element actually carries the children.
+    const cls = /^\.([\w-]+)$/.exec(selector)?.[1];
+    if (!cls) continue;
+    // Explicit placement anywhere for this class means the author took control.
+    if (new RegExp(`\\.${cls}\\b[^{}]*\\{[^{}]*grid-(column|area|row)\\s*:`, 'i').test(clean)) continue;
+
+    // Whole-token class match. \b is not enough: `\bpa\b` also matches inside
+    // class="pa-list", which reported a wrapper's children against .pa's tracks.
+    const OPEN = /<([a-zA-Z][\w-]*)([^>]*)>/g;
+    let el: RegExpExecArray | null;
+    while ((el = OPEN.exec(html))) {
+      const classAttr = attrValue(el[2], 'class');
+      if (!classAttr || !classAttr.split(/\s+/).includes(cls)) continue;
+      const { children, balanced } = directChildTags(html, el.index + el[0].length, el[1]);
+      if (!balanced) continue;
+      // An exact multiple of the track count is a deliberate multi-row grid
+      // (three icon+text pairs in a 2-track grid). Only a remainder means a
+      // child landed in the wrong column.
+      if (children.length > tracks && children.length % tracks !== 0) {
+        offenders.push(`.${cls} (${tracks} columns, ${children.length} children: ${children.join(', ')})`);
+        break;
+      }
+    }
+  }
+  return offenders.filter((v, i, a) => a.indexOf(v) === i);
+}
+
 export const antiSlop: Skill = {
   id: 'anti_slop',
   name: 'Anti-Slop',
@@ -59,22 +197,85 @@ No invented statistics, no decorative numbers, no "Our values"/"Why choose us" s
 ## Anti-slop — required
 - **One signature element.** Choose the single thing this page will be remembered by — a typographic treatment, an oversized number, a full-bleed opening image, a distinctive divider — and let it be the only loud moment. Everything else stays quiet and disciplined.
 - **Vary the geometry.** Do not reuse one border-radius and one box-shadow across the entire page. At least two distinct radius values and two distinct shadow depths, used to mean different things (an elevated surface is not a flat one).
-- **text-wrap: balance on headlines, text-wrap: pretty on paragraphs.** Both, every page. It is one line of CSS and it is the difference between typeset and typed.
+- **text-wrap: balance on section headings (h2/h3), text-wrap: pretty on paragraphs.** Both, every page. It is one line of CSS and it is the difference between typeset and typed. ONE EXCEPTION, and it is mandatory: the hero H1 must NEVER get \`text-wrap: balance\`. Balance equalises line lengths by pulling words down off a line that still had room, which breaks a headline as "It's Not About / the Injury" instead of "It's Not About the Injury." The hero H1 gets \`text-wrap: pretty\` (or nothing at all) so each line fills its measure and wraps only at a real sentence or clause boundary. Make sure any global \`h1 { ... }\` rule you write does not put balance on the hero H1 by inheritance.
 - **Before you finish, remove one accessory.** Re-read the page and delete the single least necessary decorative element. If deleting it costs nothing, it should never have been there.`,
 
   checks: [
     {
       id: 'text_wrap',
-      label: 'Modern text-wrap on headlines',
+      label: 'Modern text-wrap on headings',
       run: (html) => {
         const css = styleText(html);
         if (!css) return null;
         const balance = /text-wrap\s*:\s*balance/i.test(css);
         const pretty = /text-wrap\s*:\s*pretty/i.test(css);
-        if (balance && pretty) return { passed: true, detail: 'Both text-wrap: balance and text-wrap: pretty are used.' };
-        if (balance || pretty)
-          return { passed: true, detail: `text-wrap: ${balance ? 'balance' : 'pretty'} is used (the other is missing).` };
-        return { passed: false, detail: 'Neither text-wrap: balance nor text-wrap: pretty appears in the CSS.' };
+        if (!balance && !pretty)
+          return { passed: false, detail: 'Neither text-wrap: balance nor text-wrap: pretty appears in the CSS.' };
+        return {
+          passed: true,
+          detail: `text-wrap: ${balance && pretty ? 'balance and pretty are' : `${balance ? 'balance' : 'pretty'} is`} used.`,
+        };
+      },
+    },
+    {
+      id: 'hero_h1_no_balance',
+      label: 'Hero H1 fills its lines (no text-wrap: balance)',
+      run: (html) => {
+        const css = styleText(html);
+        if (!css) return null;
+        const offenders = balancedHeroH1Selectors(css);
+        if (offenders.length === 0)
+          return { passed: true, detail: 'No text-wrap: balance reaches the hero H1.' };
+        return {
+          passed: false,
+          detail: `text-wrap: balance applies to the hero H1 via ${offenders
+            .map((sel) => `\`${sel}\``)
+            .join(', ')} — it pulls words onto the next line while the current one still has room. Use text-wrap: pretty (or omit it) on the hero H1.`,
+        };
+      },
+    },
+    {
+      id: 'hero_h1_sentence_lines',
+      label: 'Multi-sentence hero headline gives each sentence its own line',
+      run: (html) => {
+        const clean = stripCode(html);
+        const { start, end } = heroRegion(clean);
+        const h1 = /<h1\b[^>]*>([\s\S]*?)<\/h1>/i.exec(clean.slice(start, end))?.[1];
+        if (!h1) return null;
+        const text = h1.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+        const sentences = headlineSentences(text);
+        if (sentences.length < 2)
+          return { passed: true, detail: 'Single-sentence headline — nothing to split.' };
+        // Each sentence needs its own block-level wrapper so a line break can
+        // only ever land between sentences, never mid-phrase.
+        const wrappers = h1.match(/<span\b[^>]*>/gi) ?? [];
+        const lineWrappers = wrappers.filter((tag) =>
+          /class\s*=\s*["'][^"']*\b(hl-line|headline-line|h1-line|line)\b/i.test(tag),
+        );
+        if (lineWrappers.length >= sentences.length)
+          return { passed: true, detail: `${sentences.length} sentences, each in its own line span.` };
+        return {
+          passed: false,
+          detail: `The hero H1 holds ${sentences.length} sentences but ${
+            lineWrappers.length === 0 ? 'no' : `only ${lineWrappers.length}`
+          } line span(s). Wrap each sentence in <span class="hl-line"> with display:block so a break lands between sentences, not mid-phrase.`,
+        };
+      },
+    },
+    {
+      id: 'grid_row_child_overflow',
+      label: 'Icon/number grid rows place their text in the content column',
+      run: (html) => {
+        // styleText must read the ORIGINAL html — stripCode removes <style> blocks.
+        const css = styleText(html);
+        if (!css) return null;
+        const offenders = gridOverflowRows(stripCode(html), css);
+        if (offenders.length === 0)
+          return { passed: true, detail: 'No grid row has more children than columns.' };
+        return {
+          passed: false,
+          detail: `${offenders.join('; ')} — grid auto-placement wraps the extra child onto the next row in COLUMN 1, so that text renders at the icon column's width (one word per line). Wrap the content in a single child, or set grid-column: 2 on it.`,
+        };
       },
     },
     {

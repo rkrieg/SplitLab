@@ -219,3 +219,64 @@ export function fieldPurposeText(f: FormField): string {
     .join(' ')
     .toLowerCase();
 }
+
+/** Void elements never have children, so a scanner must not wait for a close tag. */
+const VOID_TAGS = new Set([
+  'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
+  'link', 'meta', 'param', 'source', 'track', 'wbr',
+]);
+
+/**
+ * Direct element children of the element whose opening tag ends at `openEnd`,
+ * plus whether the scan closed cleanly.
+ *
+ * Used by the grid-placement check: a grid row with more direct children than
+ * it has column tracks silently wraps the overflow children into the FIRST
+ * track, which on an icon/number + text row means a paragraph rendered at the
+ * icon's width. Counting children needs real nesting depth, not a regex.
+ *
+ * Returns `balanced: false` when the markup runs out before the element
+ * closes — the caller should then skip rather than report on a bad parse.
+ */
+export function directChildTags(
+  html: string,
+  openEnd: number,
+  tagName: string,
+): { children: string[]; balanced: boolean } {
+  const children: string[] = [];
+  const TAG = /<(\/?)([a-zA-Z][\w-]*)([^>]*)>/g;
+  TAG.lastIndex = openEnd;
+  let depth = 0;
+  let m: RegExpExecArray | null;
+  while ((m = TAG.exec(html))) {
+    const closing = m[1] === '/';
+    const name = m[2].toLowerCase();
+    const selfClosing = m[3].trimEnd().endsWith('/') || VOID_TAGS.has(name);
+    if (closing) {
+      if (depth === 0) return { children, balanced: name === tagName.toLowerCase() };
+      depth--;
+      continue;
+    }
+    if (depth === 0) children.push(name);
+    if (!selfClosing) depth++;
+  }
+  return { children, balanced: false };
+}
+
+/**
+ * Column track count for a `grid-template-columns` value, or null when the
+ * track count is not statically knowable (repeat(auto-fit/auto-fill), subgrid,
+ * a var() the value depends on).
+ */
+export function gridTrackCount(value: string): number | null {
+  const v = value.trim();
+  if (!v || /subgrid|auto-fit|auto-fill|var\(/i.test(v)) return null;
+  // Expand a literal repeat(N, tracks) before counting.
+  const expanded = v.replace(/repeat\(\s*(\d+)\s*,([^()]*(?:\([^()]*\)[^()]*)*)\)/gi, (_all, n, tracks) =>
+    Array.from({ length: Number(n) }, () => tracks.trim()).join(' '),
+  );
+  // Tokenise on whitespace that is not inside brackets — minmax(0,1fr) is one track.
+  const tokens = expanded.match(/(?:[^\s()[\]]+(?:\([^()]*\))?|\[[^\]]*\])/g) ?? [];
+  const tracks = tokens.filter((t) => !t.startsWith('['));
+  return tracks.length || null;
+}

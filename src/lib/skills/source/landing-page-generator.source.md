@@ -179,6 +179,10 @@ The most important section. Must communicate value in 5 seconds.
 
 **Hero Copy Guidelines:**
 - Headline: 6-12 words, includes the primary benefit
+- Headline (SplitLab addition, 2026-08-28): write it so it can break cleanly across 1-2 lines — two short complete
+  thoughts, or one clause plus a comma/dash — so the line break lands at a natural pause rather than mid-phrase.
+  The rendered rules that enforce this live in `../../ai-page-builder.ts` ("Hero headline — line filling and break
+  points") and `../anti-slop.ts` (`hero_h1_no_balance`).
 - Subheadline: 1-2 sentences, adds specificity or addresses the "how"
 - CTA: Action verb + what they get ("Start my free trial")
 - Supporting text below CTA: reduce friction ("No credit card required")

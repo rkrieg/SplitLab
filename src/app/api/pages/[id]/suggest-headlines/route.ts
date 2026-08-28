@@ -18,7 +18,15 @@ function getClient(): Anthropic {
 function getFieldGuidance(fieldKey: string): string {
   switch (fieldKey) {
     case 'headline':
-      return '- Each variant must be under 10 words\n- Lead with the outcome or benefit, not the product name';
+      // The wrap guidance matters because this copy lands in the hero H1, which
+      // fills each line before breaking: a headline built from one long unbroken
+      // phrase can only break mid-thought, which reads as a mistake on the page.
+      return [
+        '- Each variant must be under 10 words',
+        '- Lead with the outcome or benefit, not the product name',
+        "- Write it so it can break cleanly across 1-2 lines: prefer two short complete thoughts (or one clause plus a comma/dash) over a single long unbroken phrase, so a line break can land at a natural pause rather than mid-phrase",
+        '- Never include a line break, a \\n, or a <br> in the text — the layout decides where lines fall',
+      ].join('\n');
     case 'subhead':
       return '- Each variant must be 1 short sentence (under 20 words)\n- Support and expand on the headline, add a concrete detail or proof point';
     case 'cta_text':

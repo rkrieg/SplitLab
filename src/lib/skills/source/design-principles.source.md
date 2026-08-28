@@ -38,7 +38,12 @@ These separate competent design from student work:
 - Mobile: hit targets ≥ 44px × 44px. Hairlines at <1px stop rendering on subpixel devices.
 
 **Use modern CSS.** You can do more than you think with:
-- `text-wrap: pretty` and `text-wrap: balance` — instant typographic polish on headlines and paragraphs
+- `text-wrap: pretty` and `text-wrap: balance` — instant typographic polish on headlines and paragraphs.
+  NOTE (SplitLab deviation from this source, 2026-08-28): `balance` is banned on the HERO H1 specifically.
+  It equalises line lengths by pulling words onto the next line while the current line still has room, which
+  breaks a hero headline as "It's Not About / the Injury" instead of "It's Not About the Injury." The hero H1
+  uses `pretty` (or nothing). `balance` stays correct on h2/h3. Enforced by the `hero_h1_no_balance` check in
+  `../anti-slop.ts` and the hero rules in `../../ai-page-builder.ts`.
 - CSS Grid and `subgrid` — real layouts without wrapper hell
 - `oklch()` — pick harmonious color variants without inventing new hues
 - Container queries — variants that respond to their container, not the viewport
