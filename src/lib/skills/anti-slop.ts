@@ -79,6 +79,112 @@ function balancedHeroH1Selectors(css: string): string[] {
   return out.filter((sel, i) => out.indexOf(sel) === i);
 }
 
+
+
+/**
+ * Whether a max-height cap is large enough that the image it bounds could be
+ * the hero's subject. Anything smaller is an ornament — a badge, a logo, a row
+ * of rating stars — which is letterboxed on purpose. A cap we cannot resolve
+ * (calc, a custom property) is treated as too uncertain to flag.
+ */
+function subjectSizedCap(body: string): boolean {
+  const m = /max-height\s*:\s*([^;}]+)/i.exec(body);
+  if (!m) return false;
+  const value = m[1].trim();
+  if (/none|calc\(|var\(|min\(|max\(|clamp\(/i.test(value)) return false;
+  const num = /^(-?[\d.]+)\s*([a-z%]*)$/i.exec(value);
+  if (!num) return false;
+  const size = parseFloat(num[1]);
+  if (!Number.isFinite(size)) return false;
+  switch (num[2].toLowerCase()) {
+    case 'px':
+      return size >= 240;
+    case 'vh':
+    case 'svh':
+    case 'dvh':
+    case 'vmin':
+      return size >= 30;
+    case 'rem':
+    case 'em':
+      return size >= 15;
+    case '%':
+      return size >= 50;
+    default:
+      return false;
+  }
+}
+
+/**
+ * Hero subject images that are left hovering with nothing beneath them.
+ *
+ * A cutout (a person or product on a removed background) has no rectangular
+ * edge of its own, so it needs something to stand on. The generated failure is
+ * always the same shape: the hero media <img> is letterboxed inside a taller
+ * box with `object-fit: contain` plus a height cap, and nothing in the CSS
+ * grounds it — no panel behind it, no contact shadow under it. An accent-
+ * coloured radial gradient BEHIND the subject does not count: that is a
+ * backlight, and it makes the float worse rather than better.
+ *
+ * We cannot tell from the markup whether an image is a cutout, so the check is
+ * deliberately narrow: it only fires when the letterboxing AND the absence of
+ * every grounding device coincide, which is what a floating cutout looks like
+ * and what a framed photograph never does.
+ */
+function ungroundedHeroImages(css: string): string[] {
+  const clean = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const RULE = /([^{}]+)\{([^{}]*)\}/g;
+  const rules: { selector: string; body: string }[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = RULE.exec(clean))) {
+    const selector = m[1].trim();
+    if (selector.startsWith('@')) continue;
+    rules.push({ selector, body: m[2] });
+  }
+
+  const HERO = /hero|banner|masthead|above-?fold|opening/i;
+  /** A dark, low-alpha fill reads as a shadow; a bright one reads as a glow. */
+  const DARK_FILL = /rgba?\(\s*(?:0\s*,\s*0\s*,\s*0|[0-2]?\d\s*,\s*[0-2]?\d\s*,\s*[0-2]?\d)\b/i;
+
+  const out: string[] = [];
+  for (const rule of rules) {
+    if (!HERO.test(rule.selector)) continue;
+    if (!/object-fit\s*:\s*contain/i.test(rule.body)) continue;
+    // A height cap on a contained image is what creates the empty box — but
+    // only a cap big enough to hold a person. A 44px award badge or a 32px
+    // client logo is letterboxed by design and is not what this check is for.
+    if (!subjectSizedCap(rule.body)) continue;
+
+    const parts = rule.selector.split(',').map((s2) => s2.trim());
+    const imgPart = parts.find((part) => /(^|[\s>+~])img(\b|[.:#[])/i.test(part) || /^img(\b|[.:#[])/i.test(part));
+    if (!imgPart) continue;
+    // Named as an ornament rather than the hero's subject.
+    if (/\b(logo|badge|icon|star|rating|review|avatar|seal|award|crest|flag|chip|trust)/i.test(imgPart)) continue;
+
+    // The block that would carry the grounding device: the img's own container.
+    const container = imgPart.replace(/(^|[\s>+~])img[\w.:#[\]()-]*\s*$/i, '$1').trim().replace(/[>+~]\s*$/, '').trim();
+    if (!container) continue;
+
+    const grounded = rules.some((other) => {
+      const targetsContainer = other.selector
+        .split(',')
+        .map((s2) => s2.trim())
+        .some((part) => part === container || part.startsWith(`${container}::`) || part.startsWith(`${container}:`));
+      if (!targetsContainer) return false;
+      // A panel or frame behind the subject.
+      if (/border-radius\s*:|background(-color|-image)?\s*:\s*(?!none\b|transparent\b)[^;}]+/i.test(other.body)) {
+        // A radial glow in an accent colour is not a panel — ignore it here.
+        if (!/radial-gradient/i.test(other.body) || DARK_FILL.test(other.body)) return true;
+      }
+      // A contact shadow under it.
+      if (/box-shadow\s*:\s*(?!none\b)/i.test(other.body)) return true;
+      if (/radial-gradient/i.test(other.body) && DARK_FILL.test(other.body)) return true;
+      return false;
+    });
+    if (!grounded) out.push(imgPart.replace(/\s+/g, ' '));
+  }
+  return out.filter((sel, i) => out.indexOf(sel) === i);
+}
+
 /**
  * Sentences in a hero headline, ignoring the abbreviations that would otherwise
  * split one sentence in two ("J.D.", "U.S.", "Inc."). A fragment only counts as
@@ -275,6 +381,23 @@ No invented statistics, no decorative numbers, no "Our values"/"Why choose us" s
         return {
           passed: false,
           detail: `${offenders.join('; ')} — grid auto-placement wraps the extra child onto the next row in COLUMN 1, so that text renders at the icon column's width (one word per line). Wrap the content in a single child, or set grid-column: 2 on it.`,
+        };
+      },
+    },
+    {
+      id: 'hero_image_grounded',
+      label: 'Hero subject image is grounded, not floating',
+      run: (html) => {
+        const css = styleText(html);
+        if (!css) return null;
+        const offenders = ungroundedHeroImages(css);
+        if (offenders.length === 0)
+          return { passed: true, detail: 'No hero image is left letterboxed with nothing beneath it.' };
+        return {
+          passed: false,
+          detail: `${offenders
+            .map((sel) => `\`${sel}\``)
+            .join(', ')} letterboxes the hero subject with object-fit: contain inside a capped box, and nothing in the CSS grounds it — no panel behind it, no contact shadow under it. A cutout treated this way floats in mid-air. Anchor it to the section floor (align-items: end on the grid, align-self: stretch on the media column) and give it one grounding device: a panel behind it, or a dark blurred ellipse at its base. An accent-coloured glow behind the subject is a backlight, not a shadow.`,
         };
       },
     },
