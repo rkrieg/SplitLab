@@ -106,6 +106,31 @@ export const maxDuration = 800;
 
 const FONT_FOLLOWUP_BLOCK = buildFontFollowUpBlock();
 
+const GRID_PLACEMENT_RULES = `## Grid auto-placement — icon/number + text rows
+When a row pairs a small fixed element (numbered dot, icon, check) with text via \`display:grid; grid-template-columns: 46px 1fr\` (or \`auto 1fr\`), the direct children must match the track count. Three children in a two-track grid — dot, h3, p — makes auto-placement wrap the \`<p>\` onto row 2 in the NARROW first column, so it renders ~46px wide with one word per line. It looks like a responsiveness bug; it is a placement bug, and it is the most common cause of unreadable text columns in generated pages.
+- Fix by wrapping the content in ONE child (\`<div class="dot">1</div><div class="tl-body"><h3>..</h3><p>..</p></div>\`), or by placing content children explicitly (\`.tl-item > :not(.dot){grid-column:2}\`).
+- Check this on every icon+text list, feature row, step list, checklist and stat row you touch: count direct children against track count.`;
+
+const SECTION_HEADING_WRAP_RULES = `## Section headings (h2/h3) — wrapping and measure (NON-HERO headings only)
+These apply to headings BELOW the hero and change nothing about the hero H1, which keeps its own rules.
+- Never cap a heading at a paragraph reading measure. A \`max-width\` around 60-75ch (roughly 700-800px) belongs on body copy, subheads and lede text — on a heading it is the most common cause of a pointless wrap, e.g. a heading capped at 760px inside a 1132px container wrapping to two lines with a quarter of the row empty. A section heading may use its container's full width (the container is the cap, not unlimited width).
+- NEAR-MISS RULE: never let a heading wrap by a hair. If it would fit one line with about 15% more room, make it fit — first by letting it use the container width, then if still marginally over by taking the type down one step. A heading that misses one line by a few percent and wraps reads as a bug.
+- When it genuinely does not fit, wrapping is right and only the break point matters: keep \`text-wrap: balance\` on h2/h3 (correct here, unlike the hero H1); never split a proper name, place, brand, price or phone number across lines (\`Paul&nbsp;Padda\`, \`Las&nbsp;Vegas\`); prefer a break at an existing clause boundary (? , : —); never strand an article or preposition at a line end.
+- Three lines is the cap, and a three-line heading is usually a copy problem: keep about 10 words or fewer as the heading and move the tail into the section's supporting line below it.
+- Do NOT apply the hero's sizing formula (\`--h1-chars\` / \`cqi\` fill-to-95%) to an h2 or h3. Section headings keep the page's normal fluid type scale.`;
+
+const HERO_HEADLINE_WRAP_RULES = `## Hero headline wrapping — never regress this (applies to the H1 inside the hero only)
+Whatever else you change, the hero H1 must keep reading like a spoken sentence: each line fills its column to the edge before wrapping, and a wrap only ever lands at a sentence or clause boundary. "It's Not About the Injury." on one line — never "It's Not About / the Injury", and never an article or preposition ("the", "a", "of", "and", "your") left stranded at the end of a line away from its noun.
+- Do NOT add \`text-wrap: balance\` to the hero H1, or to a global \`h1 { }\` rule the hero H1 inherits. Balance pulls words down onto the next line even when they still fit on the current one — it is the exact cause of that broken break. Use \`text-wrap: pretty\` there, or nothing. (Balance stays fine on h2/h3 section headings.)
+- Do NOT insert \`<br>\` inside the hero H1 to force a line break, even if the instruction describes where lines should fall — a hardcoded break is correct at one viewport width and wrong at every other. Achieve the wrap by adjusting font-size/measure instead.
+- Do NOT introduce a \`max-width\` (px/ch/%) on the hero H1 or its copy column that is meaningfully narrower than the width the layout already gives it (as a limit: not below ~85% of the column's real width). That is what squeezes a two-line headline into four short ragged lines. A max-width on the SUBHEAD paragraph is fine.
+- If the existing hero H1 already carries \`text-wrap: balance\`, a hardcoded \`<br>\`, or a choking max-width AND your instruction touches the hero at all, remove it as part of the edit.
+- Same for the hero's supporting layout when you touch it: repeated stat/result cards share one width and one alignment edge (never each sized to its own text), nothing overlaps or clips anything else (check z-index against any adjacent image), and every block in the copy column starts on the same left edge.
+- If the headline is more than one sentence, each sentence gets its own line via a block-level span inside the H1 (\`<span class="hl-line">\` with \`display:block\`), so a break can only ever land between complete sentences. Keep the data-field on the H1 itself. This is not the banned hardcoded <br>: a <br> breaks at one arbitrary word, a sentence span breaks only between sentences and still lets each sentence fill its own line.
+- Size the hero H1 from its COLUMN, not the viewport, and let CSS do the arithmetic rather than hand-picking a size: \`container-type: inline-size\` on the block that bounds the H1 (the text column, the centred wrapper, the copy block over a full-bleed image, or the panel's inner box — whatever actually bounds it), then \`--h1-chars\` = the longest LINE's character count (multi-sentence: the longest sentence; one sentence wrapping to N lines: total/N x 1.25, since greedy wrapping cannot split evenly and the uncorrected value costs an extra line), \`--h1-fit\` = the measured width factor for that headline font AND its casing, plus the H1's letter-spacing in em (normally negative). Measured factors, sentence case / Title Case / ALL CAPS: Playfair Display .424/.436/.549, Cormorant Garamond .366/.389/.529, Fraunces .463/.479/.597, Syne .706/.730/.924, Space Grotesk .460/.468/.510, Bebas Neue .319/.319/.319, Poppins .482/.491/.550, Bricolage Grotesque .456/.469/.537, Plus Jakarta Sans .457/.471/.546, Inter .458/.473/.567, Manrope .454/.465/.531, DM Sans .451/.462/.531; any other font .46/.47/.55. Example: Poppins Title Case at -.03em is .491 + (-.030) = .461, not .49. Using a generic guess or forgetting the tracking term is what leaves the headline short of the right margin, and \`font-size: clamp(30px, calc(95cqi / (var(--h1-chars) * var(--h1-fit))), 72px)\`. Do not put \`container-type\` on an element whose width comes from its content, and not on \`.hero\` itself when the hero has absolutely positioned overlays — it becomes their containing block and a stacking context. Keep a plain \`vw\` clamp declared BEFORE the cqi one as a fallback, give every \`var()\` a default, and set the clamp ceiling high enough for the widest column that layout produces (~72px split, ~92px centred/full-width) — a low ceiling caps the headline short of the margin and looks exactly like a wrong factor. A \`vw\` clamp in a half-width column sizes the headline against the whole screen, which is what makes a sentence overflow its line by a hair and strand a word. Size it so the LONGEST sentence in the headline lands at roughly 92-98% of the column width: over 100% it wraps and strands a word, under ~90% the headline visibly stops short of the margin and the hero looks under-set. Wrong in both directions — LOWER the size if a sentence does not fit its line, RAISE it if the headline leaves obvious empty space at the right margin. Never accept a bad break, and never leave the measure unused.
+- Keep ONE type treatment across the whole H1 (same size, weight and colour for every sentence — never small/muted for one sentence and large for the next), ONE highlighted phrase at most, and ONE casing scheme. Do not delete the hero eyebrow above the H1.`;
+
+
 /**
  * The sentence(s) the editing model wrote for the user, cleaned for a chat
  * bubble. Returns null when the model wrote nothing usable, which is the
@@ -223,6 +248,12 @@ When the user attaches one or more images, decide their role by reading the full
 When in doubt, ask yourself: is the user pointing at a problem, handing you an asset to embed, or showing how something should look? Let the instruction answer that.
 
 ${FONT_FOLLOWUP_BLOCK}
+
+${HERO_HEADLINE_WRAP_RULES}
+
+${SECTION_HEADING_WRAP_RULES}
+
+${GRID_PLACEMENT_RULES}
 
 ## Surgical change rule — CRITICAL for patch and style
 Make the MINIMUM edit required. Do NOT restructure, reorganize, or rebuild any section. Change only the specific property, value, or element the instruction targets.
@@ -784,7 +815,13 @@ Rules:
 - Before adding a scoped inline style override: if the existing rule for that property uses !important anywhere (including inside @media blocks), your override must also use !important on that property, or the change will silently not apply.
 - Never select or modify any element carrying a data-field attribute with decorative JS — that content must always stay visible/clickable.
 - Never add an external <script src> to a third-party domain.
-- If any copy in your output contains a double-quote character, escape it as \\" — invalid JSON breaks the parser.`;
+- If any copy in your output contains a double-quote character, escape it as \\" — invalid JSON breaks the parser.
+
+${HERO_HEADLINE_WRAP_RULES}
+
+${SECTION_HEADING_WRAP_RULES}
+
+${GRID_PLACEMENT_RULES}`;
 
 async function runScopedPatch(
   sectionHtml: string,
