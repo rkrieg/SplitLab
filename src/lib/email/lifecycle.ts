@@ -87,8 +87,11 @@ export async function sendLifecycleEmail(params: {
   subject: string;
   html: string;
   recurringDays?: number;
+  /** When true, run all preference/de-dupe checks but DON'T send or log — used
+   *  by the cron's dry-run so you can preview exactly who would get what. */
+  dryRun?: boolean;
 }): Promise<'sent' | 'skipped' | 'error'> {
-  const { userId, to, emailKey, klass, subject, html, recurringDays } = params;
+  const { userId, to, emailKey, klass, subject, html, recurringDays, dryRun } = params;
   if (!process.env.RESEND_API_KEY || !to) return 'skipped';
 
   try {
@@ -124,6 +127,9 @@ export async function sendLifecycleEmail(params: {
         if (ageDays < recurringDays) return 'skipped';
       }
     }
+
+    // Dry-run: all gates passed, so this WOULD send — report it without sending/logging.
+    if (dryRun) return 'sent';
 
     const isMarketing = klass !== 'operational';
     const { error } = await resend.emails.send({
