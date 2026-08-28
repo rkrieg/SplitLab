@@ -1,4 +1,5 @@
 import { Resend } from 'resend';
+import crypto from 'crypto';
 import { db } from '@/lib/supabase-server';
 
 const resend = new Resend(process.env.RESEND_API_KEY);
@@ -12,6 +13,20 @@ const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://www.trysplitlab.com'
 const FROM_LIFECYCLE = process.env.RESEND_FROM_LIFECYCLE || 'SplitLab <hello@trysplitlab.com>';
 const FROM_ALERTS = process.env.RESEND_FROM_ALERTS || 'SplitLab <hello@trysplitlab.com>';
 const REPLY_TO = process.env.RESEND_REPLY_TO || 'hello@trysplitlab.com';
+
+// One-click unsubscribe: a signed token so the link works from the email with no
+// login (RFC 8058). Keyed on NEXTAUTH_SECRET.
+const UNSUB_SECRET = process.env.NEXTAUTH_SECRET || 'splitlab-unsub';
+export function unsubToken(userId: string): string {
+  return crypto.createHmac('sha256', UNSUB_SECRET).update(`unsub:${userId}`).digest('hex').slice(0, 40);
+}
+export function verifyUnsubToken(userId: string, token: string): boolean {
+  const expected = unsubToken(userId);
+  try { return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(token)); } catch { return false; }
+}
+function unsubUrl(userId: string): string {
+  return `${APP_URL}/api/email/unsubscribe?u=${encodeURIComponent(userId)}&t=${unsubToken(userId)}`;
+}
 
 /**
  * Which class an email is, which decides preference-gating + from-address:
@@ -138,7 +153,12 @@ export async function sendLifecycleEmail(params: {
       ...(REPLY_TO ? { replyTo: REPLY_TO } : {}),
       subject,
       html,
-      ...(isMarketing ? { headers: { 'List-Unsubscribe': `<${APP_URL}/settings/notifications>` } } : {}),
+      ...(isMarketing && userId ? {
+        headers: {
+          'List-Unsubscribe': `<${unsubUrl(userId)}>`,
+          'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+        },
+      } : {}),
     });
     if (error) { console.error(`[email:${emailKey}] send failed:`, error); return 'error'; }
 
