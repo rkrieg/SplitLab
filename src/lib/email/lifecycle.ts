@@ -6,8 +6,13 @@ const LOGO_URL = 'https://www.trysplitlab.com/splitlab-logo-light.png';
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://www.trysplitlab.com';
 
 // From addresses. Lifecycle/marketing vs operational alerts. Override via env.
+// The from-domain MUST be verified in Resend.
 const FROM_LIFECYCLE = process.env.RESEND_FROM_LIFECYCLE || 'SplitLab <hello@trysplitlab.com>';
 const FROM_ALERTS = process.env.RESEND_FROM_ALERTS || 'SplitLab <alerts@trysplitlab.com>';
+// Where replies go. Set to a real monitored inbox (e.g. renny@infinitymediala.com)
+// so you can answer customers without creating a new mailbox. If unset, replies
+// go to the From address.
+const REPLY_TO = process.env.RESEND_REPLY_TO || undefined;
 
 /**
  * Which class an email is, which decides preference-gating + from-address:
@@ -125,6 +130,7 @@ export async function sendLifecycleEmail(params: {
     const { error } = await resend.emails.send({
       from: klass === 'operational' ? FROM_ALERTS : FROM_LIFECYCLE,
       to,
+      ...(REPLY_TO ? { replyTo: REPLY_TO } : {}),
       subject,
       html,
       ...(isMarketing ? { headers: { 'List-Unsubscribe': `<${APP_URL}/settings/notifications>` } } : {}),
