@@ -40,6 +40,10 @@ export const authOptions: NextAuthOptions = {
 
         if (!passwordValid) return null;
 
+        // Stamp last login for re-engagement email triggers (best-effort).
+        db.from('users').update({ last_login_at: new Date().toISOString() }).eq('id', user.id)
+          .then(({ error }) => { if (error) console.warn('[auth] last_login_at stamp failed:', error.message); });
+
         return {
           id: user.id,
           email: user.email,

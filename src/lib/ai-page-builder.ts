@@ -310,6 +310,8 @@ Every nav element (logo, links, phone number, the mobile control) must be clearl
 ### Layout and content
 - Maximum 5-6 nav links. If the schema has more, hide the least important ones or collapse into a More item.
 - Exactly one CTA button in the nav, matching the page's primary button exactly — same accent color, border-radius and font weight. It is required even when the hero has its own primary CTA: that duplication is the point, since the nav CTA is what stays reachable once the user scrolls past the hero.
+- The nav CTA's label never wraps to a second line. A two-line button reads as broken whatever the design around it looks like. If the label does not fit the button at the width you have, then the label is too long for that button — shorten the label or give the button more room; both are yours to choose.
+- The schema's nav wording is content, not a layout instruction. You may shorten a label or leave an item out of the bar when that makes for a better header — the schema names what the page contains, it does not dictate what the nav must literally read.
 - Keep a phone/contact number in the nav (or in a slim strip below the hero per "When hero content is dense" above) rather than as its own stacked line inside the hero's text column — the nav is already visible alongside the hero on first paint, so that line is pure duplicate vertical space.
 - The nav must not overlap or obscure page content, and must leave the hero fitting in the first viewport (see "Account for the nav" above).
 
@@ -461,7 +463,7 @@ Rules:
 // Applied when a competitor URL was provided — appends override rules after all shared HTML rules.
 export const COMPETITOR_SYSTEM_PROMPT = SYSTEM_PROMPT + `
 
-## Competitor reference — STRICT replication rules (OVERRIDES ALL palette, font, and style inference above)
+## Reference site — measured brand values (these OVERRIDE the palette, font and style inference above)
 
 You have been given a reference site as: a full-page SCREENSHOT, a measured PALETTE of the colours and fonts its stylesheets actually declare, its CONTENT, and a LAYOUT TOKEN block.
 
@@ -483,10 +485,10 @@ These are four views of one site and they are meant to be read TOGETHER. Each is
 ### The screenshot for structure
 - Use it for: section order, grid columns, card shapes, spacing density, hero layout type, full-bleed vs contained, border radii feel, visual weight distribution.
 - Match the hero layout type when it aligns with the schema (split two-column, centered, full-bleed image, etc.)
-- If the schema / Original user request describes a minimal or confirmation page, build ONLY what the schema contains — do NOT add every section visible in the screenshot
-- Otherwise match structure from the screenshot and schema together
-- Build EVERY section the schema carries, including the ones at the bottom of the page. Closing CTAs, review strips, community/about blocks and multi-location callouts are part of the page — dropping them because the page already feels long enough is a content error.
+- Read structure from the screenshot and the schema together. Where they disagree about which sections exist, the schema wins: how closely this page follows the reference was already settled upstream from the user's own words, and the schema is that decision.
 - Do NOT invent sections the reference does not have in order to pad the page out.
+- **The reference shows weight as well as content.** How much room the site gives a block is information about how much that block matters to the business. Read it that way. Changing a block's weight is a design decision you are free to make — just make it deliberately, knowing what the original was saying, rather than as a side effect of building each section at the same size.
+- **Never trade away credibility for tidiness.** Real numbers, testimonials, case results, video, recognisable names and location coverage are what make the page believable. You are free to change how any of it is presented — condensed, reordered, given more or less room — but a page that ends up with less proof than the site it came from has gone backwards, however clean it looks.
 - STICKY NAV RULE: The navigation bar is sticky and will appear at the top of every screenshot chunk. It is the SAME nav repeated — build it exactly ONCE. Never create duplicate nav elements.
 - NEVER use a screenshot crop/thumbnail as the logo image. If schema.brand_logo_url / nav.logo_url / logo_src is present, that EXACT URL must be the <img src> for the logo (transparent background, no dark box behind it).
 
@@ -498,15 +500,17 @@ A "SCRAPE GAPS" note means part of the reference could not be read. Work from wh
 - If footer.address / footer.email / footer.copyright exist in the schema, render them in the footer exactly
 
 ### Final check before outputting
-- Are :root colors from the token block? ✓
-- Are font families from the token block? ✓
+- Are :root colors the exact values from the measured palette? ✓
+- Are font families the exact families from the measured palette, with their fallback stacks? ✓
+- Is every colour the screenshot shows doing brand work actually present? ✓
+- Is the proof the schema carries (numbers, testimonials, results) actually on the page? ✓
 - Does the page match the SCHEMA shape (not necessarily every screenshot section)? ✓
 - Is the logo a real asset URL from the schema, not a screenshot? ✓`;
 
 const COMPETITOR_MINIMAL_ADDENDUM = `
 
-## USER SHAPE OVERRIDE — MINIMAL / CUSTOM (highest priority)
-The user asked for a custom or minimal page (confirmation, hero-only, no CTAs, etc.).
+## The user asked for a minimal / custom page
+Their request was for something like a confirmation, thank-you or hero-only page — not a copy of the reference site. That is the shape to build, and it comes from the user, so it outranks anything the reference site suggests.
 - Build ONLY the sections present in the schema
 - Do NOT recreate the full reference landing page from the screenshot
 - No buttons / CTAs if the schema has none
