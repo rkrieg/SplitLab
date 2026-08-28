@@ -131,6 +131,21 @@ Whatever else you change, the hero H1 must keep reading like a spoken sentence: 
 - Keep ONE type treatment across the whole H1 (same size, weight and colour for every sentence — never small/muted for one sentence and large for the next), ONE highlighted phrase at most, and ONE casing scheme. Do not delete the hero eyebrow above the H1.`;
 
 
+const HERO_IMAGE_GROUNDING_RULES = `## Hero subject image — a cutout must never float (hero image only)
+Applies only to the hero's own subject image. Section images, cards, feature rows and team portraits are out of scope.
+
+Judge the image yourself — nothing in the schema records this. A CUTOUT is a subject (a person, a product) with its background removed: no rectangular edge of its own, the silhouette IS the edge, and it is usually sliced straight across at the waist or thigh. A NORMAL PHOTOGRAPH has four visible edges and fills its box; leave those framed as they are. For a cutout, all of the following hold, and if the hero already breaks one AND your instruction touches the hero at all, fix it as part of the edit.
+- Never vertically centre it. \`align-items: center\` on the hero grid leaves empty space above AND below the subject — that is what makes it float. Use \`align-items: end\` on the grid, \`align-self: stretch\` plus \`display:flex; align-items:flex-end\` on the media column, so the subject's base lands on the section floor or on a visible panel's bottom edge.
+- The crop line must never sit in open background. Either it meets a boundary and is hidden, or it is masked (\`mask-image: linear-gradient(180deg, #000 76%, transparent)\`) so it dissolves into a darker floor band on purpose.
+- One grounding device, in this order: a panel behind the subject, a contact shadow at its base (a dark blurred ellipse WIDER than the subject), or a floor band it stands on.
+- A glow behind the subject is a backlight, not a shadow, and makes the float worse. Never use one as the grounding device; remove it if it is there.
+- Zero bottom padding on the column holding the cutout — move that padding to the copy column instead.
+- No \`object-fit: contain\` (letterboxes it) and no \`object-fit: cover\` (zoom-crops a transparent subject). Use \`width:auto; max-width:100%; height:auto\` and let the column bound it.
+- Subject height at least matches the copy block, eyeline in the upper third roughly level with the headline. The rules hold at every breakpoint — stacked on mobile it stays grounded, never a floating thumbnail.
+- If you cannot tell whether it is a cutout, put it in a visible frame: a rounded panel with its own background, subject anchored to the frame's bottom edge, scrim across the lower part. That is safe either way.`;
+
+
+
 /**
  * The sentence(s) the editing model wrote for the user, cleaned for a chat
  * bubble. Returns null when the model wrote nothing usable, which is the
@@ -250,6 +265,8 @@ When in doubt, ask yourself: is the user pointing at a problem, handing you an a
 ${FONT_FOLLOWUP_BLOCK}
 
 ${HERO_HEADLINE_WRAP_RULES}
+
+${HERO_IMAGE_GROUNDING_RULES}
 
 ${SECTION_HEADING_WRAP_RULES}
 
@@ -818,6 +835,8 @@ Rules:
 - If any copy in your output contains a double-quote character, escape it as \\" — invalid JSON breaks the parser.
 
 ${HERO_HEADLINE_WRAP_RULES}
+
+${HERO_IMAGE_GROUNDING_RULES}
 
 ${SECTION_HEADING_WRAP_RULES}
 
