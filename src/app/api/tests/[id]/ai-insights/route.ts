@@ -4,7 +4,7 @@ import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { resolveWorkspaceRole } from '@/lib/workspace-auth';
 import { confidencePercent } from '@/lib/stats';
-import { askAI } from '@/lib/ai-client';
+import { askAI, AIResponseTruncatedError } from '@/lib/ai-client';
 import { jsonrepair } from 'jsonrepair';
 
 export const dynamic = 'force-dynamic';
@@ -177,11 +177,25 @@ Rules:
     raw = await askAI({
       system,
       messages: [{ role: 'user', content: `Analyze this test and return the JSON.\n\n${JSON.stringify(payload)}` }],
-      maxTokens: 1800,
+      // Output length scales with how much there IS to say, not with variant
+      // count: a test with real conversion data gets a full quantitative read
+      // per variant, while an empty one gets two lines of "needs more data".
+      // 1800 fit the empty case and truncated on live tests (stop_reason=
+      // max_tokens), which threw and surfaced as a bare 502. 8000 matches the
+      // other AI routes.
+      maxTokens: 8000,
       label: 'ai-insights',
     });
-  } catch {
-    return NextResponse.json({ error: 'Could not generate insights right now. Try again.' }, { status: 502 });
+  } catch (err) {
+    console.error('[ai-insights] AI call failed:', err);
+    // NOT 502/504 — Cloudflare replaces those with its own error page and the
+    // JSON body never reaches the browser, so the toast falls back to a
+    // generic message. 4xx is passed through untouched.
+    return NextResponse.json({
+      error: err instanceof AIResponseTruncatedError
+        ? 'This test has too much data to summarize in one pass. Try again, or narrow the date range.'
+        : 'Could not generate insights right now. Try again.',
+    }, { status: 422 });
   }
 
   let parsed: unknown;
@@ -192,7 +206,7 @@ Rules:
     const slice = start >= 0 && end > start ? cleaned.slice(start, end + 1) : cleaned;
     try { parsed = JSON.parse(slice); } catch { parsed = JSON.parse(jsonrepair(slice)); }
   } catch {
-    return NextResponse.json({ error: 'Insights response was malformed. Try again.' }, { status: 502 });
+    return NextResponse.json({ error: 'Insights response was malformed. Try again.' }, { status: 422 });
   }
 
   const insights = {
