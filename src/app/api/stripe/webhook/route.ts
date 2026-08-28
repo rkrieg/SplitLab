@@ -3,6 +3,8 @@ import { getStripeClient } from '@/lib/stripeClient';
 import { db } from '@/lib/supabase-server';
 import { accrueCommissionForInvoice, markReferralChurned } from '@/lib/affiliate';
 import { logEvent } from '@/lib/log';
+import { notifyPaymentFailed } from '@/lib/email/activity';
+import { waitUntil } from '@vercel/functions';
 
 export const dynamic = 'force-dynamic';
 
@@ -182,6 +184,8 @@ export async function POST(request: NextRequest) {
         if (!custId) break;
         await db.from('users').update({ subscription_status: 'past_due' } as never)
           .eq('stripe_customer_id', custId);
+        const { data: pfUser } = await db.from('users').select('id, email').eq('stripe_customer_id', custId).maybeSingle();
+        if (pfUser?.email) waitUntil(notifyPaymentFailed({ userId: pfUser.id, email: pfUser.email }));
         break;
       }
 

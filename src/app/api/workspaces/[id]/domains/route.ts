@@ -5,6 +5,8 @@ import { db } from '@/lib/supabase-server';
 import { addDomainToVercel, removeDomainFromVercel, getDomainDnsHealth } from '@/lib/vercel';
 import { resolveWorkspaceRole } from '@/lib/workspace-auth';
 import { listDomains, addDomain, verifyDomain, deleteDomain } from '@/lib/services/domains';
+import { notifyDomainVerified, notifyDomainFailed } from '@/lib/email/activity';
+import { waitUntil } from '@vercel/functions';
 import { logEvent } from '@/lib/log';
 import { z } from 'zod';
 
@@ -98,6 +100,10 @@ export async function POST(
     const { domain_id } = verifyResult.data;
     const verifyResponse = await verifyDomain(params.id, domain_id);
     if (!verifyResponse.ok) return NextResponse.json({ error: verifyResponse.error }, { status: verifyResponse.status });
+    const vr = verifyResponse.data as { domain: string; verified: boolean };
+    waitUntil(vr.verified
+      ? notifyDomainVerified({ workspaceId: params.id, domain: vr.domain })
+      : notifyDomainFailed({ workspaceId: params.id, domain: vr.domain }));
     return NextResponse.json(verifyResponse.data);
   }
 

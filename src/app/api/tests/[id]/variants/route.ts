@@ -4,6 +4,8 @@ import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { resolveWorkspaceRole } from '@/lib/workspace-auth';
 import { createVariant } from '@/lib/services/tests';
+import { notifyVariantLive } from '@/lib/email/activity';
+import { waitUntil } from '@vercel/functions';
 import { z } from 'zod';
 
 // Taking in HTML now also copies its images into our storage (see
@@ -37,7 +39,7 @@ export async function POST(
     // Fetch test first — needed for both auth and workspace context
     const { data: test, error: testErr } = await db
       .from('tests')
-      .select('id, workspace_id')
+      .select('id, workspace_id, status, name')
       .eq('id', params.id)
       .single();
     if (testErr || !test) {
@@ -52,6 +54,16 @@ export async function POST(
     const result = await createVariant(params.id, test.workspace_id, session.user.role, data);
     if (!result.ok) {
       return NextResponse.json({ error: result.error, ...(result.limitError ? { limitError: true } : {}) }, { status: result.status });
+    }
+
+    // "New variant live" — only when the test is already serving traffic.
+    if (test.status === 'active') {
+      waitUntil(notifyVariantLive({
+        workspaceId: test.workspace_id,
+        testId: params.id,
+        testName: (test as { name?: string }).name ?? 'your test',
+        variantName: data.name,
+      }));
     }
 
     return NextResponse.json(result.data, { status: 201 });

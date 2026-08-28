@@ -3,6 +3,8 @@ import { db } from '@/lib/supabase-server';
 import { getPlanDetails } from '@/lib/plans';
 import { getDeviceType, isBotRequest } from '@/lib/utils';
 import { logEvent } from '@/lib/log';
+import { notifyFirstConversion } from '@/lib/email/activity';
+import { waitUntil } from '@vercel/functions';
 import { z } from 'zod';
 
 function corsHeaders(request: NextRequest) {
@@ -236,6 +238,21 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ ok: true, stale: true }, { headers });
       }
       throw error;
+    }
+
+    // 🎉 First-conversion email (fire-and-forget). Only when this insert made the
+    // test's conversion count exactly 1.
+    if (data.type === 'conversion') {
+      waitUntil((async () => {
+        try {
+          const { count } = await db.from('events').select('id', { count: 'exact', head: true })
+            .eq('test_id', data.testId).eq('type', 'conversion');
+          if (count === 1) {
+            const { data: t } = await db.from('tests').select('workspace_id, name').eq('id', data.testId).single();
+            if (t) await notifyFirstConversion({ workspaceId: t.workspace_id, testId: data.testId, testName: (t as { name?: string }).name ?? 'your test' });
+          }
+        } catch (e) { console.error('[event] first-conversion email:', e); }
+      })());
     }
 
     return NextResponse.json({ ok: true }, { headers });
