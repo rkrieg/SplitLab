@@ -7,12 +7,11 @@ const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://www.trysplitlab.com'
 
 // From addresses. Lifecycle/marketing vs operational alerts. Override via env.
 // The from-domain MUST be verified in Resend.
+// hello@trysplitlab.com is a real monitored mailbox, so everything sends from and
+// replies to it — one inbox, no env vars required (all overridable via env).
 const FROM_LIFECYCLE = process.env.RESEND_FROM_LIFECYCLE || 'SplitLab <hello@trysplitlab.com>';
-const FROM_ALERTS = process.env.RESEND_FROM_ALERTS || 'SplitLab <alerts@trysplitlab.com>';
-// Where replies go. Set to a real monitored inbox (e.g. renny@infinitymediala.com)
-// so you can answer customers without creating a new mailbox. If unset, replies
-// go to the From address.
-const REPLY_TO = process.env.RESEND_REPLY_TO || undefined;
+const FROM_ALERTS = process.env.RESEND_FROM_ALERTS || 'SplitLab <hello@trysplitlab.com>';
+const REPLY_TO = process.env.RESEND_REPLY_TO || 'hello@trysplitlab.com';
 
 /**
  * Which class an email is, which decides preference-gating + from-address:
