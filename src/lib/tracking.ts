@@ -1,4 +1,5 @@
 import type { ConversionGoal } from '@/types';
+import { buildTrackingParamsJs } from './tracking-params';
 
 /**
  * Generate the lightweight tracking snippet injected into every served page.
@@ -182,112 +183,7 @@ export function buildTrackingSnippet(
     }
   }
 
-  // ─── Tracking params (mirrors tracker.js — keep the two in sync) ────────────
-  //
-  // Capture used to read window.location.search at submit time only, so an ad
-  // landing on page 1 with the form on page 2 saved a lead with blank UTMs.
-  // Params are now stored on every page load and read back at submit.
-  //
-  // Deliberately a SEPARATE key from sl_ctx, which holds variant assignment.
-  var PARAMS_KEY = 'sl_params';
-  var PARAMS_TTL = 90 * 24 * 60 * 60 * 1000;
-
-  // Params with a dedicated form_leads column — everything else goes to
-  // extra_params. Never both; dual-write would let the two disagree.
-  var LEGACY_PARAM_KEYS = ['utm_source','utm_medium','utm_content','utm_term','utm_campaign','gclid','fbclid'];
-
-  // NOTE: fbc_id is NOT fbclid. Facebook sends both; different params.
-  var CLICK_ID_PARAMS = {
-    gclid:1, fbclid:1, fbc_id:1, fbp:1, msclkid:1, ttclid:1, li_fat_id:1,
-    twclid:1, dclid:1, wbraid:1, gbraid:1, epik:1, sccid:1, irclickid:1
-  };
-
-  // Explicit list, NOT a bare /_id$/ regex — that would sweep up user_id,
-  // session_id and order_id, putting PII into an analytics table.
-  var EXTRA_ID_PARAMS = {
-    h_ad_id:1, ad_id:1, adset_id:1, campaign_id:1, creative_id:1, placement_id:1
-  };
-
-  var MAX_PARAMS = 40, MAX_PARAM_KEY = 100, MAX_PARAM_VALUE = 500, MAX_PARAMS_SERIALIZED = 8192;
-
-  var CUSTOM_PARAMS = {};
-  (_SL.customParams || []).forEach(function(n) { CUSTOM_PARAMS[n] = 1; });
-
-  function isTrackingParam(name) {
-    if (!name) return false;
-    var n = String(name).toLowerCase();
-    // Ours — also what keeps decorateFormForSubmit's sl_* hidden inputs out.
-    if (n.indexOf('sl_') === 0) return false;
-    if (n.indexOf('utm_') === 0) return true;
-    if (n.indexOf('hsa_') === 0) return true;
-    if (CLICK_ID_PARAMS[n] === 1) return true;
-    if (EXTRA_ID_PARAMS[n] === 1) return true;
-    if (CUSTOM_PARAMS[n] === 1) return true;
-    return false;
-  }
-
-  function collectTrackingParams(sp) {
-    var out = {}, count = 0;
-    try {
-      sp.forEach(function(value, key) {
-        if (count >= MAX_PARAMS) return;
-        if (!isTrackingParam(key)) return;
-        if (!value || key.length > MAX_PARAM_KEY) return;
-        out[key] = value.length > MAX_PARAM_VALUE ? value.slice(0, MAX_PARAM_VALUE) : value;
-        count++;
-      });
-    } catch(e) {}
-    return out;
-  }
-
-  function saveParams(p) {
-    try {
-      var body = JSON.stringify({ p: p, ts: Date.now() });
-      if (body.length > MAX_PARAMS_SERIALIZED) return;
-      localStorage.setItem(PARAMS_KEY, body);
-    } catch(e) {}
-  }
-
-  function loadParams() {
-    try {
-      var raw = JSON.parse(localStorage.getItem(PARAMS_KEY) || 'null');
-      if (!raw || !raw.p || !raw.ts) return {};
-      if (Date.now() - raw.ts > PARAMS_TTL) return {};
-      return raw.p;
-    } catch(e) { return {}; }
-  }
-
-  function captureParamsFromUrl() {
-    try {
-      var found = collectTrackingParams(new URLSearchParams(window.location.search));
-      // Never write an empty set — otherwise page 2 wipes page 1's params,
-      // which is the exact bug being fixed.
-      if (!Object.keys(found).length) return;
-      // Last touch: a new inbound URL replaces the WHOLE set, so Monday's
-      // hsa_ad can never mix with Thursday's utm_campaign.
-      saveParams(found);
-    } catch(e) {}
-  }
-
-  // Stored params, overlaid with the live URL (same-page beats remembered).
-  function trackingParams() {
-    var out = {}, k;
-    var stored = loadParams();
-    for (k in stored) { if (stored.hasOwnProperty(k)) out[k] = stored[k]; }
-    var live = collectTrackingParams(new URLSearchParams(window.location.search));
-    for (k in live) { if (live.hasOwnProperty(k)) out[k] = live[k]; }
-    return out;
-  }
-
-  function splitTrackingParams(all) {
-    var utm = {}, extra = {}, k;
-    for (k in all) {
-      if (!all.hasOwnProperty(k)) continue;
-      if (LEGACY_PARAM_KEYS.indexOf(k) >= 0) utm[k] = all[k];
-      else extra[k] = all[k];
-    }
-    return { utm: utm, extra: extra };
-  }
+  ${buildTrackingParamsJs({ customParamsExpr: '_SL.customParams' })}
 
   // Runs immediately, not from init() — must not depend on DOM readiness.
   captureParamsFromUrl();

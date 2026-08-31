@@ -24,6 +24,7 @@ import { askAI, askAIStream, type AIContent, type AIContentBlock } from '@/lib/a
 import type { UsageContext } from '@/lib/ai-usage';
 import { parseModelRequirements, type PageRequirement } from '@/lib/ai-page-requirements';
 import type { ContentReuseIntent } from '@/lib/ai-content-placement';
+import { PLATFORM_BEHAVIOURS } from './platform-capabilities';
 
 /** What one attached image is for. Mirrors the roles the edit paths act on. */
 /**
@@ -273,6 +274,20 @@ export interface EditIntent {
    * Null whenever there is no such leftover question.
    */
   questionAside: string | null;
+  /**
+   * The message is about how SplitLab ITSELF behaves — tracking, lead capture,
+   * integrations, traffic splitting, domains — rather than about this page's
+   * content or design. Phrased like an edit ("make the UTMs carry over to the
+   * Calendly box") but no HTML change can deliver it, and attempting one
+   * rewrites a section for nothing.
+   *
+   * Callers treat this exactly like isQuestion: answer from the capability
+   * list and skip the edit pipeline. Like isQuestion it is forced false
+   * whenever asks[] is non-empty, so a real page change can never be swallowed
+   * by it — the failure we can afford is answering a bit too eagerly, not
+   * silently declining to make a change someone asked for.
+   */
+  platformRequest: boolean;
 }
 
 const SYSTEM = `You classify a single edit request for an AI landing-page builder. You do NOT edit anything and you do NOT judge the result — you only describe what the user is asking for, so the right code path runs.
@@ -282,6 +297,7 @@ Respond with ONLY a JSON object. Begin with { and end with }. No prose, no markd
 {
   "is_question": true|false,
   "question_aside": "<verbatim leftover question text, or null>",
+  "platform_request": true|false,
   "design_reference": true|false,
   "reuse_reference_copy": true|false,
   "bug_report": true|false,
@@ -310,6 +326,12 @@ Field meanings:
   - When true, leave "asks" empty — do NOT force something into "asks" just to satisfy the rule below; that rule is for constraint-only messages, not questions, and does not apply here.
   - Default to false whenever genuinely unsure. A message wrongly treated as an edit still gets handled (today's behavior); a real request for a change wrongly treated as a question would get answered instead of applied, which is worse.
 - "question_aside": when the message ALSO contains a real question alongside a concrete edit — "what do you think about the hero section? and can you please remove the FAQ section?" — the edit goes in "asks" as normal (that part IS an edit, so is_question is false), but the question ("what do you think about the hero section?") would otherwise be silently dropped since nothing else answers it. Put that leftover question here, verbatim (or close to it), so it can be answered alongside the edit. Null when there is no such leftover question — most messages, including pure edits and pure questions (which use "is_question" instead), leave this null.
+- "platform_request": the message asks for something SplitLab ALREADY DOES ON ITS OWN, listed under PLATFORM BEHAVIOUR below. It is not a page change and editing HTML cannot deliver it — the caller answers the user instead, so leave "asks" EMPTY when this is true.
+  - True: "make sure the UTMs carry over to the Calendly booking box", "can you pass the ad tracking through to the booking widget", "hook the form up to HubSpot", "where do the form submissions go?", "point my domain at this page", "why is one variant getting more traffic?".
+  - FALSE whenever the message names a real change to THIS page, even if a platform thing is mentioned in passing: "add a Calendly booking section", "make the form button green", "add a phone field to the form", "put the booking link in the hero". Those are ordinary edits — classify them as edits and let them run.
+  - FALSE for anything not on the PLATFORM BEHAVIOUR list. The list is the whole test; do not reason outward from it to "sounds technical, must be platform".
+  - Default false when unsure. The one exception: a message that names something on that list AND could equally be a page change is a genuine coin flip — set it true there and leave "asks" empty, because the answer path is built to ask one short clarifying question, whereas the edit path would quietly rewrite a section on a guess. Only for that overlap; never as a general tie-breaker.
+  - Independent of "is_question". A platform request is usually phrased as an instruction, not a question, so is_question stays false; both being true is fine and routes the same way.
 - "design_reference": the user wants the page, or a named part of it, to LOOK like an attached image or a referenced site. True for "make our footer like this", "also match the footer with screenshot", "make the footer similar to screenshot", "same vibe as the pic", "copy this bottom bar" — the wording does not matter, the intent does.
 - "reuse_reference_copy": the WORDS visible in the reference must appear on the page (cloning a footer's legal text, "use the copy from this"). FALSE when the user supplies their own copy or caps the scope ("except it should say X", "nothing else is required") — putting the reference's words on the page then is wrong.
 - "bug_report": an attachment shows something broken/ugly on OUR OWN page (the user is complaining), rather than a design to copy. Both can be true when the user complains AND points at a reference.
@@ -342,6 +364,9 @@ Field meanings:
 - "wants_social_proof": the user asked for stats, KPIs, testimonials, reviews, client logos, awards or "trusted by" content — including numbers they supplied themselves. False means we strip any such section the builder invented, so fabricated credibility claims never ship.
 - "intentional_asset_replace": the user is deliberately swapping one image/logo for another ("navbar logo same as footer", "replace the hero photo with this"). The old asset vanishing is intended, not damage.
 - "proceed_anyway": true when the user explicitly says to just decide/pick for them ("you decide", "feel free", "surprise me", "whichever") or this message is answering a clarifying question WE just asked — proceed on the best interpretation instead of asking another question.
+
+PLATFORM BEHAVIOUR — what SplitLab already does on its own, with no page edit involved. This is the ONLY list "platform_request" is judged against:
+${PLATFORM_BEHAVIOURS}
 
 Then the checklist, which is how we avoid telling the user "Done" when part of their request was silently dropped:
 `;
@@ -1202,6 +1227,10 @@ export function normalizeIntent(
     // discard a real edit because a flag also came back true. Treating it as
     // an edit is the safer of the two possible failures.
     isQuestion: truthy(raw.is_question) && asks.length === 0,
+    // Same guard, same reason: a platform_request that arrives WITH concrete
+    // asks means the model was torn, and running the edit is the recoverable
+    // outcome. Never let this flag alone cancel a change someone asked for.
+    platformRequest: truthy(raw.platform_request) && asks.length === 0,
     questionAside:
       typeof raw.question_aside === 'string' && raw.question_aside.trim()
         ? raw.question_aside.trim().slice(0, 500)

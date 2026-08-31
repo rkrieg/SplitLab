@@ -64,6 +64,7 @@ import {
   type AttachmentRole,
   type EarlierAttachment,
 } from '@/lib/ai-edit-intent';
+import { buildCapabilityBlock } from '@/lib/platform-capabilities';
 import { ensureClickToEditFields } from '@/lib/ai-data-field-stamp';
 import { verifyAndRehostHtmlImages, applyRehostMap } from '@/lib/ai-asset-integrity';
 import { measureAssetPlacement, describeAssetPlacement } from '@/lib/asset-placement';
@@ -647,12 +648,16 @@ function replaceUniqueTextInHtml(html: string, oldText: string, newText: string)
   return html.replace(new RegExp(escaped), newText);
 }
 
-// Used only when classifyEditIntent() decides a message is a pure question
-// (is_question: true, asks: []) — no page change happens on this turn, so this
-// call must never claim we already did or will automatically do something we
-// don't actually support. Keep this list accurate as features ship; an AI that
-// confidently promises a capability we don't have is worse than one that says
-// "not yet, but I can note it for later."
+// Used when classifyEditIntent() decides a message needs an answer rather than
+// an edit — either a pure question (is_question) or a request for something the
+// platform already handles on its own (platform_request). Either way no page
+// change happens on this turn, so this call must never claim we already did or
+// will automatically do something we don't actually support.
+//
+// The capability list itself lives in src/lib/platform-capabilities.ts, NOT
+// here: the intent classifier reads the platform half of it too, and a second
+// hand-written copy is how the two drift apart. Ship a feature → update that
+// file → both this answer and the classifier's routing are current.
 const FOLLOW_UP_QUESTION_SYSTEM = `You are the chat assistant for SplitLab's AI landing-page builder, answering a question about the product — not editing the page on this turn. Reply in plain text, short paragraphs or a tight list when it genuinely helps scanability, no heavy markdown headers. Be warm and direct, like a helpful teammate, not a formal support script.
 
 You are always given the current page's real HTML below — read it. When asked to judge or review something ("is our FAQ good?", "is the hero good enough?"), answer concretely from the ACTUAL content and structure you can see in that HTML: the real copy, whether a section exists, how it's built (e.g. accordion markup vs a flat list), CTA text and placement. Never say "I don't have access" or ask for a screenshot just to answer a content/structure question — you already have the markup, so use it.
@@ -661,15 +666,15 @@ What you genuinely cannot judge from HTML alone is anything purely visual/render
 
 If an image is attached, you CAN see it too — usually a screenshot of the user's own current page. Look at it and give a concrete critique of what you see (layout balance, broken characters/icons rendering as boxes, copy wrapping awkwardly, visual hierarchy) on top of what the HTML tells you. Never claim you cannot see an attached image.
 
-What this builder can actually do right now, so you never overpromise:
-- Edit any existing section: restyle, recolor, resize, rewrite copy, fix spacing/alignment, replace an image.
-- Add brand-new sections, remove sections, reorder sections.
-- Match a look from an attached screenshot or a reference site (design_reference), and fetch a real logo or content photos from a given site URL.
-- Generate real photography for sections via AI image generation.
-- Import the client's own images from a link — a public Google Drive folder, an S3/public bucket, a direct image URL, or any web page — using the link button next to the chat box. The files are re-hosted by SplitLab and can then be placed on the page. Never tell a user you have no way to pull from Google Drive or a bucket; you do.
-- Use images imported earlier in this same conversation. If the user supplied files on a previous turn, they are listed for you by filename and URL and are still usable — do not claim they are gone or ask for a re-upload.
-- Every form submission on a live page is automatically captured into SplitLab's own Leads for that test — no setup needed. Workspace-level integrations (HubSpot, email notification, or a webhook to a third-party URL) can be turned on per test in the workspace's Integrations settings, and any lead captured there gets forwarded automatically.
-- What it CANNOT do yet: wire an arbitrary custom submission endpoint directly into the page's own code from a chat instruction (forms don't POST anywhere on their own — delivery goes through the Leads/Integrations path above instead). No built-in confirmation-email-on-submit beyond what the email integration sends.
+${buildCapabilityBlock()}
+
+Two rules about HOW you say all of that, because this text is read by the agency's client, not by an engineer:
+- Plain words only. No internal names, no percentages, no browser/API jargon, no talk of scripts, frames, params or code. "UTMs are carried over automatically — links, buttons, forms and booking widgets like Calendly. One gap: a button that redirects with JavaScript won't carry them on very old browsers." That is the whole answer. Never write "Navigation API", "cross-origin iframe", "localStorage", "data-sl-no-params" or "~87%" to a user.
+- Name the exception, don't hide it. When something works with a caveat, say the caveat in the same breath as the good news. "It's automatic" on its own is the answer that gets found out in production.
+
+Some messages ask for something SplitLab ALREADY does on its own — "make sure the UTMs carry over to the Calendly box", "connect the form to HubSpot". Nothing is being edited on this turn, and nothing needs to be: tell them it already works, in one or two sentences, with its exception. Do not offer to build it, and do not describe what you would change on the page.
+
+If a message could genuinely be EITHER a real page change or something the platform already handles, say what already happens and then ask ONE short question to confirm what they want. One question, not a list, and only when you truly cannot tell — a plain page change never reaches you in the first place.
 
 If asked something outside this list, say so plainly rather than guessing. If the message is just a greeting or small talk, respond warmly and briefly, and you may offer to help with something concrete — but don't invent unrequested tasks.`;
 
@@ -2698,6 +2703,7 @@ export async function POST(
         sourceUrl: intent.sourceUrl ? intent.sourceUrl.slice(0, 80) : null,
         requirements: intent.requirements.length,
         isQuestion: intent.isQuestion,
+        platformRequest: intent.platformRequest,
         attachmentRoles: intent.attachmentRoles,
       }
     : 'unavailable', {
@@ -2888,7 +2894,12 @@ export async function POST(
   // means "we asked a section-ambiguity question" and forces noQuestions on the
   // NEXT turn's edit; a plain Q&A exchange must not suppress a genuine
   // clarifying question on whatever the user asks next.
-  if (intent.isQuestion && intent.asks.length === 0) {
+  // platformRequest joins isQuestion here rather than getting a branch of its
+  // own: both mean "answer, don't edit", both are already forced false when
+  // asks[] is non-empty, and both are answered by the same prompt reading the
+  // same capability list. A second branch would be a second place to keep in
+  // sync for no behavioural difference.
+  if ((intent.isQuestion || intent.platformRequest) && intent.asks.length === 0) {
     const { stream, controller } = createSSEStream();
     const response = new Response(stream, { headers: SSE_HEADERS });
     void (async () => {

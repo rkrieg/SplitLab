@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/supabase-server';
 import { downloadHtml } from '@/lib/storage';
 import { buildTrackingSnippet, buildScanScript, injectIntoHtml, buildScriptTag, buildClaritySnippet, buildFaviconTag, stripFaviconTags, stripSplitLabTrackerTags } from '@/lib/tracking';
+import { buildIframeHeadScript } from '@/lib/tracking-iframes';
 import { assignVariant, getDeviceType, isBotRequest } from '@/lib/utils';
 import { logEvent } from '@/lib/log';
 import { getPlanDetails } from '@/lib/plans';
@@ -492,7 +493,13 @@ ${proxyTrackingSnippet}
     const scripts = [...(workspaceScripts || []), ...(pageScripts || []), ...(testScripts || [])];
 
     const testHeadScriptsHtml = (test as { head_scripts?: string }).head_scripts || '';
-    const headScripts: string[] = testHeadScriptsHtml ? [testHeadScriptsHtml] : [];
+    // First in <head>, ahead of the test's own head scripts: it hooks
+    // HTMLIFrameElement so a widget SDK's iframe is decorated before the browser
+    // fetches it, and a widget loaded from a head script would otherwise beat it.
+    const headScripts: string[] = [
+      buildIframeHeadScript(customParamNames, test.forward_url_params !== false, isPreview ? 'preview' : (overVisitorCap ? 'cap' : '')),
+    ];
+    if (testHeadScriptsHtml) headScripts.push(testHeadScriptsHtml);
 
     // HubSpot connected on this workspace: inject the portal's tracking code so
     // the hubspotutk cookie is set first-party and the snippet can pass hutk with
