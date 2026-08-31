@@ -1395,8 +1395,11 @@ assert('an unavailable outcome check does not discard a real edit',
   helpers.includes('treating step as applied'));
 
 // ── An attachment is a source; never go scrape a different one ──────────────
+// Deliberately not pinned to the exact condition list: the guard has since
+// gained `&& libraryAssets.length === 0` and may gain more sources. What must
+// hold is that attached user images are one of the things it counts.
 assert('attached images count at the inherited-source guard',
-  /if \(competitorUrls\.length === 0 && !hasUserImages\)/.test(follow));
+  /if \(competitorUrls\.length === 0 && !hasUserImages\b/.test(follow));
 
 // ── New sections can contain real images ────────────────────────────────────
 assert('the insert path can generate images', follow.includes('SL_IMG_1') &&
@@ -1835,7 +1838,7 @@ assert('a section that was rewritten does not report itself as unfinished',
 assert('a broken image URL is a note about the page, not a failed ask',
   /addNote\(\s*`\$\{assetScan\.broken\.length\} image URL\(s\)/.test(follow));
 assert('the create path does not list a broken image under "not everything landed"',
-  /const note = brokenAssets > 0/.test(client) &&
+  /const note = \(?brokenAssets > 0/.test(client) &&
   !/caveats\.push\(`\$\{brokenAssets\}/.test(client));
 
 // The three legitimate writers must survive — a genuinely missing ask still has
