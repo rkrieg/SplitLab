@@ -119,6 +119,30 @@ These apply to headings BELOW the hero and change nothing about the hero H1, whi
 - Three lines is the cap, and a three-line heading is usually a copy problem: keep about 10 words or fewer as the heading and move the tail into the section's supporting line below it.
 - Do NOT apply the hero's sizing formula (\`--h1-chars\` / \`cqi\` fill-to-95%) to an h2 or h3. Section headings keep the page's normal fluid type scale.`;
 
+// Hero H1 sizing has two checks that pull in different directions only in
+// appearance. FILL (the 92-98% band) is a RATIO of the column, so it is
+// satisfied at almost any font size - shrink the type and the text simply
+// wraps to more lines that each still reach the margin. RANK (H1 must render
+// larger than a section h2) is the absolute check the band cannot make.
+//
+// They do not actually compete: the formula solves for a full column at
+// WHATEVER line count it is given, so the line count is the free variable and
+// fill stays constant while size moves. In a 620px column, a 57-char headline
+// fills 95% at 2 lines (35.6px) and fills 95% at 3 lines (53.5px) - same fill,
+// 18px more type. That is why the fix ladder is ordered the way it is:
+//
+//   1. another line (to the 3-line cap)  - free, no fill cost; NOT
+//                                           available on a multi-sentence
+//                                           headline, whose line count is
+//                                           already fixed at one per sentence
+//   2. widen the copy column / resplit    - when the line cap is reached
+//   3. shorten the copy                   - LAST RESORT, and forbidden when
+//                                           the words are the user's own or
+//                                           came from the PRD
+//
+// Copy locked AND column cannot widen enough: keep the words, take the best
+// size available, emit a NOTE. Never resolve it by shrinking the h2 scale -
+// that scale is the page's baseline, not a variable in a hero problem.
 const HERO_HEADLINE_WRAP_RULES = `## Hero headline wrapping — never regress this (applies to the H1 inside the hero only)
 Whatever else you change, the hero H1 must keep reading like a spoken sentence: each line fills its column to the edge before wrapping, and a wrap only ever lands at a sentence or clause boundary. "It's Not About the Injury." on one line — never "It's Not About / the Injury", and never an article or preposition ("the", "a", "of", "and", "your") left stranded at the end of a line away from its noun.
 - Do NOT add \`text-wrap: balance\` to the hero H1, or to a global \`h1 { }\` rule the hero H1 inherits. Balance pulls words down onto the next line even when they still fit on the current one — it is the exact cause of that broken break. Use \`text-wrap: pretty\` there, or nothing. (Balance stays fine on h2/h3 section headings.)
@@ -128,7 +152,9 @@ Whatever else you change, the hero H1 must keep reading like a spoken sentence: 
 - Same for the hero's supporting layout when you touch it: repeated stat/result cards share one width and one alignment edge (never each sized to its own text), nothing overlaps or clips anything else (check z-index against any adjacent image), and every block in the copy column starts on the same left edge.
 - If the headline is more than one sentence, each sentence gets its own line via a block-level span inside the H1 (\`<span class="hl-line">\` with \`display:block\`), so a break can only ever land between complete sentences. Keep the data-field on the H1 itself. This is not the banned hardcoded <br>: a <br> breaks at one arbitrary word, a sentence span breaks only between sentences and still lets each sentence fill its own line.
 - Size the hero H1 from its COLUMN, not the viewport, and let CSS do the arithmetic rather than hand-picking a size: \`container-type: inline-size\` on the block that bounds the H1 (the text column, the centred wrapper, the copy block over a full-bleed image, or the panel's inner box — whatever actually bounds it), then \`--h1-chars\` = the longest LINE's character count (multi-sentence: the longest sentence; one sentence wrapping to N lines: total/N x 1.25, since greedy wrapping cannot split evenly and the uncorrected value costs an extra line), \`--h1-fit\` = the measured width factor for that headline font AND its casing, plus the H1's letter-spacing in em (normally negative). Measured factors, sentence case / Title Case / ALL CAPS: Playfair Display .424/.436/.549, Cormorant Garamond .366/.389/.529, Fraunces .463/.479/.597, Syne .706/.730/.924, Space Grotesk .460/.468/.510, Bebas Neue .319/.319/.319, Poppins .482/.491/.550, Bricolage Grotesque .456/.469/.537, Plus Jakarta Sans .457/.471/.546, Inter .458/.473/.567, Manrope .454/.465/.531, DM Sans .451/.462/.531; any other font .46/.47/.55. Example: Poppins Title Case at -.03em is .491 + (-.030) = .461, not .49. Using a generic guess or forgetting the tracking term is what leaves the headline short of the right margin, and \`font-size: clamp(30px, calc(95cqi / (var(--h1-chars) * var(--h1-fit))), 72px)\`. Do not put \`container-type\` on an element whose width comes from its content, and not on \`.hero\` itself when the hero has absolutely positioned overlays — it becomes their containing block and a stacking context. Keep a plain \`vw\` clamp declared BEFORE the cqi one as a fallback, give every \`var()\` a default, and set the clamp ceiling high enough for the widest column that layout produces (~72px split, ~92px centred/full-width) — a low ceiling caps the headline short of the margin and looks exactly like a wrong factor. A \`vw\` clamp in a half-width column sizes the headline against the whole screen, which is what makes a sentence overflow its line by a hair and strand a word. Size it so the LONGEST sentence in the headline lands at roughly 92-98% of the column width: over 100% it wraps and strands a word, under ~90% the headline visibly stops short of the margin and the hero looks under-set. Wrong in both directions — LOWER the size if a sentence does not fit its line, RAISE it if the headline leaves obvious empty space at the right margin. Never accept a bad break, and never leave the measure unused.
-- Keep ONE type treatment across the whole H1 (same size, weight and colour for every sentence — never small/muted for one sentence and large for the next), ONE highlighted phrase at most, and ONE casing scheme. Do not delete the hero eyebrow above the H1.`;
+- Keep ONE type treatment across the whole H1 (same size, weight and colour for every sentence — never small/muted for one sentence and large for the next), ONE highlighted phrase at most, and ONE casing scheme. Do not delete the hero eyebrow above the H1.
+- An accommodation made for old text expires with that text. If your edit changes the headline's wording or length, re-derive its sizing from nothing - the character count, the fit factor, and BOTH ends of the clamp. A ceiling that was lowered to make a long headline fit was a concession to text that no longer exists, not a setting; leaving it in place is how a trimmed headline goes on rendering at the old headline's size.
+- The hero H1 is the largest heading on the page, and the 92-98% fill band cannot tell you when it is not: the band is a ratio of the column, so undersized type just wraps to more lines that each still reach the margin. Check the size itself - if the H1 computes to at or below the size a section h2 renders at, the hierarchy is inverted and it is a fail whatever the band says. Fix it INSIDE THE HERO, in this order, stopping at the first move that clears the h2: (1) let the headline take another line, up to the 3-line cap - free, since the formula re-solves for a full column at any line count, so more lines buys size without costing fill. When the headline is more than one sentence, its line count is already fixed by the sentence-per-line rule, so this move is NOT available to you - adding a line there would wrap one sentence internally and leave the headline ragged. Go straight to (2). (2) widen the copy column or rebalance the split; (3) shorten the copy - last resort, and off the table entirely when the words are the user's own or came from the PRD. Raise any clamp ceiling still holding the size down. If the copy is locked and the column cannot widen far enough, keep the words, take the largest size those constraints allow, and say so in a NOTE rather than shipping the compromise silently. Never shrink the section headings, and never edit a section outside the hero to settle it.`;
 
 
 const HERO_IMAGE_GROUNDING_RULES = `## Hero subject image — a cutout must never float (hero image only)
@@ -175,6 +201,65 @@ function normalizeEditorMessage(value: unknown): string | null {
   return raw.length >= 3 ? raw.slice(0, 1200) : null;
 }
 
+/**
+ * KNOWN GAP, 2026-08-31 — three things this prompt cannot currently reach.
+ * Left as-is deliberately; read this before "fixing" any of them.
+ *
+ * 1. THE HEAD STYLESHEET IS EFFECTIVELY OUT OF REACH FOR LAYOUT.
+ *    The patch rules below let the model touch "head" only for a "site-wide
+ *    color/font/variable/typography change". That list is shaped as WHICH KIND
+ *    of change counts as global, when the question that actually decides it is
+ *    WHERE THE RULE LIVES. A `.container` rule lives in the head stylesheet
+ *    whatever you call the change, so a request like "every section should be
+ *    the same width" has no route to it: the model correctly obeys this prompt,
+ *    writes scoped <style> blocks inside individual sections instead, and
+ *    reports "partly done". Observed three times in a row on one page.
+ *
+ *    The list is not the root cause, though, and widening it alone would make
+ *    things worse. Head is discouraged because patching it means retyping the
+ *    ENTIRE <style> block verbatim — tens of thousands of characters for a
+ *    one-line change, on a page with NO version history to restore if the
+ *    model drops a rule on the way through (see docs/decisions/page-versioning.md
+ *    — snapshots are deferred, every edit overwrites in place). Widen the list
+ *    and you get more of those retypes, not fewer.
+ *
+ *    The fix that removes the reason rather than the symptom: let the model
+ *    return ONLY the rules it changed and merge them into the existing
+ *    stylesheet in code, with postcss (already a dependency — Tailwind pulls it
+ *    in), failing closed to the original stylesheet if the partial does not
+ *    parse. Head then costs three lines instead of 32KB and the whitelist can
+ *    go entirely. Deliberately NOT built yet: the layout bugs that exposed this
+ *    came from a prompt rule in ai-page-builder.ts that has since been
+ *    rewritten, and freshly generated pages need to be checked first. If they
+ *    come out correct, this stops being urgent.
+ *
+ * 2. THIS ROUTE'S SYSTEM_PROMPT AND THE BUILD PROMPT HAVE DRIFTED.
+ *    The prompt below is a separate document from SYSTEM_PROMPT in
+ *    src/lib/ai-page-builder.ts, and nothing keeps the two in step. Layout
+ *    rules added on the build side — the content-edges rule, the two-column
+ *    dead-space rule — are invisible here, so a page repaired through follow-up
+ *    can quietly violate rules a freshly built page obeys, and no follow-up
+ *    instruction can make the model apply a rule it was never shown. Worth
+ *    knowing before concluding that an edit "ignored" a rule.
+ *
+ * 3. PAGE VERSIONING IS WHAT UNBLOCKS FULL REWRITES, AND IT IS NOT BUILT.
+ *    Every constraint above is a workaround for the same missing thing. The
+ *    routing prompt is biased hard toward patch, head is fenced off, and the
+ *    postcss merge in (1) exists to avoid a retype — not because a rewrite is
+ *    beyond the model, but because an edit overwrites the stored HTML in place
+ *    and there is nothing to go back to if it comes out wrong. The `version`
+ *    column on `pages` is a counter, not a history; there is no snapshot table
+ *    (docs/decisions/page-versioning.md — deferred).
+ *
+ *    Once a snapshot is written before each edit and a page can be restored to
+ *    a previous one, the calculus changes: a full rewrite stops being a
+ *    one-way door, and the honest routing rule becomes "rewrite when the change
+ *    is genuinely page-wide" instead of "avoid rewriting because we cannot
+ *    recover". Most of the hedging in this file could then come out — the head
+ *    whitelist, the strength of the patch bias, probably the need for the
+ *    postcss merge at all. Treat versioning as the prerequisite, and do not
+ *    loosen these rules one at a time before it lands.
+ */
 const SYSTEM_PROMPT = `You are editing an existing landing page. The user will give you an instruction to modify the page.
 
 ## Your job
@@ -681,6 +766,21 @@ async function trySurgicalTextEdit(
   }
 }
 
+// The "style" bullet below names two exceptions by hand, and both are there for
+// the same reason: the bias paragraph in SYSTEM_PROMPT ("default to patch", "do
+// not reach for style because it feels safer") is deliberately strong, because a
+// style route rewrites the whole document and that is slow, drifts on the parts
+// it was not asked to touch, and cannot be undone — pages are overwritten in
+// place with no snapshot. That bias is right for almost every edit and should
+// stay.
+//
+// What it cannot do is weigh a case it was never shown. Page-wide width and
+// alignment reads like a layout tweak, layout tweaks are patches, so it was
+// being routed to patch — where the fix has nowhere to live, because the rule
+// that governs it sits in the shared stylesheet and patch may only touch head
+// for colour/font/typography. The model obeyed both rules correctly and returned
+// a partial fix, three turns in a row. Naming the case here is what stops the
+// bias from swallowing it.
 const ROUTING_SYSTEM_PROMPT = `You are a routing classifier for a landing-page AI edit assistant. Given a list of the page's sections (name + a short text/image preview of each) and an edit instruction, decide which section(s) the instruction targets and how big the change is.
 
 Return JSON only. No markdown fences, no explanation.
@@ -688,7 +788,7 @@ Return JSON only. No markdown fences, no explanation.
 
 Rules:
 - "patch": the instruction clearly targets 1-3 specific existing sections you can identify from the previews below (a heading, button, image, paragraph, one section's design/spacing/color, or a full redesign/rebuild of ONE existing section).
-- "style": the instruction touches 4+ unrelated sections, or a global CSS/font/color variable change (route this to the "head" section), or you cannot map it to specific sections from the previews given (e.g. "make the whole page feel more premium"). Recoloring logos "everywhere" / "all logos" is NOT style/head — it is a "patch" on every section that currently shows a logo (typically nav, footer, and hero).
+- "style": the instruction touches 4+ unrelated sections, or a global CSS/font/color variable change (route this to the "head" section), or you cannot map it to specific sections from the previews given (e.g. "make the whole page feel more premium"). Recoloring logos "everywhere" / "all logos" is NOT style/head — it is a "patch" on every section that currently shows a logo (typically nav, footer, and hero). A change to the page's own width, alignment or grid — "make every section the same width", "centre the whole site", "the sections don't line up with each other" — is "style". The rule that decides it is one shared rule in the stylesheet, not something any single section owns, so a patch has nowhere to put the fix and will land a partial one. One section's own padding, spacing or internal columns is still a "patch".
 - "insert_section": the instruction clearly asks to ADD exactly ONE brand-new section, and you can confidently name an existing section to place it relative to. Return "anchor_section" (an existing section name from the list) and "position" ("before" or "after" that anchor). If the instruction doesn't say where, pick the most sensible spot (e.g. right after the section it's most related to, or right before "footer" as a safe default). Do NOT use this for adding more than one new section, or when you can't confidently pick an anchor — use "structural" instead for those.
 - "remove_section": the instruction clearly asks to remove exactly ONE existing section entirely. Return that section's name as the single entry in "target_sections". Use "structural" instead if more than one section should be removed, or the target section is ambiguous.
 - "reorder_sections": the instruction asks to reorder 2 or more EXISTING sections relative to each other (e.g. "move testimonials above the stats section") without adding/removing anything or changing their content. Return the full new relative order of ONLY the sections that need to move, as "new_order" (an array of existing section names, in the desired new sequence) — e.g. for "move testimonials above stats", new_order:["testimonials","stats"] (testimonials will end up positioned immediately before "stats"). Use "structural" instead if the reorder is tangled up with content changes, or spans 4+ sections, or you're not confident of the exact target section names.
@@ -6393,9 +6493,14 @@ export async function POST(
       }
 
       const doneHeadline = editorMessage ?? 'Done! The page has been updated.';
+      // Notes are stored BESIDE the sentence, not appended to it. Appended, they
+      // read as trailing filler and were skipped; the client renders this field
+      // as its own callout. One per line, so two or three calls list rather than
+      // running together into a paragraph.
       const assistantReply = partialMessage
-        ? `Partly done (not fully finished). ${partialMessage}${pageNotes.length > 0 ? ` ${pageNotes.join(' ')}` : ''}`
-        : `${doneHeadline}${pageNotes.length > 0 ? ` ${pageNotes.join(' ')}` : ''}`;
+        ? `Partly done (not fully finished). ${partialMessage}`
+        : doneHeadline;
+      const assistantNote = pageNotes.length > 0 ? pageNotes.join('\n') : '';
       const userEntry: Record<string, unknown> = { role: 'user', content: rawPrompt };
       if (Array.isArray(image_urls) && image_urls.length > 0) userEntry.image_urls = image_urls;
       // Only THIS turn's imports. The merged list above also holds files carried
@@ -6422,6 +6527,7 @@ export async function POST(
         {
           role: 'assistant',
           content: assistantReply,
+          ...(assistantNote ? { note: assistantNote } : {}),
           // Which sections this turn actually touched. The next message is
           // often a correction — "no, use the hero's image" — that names the
           // WHAT but not the WHERE, because the where was settled a turn ago
@@ -6546,7 +6652,7 @@ export async function POST(
         // still covers them — see SSEEvent.message.
         ...(editorMessage ? { message: editorMessage } : {}),
         ...(partialMessage ? { partial_message: partialMessage } : {}),
-        ...(pageNotes.length > 0 ? { notes: pageNotes.join(' ') } : {}),
+        ...(pageNotes.length > 0 ? { notes: pageNotes.join('\n') } : {}),
       };
       sendSSE(controller, doneEvent);
       closeSSE(controller);

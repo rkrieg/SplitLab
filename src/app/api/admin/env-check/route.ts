@@ -103,7 +103,7 @@ export async function GET() {
   const aiProvider = activeAIProvider === 'anthropic'
     ? {
         active: 'anthropic',
-        anthropic_model: process.env.ANTHROPIC_MODEL?.trim() || 'claude-sonnet-5 (default)',
+        anthropic_model: process.env.ANTHROPIC_MODEL?.trim() || 'claude-opus-5 (default)',
       }
     : {
         active: activeAIProvider,

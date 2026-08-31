@@ -334,6 +334,39 @@ export async function POST(request: NextRequest) {
         html = forceEmbedFooterContactInHtml(html, footerContact);
       }
 
+      // Where the model resolved a conflict between a design rule and what it
+      // was handed, it says so here — see "When best practice and the request
+      // disagree" in the build prompt. Read BEFORE the strip, because these
+      // come off the page like STATUS comments and never render.
+      //
+      // The rule splits three ways, and which branch fires decides whether a
+      // note shows up here at all:
+      //
+      //   what happened            | what it does            | note emitted?
+      //   -------------------------|-------------------------|---------------
+      //   the model invented it    | follows the design rule | NO — a note
+      //                            |                         | about its own
+      //                            |                         | first draft is
+      //                            |                         | just noise
+      //   the REFERENCE SITE does  | builds the better       | YES — "changed
+      //   it                       | version, rule wins      | X, say the word
+      //                            |                         | and it goes
+      //                            |                         | back"
+      //   the USER asked for it in | does it THEIR way,      | YES — "not what
+      //   their own words          | rule loses              | I'd recommend,
+      //                            |                         | here's the cost"
+      //
+      // Underneath: the more deliberately a thing was asked for, the more the
+      // model obeys and the less it corrects. So an EMPTY buildNotes is a
+      // meaningful result, not a failure — it usually means nothing the user
+      // wrote deliberately was in conflict with anything.
+      const buildNotes: string[] = [];
+      html = html.replace(/<!--\s*NOTE:\s*([^>]*?)-->/g, (_full, msg: string) => {
+        const text = msg.trim();
+        if (text && !buildNotes.includes(text)) buildNotes.push(text);
+        return '';
+      });
+
       // Strip any remaining STATUS comments before upload
       html = html.replace(/<!--\s*STATUS:[^>]*-->/g, '');
 
@@ -528,6 +561,11 @@ export async function POST(request: NextRequest) {
         schema_json: enrichedSchema,
         ...(finalUnmet ? { unmet_requirements: finalUnmet } : {}),
         ...(assetScan.broken.length > 0 ? { broken_assets: assetScan.broken.length } : {}),
+        // Capped at three even though the prompt asks for at most three: a model
+        // that ignores the cap must not turn the chat reply into an essay.
+        // One per line: two or three separate calls are a list the user scans,
+        // not a paragraph they wade through.
+        ...(buildNotes.length > 0 ? { notes: buildNotes.slice(0, 3).join('\n') } : {}),
         ...(placement
           ? { imported_assets: placement.imported, placed_assets: placement.placed, unused_asset_names: placement.unusedNames }
           : {}),

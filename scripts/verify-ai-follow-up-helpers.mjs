@@ -1395,8 +1395,11 @@ assert('an unavailable outcome check does not discard a real edit',
   helpers.includes('treating step as applied'));
 
 // ── An attachment is a source; never go scrape a different one ──────────────
+// Deliberately not pinned to the exact condition list: the guard has since
+// gained `&& libraryAssets.length === 0` and may gain more sources. What must
+// hold is that attached user images are one of the things it counts.
 assert('attached images count at the inherited-source guard',
-  /if \(competitorUrls\.length === 0 && !hasUserImages\)/.test(follow));
+  /if \(competitorUrls\.length === 0 && !hasUserImages\b/.test(follow));
 
 // ── New sections can contain real images ────────────────────────────────────
 assert('the insert path can generate images', follow.includes('SL_IMG_1') &&
@@ -1760,17 +1763,22 @@ const sseSrc = readFileSync(join(__dirname, '../src/lib/sse.ts'), 'utf8');
 
 assert('there is a channel for "done, with a caveat"',
   /notes\?: string;/.test(sseSrc));
+// Joined one-per-line, not space-separated: two or three separate calls render
+// as a list in the callout instead of running together into a paragraph.
 assert('the follow-up route emits notes on the done event',
-  /\.\.\.\(pageNotes\.length > 0 \? \{ notes: pageNotes\.join\(' '\) \} : \{\}\)/.test(follow));
+  follow.includes("...(pageNotes.length > 0 ? { notes: pageNotes.join('") &&
+  /pageNotes\.join\('.n'\)/.test(follow));
 assert('the orphaned `warning` field is gone',
   !/\{ warning: assetWarning \}/.test(follow) && !/let assetWarning/.test(follow));
 // The headline itself is now the model's own sentence when it wrote one — the
 // fixed copy is the fallback, not the default (see SSEEvent.message). What this
-// still guards is the shape: a note is APPENDED to that headline, and never
-// routed through the partial_message branch that raises a retry toast.
+// still guards is the shape: the note travels on its OWN message field, so it
+// renders as its own callout instead of trailing the status sentence where it
+// went unread — and it is never routed through the partial_message branch that
+// raises a retry toast.
 assert('a note keeps the Done headline and raises no retry toast',
   /const didIt = done\.message\?\.trim\(\) \|\| 'Done! The page has been updated\.';/.test(client) &&
-  /content: done\.notes \? `\$\{didIt\} \$\{done\.notes\}` : didIt,/.test(client));
+  client.includes('content: didIt,') && client.includes('note: done.notes,'));
 // Every success sentence the user read used to be written by us — one fixed
 // line, printed whether the turn nudged a logo or rebuilt a hero. The model knew
 // what it had changed and had nowhere to say it, because the rewrite contract
@@ -1820,7 +1828,29 @@ assert('a silent no-change still prefers the model words over our fixed line',
   follow.includes('reason: message ?? "I looked at that and didn\'t find anything to change on the page."'));
 
 assert('a note is not lost when something else really is partial',
-  /\$\{done\.notes \? ` \$\{done\.notes\}` : ''\}/.test(client));
+  client.includes('content: `Partly done (not fully finished). ${done.partial_message}`,') &&
+  client.includes('note: done.notes,'));
+// The callout is the whole reason the note left `content`. If it stops being
+// rendered, the note is silently gone from the UI while every assertion above
+// still passes.
+// An edit turn used to persist JSON.stringify(done). The restore path detects a
+// `{`-prefixed row as a legacy payload and swaps it for canned text, so the note
+// the user was shown during the session was gone the moment they reopened the
+// page. Storing the sentence keeps it, and keeps model history readable too.
+assert('an edit turn persists the sentence and its note, not a JSON blob',
+  !client.includes("content: JSON.stringify(done)") &&
+  client.includes("content: done.message?.trim() || 'Done! The page has been updated.',") &&
+  client.includes("...(done.notes ? { note: done.notes } : {}),"));
+// Notes appended to the status sentence by older builds are split back out on a
+// literal match against the sentences we authored — never a guess at where one
+// sentence ends.
+assert('notes stored inside older content are recovered, not stranded',
+  client.includes('const splitStoredNote =') &&
+  client.includes("'Your page is ready! Click any text in the preview to edit it, or ask me to make changes.',"));
+assert('the note is rendered as its own callout the user can act on',
+  /\{msg\.note && \(/.test(client) &&
+  /A call I made/.test(client) &&
+  /note\?: string;/.test(client));
 
 // A cleared loss has nothing honest to say: every destructive outcome returns
 // before this point, so the only thing left to report would contradict the
@@ -1835,7 +1865,7 @@ assert('a section that was rewritten does not report itself as unfinished',
 assert('a broken image URL is a note about the page, not a failed ask',
   /addNote\(\s*`\$\{assetScan\.broken\.length\} image URL\(s\)/.test(follow));
 assert('the create path does not list a broken image under "not everything landed"',
-  /const note = brokenAssets > 0/.test(client) &&
+  /const note = \(?brokenAssets > 0/.test(client) &&
   !/caveats\.push\(`\$\{brokenAssets\}/.test(client));
 
 // The three legitimate writers must survive — a genuinely missing ask still has
