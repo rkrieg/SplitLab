@@ -1,6 +1,8 @@
 // used for "one case":
 // Redirect-URL variants with proxy mode OFF (plain 302 redirect to an external domain SplitLab doesn't serve)
 import { NextRequest, NextResponse } from 'next/server';
+import { buildTrackingParamsJs } from '@/lib/tracking-params';
+import { buildIframeHookBody } from '@/lib/tracking-iframes';
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://www.trysplitlab.com';
 
@@ -161,119 +163,7 @@ function buildTrackerScript(appUrl: string): string {
     } catch(e) {}
   }
 
-  // ─── Tracking params (mirrors the inline snippet in src/lib/tracking.ts) ────
-  //
-  // Capture used to read window.location.search at submit time only, so an ad
-  // landing on page 1 with the form on page 2 saved a lead with blank UTMs —
-  // "the traffic didn't convert" when it actually had. Params are now stored on
-  // every page load and read back at submit.
-  //
-  // Deliberately a SEPARATE key from sl_tracking: that holds variant assignment
-  // and feeds the Method 1-4 detection chain. Polluting it risks the boot path.
-  var PARAMS_KEY = "sl_params";
-  var PARAMS_TTL = 90 * 24 * 60 * 60 * 1000; // matches sl_visitor / sl_tracking
-
-  // Params with a dedicated form_leads column. These keep their exact existing
-  // behaviour; everything else goes to extra_params. Never both — dual-write
-  // would let the two disagree.
-  var LEGACY_PARAM_KEYS = ["utm_source","utm_medium","utm_content","utm_term","utm_campaign","gclid","fbclid"];
-
-  // NOTE: fbc_id is NOT fbclid. Facebook ads send both; they are different
-  // params and reading one as the other silently drops attribution.
-  var CLICK_ID_PARAMS = {
-    gclid:1, fbclid:1, fbc_id:1, fbp:1, msclkid:1, ttclid:1, li_fat_id:1,
-    twclid:1, dclid:1, wbraid:1, gbraid:1, epik:1, sccid:1, irclickid:1
-  };
-
-  // Explicit list, NOT a bare /_id$/ regex — a suffix match would sweep up
-  // user_id, session_id and order_id, putting session identifiers and PII into
-  // an analytics table we export to CSV and push to HubSpot.
-  var EXTRA_ID_PARAMS = {
-    h_ad_id:1, ad_id:1, adset_id:1, campaign_id:1, creative_id:1, placement_id:1
-  };
-
-  var MAX_PARAMS = 40, MAX_PARAM_KEY = 100, MAX_PARAM_VALUE = 500, MAX_PARAMS_SERIALIZED = 8192;
-
-  function isTrackingParam(name) {
-    if (!name) return false;
-    var n = String(name).toLowerCase();
-    // Ours. Echoing these back would confuse the detection chain, and it is what
-    // stops decorateFormForSubmit's hidden sl_* inputs being captured as leads.
-    if (n.indexOf("sl_") === 0) return false;
-    if (n.indexOf("utm_") === 0) return true;
-    if (n.indexOf("hsa_") === 0) return true; // machine-readable ad/adset/campaign IDs
-    if (CLICK_ID_PARAMS[n] === 1) return true;
-    if (EXTRA_ID_PARAMS[n] === 1) return true;
-    return false;
-  }
-
-  function collectTrackingParams(sp) {
-    var out = {}, count = 0;
-    try {
-      sp.forEach(function(value, key) {
-        if (count >= MAX_PARAMS) return;
-        if (!isTrackingParam(key)) return;
-        if (!value || key.length > MAX_PARAM_KEY) return;
-        out[key] = value.length > MAX_PARAM_VALUE ? value.slice(0, MAX_PARAM_VALUE) : value;
-        count++;
-      });
-    } catch(e) {}
-    return out;
-  }
-
-  function saveParams(p) {
-    try {
-      var body = JSON.stringify({ p: p, ts: Date.now() });
-      if (body.length > MAX_PARAMS_SERIALIZED) return;
-      localStorage.setItem(PARAMS_KEY, body);
-    } catch(e) {}
-  }
-
-  function loadParams() {
-    try {
-      var raw = JSON.parse(localStorage.getItem(PARAMS_KEY) || "null");
-      if (!raw || !raw.p || !raw.ts) return {};
-      if (Date.now() - raw.ts > PARAMS_TTL) return {};
-      return raw.p;
-    } catch(e) { return {}; }
-  }
-
-  // Runs on every page load, before boot and independent of _ctx.
-  function captureParamsFromUrl() {
-    try {
-      var found = collectTrackingParams(new URLSearchParams(window.location.search));
-      var keys = Object.keys(found);
-      // Never write an empty set — otherwise page 2 wipes page 1's params,
-      // which is the exact bug being fixed.
-      if (!keys.length) return;
-      // Last touch: a new inbound URL replaces the WHOLE set. Merging
-      // param-by-param across visits would mix Monday's hsa_ad with Thursday's
-      // utm_campaign and describe an ad that never existed.
-      saveParams(found);
-    } catch(e) {}
-  }
-
-  // Stored params, overlaid with anything on the live URL (same-page is more
-  // specific than remembered).
-  function trackingParams() {
-    var out = {}, k;
-    var stored = loadParams();
-    for (k in stored) { if (stored.hasOwnProperty(k)) out[k] = stored[k]; }
-    var live = collectTrackingParams(new URLSearchParams(window.location.search));
-    for (k in live) { if (live.hasOwnProperty(k)) out[k] = live[k]; }
-    return out;
-  }
-
-  // Splits into the 7 dedicated columns vs everything else (extra_params).
-  function splitTrackingParams(all) {
-    var utm = {}, extra = {}, k;
-    for (k in all) {
-      if (!all.hasOwnProperty(k)) continue;
-      if (LEGACY_PARAM_KEYS.indexOf(k) >= 0) utm[k] = all[k];
-      else extra[k] = all[k];
-    }
-    return { utm: utm, extra: extra };
-  }
+  ${buildTrackingParamsJs({ customParamsExpr: null })}
 
   // ─── Cross-domain linker (mirrors the inline snippet in src/lib/tracking.ts) ─
   // localStorage never crosses origins, so the only way context survives a jump
@@ -1598,6 +1488,18 @@ function buildTrackerScript(appUrl: string): string {
 
   // Auto-detect and boot — no init() call needed
   detect(boot);
+
+  // Embedded-widget params. Deliberately AFTER detect(), which sets _scanMode /
+  // _previewMode synchronously at its top before any network work — so muted()
+  // already answers correctly and a scan render is never rewritten. Still
+  // parse-time, which is what matters: no widget script has run yet.
+  //
+  // Unlike decorate(), this needs no _ctx: the params live in localStorage, so
+  // the ~1s /api/resolve boot window that costs the linker its first second
+  // costs this nothing. Forwarding is unconditional here, matching decorate()
+  // in this file — tracker.js is a static cacheable script with no test row to
+  // read forward_url_params from.
+  ${buildIframeHookBody({ mutedExpr: 'muted()', forwardExpr: 'true' })}
 
 })();
 `;
