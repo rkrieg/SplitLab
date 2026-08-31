@@ -1677,6 +1677,9 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     let unmetRequirements: string | null = null;
     let brokenAssets = 0;
     let assetPlacementNote: string | null = null;
+    // Recommendations the builder made, or a warning that something the user
+    // asked for outright is not best practice. Absent on most builds.
+    let modelNotes: string | null = null;
     let builtSkillIds: string[] | null = null;
     let builtStyle: string | null = null;
 
@@ -1688,6 +1691,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         finalSchema = event.schema_json ?? schema;
         unmetRequirements = event.unmet_requirements ?? null;
         brokenAssets = event.broken_assets ?? 0;
+        modelNotes = event.notes ?? null;
         // Server-resolved, so this is what ACTUALLY built the page — the
         // panel must never show what was ticked if the two disagree.
         builtSkillIds = event.skills_applied ?? null;
@@ -1725,6 +1729,26 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         )
       : history;
 
+    // Name what didn't land instead of a blanket "ready" — a page with a
+    // banned CTA still on it is not what the user asked for.
+    // An image URL that didn't respond is a note about the page, not an ask we
+    // failed — it used to be listed alongside unmet asks under "not everything
+    // landed", which reads as "you ignored me" on a page that is in fact done.
+    const note = (brokenAssets > 0
+      ? ` ${brokenAssets} image URL(s) couldn't be loaded and were left as they were.`
+      : '')
+      // Placing none of the user's imported photos can be the right call, but
+      // saying nothing about it reads as the import having failed — which is
+      // exactly how it was read. Name the outcome either way.
+      + (assetPlacementNote ? ` ${assetPlacementNote}` : '')
+      // A design call the builder made and wants looked at. It rides the same
+      // sentence as the other notes: the page IS done, so this must never turn
+      // into a second "not everything landed".
+      + (modelNotes ? ` ${modelNotes}` : '');
+    const assistantReply = unmetRequirements
+      ? `Your page is built, but not everything landed — ${unmetRequirements}. Tell me to fix it and I'll take another pass.${note}`
+      : `Your page is ready! Click any text in the preview to edit it, or ask me to make changes.${note}`;
+
     // Step 3: PATCH first so DB has html_url before preview route is hit
     const patchRes = await fetch(`/api/pages/${pageId}`, {
       method: 'PATCH',
@@ -1734,7 +1758,11 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         slug: finalSlug,
         html_url: htmlUrl,
         schema_json: finalSchema,
-        conversation_json: historyWithImages,
+        // The reply is stored, not just rendered: it carries the build's NOTE
+        // comments, and until this was saved a refresh replaced the whole
+        // thing with a canned "Got it! Built your page." Follow-up turns have
+        // always persisted their assistant reply — the build now matches.
+        conversation_json: [...historyWithImages, { role: 'assistant', content: assistantReply }],
         // Saved so a later "Edit with AI" rebuild obeys the same rules. Written
         // through a separate, non-fatal query server-side (skills/persistence),
         // so a missing migration cannot fail this PATCH.
@@ -1752,30 +1780,8 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     setSchemaJson(finalSchema);
     setPhase('editing');
 
-    // Name what didn't land instead of a blanket "ready" — a page with a
-    // banned CTA still on it is not what the user asked for.
-    // An image URL that didn't respond is a note about the page, not an ask we
-    // failed — it used to be listed alongside unmet asks under "not everything
-    // landed", which reads as "you ignored me" on a page that is in fact done.
-    const note = (brokenAssets > 0
-      ? ` ${brokenAssets} image URL(s) couldn't be loaded and were left as they were.`
-      : '')
-      // Placing none of the user's imported photos can be the right call, but
-      // saying nothing about it reads as the import having failed — which is
-      // exactly how it was read. Name the outcome either way.
-      + (assetPlacementNote ? ` ${assetPlacementNote}` : '');
-    if (unmetRequirements) {
-      toast('Built, but some asks need another pass.', { icon: '⚠️' });
-      addMessage({
-        role: 'assistant',
-        content: `Your page is built, but not everything landed — ${unmetRequirements}. Tell me to fix it and I'll take another pass.${note}`,
-      });
-    } else {
-      addMessage({
-        role: 'assistant',
-        content: `Your page is ready! Click any text in the preview to edit it, or ask me to make changes.${note}`,
-      });
-    }
+    if (unmetRequirements) toast('Built, but some asks need another pass.', { icon: '⚠️' });
+    addMessage({ role: 'assistant', content: assistantReply });
   }
 
   async function handleGenerate(e: React.FormEvent) {
