@@ -239,6 +239,24 @@ function AiCreditsMeter() {
   );
 }
 
+/**
+ * What the "Built with" strip shows for the page's style.
+ *
+ * Two shapes reach it. One of the twelve named styles arrives as its tag and is
+ * looked up in STYLE_OPTIONS. A style the design step wrote for this business
+ * has no tag, so it arrives as `custom:<its own name>` — the prefix is what
+ * keeps it from being mistaken for a tag on the server (see
+ * CUSTOM_STYLE_PREFIX in ai-page-style-sheet.ts), and it is stripped here
+ * rather than shown.
+ */
+function styleStripLabel(style: string | null, wasAuto: boolean): string | null {
+  if (!style) return null;
+  const name = style.startsWith('custom:')
+    ? style.slice('custom:'.length)
+    : STYLE_OPTIONS.find((o) => o.value === style)?.label ?? style;
+  return `${name}${wasAuto ? ' (auto)' : ''}`;
+}
+
 export default function AIBuilderClient({ workspaceId, clientId, clientName, variantName, initialPage, initialSkills, initialStyle, backPath, canUseAI = true, isTestVariantPage = false, canPublish = true }: Props) {
   const router = useRouter();
 
@@ -3300,11 +3318,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
             scores={skillScores}
             skillNames={appliedSkillNames}
             verticalLabel={VERTICAL_LABELS[vertical] ?? null}
-            styleLabel={
-              appliedStyle
-                ? `${STYLE_OPTIONS.find((o) => o.value === appliedStyle)?.label ?? appliedStyle}${appliedStyleAuto ? ' (auto)' : ''}`
-                : null
-            }
+            styleLabel={styleStripLabel(appliedStyle, appliedStyleAuto)}
           />
         )}
       </div>

@@ -1,5 +1,12 @@
 import { askAI, askAIStream, type AIContent, type AIContentBlock } from '@/lib/ai-client';
 import { STYLE_EXEMPLARS, AUTO_STYLE_TAGS, isStyleTag, type StyleTag } from '@/lib/ai-page-exemplars';
+import {
+  STYLE_SHEET_JSON_SPEC,
+  STYLE_SHEET_RULES,
+  parseStyleSheet,
+  customStyleValue,
+  type PageStyleSheet,
+} from '@/lib/ai-page-style-sheet';
 import { assembleSystemPrompt, LOCKED_RULES_BUILD, type Skill } from '@/lib/skills';
 // DEAD IMPORT — never called in this file. Page shape arrives already decided
 // as `options.minimalShape`, forwarded from the schema pass. This used to
@@ -11,50 +18,46 @@ import { buildIconLibraryBlock } from '@/lib/ai-page-icons';
 import { attachedImagesInstructionNote } from '@/lib/ai-edit-intent';
 
 /**
- * The styles Auto may choose from, as a JSON-union string and as a readable
- * catalogue.
+ * The design-brief call: one Opus request that decides what this page looks
+ * like, before any HTML exists.
  *
- * Both are generated from AUTO_STYLE_TAGS so the union, the catalogue and the
- * picker cannot drift apart, and so a `userPickOnly` style is absent from all
- * of them by virtue of one flag. Before this the union was a hardcoded string
- * and the only description of each style was a business-vertical lookup table,
- * which is what taught the call to keyword-match instead of judge.
+ * It used to pick one of twelve hand-written styles and hand back a tag, which
+ * code turned into a fixed table of hex codes and font names. That capped the
+ * whole product at twelve looks — two unrelated businesses that reasoned their
+ * way to the same tag got the same page, down to the shade of the buttons. It
+ * also set up a contradiction the model kept reporting to the user: the brief
+ * was asked for "a colour direction for THIS business" and the token block
+ * then locked colours it had no part in choosing.
+ *
+ * Now the call WRITES the sheet. Everything downstream is unchanged — the
+ * sheet is still decided up front, still rendered into the same "## Style
+ * reference" block, still locked by LOCKED_RULES_BUILD, still followed all the
+ * way down the page. Only the number of possible answers changed.
+ *
+ * The twelve stay as the fallback for when this call fails or returns a sheet
+ * that would not survive contact with a browser. Before, that case built with
+ * no style block at all.
  */
-const AUTO_STYLE_UNION = AUTO_STYLE_TAGS.map((tag) => `"${tag}"`).join(' | ');
-
-const AUTO_STYLE_CATALOGUE = AUTO_STYLE_TAGS.map((tag) => {
-  const ex = STYLE_EXEMPLARS[tag];
-  return `- ${tag} (${ex.label})\n    Mood: ${ex.mood}\n    Suits: ${ex.bestFor}`;
-}).join('\n');
-
-const DESIGN_BRIEF_SYSTEM_PROMPT = `You are the design director for an AI landing page builder. Given a business schema and the user's original request, produce a short creative brief that will guide the HTML/CSS generation step that runs after you. You are making a judgement call about this specific business, not sorting it into a bucket.
+const DESIGN_BRIEF_SYSTEM_PROMPT = `You are the design director for an AI landing page builder. Given a business schema and the user's original request, decide what this page looks like and write the style sheet the HTML step will build from. You are designing for one specific business, not sorting it into a bucket.
 
 Return JSON only. No explanation, no markdown fences.
 
 {
-  "style_tag": ${AUTO_STYLE_UNION},
-  "palette_direction": "specific color direction for THIS business — 1 sentence, not generic",
-  "layout_rhythm": "specific layout/spacing direction for THIS business — 1 sentence",
+${STYLE_SHEET_JSON_SPEC}
   "copy_tone": "specific tone-of-voice direction for THIS business — 1 sentence",
-  "motion_style": "specific motion intensity direction for THIS business — 1 sentence",
   "reference_object": "ONLY if the business/request has no explicit colors or fonts specified: one real-world place or object this brand's energy maps to — specific, not a category (e.g. 'a Tokyo convenience store at 2am', not 'modern'). Otherwise empty string.",
   "wildcard_element": "ONLY if the business/request has no explicit colors or fonts specified: one specific visual/interaction detail that doesn't obviously match the rest but makes the page memorable. Otherwise empty string."
 }
 
-## How to pick style_tag
-- If the user's request uses explicit style words ("funky", "sleek", "minimal", "corporate", "luxury", "techy", "bold", "playful", etc.), map to the closest tag and stop there — an explicit ask wins over your own judgement.
-- Otherwise DECIDE it, do not classify it. The industry a business sits in does not determine how its page should feel — its buyer does. Two businesses in the same vertical routinely need opposite styles, and a page that converts one actively loses the other. Reason from the schema and the request:
+## Read the business before you design anything
+- If the user's request uses explicit style words ("funky", "sleek", "minimal", "corporate", "luxury", "techy", "bold", "playful", etc.), that is the direction — build the sheet around it. An explicit ask wins over your own judgement.
+- Otherwise DECIDE it, do not classify it. The industry a business sits in does not determine how its page should feel — its buyer does. Two businesses in the same vertical routinely need opposite pages, and a page that converts one actively loses the other. Reason from the schema and the request:
   - WHO is buying — a consumer browsing on their phone, or a business owner spending significant money on a considered purchase?
   - WHAT IT COSTS and how much deliberation it takes — an impulse buy, or something researched, compared and signed off?
   - HOW THE COPY ITSELF SOUNDS — the brief's own tone, the proof it leans on, the claims it makes. Content built on revenue figures, contract terms and client outcomes is not the same brand as content built on urgency and exclamation marks, even when both sit under the same industry label.
-  - WHAT A WRONG STYLE WOULD COST — the more expensive and considered the purchase, the more a loud, novelty or low-fidelity style undermines the trust the page needs to build. When genuinely torn between a safe style and a striking one for a high-price, high-trust offer, take the safe one.
-- Then choose the tag whose mood honestly matches that buyer, reading the catalogue below. Judge on the mood — "Suits" is a hint about who tends to fit, never a lookup key.
+  - WHAT A WRONG LOOK WOULD COST — the more expensive and considered the purchase, the more a loud, novelty or low-fidelity treatment undermines the trust the page needs to build. When genuinely torn between a restrained direction and a striking one for a high-price, high-trust offer, take the restrained one. Restrained is not the same as generic: it still has to be this business's own restraint, not the internet's.
 
-## The styles you may choose from
-${AUTO_STYLE_CATALOGUE}
-
-- Never pick a tag merely because the business's industry appears somewhere in its bestFor list. That is pattern-matching on a keyword, and it is exactly what produces loud consumer styling on a serious B2B service, or corporate restraint on a brand that needed personality.
-- Never default to the same tag regardless of business — vary based on what's actually being built.`;
+${STYLE_SHEET_RULES}`;
 
 const FONT_LIBRARY_BLOCK = buildFontLibraryBlock();
 const FONT_METRICS_TABLE = buildFontMetricsTable();
@@ -208,6 +211,15 @@ Your :root must always include ALL of these:
 - --container: max-width for content (e.g. 1200px)
 
 Never hardcode any of these values outside :root. Every element references a CSS variable — consistency is non-negotiable.
+
+## Content edges — one measure, and every section lines up on it (mandatory)
+\`--container\` is the page's content width, and it does nothing until something applies it. Define ONE wrapper — \`max-width: var(--container)\` with \`margin-inline: auto\` and a gutter of horizontal padding — and put every section's content inside it. That wrapper is what gives the page its two vertical lines. A \`--container\` declared in :root and then never used as a max-width means the page has no content width at all: on a wide monitor every section stretches the full window, the copy runs toward the screen edges, and the page reads as unstyled no matter how good the palette is.
+
+- EVERY SECTION'S TEXT STARTS AND ENDS ON THOSE TWO LINES, however that section is built — contained, full-bleed, split two-column, panelled, alternating background.
+- WHAT MAY LEAVE THE WRAPPER IS A SURFACE, NEVER AN OBJECT. A section's own background — a colour field, a texture, a photograph sitting behind the content — runs the full window width, always, and the copy on top of it still lands on the lines. A photograph forming one half of a split may bleed to the edge nearest it, with the copy column's OUTER edge landing on the container line on the other side.
+- A PANEL THAT READS AS AN OBJECT SITS ON THE LINES, LIKE TEXT DOES. Anything bordered, framed, elevated, or paired with a twin beside it has become a thing placed ON the page rather than the page's own backdrop, and a thing that runs off both sides of the window reads as a mistake however deliberate it was. The test is what a visitor takes it for: a backdrop may touch the glass, an object may not.
+- WHEN YOU DO BREAK OUT, CHECK THE FINISHED POSITION INSTEAD OF TRUSTING THE FORMULA. Compare where that section's text actually starts against a normal contained section above or below it; if the two do not begin on the same line, the break-out is wrong. The usual reason is two things positioning the same edge — a margin that pushes the box, and a padding measured from the viewport — which counts the same offset twice and lands the content roughly half the leftover viewport too far in. This is a warning about ONE break-out block. It is never a reason to take the centred wrapper off the rest of the page.
+- AN INTENTIONAL INSET FROM THOSE LINES IS FINE WHEN IT IS A DECISION YOU REPEAT — an editorial layout that indents its body column the same way in every section is still one grid. An edge that differs because two rules collided is not a decision, and that is what this rule is for.
 
 ## Hero height — fit the content, cap it at the fold (mandatory)
 The hero's job is that the H1, the subhead and the primary CTA are all visible without scrolling. That is a CEILING, not a floor. Nothing here says the hero must fill the screen — YOU decide its height from the content and the layout, then check it against the two bounds below.
@@ -424,6 +436,14 @@ Some sections are READ — an explainer, a story, a step-by-step, a bio. Others 
 - A LARGE SET IS NOT A REASON TO MAKE THE SECTION TALL. It is a reason to make each item cheaper. The remedies are yours: a smaller card, more items per row, a compact list or table instead of cards, a row that scrolls sideways so the whole set stays one band deep. Pick whichever suits the content — what matters is that the set stays close to a band rather than becoming a screen.
 - NEVER cut items to make a section shorter. How many results, awards, certifications or clients the business has is content, not layout — and every remedy above keeps all of them.
 - This is not a licence to flatten every proof section into the same thin strip. Judge by whether the block is scanned or read, not by what it is called: a single testimonial with a face and a paragraph behind it is read, and earns its room.
+
+## Two-column sections — the taller column's height is yours to account for (mandatory)
+A two-column row is as tall as its taller column. When one column is an image and the other is copy, the image's natural height sets the row, and every pixel the copy does not use collects as a visible band of empty space beneath it. This is the same failure the hero height rules describe, and it happens just as often in ordinary content sections.
+
+- LOOK AT THE FINISHED PAIR. If the copy stops well short of the media's bottom edge, the section is wrong. An image with no height ceiling in a stretched row does this on every wide screen, whatever the copy length looked like while you were writing it.
+- THE REMEDIES ARE YOURS and any of them is fine: size the media against the copy, let the copy column sit at its own height rather than stretching, give the space the content it is missing, or let the row shrink to what it actually holds. What must not survive is the band.
+- ANCHORING THE WHOLE GRID MOVES THE BAND, IT DOES NOT REMOVE IT. \`align-items\` applies to both columns, so choosing between \`center\`, \`start\` and \`end\` only decides which end the empty space collects at. Where one element genuinely must sit on a specific edge, give THAT element its own \`align-self\` and leave the other column free to sit where it looks right.
+- A COLUMN'S WIDTH BOUNDS ITS IMAGE. A photo in the narrower column stops at the height its aspect ratio allows however tall you declare the box, so a media column that has to reach a tall copy column needs the width to get there — or the pairing was wrong and the row should shrink instead.
 
 ## Anti-patterns — never write these
 - NEVER: box-shadow: 0 4px 6px rgba(0,0,0,0.1) on every card — use either no shadow or a strong deliberate one
@@ -794,10 +814,9 @@ const AESTHETIC_REFERENCES: Record<StyleTag, string> = {
   quiet_minimalism: 'Think MUJI, Aesop, Kinfolk — 70% empty space, warm off-white ground, warm ink instead of black, two type sizes at most, a single object given room to breathe',
   bauhaus_geometric: 'Think Paula Scher for the Public Theater, Mueller-Brockmann Tonhalle posters — flat primary colour blocks, circles and hard diagonals as structure, type set as shape, zero gradients or shadows',
   brutalist_raw: 'Think Are.na, Bloomberg terminal, Craigslist done deliberately — monospace, visible hairline borders, real tables, zero border-radius, link-blue accents, no polish anywhere',
-  // User-pick-only. Absent from the style_tag union in
-  // DESIGN_BRIEF_SYSTEM_PROMPT above, so "Auto" can never select these — but
-  // they still need an entry here, because a user CAN select them and this
-  // record is what styleNoteFromTag() reads.
+  // User-pick-only. Absent from AUTO_STYLE_TAGS, so the fallback picker can
+  // never land on these — but they still need an entry here, because a user
+  // CAN select them and this record is what sheetFromExemplar() reads.
   dieter_industrial: 'Think Braun catalogues, Vitsoe, pre-2010 Apple — monochrome greys with one functional accent, a single product given room, hairline grid rules, nothing decorative anywhere',
   zine_riso: 'Think independent zines, Rough Trade gig posters, skate-culture print — risograph spot colours, halftone texture, hand-placed collage, deliberate misregistration where blocks overlap',
 };
@@ -814,11 +833,119 @@ const AESTHETIC_REFERENCES: Record<StyleTag, string> = {
  */
 const COMMIT_TO_THE_STYLE = `\nCommit to this system at full strength. A style applied at 30% reads as hesitant and generic; applied at 80% it reads as deliberate. Where you are unsure, do MORE of what defines this style, not less. Every value above is the anchor — if you need something the system does not cover, extend it in the style's own logic rather than falling back on a neutral default.`;
 
+/**
+ * One of the twelve hand-written styles, as a sheet.
+ *
+ * Exists so that the picked path and the invented path produce the same object
+ * and go through the same renderer. Before this the exemplar was read field by
+ * field inside the renderer, which meant a second source of style could not be
+ * added without a second renderer to go with it.
+ */
+function sheetFromExemplar(styleTag: StyleTag): PageStyleSheet {
+  const exemplar = STYLE_EXEMPLARS[styleTag];
+  return {
+    label: exemplar.label,
+    mood: exemplar.mood,
+    palette: exemplar.palette,
+    tokens: exemplar.tokens,
+    typography: exemplar.typography,
+    typeScale: exemplar.typeScale,
+    geometry: exemplar.geometry,
+    layoutNotes: exemplar.layoutNotes,
+    signatureMoves: exemplar.signatureMoves,
+    avoid: exemplar.avoid,
+    motionStyle: exemplar.motionStyle,
+    aestheticTarget: AESTHETIC_REFERENCES[styleTag] ?? '',
+  };
+}
+
+/**
+ * The "## Style reference" block — the single place a style becomes prompt
+ * text, whichever of the two sources it came from.
+ *
+ * LOCKED_RULES_BUILD locks "the ## Style reference block in the user message",
+ * not the exemplar table, so an invented sheet is locked exactly as hard as a
+ * looked-up one and nothing in the locked rules had to change.
+ */
+function renderStyleReference(sheet: PageStyleSheet, chosenBy: 'user' | 'auto'): string {
+  // Whose choice this was decides whether the model may write a note about it.
+  // Both callers used to say "chosen by the user", which on the Auto path is simply
+  // untrue - and it invited notes reporting a disagreement between two of our own
+  // steps as though it were the user's to settle.
+  const provenance =
+    chosenBy === 'user'
+      ? 'chosen by the user'
+      : 'chosen for this page by the design step — the user did not pick it and has not seen it';
+  return (
+    `\n\n## Style reference (${provenance} — follow it, do not substitute a different aesthetic)\n` +
+    `Style: ${sheet.label} — ${sheet.mood}\n` +
+    `Palette direction: background ${sheet.palette.background}, text ${sheet.palette.text}, accent ${sheet.palette.accent}` +
+    (sheet.palette.secondaryAccent ? `, secondary ${sheet.palette.secondaryAccent}` : '') +
+    ` — use these as the anchor, adapting only as far as the business genuinely requires.\n` +
+    // The remaining :root tokens the system prompt demands, handed over as a
+    // ready-to-paste block. Prose ("soft rounded cards") left ten tokens to
+    // invention on every build; exact values leave none.
+    `Use EXACTLY these values for the rest of the token block — do not substitute your own:\n` +
+    `  --bg: ${sheet.palette.background};\n` +
+    `  --bg-surface: ${sheet.tokens.surface};\n` +
+    `  --bg-elevated: ${sheet.tokens.elevated};\n` +
+    `  --text: ${sheet.palette.text};\n` +
+    `  --text-muted: ${sheet.tokens.textMuted};\n` +
+    `  --border: ${sheet.tokens.border};\n` +
+    `  --accent: ${sheet.palette.accent};\n` +
+    `  --radius: ${sheet.tokens.radius};\n` +
+    `  --radius-lg: ${sheet.tokens.radiusLg};\n` +
+    `  --radius-pill: ${sheet.tokens.radiusPill};\n` +
+    `  --section-py: ${sheet.tokens.sectionPy};\n` +
+    `  --container: ${sheet.tokens.container};\n` +
+    `  --shadow: ${sheet.tokens.shadow};\n` +
+    `  --shadow-lg: ${sheet.tokens.shadowLg};\n` +
+    `Typography: headline ${sheet.typography.headline}, body ${sheet.typography.body}\n` +
+    `Type scale: ${sheet.typeScale}\n` +
+    `Geometry (corners, borders, shadows): ${sheet.geometry}\n` +
+    `Layout rhythm: ${sheet.layoutNotes}\n` +
+    `Signature moves — at least two of these MUST appear on the page: ${sheet.signatureMoves}\n` +
+    `Do NOT use, in this style: ${sheet.avoid}\n` +
+    `Motion style: ${sheet.motionStyle}\n` +
+    `Aesthetic target: ${sheet.aestheticTarget}\n` +
+    COMMIT_TO_THE_STYLE
+  );
+}
+
+/**
+ * The same block, built from a style the USER picked instead of from a model
+ * call. Unchanged behaviour: the picker path still gets the exemplar's own
+ * mood, layout notes and motion style as the direction, with no invented
+ * sentences layered on top to water the choice down.
+ */
+function styleNoteFromTag(styleTag: StyleTag, chosenBy: 'user' | 'auto'): string {
+  return renderStyleReference(sheetFromExemplar(styleTag), chosenBy);
+}
+
+/**
+ * Which of the twelve to fall back on when the design-brief call fails or
+ * returns a sheet that would break the page.
+ *
+ * Spread over the business rather than fixed, so an outage does not quietly
+ * ship every client the same page. It is a fail-open, not a design decision —
+ * the point is only that SOME complete, readable, self-consistent style
+ * reaches the HTML step. Building with no style block at all, which is what
+ * this case did before, is the one outcome worth ruling out.
+ */
+function fallbackStyleTag(schema: unknown): StyleTag {
+  let hash = 0;
+  const seed = JSON.stringify(schema ?? '').slice(0, 4000);
+  for (let i = 0; i < seed.length; i++) {
+    hash = (hash * 31 + seed.charCodeAt(i)) | 0;
+  }
+  return AUTO_STYLE_TAGS[Math.abs(hash) % AUTO_STYLE_TAGS.length];
+}
+
 async function getDesignBrief(
   schema: unknown,
   userPrompt: string | undefined,
   imageUrls: string[],
-): Promise<{ styleTag: StyleTag; brief: Record<string, string> } | null> {
+): Promise<{ sheet: PageStyleSheet; brief: Record<string, string> } | null> {
   try {
     const briefText = `Business schema:\n${JSON.stringify(schema, null, 2)}${userPrompt ? `\n\nOriginal user request: ${userPrompt}` : ''}`;
     const briefContent: AIContent = imageUrls.length > 0
@@ -831,11 +958,13 @@ async function getDesignBrief(
     const text = await askAI({
       system: DESIGN_BRIEF_SYSTEM_PROMPT,
       messages: [{ role: 'user', content: briefContent }],
-      // Opus, not the default Sonnet. This one call decides the entire visual
-      // direction of the page from a free-text brief — "understated but not
-      // boring", "like Stripe but warmer" — which is judgement, not a lookup.
-      // It is also cheap to upgrade: short JSON in, short JSON out, and it only
-      // runs when the user left Style on "Auto".
+      // Pinned rather than left to the default, because this one call decides
+      // the entire visual identity of the page — every colour, both fonts, the
+      // geometry — from a free-text brief. That is judgement, not a lookup, and
+      // it is cheap to run at the top model: short JSON in, short JSON out, and
+      // it only fires when the user left Style on "Auto". (The default is Opus
+      // 5 today, so the pin changes nothing right now; it is here so a cheaper
+      // default later cannot silently take this call down with it.)
       model: 'claude-opus-5',
       maxTokens: 128000,
       label: 'build-html:design-brief',
@@ -847,73 +976,26 @@ async function getDesignBrief(
     }
 
     const parsed = JSON.parse(raw);
-    if (typeof parsed.style_tag !== 'string' || !(parsed.style_tag in STYLE_EXEMPLARS)) return null;
+    // A rejected sheet returns null and the caller falls back to one of the
+    // twelve. Never half-accept: a page built on a palette that failed its
+    // contrast check, or on a font with no @import URL, is worse than a page
+    // that shares a look with another page.
+    const sheet = parseStyleSheet(parsed.style_sheet);
+    if (!sheet) return null;
 
-    console.log('[buildHtmlFromSchema] design brief picked style', {
-      styleTag: parsed.style_tag,
+    console.log('[buildHtmlFromSchema] design brief wrote style sheet', {
+      label: sheet.label,
+      background: sheet.palette.background,
+      accent: sheet.palette.accent,
+      headline: sheet.typography.headline,
       referenceObject: typeof parsed.reference_object === 'string' ? parsed.reference_object : '',
       wildcard: typeof parsed.wildcard_element === 'string' ? parsed.wildcard_element : '',
     });
-    return { styleTag: parsed.style_tag as StyleTag, brief: parsed };
+    return { sheet, brief: parsed };
   } catch (err) {
-    console.error('[buildHtmlFromSchema] design-brief step failed, continuing without style reference', err);
+    console.error('[buildHtmlFromSchema] design-brief step failed, falling back to a stock style', err);
     return null;
   }
-}
-
-/**
- * The same "## Style reference" block the design brief produces, built from a
- * style the USER picked instead of from a model call.
- *
- * Deliberately shorter than the brief's version: the brief invents
- * business-specific palette/tone/motion sentences, and inventing those on top
- * of an explicit user choice would water the choice down. The exemplar's own
- * mood, layout notes and motion style ARE the direction here.
- */
-function styleNoteFromTag(styleTag: StyleTag, chosenBy: 'user' | 'auto'): string {
-  const exemplar = STYLE_EXEMPLARS[styleTag];
-  // Whose choice this was decides whether the model may write a note about it.
-  // Both callers used to say "chosen by the user", which on the Auto path is simply
-  // untrue - and it invited notes reporting a disagreement between two of our own
-  // steps as though it were the user's to settle.
-  const provenance =
-    chosenBy === 'user'
-      ? 'chosen by the user'
-      : 'chosen for this page by the design step — the user did not pick it and has not seen it';
-  return (
-    `\n\n## Style reference (${provenance} — follow it, do not substitute a different aesthetic)\n` +
-    `Style: ${exemplar.label} — ${exemplar.mood}\n` +
-    `Palette direction: background ${exemplar.palette.background}, text ${exemplar.palette.text}, accent ${exemplar.palette.accent}` +
-    (exemplar.palette.secondaryAccent ? `, secondary ${exemplar.palette.secondaryAccent}` : '') +
-    ` — use these as the anchor, adapting only as far as the business genuinely requires.\n` +
-    // The remaining :root tokens the system prompt demands, handed over as a
-    // ready-to-paste block. Prose ("soft rounded cards") left ten tokens to
-    // invention on every build; exact values leave none.
-    `Use EXACTLY these values for the rest of the token block — do not substitute your own:\n` +
-    `  --bg: ${exemplar.palette.background};\n` +
-    `  --bg-surface: ${exemplar.tokens.surface};\n` +
-    `  --bg-elevated: ${exemplar.tokens.elevated};\n` +
-    `  --text: ${exemplar.palette.text};\n` +
-    `  --text-muted: ${exemplar.tokens.textMuted};\n` +
-    `  --border: ${exemplar.tokens.border};\n` +
-    `  --accent: ${exemplar.palette.accent};\n` +
-    `  --radius: ${exemplar.tokens.radius};\n` +
-    `  --radius-lg: ${exemplar.tokens.radiusLg};\n` +
-    `  --radius-pill: ${exemplar.tokens.radiusPill};\n` +
-    `  --section-py: ${exemplar.tokens.sectionPy};\n` +
-    `  --container: ${exemplar.tokens.container};\n` +
-    `  --shadow: ${exemplar.tokens.shadow};\n` +
-    `  --shadow-lg: ${exemplar.tokens.shadowLg};\n` +
-    `Typography: headline ${exemplar.typography.headline}, body ${exemplar.typography.body}\n` +
-    `Type scale: ${exemplar.typeScale}\n` +
-    `Geometry (corners, borders, shadows): ${exemplar.geometry}\n` +
-    `Layout rhythm: ${exemplar.layoutNotes}\n` +
-    `Signature moves — at least two of these MUST appear on the page: ${exemplar.signatureMoves}\n` +
-    `Do NOT use, in this style: ${exemplar.avoid}\n` +
-    `Motion style: ${exemplar.motionStyle}\n` +
-    `Aesthetic target: ${AESTHETIC_REFERENCES[styleTag] ?? ''}\n` +
-    COMMIT_TO_THE_STYLE
-  );
 }
 
 export interface BuildHtmlOptions {
@@ -995,7 +1077,16 @@ export interface BuildHtmlOptions {
    * preserving the page's existing look) or when a competitor's CSS tokens
    * define the palette — in neither case is a style tag in play.
    */
-  onStyleResolved?: (styleTag: StyleTag, source: 'user' | 'auto') => void;
+  /**
+   * What style the page ended up with, for the "Built with" strip and for
+   * `pages.style`. A StyleTag when one of the twelve was used; a
+   * `custom:`-prefixed label when the design step wrote its own sheet.
+   *
+   * The prefix is what keeps the stored value safe to read back: isStyleTag()
+   * rejects it, so a later rebuild falls through to Auto — the same thing a
+   * page with no stored style does today.
+   */
+  onStyleResolved?: (style: string, source: 'user' | 'auto') => void;
 }
 
 /**
@@ -1055,22 +1146,28 @@ export async function buildHtmlFromSchema(
       hasImages ? imageUrls : [],
     );
     if (designBrief) {
-      options.onStyleResolved?.(designBrief.styleTag, 'auto');
-      const b = designBrief.brief;
+      const { sheet, brief: b } = designBrief;
+      options.onStyleResolved?.(customStyleValue(sheet), 'auto');
       const referenceObject = typeof b.reference_object === 'string' ? b.reference_object.trim() : '';
       const wildcardElement = typeof b.wildcard_element === 'string' ? b.wildcard_element.trim() : '';
-      // Base on the same hardcoded tokens the manual picker uses (exact hex
-      // codes, exact font names, exact layout notes) — without these the model
-      // has no concrete anchor and drifts to generic/default fonts and colors.
-      // The brief's freeform sentences layer business-specific refinement on
-      // top of that anchor, they don't replace it.
+      // The sheet already carries the palette, the type and the layout rhythm,
+      // written for this business. Only what it does NOT cover is appended —
+      // the old "business-specific palette direction" line is gone, because a
+      // second opinion about colour next to a locked token block is exactly
+      // what made the model report a conflict it had invented on both sides.
       styleReferenceNote =
-        styleNoteFromTag(designBrief.styleTag, 'auto') +
-        `\nBusiness-specific palette direction: ${b.palette_direction ?? ''}\n` +
-        `Business-specific layout rhythm: ${b.layout_rhythm ?? ''}\n` +
-        `Copy tone: ${b.copy_tone ?? ''}\n` +
+        renderStyleReference(sheet, 'auto') +
+        `\nCopy tone: ${b.copy_tone ?? ''}\n` +
         (referenceObject ? `\nReal-world reference: ${referenceObject} — let this genuinely inform color/type/layout choices, don't just namedrop it` : '') +
         (wildcardElement ? `\nWildcard detail: ${wildcardElement}` : '');
+    } else {
+      // Fail-open. Until now this branch produced no style block at all, which
+      // left the HTML step to invent ten tokens mid-draft and drift to default
+      // fonts and colours — the worst-looking pages the builder made.
+      const fallback = fallbackStyleTag(schema);
+      console.warn('[buildHtmlFromSchema] no invented style sheet, falling back to stock style', fallback);
+      options.onStyleResolved?.(fallback, 'auto');
+      styleReferenceNote = styleNoteFromTag(fallback, 'auto');
     }
   }
 

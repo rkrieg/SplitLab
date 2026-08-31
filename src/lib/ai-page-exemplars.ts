@@ -487,9 +487,9 @@ export const STYLE_EXEMPLARS: Record<StyleTag, StyleExemplar> = {
   },
 
   // ── User-pick-only styles (2026-08-26) ───────────────────────────────────
-  // Marked `userPickOnly` below, which keeps them out of the style_tag union
-  // and the style catalogue the design-brief call reads, so "Auto" can never
-  // land on them — while the picker still offers them to a user who asks.
+  // Marked `userPickOnly` below, which keeps them out of AUTO_STYLE_TAGS, so
+  // the Auto path can never land on them — while the picker still offers them
+  // to a user who asks.
   // They are here because a user who wants them should be able to ask, not
   // because Auto should ever land one on a plumber. The exclusion is now
   // derived from that flag rather than from a hand-maintained list, so there
@@ -575,12 +575,13 @@ export const STYLE_OPTIONS: { value: StyleTag; label: string; mood: string; best
   }));
 
 /**
- * The styles "Auto" is allowed to choose from — everything except the
+ * The styles "Auto" is allowed to fall back on — everything except the
  * `userPickOnly` ones.
  *
- * The design-brief call builds both its style_tag union and its style
- * catalogue from this, so a style is hidden from Auto by setting one flag on
- * the exemplar and nowhere else.
+ * Auto no longer picks from this list: the design-brief call writes its own
+ * style sheet for the business. These are what a page gets when that call
+ * fails or returns a sheet that would not survive a browser, and a style is
+ * kept out of that pool by setting one flag on the exemplar and nowhere else.
  */
 export const AUTO_STYLE_TAGS: StyleTag[] = STYLE_TAG_VALUES.filter(
   (tag) => !STYLE_EXEMPLARS[tag].userPickOnly,
