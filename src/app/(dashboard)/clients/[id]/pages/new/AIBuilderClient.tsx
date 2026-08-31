@@ -7,7 +7,7 @@ import {
   Wand2, Layout, Palette, RefreshCw, Monitor, Smartphone,
   ExternalLink, RotateCcw, Plus, Download, Lock, ArrowRight,
   Sliders, Trash2, AlertTriangle, MoreHorizontal, MousePointer2, ChevronDown,
-  FileCode2, Link2,
+  FileCode2, Link2, Lightbulb,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { cn } from '@/lib/utils';
@@ -50,6 +50,14 @@ interface Message {
   questions?: string[];
   elapsedMs?: number;
   /**
+   * A design call the model made and wants looked at, e.g. it improved on
+   * something the reference site does, or it did what the user asked while
+   * disagreeing with it. Kept OFF `content` so it renders as its own callout
+   * rather than disappearing into the end of the status sentence — the whole
+   * point of the note is that the user notices it and can overrule it.
+   */
+  note?: string;
+  /**
    * Renders "Rebuild it" / "Leave it as it is" under the message.
    *
    * Set when prep found a page whose layout is pixel coordinates and which
@@ -73,7 +81,7 @@ interface InitialPage {
   name: string;
   vertical: string;
   schema_json: unknown;
-  conversation_json: { role: string; content: string; image_urls?: string[]; asset_library?: { url: string; name?: string }[] }[] | null;
+  conversation_json: { role: string; content: string; note?: string; image_urls?: string[]; asset_library?: { url: string; name?: string }[] }[] | null;
   html_url: string | null;
   slug: string | null;
   is_published: boolean;
@@ -330,7 +338,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   const [iframeSrc, setIframeSrc] = useState<string | null>(null);
   const [iframeLoaded, setIframeLoaded] = useState(false);
   const [schemaJson, setSchemaJson] = useState<unknown>(null);
-  const [conversationJson, setConversationJson] = useState<{ role: string; content: string; image_urls?: string[]; asset_library?: { url: string; name?: string }[]; clarify?: boolean }[]>([]);
+  const [conversationJson, setConversationJson] = useState<{ role: string; content: string; note?: string; image_urls?: string[]; asset_library?: { url: string; name?: string }[]; clarify?: boolean }[]>([]);
   const [publishedUrl, setPublishedUrl] = useState<string | null>(null);
   const [urlCopied, setUrlCopied] = useState(false);
   const [publishConfirmOpen, setPublishConfirmOpen] = useState(false);
@@ -818,6 +826,29 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     // that had never been an edit at all ("hey how are you"). Show what was
     // stored; fall back to the canned line only for the JSON blobs written by
     // older builds, which have no words in them to show.
+    // Notes written before they moved onto their own field are sitting at the
+    // end of the status sentence. These are the exact sentences WE authored and
+    // appended to, so the split is a literal match, not a guess at where one
+    // sentence ends. Only the tail after a full match is treated as the note.
+    //
+    // Known imprecision, and it is cosmetic: when that turn also reported a
+    // broken image URL or an unplaced import, those sit in the same tail and
+    // ride into the card with the note. The text is all still shown, in order.
+    const LEGACY_NOTE_TAILS = [
+      'Your page is ready! Click any text in the preview to edit it, or ask me to make changes.',
+      "Tell me to fix it and I'll take another pass.",
+    ];
+    const splitStoredNote = (text: string): { content: string; note?: string } => {
+      for (const lead of LEGACY_NOTE_TAILS) {
+        const at = text.indexOf(lead);
+        if (at === -1) continue;
+        const end = at + lead.length;
+        const tail = text.slice(end).trim();
+        if (tail) return { content: text.slice(0, end).trim(), note: tail };
+      }
+      return { content: text };
+    };
+
     const restored: Message[] = [];
     let assistantSeen = false;
     for (let i = 0; i < history.length; i++) {
@@ -833,13 +864,18 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         // A pre-fix row: {"type":"patch","schema_json":{…}} or
         // {"type":"questions",…} from the create flow. Never shown raw.
         const isLegacyPayload = !stored || stored.startsWith('{') || stored.startsWith('[');
+        const storedNote = typeof entry.note === 'string' ? entry.note.trim() : '';
+        // Rows written since notes moved off `content` carry `note` directly.
+        // Older rows have it appended to the sentence — recover it there.
+        const legacy = isLegacyPayload || storedNote ? null : splitStoredNote(stored);
         restored.push({
           role: 'assistant',
           content: isLegacyPayload
             ? assistantSeen
               ? 'Done! The page has been updated.'
               : `Got it! Built your ${VERTICAL_LABELS[initialPage.vertical] ?? 'new'} page.`
-            : stored,
+            : legacy?.content ?? stored,
+          ...(storedNote ? { note: storedNote } : legacy?.note ? { note: legacy.note } : {}),
         });
         assistantSeen = true;
       }
@@ -1043,7 +1079,8 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       toast.success('Page rebuilt — every section is editable now.', { duration: 6000 });
       addMessage({
         role: 'assistant',
-        content: [doneNote, doneNotes].filter(Boolean).join(' ') || 'This page has been rebuilt.',
+        content: doneNote || 'This page has been rebuilt.',
+        note: doneNotes,
         elapsedMs: doneElapsed,
       });
     } catch {
@@ -1741,10 +1778,10 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       // saying nothing about it reads as the import having failed — which is
       // exactly how it was read. Name the outcome either way.
       + (assetPlacementNote ? ` ${assetPlacementNote}` : '')
-      // A design call the builder made and wants looked at. It rides the same
-      // sentence as the other notes: the page IS done, so this must never turn
-      // into a second "not everything landed".
-      + (modelNotes ? ` ${modelNotes}` : '');
+      ;
+    // A design call the builder made and wants looked at. It does NOT ride the
+    // status sentence — it renders as its own callout, because a recommendation
+    // tucked onto the end of "your page is ready" is one nobody reads.
     const assistantReply = unmetRequirements
       ? `Your page is built, but not everything landed — ${unmetRequirements}. Tell me to fix it and I'll take another pass.${note}`
       : `Your page is ready! Click any text in the preview to edit it, or ask me to make changes.${note}`;
@@ -1762,7 +1799,10 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         // comments, and until this was saved a refresh replaced the whole
         // thing with a canned "Got it! Built your page." Follow-up turns have
         // always persisted their assistant reply — the build now matches.
-        conversation_json: [...historyWithImages, { role: 'assistant', content: assistantReply }],
+        // `note` is stored beside `content`, not inside it: the note no longer
+        // rides the status sentence, so persisting only `content` would drop
+        // the model's recommendation the moment the page is reopened.
+        conversation_json: [...historyWithImages, { role: 'assistant', content: assistantReply, ...(modelNotes ? { note: modelNotes } : {}) }],
         // Saved so a later "Edit with AI" rebuild obeys the same rules. Written
         // through a separate, non-fatal query server-side (skills/persistence),
         // so a missing migration cannot fail this PATCH.
@@ -1781,7 +1821,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     setPhase('editing');
 
     if (unmetRequirements) toast('Built, but some asks need another pass.', { icon: '⚠️' });
-    addMessage({ role: 'assistant', content: assistantReply });
+    addMessage({ role: 'assistant', content: assistantReply, note: modelNotes ?? undefined });
   }
 
   async function handleGenerate(e: React.FormEvent) {
@@ -2103,13 +2143,15 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         toast(`Partly done — some edits still need a retry.`, { icon: '⚠️' });
         addMessage({
           role: 'assistant',
-          content: `Partly done (not fully finished). ${done.partial_message}${done.notes ? ` ${done.notes}` : ''}`,
+          content: `Partly done (not fully finished). ${done.partial_message}`,
+          note: done.notes,
           elapsedMs: done.elapsed_ms,
         });
       } else {
         addMessage({
           role: 'assistant',
-          content: done.notes ? `${didIt} ${done.notes}` : didIt,
+          content: didIt,
+          note: done.notes,
           elapsedMs: done.elapsed_ms,
         });
       }
@@ -2121,7 +2163,14 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         content: instruction,
         ...(linkedForEdit.length > 0 ? { asset_library: linkedForEdit } : {}),
       },
-      { role: 'assistant', content: JSON.stringify(done) },
+      // Was JSON.stringify(done): a blob the restore path detects as a legacy
+      // payload and replaces with canned text, so an edit's note was gone the
+      // moment the page was reopened. Store what the user actually read.
+      {
+        role: 'assistant',
+        content: done.message?.trim() || 'Done! The page has been updated.',
+        ...(done.notes ? { note: done.notes } : {}),
+      },
     ]);
     setPhase('editing');
   }
@@ -2461,6 +2510,69 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                         <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed break-words whitespace-pre-wrap">{msg.content}</p>
                       )}
                       {/*
+                        A design call the model made and is handing over for
+                        approval — it improved on something the reference site
+                        does, or it did what was asked while disagreeing. This
+                        used to be appended to the status sentence above, where
+                        it read as trailing filler and got skipped. It is a
+                        recommendation the user is meant to act on, so it gets
+                        its own card, a label, and a one-click way to push back.
+                      */}
+                      {msg.note && (
+                        <div className="mt-2.5 rounded-xl border border-amber-200/80 dark:border-amber-500/25 bg-amber-50/70 dark:bg-amber-500/[0.07] px-3 py-2.5">
+                          <div className="flex items-center gap-1.5 mb-1.5">
+                            <Lightbulb size={12} className="text-amber-600 dark:text-amber-400 flex-shrink-0" />
+                            <span className="text-[10px] font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-400">
+                              A call I made
+                            </span>
+                            <span
+                              className="text-[10px] text-amber-600/70 dark:text-amber-400/60"
+                              title="Splitlab makes a judgement call when a design rule and what you asked for disagree. It always tells you here, so you can keep it or put it back."
+                            >
+                              — you can overrule this
+                            </span>
+                          </div>
+                          {/* The server sends one call per line. Two or three run
+                              together as a paragraph and stop being scannable, so
+                              past the first they become a list. */}
+                          {msg.note.split('\n').map(l => l.trim()).filter(Boolean).length > 1 ? (
+                            <ul className="space-y-1.5">
+                              {msg.note.split('\n').map(l => l.trim()).filter(Boolean).map((line, li) => (
+                                <li key={li} className="text-sm text-slate-700 dark:text-slate-200 leading-relaxed break-words flex gap-1.5">
+                                  <span className="text-amber-600/70 dark:text-amber-400/60 flex-shrink-0">•</span>
+                                  <span>{line}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p className="text-sm text-slate-700 dark:text-slate-200 leading-relaxed break-words whitespace-pre-wrap">
+                              {msg.note}
+                            </p>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              // Prefill rather than send: the model named the
+                              // specific thing it changed, and only the user can
+                              // say which way they want it. Focus so the next
+                              // keystroke finishes the sentence.
+                              setFollowUpInput('Change that back — ');
+                              const el = followUpRef.current;
+                              if (el) {
+                                el.focus();
+                                const n = el.value.length;
+                                el.setSelectionRange(n, n);
+                              }
+                            }}
+                            title="Start a message asking for this to be reverted"
+                            className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-400 hover:text-amber-800 dark:hover:text-amber-300 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 rounded"
+                          >
+                            <RotateCcw size={11} />
+                            Change it back
+                          </button>
+                        </div>
+                      )}
+                      {/*
                         Prep found a page whose layout is pixel coordinates, so
                         restructuring it by editing markup is impossible. The
                         interactive choice (go back / reupload cleaned HTML)
@@ -2488,12 +2600,16 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                         {(msg.elapsedMs / 1000).toFixed(1)}s
                       </span>
                     )}
-                    <button className="p-1 text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 transition-colors"><RotateCcw size={12} /></button>
+                    {/* A regenerate button sat here with no onClick — it looked
+                        actionable, did nothing when pressed, and there is no
+                        regenerate flow behind it to wire up. Removed rather than
+                        left as a control that lies about what it does. */}
                     {/* <button className="p-1 text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 transition-colors"><ThumbsUp size={12} /></button> */}
                     {/* <button className="p-1 text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 transition-colors"><ThumbsDown size={12} /></button> */}
                     <button
                       className="p-1 text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 transition-colors"
-                      onClick={() => { navigator.clipboard.writeText(msg.content); toast.success('Copied'); }}
+                      title="Copy this message"
+                      onClick={() => { navigator.clipboard.writeText([msg.content, msg.note].filter(Boolean).join('\n\n')); toast.success('Copied'); }}
                     >
                       <Copy size={12} />
                     </button>

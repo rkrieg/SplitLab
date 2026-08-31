@@ -563,7 +563,9 @@ export async function POST(request: NextRequest) {
         ...(assetScan.broken.length > 0 ? { broken_assets: assetScan.broken.length } : {}),
         // Capped at three even though the prompt asks for at most three: a model
         // that ignores the cap must not turn the chat reply into an essay.
-        ...(buildNotes.length > 0 ? { notes: buildNotes.slice(0, 3).join(' ') } : {}),
+        // One per line: two or three separate calls are a list the user scans,
+        // not a paragraph they wade through.
+        ...(buildNotes.length > 0 ? { notes: buildNotes.slice(0, 3).join('\n') } : {}),
         ...(placement
           ? { imported_assets: placement.imported, placed_assets: placement.placed, unused_asset_names: placement.unusedNames }
           : {}),

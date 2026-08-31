@@ -6419,9 +6419,14 @@ export async function POST(
       }
 
       const doneHeadline = editorMessage ?? 'Done! The page has been updated.';
+      // Notes are stored BESIDE the sentence, not appended to it. Appended, they
+      // read as trailing filler and were skipped; the client renders this field
+      // as its own callout. One per line, so two or three calls list rather than
+      // running together into a paragraph.
       const assistantReply = partialMessage
-        ? `Partly done (not fully finished). ${partialMessage}${pageNotes.length > 0 ? ` ${pageNotes.join(' ')}` : ''}`
-        : `${doneHeadline}${pageNotes.length > 0 ? ` ${pageNotes.join(' ')}` : ''}`;
+        ? `Partly done (not fully finished). ${partialMessage}`
+        : doneHeadline;
+      const assistantNote = pageNotes.length > 0 ? pageNotes.join('\n') : '';
       const userEntry: Record<string, unknown> = { role: 'user', content: rawPrompt };
       if (Array.isArray(image_urls) && image_urls.length > 0) userEntry.image_urls = image_urls;
       // Only THIS turn's imports. The merged list above also holds files carried
@@ -6448,6 +6453,7 @@ export async function POST(
         {
           role: 'assistant',
           content: assistantReply,
+          ...(assistantNote ? { note: assistantNote } : {}),
           // Which sections this turn actually touched. The next message is
           // often a correction — "no, use the hero's image" — that names the
           // WHAT but not the WHERE, because the where was settled a turn ago
@@ -6572,7 +6578,7 @@ export async function POST(
         // still covers them — see SSEEvent.message.
         ...(editorMessage ? { message: editorMessage } : {}),
         ...(partialMessage ? { partial_message: partialMessage } : {}),
-        ...(pageNotes.length > 0 ? { notes: pageNotes.join(' ') } : {}),
+        ...(pageNotes.length > 0 ? { notes: pageNotes.join('\n') } : {}),
       };
       sendSSE(controller, doneEvent);
       closeSSE(controller);
