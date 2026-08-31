@@ -90,7 +90,16 @@ resolve that depends ENTIRELY on how deliberately the thing was asked for. In ev
 case you SAY what you did — you never silently pick a side.
 
 - SOMETHING YOU WOULD HAVE INVENTED YOURSELF. There is no conflict. Follow the rule.
-  Write no note: a note about your own first draft is noise.
+  Write no note: a note about your own first draft is noise. A STYLE REFERENCE BLOCK
+  MARKED AS CHOSEN FOR THIS PAGE IS YOUR OWN WORK AND FALLS UNDER THIS CASE. It reads
+  like an instruction only because it arrives as a separate document: the user did not
+  write it, was not shown it, and was never offered a choice about it. It came from the
+  same pipeline you are part of. So it can never be one side of a conflict. When it
+  disagrees with a design rule, with the token block, or with itself, resolve it and
+  move on. There is nothing there for the user to overrule, and a note about it asks
+  them to hold an opinion about a decision that was never theirs to make. (A block
+  marked as chosen BY THE USER is the opposite case - that is their choice, and it
+  belongs in the last case below.)
 - SOMETHING THE REFERENCE SITE HAPPENS TO DO. Build the better version — apply the
   rule. A reference site is evidence of what that business chose, not an instruction
   to reproduce its mistakes. Then say what you changed and why, so it can be
@@ -854,10 +863,18 @@ async function getDesignBrief(
  * of an explicit user choice would water the choice down. The exemplar's own
  * mood, layout notes and motion style ARE the direction here.
  */
-function styleNoteFromTag(styleTag: StyleTag): string {
+function styleNoteFromTag(styleTag: StyleTag, chosenBy: 'user' | 'auto'): string {
   const exemplar = STYLE_EXEMPLARS[styleTag];
+  // Whose choice this was decides whether the model may write a note about it.
+  // Both callers used to say "chosen by the user", which on the Auto path is simply
+  // untrue - and it invited notes reporting a disagreement between two of our own
+  // steps as though it were the user's to settle.
+  const provenance =
+    chosenBy === 'user'
+      ? 'chosen by the user'
+      : 'chosen for this page by the design step — the user did not pick it and has not seen it';
   return (
-    `\n\n## Style reference (chosen by the user — follow it, do not substitute a different aesthetic)\n` +
+    `\n\n## Style reference (${provenance} — follow it, do not substitute a different aesthetic)\n` +
     `Style: ${exemplar.label} — ${exemplar.mood}\n` +
     `Palette direction: background ${exemplar.palette.background}, text ${exemplar.palette.text}, accent ${exemplar.palette.accent}` +
     (exemplar.palette.secondaryAccent ? `, secondary ${exemplar.palette.secondaryAccent}` : '') +
@@ -1021,7 +1038,7 @@ export async function buildHtmlFromSchema(
   let styleReferenceNote = callerStyleNote ?? '';
   const chosenStyle = isStyleTag(options.styleTag) ? options.styleTag : null;
   if (!styleReferenceNote && !hasCompetitorContext && chosenStyle) {
-    styleReferenceNote = styleNoteFromTag(chosenStyle);
+    styleReferenceNote = styleNoteFromTag(chosenStyle, 'user');
     options.onStyleResolved?.(chosenStyle, 'user');
   }
   if (!styleReferenceNote && !hasCompetitorContext) {
@@ -1041,7 +1058,7 @@ export async function buildHtmlFromSchema(
       // The brief's freeform sentences layer business-specific refinement on
       // top of that anchor, they don't replace it.
       styleReferenceNote =
-        styleNoteFromTag(designBrief.styleTag) +
+        styleNoteFromTag(designBrief.styleTag, 'auto') +
         `\nBusiness-specific palette direction: ${b.palette_direction ?? ''}\n` +
         `Business-specific layout rhythm: ${b.layout_rhythm ?? ''}\n` +
         `Copy tone: ${b.copy_tone ?? ''}\n` +
