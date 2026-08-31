@@ -202,7 +202,7 @@ export function userFacingAIErrorMessage(err: unknown): string {
 
 async function askAnthropic(options: AskAIOptions): Promise<string> {
   const anthropic = getAnthropicClient();
-  const model = options.model ?? process.env.ANTHROPIC_MODEL?.trim() ?? 'claude-sonnet-5';
+  const model = options.model ?? process.env.ANTHROPIC_MODEL?.trim() ?? 'claude-opus-5';
   const callId = `${options.label}:${Date.now().toString(36)}`;
   const startedAt = Date.now();
 
@@ -243,7 +243,7 @@ async function askAnthropic(options: AskAIOptions): Promise<string> {
         throw new AIResponseTruncatedError(output_tokens, options.maxTokens);
       }
 
-      // Claude Sonnet 5 runs adaptive thinking by default (no `thinking` param
+      // Claude Opus 5 runs adaptive thinking by default (no `thinking` param
       // needed to trigger it), which puts a `thinking` block ahead of the
       // `text` block in `content` — content[0] is no longer reliably the answer.
       const block = response.content.find((b) => b.type === 'text');
@@ -276,7 +276,7 @@ async function askAnthropic(options: AskAIOptions): Promise<string> {
 
 async function askAnthropicStream(options: AskAIOptions, onChunk: (text: string) => void): Promise<string> {
   const anthropic = getAnthropicClient();
-  const model = options.model ?? process.env.ANTHROPIC_MODEL?.trim() ?? 'claude-sonnet-5';
+  const model = options.model ?? process.env.ANTHROPIC_MODEL?.trim() ?? 'claude-opus-5';
   const callId = `${options.label}:${Date.now().toString(36)}`;
   const startedAt = Date.now();
 

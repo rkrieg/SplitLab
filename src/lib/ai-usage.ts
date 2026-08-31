@@ -4,15 +4,18 @@ import { aiCreditsForPlan, TOKENS_PER_CREDIT } from '@/lib/plans';
 // Provider cost in MICRO-dollars per token, by model. $X per 1M tokens = X
 // micro$/token, so these are just the per-million dollar rates as integers.
 const MODEL_COST_MICROS: Record<string, { in: number; out: number }> = {
+  'claude-opus-5':              { in: 5,  out: 25 },
+  'claude-sonnet-5':            { in: 2,  out: 10 },
   'claude-sonnet-4-6':          { in: 3,  out: 15 },
-  'claude-sonnet-5':            { in: 3,  out: 15 },
   'claude-haiku-4-5':           { in: 1,  out: 5 },
   'claude-haiku-4-5-20251001':  { in: 1,  out: 5 },
 };
 
 /** Actual provider cost of a call, in micro-dollars (integer). */
 export function costMicros(model: string, inputTokens: number, outputTokens: number): number {
-  const p = MODEL_COST_MICROS[model] ?? { in: 3, out: 15 }; // default to Sonnet rates
+  // Unknown models fall back to Opus rates — the most expensive model we run.
+  // Guessing low here silently undercharges overage; guessing high never does.
+  const p = MODEL_COST_MICROS[model] ?? { in: 5, out: 25 };
   return inputTokens * p.in + outputTokens * p.out;
 }
 

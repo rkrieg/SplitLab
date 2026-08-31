@@ -533,7 +533,6 @@ async function extractCssTokens(cssBlocks: string, htmlStructure: string): Promi
         },
       ],
       maxTokens: 128000,
-      model: 'claude-sonnet-5',
       label: 'competitor-scrape:extract-css-tokens',
     });
     return result.trim() || null;
