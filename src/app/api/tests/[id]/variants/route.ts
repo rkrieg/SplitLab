@@ -20,7 +20,10 @@ const addVariantSchema = z.object({
   redirect_url: z.string().url().nullable().optional(),
   html_content: z.string().optional(),
   proxy_mode: z.boolean().optional(),
-  traffic_weight: z.number().int().min(0).max(100),
+  // Accepted and ignored. New variants always join at 0% (see
+  // lib/traffic-weights) — kept in the schema only so an older client still
+  // sending it gets its variant instead of a 400.
+  traffic_weight: z.number().int().min(0).max(100).optional(),
 });
 
 // Extracted into createVariant() (src/lib/services/tests.ts) so this route
@@ -51,7 +54,8 @@ export async function POST(
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    const result = await createVariant(params.id, test.workspace_id, session.user.role, data);
+    const { traffic_weight: _ignoredWeight, ...variantInput } = data;
+    const result = await createVariant(params.id, test.workspace_id, session.user.role, variantInput);
     if (!result.ok) {
       return NextResponse.json({ error: result.error, ...(result.limitError ? { limitError: true } : {}) }, { status: result.status });
     }
