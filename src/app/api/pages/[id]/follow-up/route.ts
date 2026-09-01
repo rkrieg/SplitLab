@@ -1487,7 +1487,7 @@ Rules for the sections object:
 - KEEP A SECTION'S EXISTING NAME whenever that section survives in recognisable form, even if you moved it or restyled it. Only invent a new kebab-case name for a section that genuinely did not exist before. Names must be unique.
 - Do NOT include <!-- SL:name --> markers yourself — the caller wraps each section you return.
 - Change ONLY what the instruction asks for. Every section in this run is being replaced by what you return, so anything you fail to carry across is destroyed: copy, images, links and layout you were not asked to touch must come back unchanged.
-- Preserve every data-field attribute on content you carry across — they drive the page's click-to-edit, and dropping one silently takes away the user's ability to edit that text. Give any genuinely new element a data-field too, using "<name>.<field>" dot-paths matching the section's name.
+- Preserve every data-field attribute on content you carry across — they drive the page's click-to-edit, and dropping one silently takes away the user's ability to edit that text. Give any genuinely new element a data-field too, using "<name>.<field>" dot-paths matching the section's name. Two limits on that, both of which have broken real pages: put it ONLY on an element that holds text or an image of its own — never on a wrapper/layout box that exists to contain other elements, because every data-field becomes contentEditable and naming the wrapper makes the entire block editable as one lump, so a stray backspace inside it wipes the video and buttons along with the text. And NEVER prefix a name that already carries the section prefix: if the element you are copying from says data-field="hero.badge", the new one is "hero.badge", not "hero.hero.badge" — a doubled prefix points at a path no schema has, so every edit typed there is silently discarded.
 - Match the page's existing visual design system — reuse the existing CSS custom properties/:root variables, class names, fonts and colors rather than inventing a new look. If new CSS is genuinely needed, add a small scoped <style> block inside the section itself; never modify the page's shared stylesheet.
 - Each section must be a single top-level element (e.g. one <section>...</section>).
 - Never add an external <script src> to a third-party domain.
@@ -2481,11 +2481,14 @@ export async function POST(
   // itself on a page nobody asked us to touch.
   {
     const fix = repairSlMarkers(html, schema);
-    if (fix.repaired.length > 0 || fix.skipped.length > 0) {
+    if (fix.repaired.length > 0 || fix.skipped.length > 0 || fix.unnested.length > 0) {
       console.log('[pages/follow-up] section markers repaired in memory', {
         repaired: fix.repaired,
         structural: fix.structural,
         skipped: fix.skipped,
+        // Non-empty means this page had been saved with one marker swallowing
+        // the others, and every edit on it was failing until now.
+        unnested: fix.unnested,
       });
     }
     html = fix.html;

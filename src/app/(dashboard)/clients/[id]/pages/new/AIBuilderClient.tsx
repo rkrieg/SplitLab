@@ -735,6 +735,14 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   const followUpRef = useRef<HTMLTextAreaElement>(null);
   const FOLLOW_UP_MAX_HEIGHT = 240;
   const iframeRef = useRef<HTMLIFrameElement>(null);
+
+  // The top-level body nodes that came from OUR html, per preview document.
+  // Written on load in injectPreviewEditor, read on save in getCleanHtml, so
+  // the browser's own additions never get written into the customer's page.
+  const ownTopLevel = useRef<{ doc: Document | null; nodes: WeakSet<Element> }>({
+    doc: null,
+    nodes: new WeakSet(),
+  });
   const imageInputRef = useRef<HTMLInputElement>(null);
 
   // Restore state from pre-created page
@@ -1360,7 +1368,26 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   // real document load — a previous dual-iframe (scale remount) path attached
   // the editor to a document that was then thrown away once layout finished.
   function injectPreviewEditor(doc: Document | null | undefined) {
-    if (!doc?.body || phase !== 'editing') return;
+    if (!doc?.body) return;
+
+    // Remember which top-level nodes were OURS, the moment the document loads.
+    //
+    // getCleanHtml saves the page by reading this live document back out, so
+    // anything the BROWSER adds to it gets saved into the customer's page. That
+    // is not hypothetical: an extension dropped two empty
+    // <span id="PING_…" style="display:none"> after </main> on an uploaded
+    // Unbounce page, we wrote them into the saved HTML, and from then on the
+    // section map read the page as one giant block and every edit failed.
+    //
+    // Recorded here rather than guessed at save time, because "is this ours"
+    // has an exact answer — it was in the document we loaded — and no reliable
+    // heuristic. No name matching, no denylist: a chat widget with real content
+    // is treated exactly like an empty span.
+    if (ownTopLevel.current.doc !== doc) {
+      ownTopLevel.current = { doc, nodes: new WeakSet(Array.from(doc.body.children)) };
+    }
+
+    if (phase !== 'editing') return;
     // Same document already wired (effect + onLoad both fire).
     if (doc.querySelector('[data-sl-editor]')) return;
     const fields = doc.querySelectorAll('[data-field]');
@@ -1437,7 +1464,27 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   function getCleanHtml(): string | null {
     const doc = iframeRef.current?.contentDocument;
     if (!doc) return null;
+
+    // Positions of top-level nodes the browser added after load (see
+    // injectPreviewEditor). Collected against the LIVE document, applied to the
+    // clone by index — the clone is a deep copy taken in the same tick, so the
+    // two line up. Only ever runs when we have a snapshot for THIS document; a
+    // missing snapshot means we cannot tell ours from theirs, and dropping a
+    // real section would be far worse than keeping a hidden span.
+    const foreign: number[] = [];
+    if (ownTopLevel.current.doc === doc) {
+      const own = ownTopLevel.current.nodes;
+      Array.from(doc.body.children).forEach((el, i) => {
+        if (!own.has(el)) foreign.push(i);
+      });
+    }
+
     const clone = doc.documentElement.cloneNode(true) as HTMLElement;
+    const cloneBody = clone.querySelector('body');
+    if (cloneBody) {
+      // Back to front, so removing one never shifts an index still to be used.
+      for (let i = foreign.length - 1; i >= 0; i--) cloneBody.children[foreign[i]]?.remove();
+    }
     clone.querySelectorAll('[data-sl-editor]').forEach(el => el.remove());
     clone.querySelectorAll('[data-field]').forEach((el) => {
       el.removeAttribute('contenteditable');

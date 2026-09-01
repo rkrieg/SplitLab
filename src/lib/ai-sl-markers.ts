@@ -84,6 +84,8 @@ export interface MarkerRepair {
   structural: string[];
   /** Schema sections we could not place. Left alone on purpose — see above. */
   skipped: string[];
+  /** Outer markers removed because they had swallowed other sections. */
+  unnested: string[];
 }
 
 function hasMarker(html: string, name: string): boolean {
@@ -217,6 +219,32 @@ function topLevelElements(html: string, from: number, to: number): TopLevelEleme
   return out;
 }
 
+/** One opening marker, anywhere. */
+const ANY_OPEN_MARKER = /<!--\s*SL:[a-zA-Z0-9_-]+\s*-->/i;
+
+/**
+ * Is there a marker sitting directly at this level, rather than inside a child?
+ *
+ * Markers live in the gaps BETWEEN the children — `<!-- SL:hero -->` is a
+ * sibling of `<section class="hero">`, not part of it. So the test is: cut the
+ * children out and look at what is left.
+ */
+function markerAtLevel(
+  html: string,
+  from: number,
+  to: number,
+  kids: Array<{ start: number; end: number }>,
+): boolean {
+  let gaps = '';
+  let cursor = from;
+  for (const k of kids) {
+    gaps += html.slice(cursor, k.start);
+    cursor = k.end;
+  }
+  gaps += html.slice(cursor, to);
+  return ANY_OPEN_MARKER.test(gaps);
+}
+
 /**
  * The range that actually holds the page's blocks.
  *
@@ -224,6 +252,21 @@ function topLevelElements(html: string, from: number, to: number): TopLevelEleme
  * page written as <body><div class="page-wrapper">…</div></body> is read the
  * same as a flat one. Bounded, because "descend while there is one child"
  * would otherwise walk all the way into a leaf.
+ *
+ * The order of the three tests below is the whole point, and it is there
+ * because of a real page. An uploaded Unbounce export is
+ * `<body><main class="tfr-page">…8 marked sections…</main></body>`, and the
+ * browser had left two empty `display:none` spans after the `</main>`. The old
+ * rule was "descend only when there is exactly ONE child": three children, so
+ * it never looked inside <main>, saw no markers at body level, and wrapped the
+ * entire page in a single `SL:tfr-page` that swallowed all eight. Every
+ * subsequent edit then had one 44,000-character section to aim at, wrote back a
+ * section named `hero` that no longer existed, and failed with "I couldn't work
+ * out what to change" — which blamed the user for our own bookkeeping.
+ *
+ * So: the markers a page already carries are the most reliable evidence we have
+ * about where its blocks live. Trust them first, and fall back to counting
+ * children only when there are none.
  */
 function blockContainer(html: string): { from: number; to: number } {
   const bodyOpen = /<body\b[^>]*>/i.exec(html);
@@ -235,8 +278,32 @@ function blockContainer(html: string): { from: number; to: number } {
     const children = topLevelElements(html, from, to).filter(
       (el) => !OPAQUE_TAGS.has(el.tag) && !VOID_TAGS.has(el.tag),
     );
-    if (children.length !== 1) break;
-    const only = children[0];
+
+    // 1. Markers already sit at THIS level. This is the block level, by proof
+    //    rather than by inference — stop, whatever else is lying around here.
+    if (markerAtLevel(html, from, to, children)) break;
+
+    // 2. Exactly one child holds the markers. That child is the real page
+    //    wrapper and everything beside it is noise, however big that noise is.
+    const holders = children.filter(
+      (el) =>
+        WRAPPER_TAGS.has(el.tag) &&
+        !insideAnyMarker(html, el.start) &&
+        ANY_OPEN_MARKER.test(html.slice(el.innerStart, el.innerEnd)),
+    );
+    if (holders.length === 1) {
+      from = holders[0].innerStart;
+      to = holders[0].innerEnd;
+      continue;
+    }
+
+    // 3. No markers anywhere yet — a page being prepared for the first time.
+    //    Count children as before, but ignore the ones too small to ever BE a
+    //    block: wrapTopLevelBlocks already refuses to wrap those, so counting
+    //    them here only ever produced a level nobody wanted.
+    const real = children.filter((el) => el.innerEnd - el.innerStart >= MIN_BLOCK_CHARS);
+    if (real.length !== 1) break;
+    const only = real[0];
     if (!WRAPPER_TAGS.has(only.tag)) break;
     // A wrapper that is already a marked section is a section, not a wrapper.
     if (insideAnyMarker(html, only.start)) break;
@@ -487,6 +554,74 @@ function enclosingElementSpan(html: string, at: number): [number, number] | null
   return best;
 }
 
+// ── Pass 0: undo a marker that swallowed the page ───────────────────────────
+
+/**
+ * Remove any marker pair that CONTAINS another marker pair.
+ *
+ * Nesting is not a judgement call — it is against our own rule. The builder's
+ * prompt says "Do NOT add SL markers inside sections — top level only", so a
+ * marker wrapping other markers can only ever be a mistake, and the mistake is
+ * always the OUTER one: the inner markers name real sections, the outer one
+ * names whatever container happened to be around them.
+ *
+ * It exists because pages are already saved in that state. A page whose eight
+ * sections ended up inside a ninth `SL:tfr-page` reads as ONE section, so every
+ * edit fails with nothing for the user to do about it. Fixing `blockContainer`
+ * stops new pages getting there; this un-does the ones that already are, on the
+ * next turn, with no re-upload and no migration.
+ *
+ * Only the two comments are cut. Not one character of page content moves —
+ * that is what makes this safe to run on every page, every time.
+ *
+ * It also cleans up a SECOND, unrelated source of nesting, and that one is
+ * left to this pass ON PURPOSE. Our own builder emits `<!-- SL:head -->`
+ * twice — the model hand-types markers from its prompt (ai-page-builder.ts,
+ * "Section markers — REQUIRED") and types that one two lines running, so the
+ * outer pair ends up spanning past `</head>`. Nothing in code writes SL:head,
+ * so the only real fix is to take marker-writing away from the model in the
+ * build path.
+ *
+ * Not worth it. The duplicate has no effect on anything — nothing reads the
+ * outer pair, and this pass removes it on every load anyway, keeping the
+ * correct inner pair. Rewriting how the builder emits markers to prevent a
+ * defect that is already neutralised would risk the one path that currently
+ * works, for no user-visible gain. Revisit only if the builder starts
+ * duplicating markers that are NOT head.
+ */
+export function dropNestedMarkers(html: string): { html: string; dropped: string[] } {
+  const dropped: string[] = [];
+  if (!html) return { html, dropped };
+
+  const cuts: Array<{ name: string; open: [number, number]; close: [number, number] }> = [];
+
+  for (const open of Array.from(html.matchAll(/<!--\s*SL:([a-zA-Z0-9_-]+)\s*-->/gi))) {
+    const name = open[1];
+    const innerStart = (open.index ?? 0) + open[0].length;
+    const closeRe = new RegExp(`<!--\\s*\\/SL:${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*-->`, 'i');
+    const close = closeRe.exec(html.slice(innerStart));
+    if (!close) continue; // Unclosed. Leave it; guessing where it ended is worse.
+
+    const innerEnd = innerStart + close.index;
+    if (!ANY_OPEN_MARKER.test(html.slice(innerStart, innerEnd))) continue;
+
+    cuts.push({
+      name,
+      open: [open.index ?? 0, innerStart],
+      close: [innerEnd, innerEnd + close[0].length],
+    });
+  }
+
+  // Back to front, so a cut never shifts an offset still to be used.
+  let out = html;
+  for (const cut of cuts.reverse()) {
+    out = out.slice(0, cut.close[0]) + out.slice(cut.close[1]);
+    out = out.slice(0, cut.open[0]) + out.slice(cut.open[1]);
+    dropped.push(cut.name);
+  }
+  return { html: out, dropped: dropped.reverse() };
+}
+
 // ── Both passes, cheapest first ─────────────────────────────────────────────
 
 /**
@@ -499,17 +634,29 @@ function enclosingElementSpan(html: string, at: number): [number, number] | null
 export function repairSlMarkers(html: string, schema: unknown): MarkerRepair {
   const repaired: string[] = [];
   const skipped: string[] = [];
-  if (!html) return { html, repaired, structural: [], skipped };
+  if (!html) return { html, repaired, structural: [], skipped, unnested: [] };
+
+  // Pass 0 — undo a marker that swallowed other sections. Runs FIRST because
+  // both passes below read the page's existing markers to decide what is
+  // already covered, and a swallowing marker makes the whole page look covered.
+  const unnest = dropNestedMarkers(html);
+  const source = unnest.html;
 
   // Pass 1 — the page's own structure. Needs no schema, so it runs even when
   // the schema is missing, stale, or (as on the page that prompted this) simply
   // has no entry for the blocks that are unmarked.
-  const structuralPass = wrapTopLevelBlocks(html);
+  const structuralPass = wrapTopLevelBlocks(source);
   let working = structuralPass.html;
   repaired.push(...structuralPass.wrapped);
 
   if (!schema || typeof schema !== 'object') {
-    return { html: working, repaired, structural: structuralPass.wrapped, skipped };
+    return {
+      html: working,
+      repaired,
+      structural: structuralPass.wrapped,
+      skipped,
+      unnested: unnest.dropped,
+    };
   }
 
   // Pass 2 — anything the schema names that is still unmarked.
@@ -550,7 +697,13 @@ export function repairSlMarkers(html: string, schema: unknown): MarkerRepair {
   }
 
   if (edits.length === 0) {
-    return { html: working, repaired, structural: structuralPass.wrapped, skipped };
+    return {
+      html: working,
+      repaired,
+      structural: structuralPass.wrapped,
+      skipped,
+      unnested: unnest.dropped,
+    };
   }
 
   // Back to front, so an insertion never shifts an offset still to be used.
@@ -562,7 +715,13 @@ export function repairSlMarkers(html: string, schema: unknown): MarkerRepair {
   }
   repaired.push(...fromSchema.reverse());
 
-  return { html: working, repaired, structural: structuralPass.wrapped, skipped };
+  return {
+      html: working,
+      repaired,
+      structural: structuralPass.wrapped,
+      skipped,
+      unnested: unnest.dropped,
+    };
 }
 
 /**
