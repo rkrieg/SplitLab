@@ -227,9 +227,50 @@ export function stampStructuralDataFields(html: string): string {
 }
 
 /** Schema match first, then structural fill for whatever is still bare. */
+/**
+ * Strip data-field names whose first segment repeats itself.
+ *
+ * Every name we generate is `<section>.<field>`, so `hero.hero.badge` cannot
+ * address anything: no schema has a `hero` inside `hero`. It comes from a
+ * section rewrite copying a child's existing `hero.badge` and prefixing the
+ * section name onto it a second time.
+ *
+ * Two things go wrong when one survives. Every [data-field] is made
+ * contentEditable, so a doubled name on a LAYOUT box turns the whole block —
+ * logo, video, buttons — into one editable lump, and a stray backspace inside
+ * it takes the lot. And because the path addresses nothing, anything typed
+ * there is dropped on save: the text changes on screen, then comes back on the
+ * next load.
+ *
+ * Deliberately narrower than "an outer handle containing inner handles is
+ * wrong". That reading is false on our own pages — a nav logo lockup is
+ * legitimately `<a data-field="nav.cta"><img data-field="nav.image">…`, and a
+ * real AI-built page carries 22 such pairs. The repeated first segment is the
+ * part that is malformed on its face, so that is all this removes.
+ *
+ * Only the attribute is removed; the element and its content stay untouched.
+ */
+export function dropDoubledDataFields(html: string): { html: string; dropped: string[] } {
+  const dropped: string[] = [];
+  if (!html) return { html, dropped };
+
+  const out = html.replace(/\sdata-field=["']([^"']+)["']/gi, (whole, path: string) => {
+    const parts = String(path).split('.');
+    if (parts.length >= 3 && parts[0] === parts[1]) {
+      dropped.push(path);
+      return '';
+    }
+    return whole;
+  });
+
+  return { html: out, dropped };
+}
+
 export function ensureClickToEditFields(html: string, schema?: unknown): string {
   if (!html) return html;
   let out = stampSchemaDataFields(html, schema ?? null);
   out = stampStructuralDataFields(out);
+  // Last, so neither stamp above can put a doubled name back.
+  out = dropDoubledDataFields(out).html;
   return out;
 }
