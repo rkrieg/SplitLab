@@ -86,6 +86,14 @@ export interface UpdateTestInput {
   forward_url_params?: boolean;
   goals?: GoalInput[];
   weights?: WeightInput[];
+  /**
+   * Explicit split for the variants that REMAIN after a delete or archive.
+   * When absent the removed variant's share is redistributed proportionally.
+   * When present the caller has adjusted the numbers by hand in the confirm
+   * dialog, and their split wins — it still has to cover exactly the
+   * remaining active variants and sum to 100.
+   */
+  remaining_weights?: WeightInput[];
   variant_updates?: VariantUpdateInput[];
   delete_variant_id?: string;
   archive_variant_id?: string;
@@ -104,7 +112,7 @@ export async function updateTest(
   testMeta: TestMeta,
   input: UpdateTestInput
 ): Promise<ServiceResult<unknown>> {
-  const { goals, weights, variant_updates, delete_variant_id, archive_variant_id, unarchive_variant_id, ...testFields } = input;
+  const { goals, weights, remaining_weights, variant_updates, delete_variant_id, archive_variant_id, unarchive_variant_id, ...testFields } = input;
 
   // Block duplicate active url_path within the same workspace when this update
   // would result in an active test (activation or path change while active)
@@ -217,9 +225,20 @@ export async function updateTest(
     const activeBeforeDelete = await loadActiveWeights(testId);
     let deleteWeights: Weight[] | null = null;
     if (activeBeforeDelete.some((v) => v.id === delete_variant_id)) {
-      const rebalanced = weightsAfterRemoval(activeBeforeDelete, delete_variant_id);
-      if (!rebalanced.ok) return fail(400, rebalanced.reason);
-      deleteWeights = rebalanced.weights.filter((w) => w.id !== delete_variant_id);
+      const survivors = activeBeforeDelete
+        .filter((v) => v.id !== delete_variant_id)
+        .map((v) => v.id);
+      if (remaining_weights) {
+        // Hand-adjusted in the confirm dialog. Same validation as any other
+        // weight write, just against the set that survives the delete.
+        const valid = validateFullSplit(remaining_weights, survivors);
+        if (!valid.ok) return fail(400, valid.reason);
+        deleteWeights = remaining_weights;
+      } else {
+        const rebalanced = weightsAfterRemoval(activeBeforeDelete, delete_variant_id);
+        if (!rebalanced.ok) return fail(400, rebalanced.reason);
+        deleteWeights = rebalanced.weights.filter((w) => w.id !== delete_variant_id);
+      }
     }
 
     if (target.page_id) {
@@ -259,8 +278,22 @@ export async function updateTest(
       return fail(400, 'Cannot archive the last active variant — a test must always have at least one live.');
     }
 
-    const rebalanced = weightsAfterRemoval(activeVariants, archive_variant_id);
-    if (!rebalanced.ok) return fail(400, rebalanced.reason);
+    const survivors = activeVariants
+      .filter((v) => v.id !== archive_variant_id)
+      .map((v) => v.id);
+
+    let archiveWeights: Weight[];
+    if (remaining_weights) {
+      // Hand-adjusted in the confirm dialog: the caller decided where the
+      // archived variant's traffic goes, so no proportional guess is needed.
+      const valid = validateFullSplit(remaining_weights, survivors);
+      if (!valid.ok) return fail(400, valid.reason);
+      archiveWeights = remaining_weights;
+    } else {
+      const rebalanced = weightsAfterRemoval(activeVariants, archive_variant_id);
+      if (!rebalanced.ok) return fail(400, rebalanced.reason);
+      archiveWeights = rebalanced.weights.filter((w) => w.id !== archive_variant_id);
+    }
 
     const { error } = await db
       .from('test_variants')
@@ -269,7 +302,7 @@ export async function updateTest(
       .eq('test_id', testId);
     if (error) return fail(500, error.message);
 
-    await persistWeights(testId, rebalanced.weights.filter((w) => w.id !== archive_variant_id), activeVariants);
+    await persistWeights(testId, archiveWeights, activeVariants);
   }
 
   // Restore an archived variant back into the active split — at 0%, leaving

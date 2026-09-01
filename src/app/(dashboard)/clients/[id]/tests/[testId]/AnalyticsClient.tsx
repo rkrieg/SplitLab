@@ -527,7 +527,6 @@ export default function AnalyticsClient({
   const skipWeightBlur = useRef(false);
 
   // Delete variant
-  const [deleteVariantId, setDeleteVariantId] = useState<string | null>(null);
 
   // Reset stats (wipe a test's recorded data — misconfigured tracking, etc.)
   const [resetOpen, setResetOpen] = useState(false);
@@ -561,7 +560,6 @@ export default function AnalyticsClient({
       setResetting(false);
     }
   }
-  const [deletingVariant, setDeletingVariant] = useState(false);
 
   // URL change confirmation (clears scan results)
   const [urlChangeConfirmId, setUrlChangeConfirmId] = useState<string | null>(null);
@@ -586,11 +584,16 @@ export default function AnalyticsClient({
   // both move live traffic between pages, so neither is applied on a click —
   // the exact before/after numbers go on screen first and only Apply writes.
   const [pendingSplit, setPendingSplit] = useState<{
-    kind: "weight" | "archive";
+    kind: "weight" | "archive" | "delete";
+    /** The variant being edited, archived or deleted. */
     variantId: string;
     variantName: string;
-    weights: Weight[];
-    rows: SplitPreviewRow[];
+    /**
+     * Raw input per variant staying in the live split. Strings, not numbers,
+     * so a field can sit empty while it is being retyped. The proportional
+     * result seeds these; the user can overwrite any of them before applying.
+     */
+    drafts: Record<string, string>;
   } | null>(null);
   const [applyingSplit, setApplyingSplit] = useState(false);
 
@@ -889,19 +892,50 @@ export default function AnalyticsClient({
   const activeVariants = variants.filter((v) => !v.archived_at);
   const activeStats = stats.filter((s) => !s.variant.archived_at);
 
-  // Preview for the delete dialog. An archived variant being deleted
-  // holds no traffic, so there is nothing to redistribute and no table.
-  const deleteSplit =
-    deleteVariantId && activeVariants.some((v) => v.id === deleteVariantId)
-      ? weightsAfterRemoval(
-          activeVariants.map((v) => ({ id: v.id, traffic_weight: v.traffic_weight })),
-          deleteVariantId,
-        )
-      : null;
-  const deleteSplitRows: SplitPreviewRow[] =
-    deleteSplit?.ok && deleteVariantId
-      ? buildSplitRows(deleteSplit.weights, deleteVariantId)
-      : [];
+  // The staged split, re-derived from the drafts on every keystroke. The
+  // numbers are only a proposal until they add up to exactly 100 — anything
+  // else would leave part of the traffic unassigned, so Apply stays disabled
+  // and the total turns red rather than the app silently correcting it.
+  const splitRemoved = pendingSplit && pendingSplit.kind !== "weight" ? pendingSplit.variantId : null;
+  // An archived variant holds no traffic, so removing it has no share to give
+  // away — the dialog shouldn't claim otherwise.
+  const splitRemovedIsLive = !!splitRemoved && activeVariants.some((v) => v.id === splitRemoved);
+
+  const parseDraft = (raw: string | undefined): number | null => {
+    if (raw === undefined || raw.trim() === "") return null;
+    const n = Number(raw);
+    if (!Number.isInteger(n) || n < 0 || n > 100) return null;
+    return n;
+  };
+
+  const splitRows: SplitPreviewRow[] = pendingSplit
+    ? activeVariants.map((v) => ({
+        id: v.id,
+        name: v.name,
+        before: v.traffic_weight,
+        after: v.id === splitRemoved ? null : parseDraft(pendingSplit.drafts[v.id]),
+        removed: v.id === splitRemoved,
+      }))
+    : [];
+
+  const splitTotal = pendingSplit
+    ? Object.values(pendingSplit.drafts).reduce<number | null>((sum, raw) => {
+        const n = parseDraft(raw);
+        return sum === null || n === null ? null : sum + n;
+      }, 0)
+    : null;
+
+  const splitError = !pendingSplit
+    ? null
+    : splitTotal === null
+      ? "Every variant needs a whole number between 0 and 100."
+      : splitTotal === 100
+        ? null
+        : splitTotal > 100
+          ? `The split adds up to ${splitTotal}% — that is ${splitTotal - 100} over. Traffic has to total exactly 100%.`
+          : `The split adds up to ${splitTotal}% — ${100 - splitTotal}% of your traffic is unassigned. It has to total exactly 100%.`;
+
+  const splitValid = splitTotal === 100;
   const archivedStats = stats.filter((s) => s.variant.archived_at);
   const snippet = `<script src="${appUrl}/tracker.js"></script>`;
   const fullUrl = domain ? `${domain}${test.url_path}` : null;
@@ -1141,24 +1175,35 @@ export default function AnalyticsClient({
   }
 
   /**
-   * Before/after rows for a proposed split, across the active variants.
-   * `removedId` marks the variant leaving the live split (archive or delete),
-   * which shows as "off" rather than a percentage.
+   * Opens the confirm dialog with a proposed split loaded into the inputs.
+   * `weights` is the starting point, not the answer — the dialog is editable,
+   * so it is fine for a proposal not to sum to 100 (it happens when
+   * proportions can't be preserved). The user fixes it before Apply unlocks.
    */
-  function buildSplitRows(weights: Weight[], removedId?: string): SplitPreviewRow[] {
-    const next = new Map(weights.map((w) => [w.id, w.traffic_weight]));
-    return activeVariants.map((v) => ({
-      id: v.id,
-      name: v.name,
-      before: v.traffic_weight,
-      after: v.id === removedId ? null : (next.get(v.id) ?? v.traffic_weight),
-    }));
+  function stageSplit(
+    kind: "weight" | "archive" | "delete",
+    variantId: string,
+    variantName: string,
+    weights: Weight[],
+  ) {
+    const drafts: Record<string, string> = {};
+    for (const w of weights) {
+      if (kind !== "weight" && w.id === variantId) continue;
+      drafts[w.id] = String(w.traffic_weight);
+    }
+    setPendingSplit({ kind, variantId, variantName, drafts });
+  }
+
+  /** Current live weights, used to seed a dialog when no proposal is possible. */
+  function currentWeights(): Weight[] {
+    return activeVariants.map((v) => ({ id: v.id, traffic_weight: v.traffic_weight }));
   }
 
   /**
    * Stages a weight edit for confirmation. The typed number is what that
    * variant gets; the others scale proportionally to fill the rest, so a
-   * variant parked at 0% is never handed traffic by an edit elsewhere.
+   * variant parked at 0% is never handed traffic by an edit elsewhere. That
+   * is only the opening proposal — every number is editable in the dialog.
    */
   function saveWeight() {
     const variantId = editingWeightId;
@@ -1179,29 +1224,38 @@ export default function AnalyticsClient({
     const target = activeVariants.find((v) => v.id === variantId);
     if (!target || target.traffic_weight === newWeight) return;
 
-    const result = weightsAfterSet(
-      activeVariants.map((v) => ({ id: v.id, traffic_weight: v.traffic_weight })),
-      variantId,
-      newWeight,
-    );
-    if (!result.ok) {
-      toast.error(result.reason);
-      return;
-    }
+    const result = weightsAfterSet(currentWeights(), variantId, newWeight);
 
-    setPendingSplit({
-      kind: "weight",
+    // When every other variant sits at 0% there is no proportion to scale by,
+    // so there is no proposal to make. Open the dialog anyway with the typed
+    // number in place and the rest as they are: the total will be short, and
+    // the user says where the remainder goes instead of the app guessing.
+    stageSplit(
+      "weight",
       variantId,
-      variantName: target.name,
-      weights: result.weights,
-      rows: buildSplitRows(result.weights),
-    });
+      target.name,
+      result.ok
+        ? result.weights
+        : currentWeights().map((w) =>
+            w.id === variantId ? { ...w, traffic_weight: newWeight } : w,
+          ),
+    );
   }
 
   /** Writes the staged split (weight edit) or archives (archive). */
   async function applyPendingSplit() {
     if (!pendingSplit) return;
-    const { kind, variantId, weights } = pendingSplit;
+    const { kind, variantId, drafts } = pendingSplit;
+    // Guarded by the disabled Apply button too — this is the backstop, since
+    // a split that doesn't total 100 must never reach the API.
+    if (!splitValid) return;
+
+    const weights: Weight[] = Object.entries(drafts).map(([id, raw]) => ({
+      id,
+      traffic_weight: Number(raw),
+    }));
+    const noun = kind === "weight" ? "update weights" : `${kind} variant`;
+
     setApplyingSplit(true);
     if (kind === "weight") setSavingWeightId(variantId);
     else setArchivingVariantId(variantId);
@@ -1210,15 +1264,16 @@ export default function AnalyticsClient({
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(
-          kind === "weight" ? { weights } : { archive_variant_id: variantId },
+          kind === "weight"
+            ? { weights }
+            : kind === "archive"
+              ? { archive_variant_id: variantId, remaining_weights: weights }
+              : { delete_variant_id: variantId, remaining_weights: weights },
         ),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        toast.error(
-          err.error ||
-            (kind === "weight" ? "Failed to update weights" : "Failed to archive variant"),
-        );
+        toast.error(err.error || `Failed to ${noun}`);
         return;
       }
       const updated = await res.json();
@@ -1239,11 +1294,22 @@ export default function AnalyticsClient({
             : s;
         }),
       );
-      toast.success(kind === "weight" ? "Weights updated" : "Variant archived");
+      if (kind === "delete") {
+        setEditingVariantId(null);
+        setScanResults(null);
+        setScanResultsLoaded(false);
+      }
+      toast.success(
+        kind === "weight"
+          ? "Weights updated"
+          : kind === "archive"
+            ? "Variant archived"
+            : "Variant deleted",
+      );
       setPendingSplit(null);
-      if (kind === "archive") fetchAnalytics();
+      if (kind !== "weight") fetchAnalytics();
     } catch {
-      toast.error(kind === "weight" ? "Failed to save weights" : "Failed to archive variant");
+      toast.error(`Failed to ${noun}`);
     } finally {
       setApplyingSplit(false);
       setSavingWeightId(null);
@@ -1392,35 +1458,6 @@ export default function AnalyticsClient({
     }
   }
 
-  async function deleteVariant() {
-    if (!deleteVariantId) return;
-    setDeletingVariant(true);
-    try {
-      const res = await fetch(`/api/tests/${test.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ delete_variant_id: deleteVariantId }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        toast.error(err.error || "Failed to delete variant");
-        return;
-      }
-      const updated = await res.json();
-      setTest(updated);
-      setEditingVariantId(null);
-      setScanResults(null);
-      setScanResultsLoaded(false);
-      toast.success("Variant deleted");
-      fetchAnalytics();
-    } catch {
-      toast.error("Failed to delete");
-    } finally {
-      setDeletingVariant(false);
-      setDeleteVariantId(null);
-    }
-  }
-
   // ─── Add variant ────────────────────────────────────────────────────
 
   async function handleAddVariant(e: React.FormEvent) {
@@ -1560,25 +1597,41 @@ export default function AnalyticsClient({
    */
   function requestArchiveVariant(variantId: string) {
     setActionMenu(null);
-    const target = activeVariants.find((v) => v.id === variantId);
+    requestRemoval("archive", variantId);
+  }
+
+  function requestDeleteVariant(variantId: string) {
+    setActionMenu(null);
+    requestRemoval("delete", variantId);
+  }
+
+  /**
+   * Stages an archive or a delete. The variant's share is absorbed by the
+   * others in proportion to what they already hold — removing one that sits
+   * at 0% moves no traffic at all — and every number stays editable before
+   * Apply. When proportions can't be preserved (the variant leaving is the
+   * only one with traffic) the dialog opens short of 100 and says so.
+   */
+  function requestRemoval(kind: "archive" | "delete", variantId: string) {
+    const target = variants.find((v) => v.id === variantId);
     if (!target) return;
 
-    const result = weightsAfterRemoval(
-      activeVariants.map((v) => ({ id: v.id, traffic_weight: v.traffic_weight })),
-      variantId,
-    );
-    if (!result.ok) {
-      toast.error(result.reason);
+    // An archived variant holds no traffic, so removing it changes nothing —
+    // the live split carries over untouched.
+    if (!activeVariants.some((v) => v.id === variantId)) {
+      stageSplit(kind, variantId, target.name, currentWeights());
       return;
     }
 
-    setPendingSplit({
-      kind: "archive",
-      variantId,
-      variantName: target.name,
-      weights: result.weights,
-      rows: buildSplitRows(result.weights, variantId),
-    });
+    if (activeVariants.length === 1) {
+      toast.error(
+        `A test must always keep one variant live. Add another variant, or restore an archived one, before you ${kind} "${target.name}".`,
+      );
+      return;
+    }
+
+    const result = weightsAfterRemoval(currentWeights(), variantId);
+    stageSplit(kind, variantId, target.name, result.ok ? result.weights : currentWeights());
   }
 
   async function handleUnarchiveVariant(variantId: string) {
@@ -3648,7 +3701,7 @@ export default function AnalyticsClient({
                                     )}
                                     {variants.length > 1 && (
                                       <button
-                                        onClick={() => { setActionMenu(null); setDeleteVariantId(stat.variant.id); }}
+                                        onClick={() => requestDeleteVariant(stat.variant.id)}
                                         className="w-full flex items-center gap-2 px-3 py-2 text-left text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors"
                                       >
                                         <Trash2 size={13} /> Delete
@@ -3879,7 +3932,7 @@ export default function AnalyticsClient({
                                     {variants.length > 1 && (
                                       <button
                                         onClick={() =>
-                                          setDeleteVariantId(stat.variant.id)
+                                          requestDeleteVariant(stat.variant.id)
                                         }
                                         className="btn-secondary text-xs text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300"
                                       >
@@ -6126,40 +6179,51 @@ export default function AnalyticsClient({
         </form>
       </Modal>
 
-      <ConfirmDialog
-        open={!!deleteVariantId}
-        onClose={() => setDeleteVariantId(null)}
-        onConfirm={deleteVariant}
-        title="Delete Variant"
-        description="This will permanently delete the variant and its event data. Linked pages and UTM rules will be archived. Its traffic share moves to the remaining variants in proportion to what they already have — anything at 0% stays at 0%."
-        confirmDisabled={!!deleteSplit && !deleteSplit.ok}
-        loading={deletingVariant}
-      >
-        {deleteSplit?.ok && <SplitPreview rows={deleteSplitRows} />}
-        {deleteSplit && !deleteSplit.ok && (
-          <div className="rounded-lg bg-amber-500/10 border border-amber-500/30 px-3 py-2.5 text-xs text-amber-600 dark:text-amber-400">
-            {deleteSplit.reason}
-          </div>
-        )}
-      </ConfirmDialog>
-
-      {/* Weight edit / archive — never applied on a click alone. The exact
-          before/after split is on screen, and only Apply writes it. */}
+      {/* Weight edit / archive / delete — never applied on a click alone. The
+          proposed split is on screen and editable, and Apply only unlocks
+          once the numbers total exactly 100. */}
       <ConfirmDialog
         open={!!pendingSplit}
         onClose={() => !applyingSplit && setPendingSplit(null)}
         onConfirm={applyPendingSplit}
-        title={pendingSplit?.kind === "archive" ? "Archive Variant" : "Update Traffic Split"}
+        title={
+          pendingSplit?.kind === "archive"
+            ? "Archive Variant"
+            : pendingSplit?.kind === "delete"
+              ? "Delete Variant"
+              : "Update Traffic Split"
+        }
         description={
           pendingSplit?.kind === "archive"
-            ? `"${pendingSplit.variantName}" comes out of the live split and keeps its history — you can restore it from the Archived section. Here's what happens to traffic:`
-            : `Here's how traffic will be split across the live variants once you apply this:`
+            ? `"${pendingSplit.variantName}" comes out of the live split and keeps its history — you can restore it from the Archived section. ${splitRemovedIsLive ? "Its share is shared out below in proportion to what each page already has. Change any number you like before applying." : "It is already out of the live split, so no traffic moves — the numbers below are yours to change anyway."}`
+            : pendingSplit?.kind === "delete"
+              ? `"${pendingSplit.variantName}" and its event data are deleted permanently, and any linked page or UTM rule is archived. ${splitRemovedIsLive ? "Its share is shared out below in proportion to what each page already has. Change any number you like before applying." : "It is already out of the live split, so no traffic moves — the numbers below are yours to change anyway."}`
+              : "Here's how traffic will be split across the live variants. The other pages have been scaled to fit your change — adjust any of them before applying."
         }
-        confirmLabel={pendingSplit?.kind === "archive" ? "Archive" : "Apply"}
-        confirmVariant={pendingSplit?.kind === "archive" ? "danger" : "primary"}
+        confirmLabel={
+          pendingSplit?.kind === "archive"
+            ? "Archive"
+            : pendingSplit?.kind === "delete"
+              ? "Delete"
+              : "Apply"
+        }
+        confirmVariant={pendingSplit?.kind === "weight" ? "primary" : "danger"}
+        confirmDisabled={!splitValid}
         loading={applyingSplit}
       >
-        {pendingSplit && <SplitPreview rows={pendingSplit.rows} />}
+        {pendingSplit && (
+          <SplitPreview
+            rows={splitRows}
+            drafts={pendingSplit.drafts}
+            onDraftChange={(id, value) =>
+              setPendingSplit((prev) =>
+                prev ? { ...prev, drafts: { ...prev.drafts, [id]: value } } : prev,
+              )
+            }
+            total={splitTotal}
+            error={splitError}
+          />
+        )}
       </ConfirmDialog>
 
       {/* Reset stats — wipe recorded data for this test (misconfigured tracking, etc.) */}
