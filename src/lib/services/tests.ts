@@ -5,6 +5,13 @@ import { uploadHtml, downloadHtml, inlineDataUrisToStorage } from '@/lib/storage
 import { confidencePercent, findWinner } from '@/lib/stats';
 import { getLinkedVariant } from '@/lib/page-drafts';
 import { rescanVariantHtml } from './scan';
+import {
+  weightForNewVariant,
+  weightsAfterRemoval,
+  validateFullSplit,
+  type Weight,
+  type WeightedVariant,
+} from '@/lib/traffic-weights';
 import { ok, fail, ServiceResult } from './types';
 
 export function fullTestSelect() {
@@ -35,20 +42,28 @@ export async function getTestDetail(testId: string): Promise<ServiceResult<unkno
   return ok(data);
 }
 
-/** Redistribute weights equally across a test's non-archived variants (sums to 100). */
-export async function redistributeActiveWeights(testId: string) {
-  const { data: active } = await db
+/**
+ * A test's active (non-archived) variants with their current weights, oldest
+ * first — the input every weight calculation works from. Archived variants are
+ * excluded everywhere by design: they are always 0% and must never be handed
+ * traffic by an operation happening elsewhere on the test.
+ */
+export async function loadActiveWeights(testId: string): Promise<WeightedVariant[]> {
+  const { data } = await db
     .from('test_variants')
-    .select('id')
+    .select('id, traffic_weight')
     .eq('test_id', testId)
     .is('archived_at', null)
     .order('created_at', { ascending: true });
-  if (!active || active.length === 0) return;
-  const equalWeight = Math.floor(100 / active.length);
-  let remainder = 100 - equalWeight * active.length;
-  for (const v of active) {
-    const w = equalWeight + (remainder-- > 0 ? 1 : 0);
-    await db.from('test_variants').update({ traffic_weight: w }).eq('id', v.id);
+  return (data ?? []) as WeightedVariant[];
+}
+
+/** Writes a computed split back, skipping rows whose weight hasn't changed. */
+async function persistWeights(testId: string, weights: Weight[], current: WeightedVariant[]) {
+  const before = new Map(current.map((v) => [v.id, v.traffic_weight]));
+  for (const w of weights) {
+    if (before.get(w.id) === w.traffic_weight) continue;
+    await db.from('test_variants').update({ traffic_weight: w.traffic_weight }).eq('id', w.id).eq('test_id', testId);
   }
 }
 
@@ -117,11 +132,15 @@ export async function updateTest(
     if (error) return fail(500, error.message);
   }
 
-  // Update variant weights if provided
+  // Update variant weights if provided. The set has to be exactly the active
+  // variants: a partial write would leave the live split not summing to 100,
+  // and a write naming an archived variant would put a page that was pulled
+  // out of the test back into rotation without anyone asking for it.
   if (weights) {
-    const totalWeight = weights.reduce((s, w) => s + w.traffic_weight, 0);
-    if (totalWeight !== 100) {
-      return fail(400, 'Weights must sum to 100');
+    const activeNow = await loadActiveWeights(testId);
+    const valid = validateFullSplit(weights, activeNow.map((v) => v.id));
+    if (!valid.ok) {
+      return fail(400, valid.reason);
     }
     for (const w of weights) {
       const { error: wErr } = await db
@@ -191,6 +210,18 @@ export async function updateTest(
     const target = allVariants.find((v) => v.id === delete_variant_id);
     if (!target) return fail(404, 'Variant not found');
 
+    // Work the new split out BEFORE deleting, so a split that can't be
+    // rebalanced (deleting the only variant with traffic) refuses while the
+    // variant still exists, rather than deleting it and leaving the test with
+    // no live traffic anywhere.
+    const activeBeforeDelete = await loadActiveWeights(testId);
+    let deleteWeights: Weight[] | null = null;
+    if (activeBeforeDelete.some((v) => v.id === delete_variant_id)) {
+      const rebalanced = weightsAfterRemoval(activeBeforeDelete, delete_variant_id);
+      if (!rebalanced.ok) return fail(400, rebalanced.reason);
+      deleteWeights = rebalanced.weights.filter((w) => w.id !== delete_variant_id);
+    }
+
     if (target.page_id) {
       const pageStillUsed = allVariants.some(
         (v) => v.id !== delete_variant_id && v.page_id === target.page_id,
@@ -210,35 +241,26 @@ export async function updateTest(
       await db.from('tests').update({ scan_results: pruned }).eq('id', testId);
     }
 
-    const { data: remaining } = await db
-      .from('test_variants')
-      .select('id')
-      .eq('test_id', testId)
-      .order('created_at', { ascending: true });
-
-    if (remaining && remaining.length > 0) {
-      const equalWeight = Math.floor(100 / remaining.length);
-      let remainder = 100 - equalWeight * remaining.length;
-      for (const v of remaining) {
-        const w = equalWeight + (remainder-- > 0 ? 1 : 0);
-        await db.from('test_variants').update({ traffic_weight: w }).eq('id', v.id);
-      }
+    if (deleteWeights) {
+      await persistWeights(testId, deleteWeights, activeBeforeDelete);
     }
   }
 
   // Archive a variant: pull it out of the live split (weight 0) but keep its
-  // history. A test must always keep at least one active variant.
+  // history. Its share goes to the remaining variants in proportion to what
+  // they already hold — archiving a variant that was parked at 0% moves no
+  // traffic at all. A test must always keep at least one active variant.
   if (archive_variant_id) {
-    const { data: activeVariants } = await db
-      .from('test_variants')
-      .select('id')
-      .eq('test_id', testId)
-      .is('archived_at', null);
-
-    const remainingActive = (activeVariants ?? []).filter((v) => v.id !== archive_variant_id).length;
-    if (remainingActive === 0) {
+    const activeVariants = await loadActiveWeights(testId);
+    if (!activeVariants.some((v) => v.id === archive_variant_id)) {
+      return fail(400, 'That variant is not in the active split — it may already be archived.');
+    }
+    if (activeVariants.length === 1) {
       return fail(400, 'Cannot archive the last active variant — a test must always have at least one live.');
     }
+
+    const rebalanced = weightsAfterRemoval(activeVariants, archive_variant_id);
+    if (!rebalanced.ok) return fail(400, rebalanced.reason);
 
     const { error } = await db
       .from('test_variants')
@@ -246,18 +268,21 @@ export async function updateTest(
       .eq('id', archive_variant_id)
       .eq('test_id', testId);
     if (error) return fail(500, error.message);
-    await redistributeActiveWeights(testId);
+
+    await persistWeights(testId, rebalanced.weights.filter((w) => w.id !== archive_variant_id), activeVariants);
   }
 
-  // Restore an archived variant back into the active split.
+  // Restore an archived variant back into the active split — at 0%, leaving
+  // every other variant's traffic exactly where it is. Coming back cold is
+  // the only safe default: an old page rejoining a live test must never be
+  // handed real traffic until someone deliberately ramps it up.
   if (unarchive_variant_id) {
     const { error } = await db
       .from('test_variants')
-      .update({ archived_at: null })
+      .update({ archived_at: null, traffic_weight: 0 })
       .eq('id', unarchive_variant_id)
       .eq('test_id', testId);
     if (error) return fail(500, error.message);
-    await redistributeActiveWeights(testId);
   }
 
   // Upsert goals — preserve existing UUIDs so historical events stay linked
@@ -719,15 +744,15 @@ export interface CreateVariantInput {
   html_content?: string;
   redirect_url?: string | null;
   proxy_mode?: boolean;
-  traffic_weight: number;
 }
 
 /**
  * Fresh (blank) variant on an existing test — distinct from duplicateVariant,
  * which clones an existing one. Extracted verbatim from
  * POST /api/tests/[id]/variants: same plan-limit check, same
- * inline-data-uri-to-storage swap before HTML is ever stored, same
- * equalize-all-weights-after-insert behavior.
+ * inline-data-uri-to-storage swap before HTML is ever stored. The new variant
+ * joins at 0% and no existing weight is touched, so adding a variant can
+ * never move traffic off a live page (see lib/traffic-weights).
  */
 export async function createVariant(
   testId: string,
@@ -759,6 +784,11 @@ export async function createVariant(
     }
   }
 
+  // A new variant joins at 0% and nothing else moves — the only case that
+  // differs is a test with no active variants, where the newcomer has to
+  // carry all of it or there is no split to serve.
+  const newWeight = weightForNewVariant(await loadActiveWeights(testId));
+
   let pageId: string | null = null;
   let scanHtml: string | null = null;
   if (input.html_content) {
@@ -783,28 +813,13 @@ export async function createVariant(
     redirect_url: pageId ? null : (input.redirect_url || null),
     page_id: pageId,
     proxy_mode: pageId ? false : (input.proxy_mode ?? true),
-    traffic_weight: input.traffic_weight,
+    traffic_weight: newWeight,
     is_control: false,
   }).select('id').single();
   if (varErr) return fail(500, varErr.message);
 
   if (scanHtml && newVariant) {
     await rescanVariantHtml(testId, newVariant.id, input.name, scanHtml);
-  }
-
-  const { data: allVariants } = await db
-    .from('test_variants')
-    .select('id')
-    .eq('test_id', testId)
-    .order('created_at', { ascending: true });
-
-  if (allVariants && allVariants.length > 0) {
-    const equalWeight = Math.floor(100 / allVariants.length);
-    let rem = 100 - equalWeight * allVariants.length;
-    for (const v of allVariants) {
-      const w = equalWeight + (rem-- > 0 ? 1 : 0);
-      await db.from('test_variants').update({ traffic_weight: w }).eq('id', v.id);
-    }
   }
 
   const { data: fullTest, error: fetchErr } = await db.from('tests').select(fullTestSelect()).eq('id', testId).single();

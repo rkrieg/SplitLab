@@ -39,7 +39,8 @@ settings.local.json
 next-env.d.ts
 
 # scratch output from scripts/verify-page-requirements.mjs
-/.verify-tmp
+/.verify-tmp*
+/.verify-tmp-ops.tsconfig.json
 
 stripe.exe
 

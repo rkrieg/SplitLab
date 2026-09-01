@@ -77,7 +77,6 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
   const [addVariantTestId, setAddVariantTestId] = useState<string | null>(null);
   const [variantName, setVariantName] = useState('');
   const [variantUrl, setVariantUrl] = useState('');
-  const [variantWeight, setVariantWeight] = useState(50);
   const [addingVariant, setAddingVariant] = useState(false);
   const [variantMode, setVariantMode] = useState<'url' | 'html'>('url');
   const [variantHtml, setVariantHtml] = useState('');
@@ -315,7 +314,6 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
     const count = (test.test_variants ?? []).length;
     setVariantName(`Variant ${String.fromCharCode(65 + count)}`);
     setVariantUrl('');
-    setVariantWeight(50);
     setVariantMode('url');
     setVariantHtml('');
     setActiveMenu(null);
@@ -328,8 +326,8 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
     try {
       const proxyMode = variantMode === 'url' ? await checkFrameable(variantUrl.trim()) : true;
       const payload = variantMode === 'html'
-        ? { name: variantName, html_content: variantHtml, traffic_weight: variantWeight }
-        : { name: variantName, redirect_url: variantUrl, proxy_mode: proxyMode, traffic_weight: variantWeight };
+        ? { name: variantName, html_content: variantHtml }
+        : { name: variantName, redirect_url: variantUrl, proxy_mode: proxyMode };
       const res = await fetch(`/api/tests/${addVariantTestId}/variants`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -347,7 +345,7 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
       router.refresh();
       setAddVariantTestId(null);
       setAddVariantError(null);
-      toast.success('Variant added');
+      toast.success('Variant added at 0% traffic — set its weight to send traffic to it');
     } catch { toast.error('Unexpected error'); } finally { setAddingVariant(false); }
   }
 
@@ -781,9 +779,13 @@ export default function PagesClient({ tests: initialTests, workspaceId, clientId
             </div>
           )}
 
-          <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Traffic Weight (%)</label>
-            <input type="number" value={variantWeight} onChange={(e) => setVariantWeight(Number(e.target.value))} className="input-base w-24" min={1} max={100} required />
+          <div className="flex items-start gap-2 rounded-lg bg-slate-500/10 border border-slate-500/20 px-3 py-2.5 text-xs text-slate-600 dark:text-slate-400">
+            <Info size={13} className="flex-shrink-0 mt-px" />
+            <span>
+              This variant starts at <strong>0% traffic</strong>. The test&apos;s current
+              split stays exactly as it is — set its weight on the test page
+              when you want to send traffic to it.
+            </span>
           </div>
 
           {addVariantError && (

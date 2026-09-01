@@ -350,7 +350,7 @@ const TOOLS = [
   },
   {
     name: 'create_variant',
-    description: 'Adds a fresh (blank, not cloned) variant to an existing test — either HTML you write yourself, or a redirect URL, or proxy mode. Existing variants\' weights are automatically equalized across the new total. An HTML variant gets scanned automatically on creation — call get_test to read its scan_results before setting up a conversion goal on it. A redirect/proxy variant has no HTML, so it never gets scan_results — goals on it need a manual scan in the dashboard first.',
+    description: 'Adds a fresh (blank, not cloned) variant to an existing test — either HTML you write yourself, or a redirect URL, or proxy mode. The new variant joins at 0% traffic and no existing variant\'s weight is touched — adding a variant never moves traffic off a live page. To actually send it traffic, call update_test_weights afterwards with the full split. (The only exception: on a test with no active variants left, the new one joins at 100%, since something has to carry the traffic.) An HTML variant gets scanned automatically on creation — call get_test to read its scan_results before setting up a conversion goal on it. A redirect/proxy variant has no HTML, so it never gets scan_results — goals on it need a manual scan in the dashboard first.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -359,9 +359,8 @@ const TOOLS = [
         html_content: { type: 'string', description: 'Full HTML document — creates a new page for this variant' },
         redirect_url: { type: 'string', description: 'Alternative to html_content: redirect visitors to an external URL' },
         proxy_mode: { type: 'boolean', description: 'When redirecting, proxy the destination instead of a browser redirect' },
-        traffic_weight: { type: 'number', description: 'Initial traffic share (0-100) — will be re-equalized across all variants after insert' },
       },
-      required: ['test_id', 'name', 'traffic_weight'],
+      required: ['test_id', 'name'],
       additionalProperties: false,
     },
   },
@@ -415,7 +414,7 @@ const TOOLS = [
   },
   {
     name: 'archive_variant',
-    description: 'Pulls a variant out of the live traffic split (sets it to 0% and marks it archived) without deleting it — SplitLab\'s equivalent of "remove from the test." Remaining active variants\' weights are automatically redistributed. Refuses to archive a test\'s last active variant.',
+    description: 'Pulls a variant out of the live traffic split (sets it to 0% and marks it archived) without deleting it — SplitLab\'s equivalent of "remove from the test." Its traffic share is absorbed by the remaining active variants in proportion to what they already hold, so their ratios are preserved and any variant parked at 0% stays at 0% — archiving a variant that was already at 0% moves no traffic at all. Refuses to archive a test\'s last active variant, or a variant that is the only one receiving traffic (there would be nowhere proportional for its share to go — give another variant traffic above 0% first).',
     inputSchema: {
       type: 'object',
       properties: { test_id: { type: 'string' }, variant_id: { type: 'string' } },
@@ -425,7 +424,7 @@ const TOOLS = [
   },
   {
     name: 'unarchive_variant',
-    description: 'Restores an archived variant back into the active rotation. Remaining active variants\' weights are automatically redistributed to make room for it.',
+    description: 'Restores an archived variant back into the active rotation at 0% traffic, leaving every other variant\'s weight exactly where it is. It receives no traffic until someone deliberately ramps it up with update_test_weights — an old page rejoining a live test must never take real traffic by surprise.',
     inputSchema: {
       type: 'object',
       properties: { test_id: { type: 'string' }, variant_id: { type: 'string' } },
@@ -936,8 +935,7 @@ export async function POST(request: NextRequest) {
       if (toolName === 'create_variant') {
         const testId = args.test_id as string | undefined;
         const name = args.name as string | undefined;
-        const trafficWeight = args.traffic_weight as number | undefined;
-        if (!testId || !name || trafficWeight === undefined) return denyOrFail('test_id, name, and traffic_weight are required');
+        if (!testId || !name) return denyOrFail('test_id and name are required');
 
         const access = await requireTestAccess(principal, testId, { write: true });
         if (!access.ok) return denyOrFail(access.error);
@@ -947,7 +945,6 @@ export async function POST(request: NextRequest) {
           html_content: args.html_content as string | undefined,
           redirect_url: args.redirect_url as string | undefined,
           proxy_mode: args.proxy_mode as boolean | undefined,
-          traffic_weight: trafficWeight,
         });
         if (!result.ok) return denyOrFail(result.error);
         return succeed(result.data);

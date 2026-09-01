@@ -73,7 +73,13 @@ import Spinner from "@/components/ui/Spinner";
 import Button from "@/components/ui/Button";
 import Modal from "@/components/ui/Modal";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
+import SplitPreview, { type SplitPreviewRow } from "@/components/ui/SplitPreview";
 import { TestStatusBadge } from "@/components/ui/Badge";
+import {
+  weightsAfterRemoval,
+  weightsAfterSet,
+  type Weight,
+} from "@/lib/traffic-weights";
 import { formatPercent } from "@/lib/utils";
 import { HUBSPOT_SYSTEM_FIELDS } from "@/lib/system-fields";
 
@@ -518,6 +524,7 @@ export default function AnalyticsClient({
   const [editingWeightId, setEditingWeightId] = useState<string | null>(null);
   const [weightDraft, setWeightDraft] = useState("");
   const [savingWeightId, setSavingWeightId] = useState<string | null>(null);
+  const skipWeightBlur = useRef(false);
 
   // Delete variant
   const [deleteVariantId, setDeleteVariantId] = useState<string | null>(null);
@@ -574,6 +581,18 @@ export default function AnalyticsClient({
   const [newVariantHtml, setNewVariantHtml] = useState("");
   const [addingVariant, setAddingVariant] = useState(false);
   const [addVariantError, setAddVariantError] = useState<{ message: string; isLimit: boolean } | null>(null);
+
+  // A traffic-split change waiting on confirmation. Weight edits and archives
+  // both move live traffic between pages, so neither is applied on a click —
+  // the exact before/after numbers go on screen first and only Apply writes.
+  const [pendingSplit, setPendingSplit] = useState<{
+    kind: "weight" | "archive";
+    variantId: string;
+    variantName: string;
+    weights: Weight[];
+    rows: SplitPreviewRow[];
+  } | null>(null);
+  const [applyingSplit, setApplyingSplit] = useState(false);
 
   // Duplicate variant (folded into the per-row "..." actions menu)
   const [duplicatingVariantId, setDuplicatingVariantId] = useState<string | null>(null);
@@ -869,6 +888,20 @@ export default function AnalyticsClient({
   const variants = test.test_variants || [];
   const activeVariants = variants.filter((v) => !v.archived_at);
   const activeStats = stats.filter((s) => !s.variant.archived_at);
+
+  // Preview for the delete dialog. An archived variant being deleted
+  // holds no traffic, so there is nothing to redistribute and no table.
+  const deleteSplit =
+    deleteVariantId && activeVariants.some((v) => v.id === deleteVariantId)
+      ? weightsAfterRemoval(
+          activeVariants.map((v) => ({ id: v.id, traffic_weight: v.traffic_weight })),
+          deleteVariantId,
+        )
+      : null;
+  const deleteSplitRows: SplitPreviewRow[] =
+    deleteSplit?.ok && deleteVariantId
+      ? buildSplitRows(deleteSplit.weights, deleteVariantId)
+      : [];
   const archivedStats = stats.filter((s) => s.variant.archived_at);
   const snippet = `<script src="${appUrl}/tracker.js"></script>`;
   const fullUrl = domain ? `${domain}${test.url_path}` : null;
@@ -1096,71 +1129,96 @@ export default function AnalyticsClient({
   // ─── Weight editing ─────────────────────────────────────────────────
 
   function startEditWeight(variantId: string, currentWeight: number) {
+    skipWeightBlur.current = false;
     setEditingWeightId(variantId);
     setWeightDraft(String(currentWeight));
   }
 
-  async function saveWeight() {
+  /** Escape cancels, and the blur that follows Enter must not stage twice. */
+  function cancelEditWeight() {
+    skipWeightBlur.current = true;
+    setEditingWeightId(null);
+  }
+
+  /**
+   * Before/after rows for a proposed split, across the active variants.
+   * `removedId` marks the variant leaving the live split (archive or delete),
+   * which shows as "off" rather than a percentage.
+   */
+  function buildSplitRows(weights: Weight[], removedId?: string): SplitPreviewRow[] {
+    const next = new Map(weights.map((w) => [w.id, w.traffic_weight]));
+    return activeVariants.map((v) => ({
+      id: v.id,
+      name: v.name,
+      before: v.traffic_weight,
+      after: v.id === removedId ? null : (next.get(v.id) ?? v.traffic_weight),
+    }));
+  }
+
+  /**
+   * Stages a weight edit for confirmation. The typed number is what that
+   * variant gets; the others scale proportionally to fill the rest, so a
+   * variant parked at 0% is never handed traffic by an edit elsewhere.
+   */
+  function saveWeight() {
     const variantId = editingWeightId;
     if (!variantId) return;
-    const newWeight = Math.max(
-      0,
-      Math.min(100, Math.round(Number(weightDraft))),
-    );
-    if (isNaN(newWeight)) {
-      setEditingWeightId(null);
+    // The input unmounts as soon as editing stops, so Enter and Escape are
+    // both followed by a blur on the same element. Only the first one counts.
+    if (skipWeightBlur.current) {
+      skipWeightBlur.current = false;
       return;
     }
+    skipWeightBlur.current = true;
+
+    const parsed = Number(weightDraft);
     setEditingWeightId(null);
+    if (weightDraft.trim() === "" || isNaN(parsed)) return;
 
-    const otherVariants = variants.filter((v) => v.id !== variantId);
-    const remaining = 100 - newWeight;
-    const weights: { id: string; traffic_weight: number }[] = [
-      { id: variantId, traffic_weight: newWeight },
-    ];
+    const newWeight = Math.max(0, Math.min(100, Math.round(parsed)));
+    const target = activeVariants.find((v) => v.id === variantId);
+    if (!target || target.traffic_weight === newWeight) return;
 
-    if (otherVariants.length === 0) {
-      weights[0].traffic_weight = 100;
-    } else {
-      const currentOtherTotal = otherVariants.reduce(
-        (s, v) => s + v.traffic_weight,
-        0,
-      );
-      if (currentOtherTotal === 0) {
-        const each = Math.floor(remaining / otherVariants.length);
-        let leftover = remaining - each * otherVariants.length;
-        for (const v of otherVariants) {
-          weights.push({
-            id: v.id,
-            traffic_weight: each + (leftover-- > 0 ? 1 : 0),
-          });
-        }
-      } else {
-        let allocated = 0;
-        for (let i = 0; i < otherVariants.length; i++) {
-          const v = otherVariants[i];
-          if (i === otherVariants.length - 1) {
-            weights.push({ id: v.id, traffic_weight: remaining - allocated });
-          } else {
-            const w = Math.round(
-              (v.traffic_weight / currentOtherTotal) * remaining,
-            );
-            weights.push({ id: v.id, traffic_weight: w });
-            allocated += w;
-          }
-        }
-      }
+    const result = weightsAfterSet(
+      activeVariants.map((v) => ({ id: v.id, traffic_weight: v.traffic_weight })),
+      variantId,
+      newWeight,
+    );
+    if (!result.ok) {
+      toast.error(result.reason);
+      return;
     }
 
-    setSavingWeightId(variantId);
+    setPendingSplit({
+      kind: "weight",
+      variantId,
+      variantName: target.name,
+      weights: result.weights,
+      rows: buildSplitRows(result.weights),
+    });
+  }
+
+  /** Writes the staged split (weight edit) or archives (archive). */
+  async function applyPendingSplit() {
+    if (!pendingSplit) return;
+    const { kind, variantId, weights } = pendingSplit;
+    setApplyingSplit(true);
+    if (kind === "weight") setSavingWeightId(variantId);
+    else setArchivingVariantId(variantId);
     try {
       const res = await fetch(`/api/tests/${test.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ weights }),
+        body: JSON.stringify(
+          kind === "weight" ? { weights } : { archive_variant_id: variantId },
+        ),
       });
       if (!res.ok) {
-        toast.error("Weights must sum to 100");
+        const err = await res.json().catch(() => ({}));
+        toast.error(
+          err.error ||
+            (kind === "weight" ? "Failed to update weights" : "Failed to archive variant"),
+        );
         return;
       }
       const updated = await res.json();
@@ -1172,16 +1230,24 @@ export default function AnalyticsClient({
           return v
             ? {
                 ...s,
-                variant: { ...s.variant, traffic_weight: v.traffic_weight },
+                variant: {
+                  ...s.variant,
+                  traffic_weight: v.traffic_weight,
+                  archived_at: v.archived_at,
+                },
               }
             : s;
         }),
       );
-      toast.success("Weights updated");
+      toast.success(kind === "weight" ? "Weights updated" : "Variant archived");
+      setPendingSplit(null);
+      if (kind === "archive") fetchAnalytics();
     } catch {
-      toast.error("Failed to save weights");
+      toast.error(kind === "weight" ? "Failed to save weights" : "Failed to archive variant");
     } finally {
+      setApplyingSplit(false);
       setSavingWeightId(null);
+      setArchivingVariantId(null);
     }
   }
 
@@ -1383,11 +1449,11 @@ export default function AnalyticsClient({
       }
       setNewVariantUrlError("");
     }
+
+    setAddVariantError(null);
+
     setAddingVariant(true);
     try {
-      const count = variants.length + 1;
-      const weight = Math.floor(100 / count);
-      const remainder = 100 - weight * count;
       const useProxyMode = newVariantMode === "url"
         ? await checkFrameable(newVariantUrl.trim())
         : true;
@@ -1397,13 +1463,11 @@ export default function AnalyticsClient({
           ? {
               name: newVariantName,
               html_content: newVariantHtml,
-              traffic_weight: weight + remainder,
             }
           : {
               name: newVariantName,
               redirect_url: newVariantUrl,
               proxy_mode: useProxyMode,
-              traffic_weight: weight + remainder,
             };
       const res = await fetch(`/api/tests/${test.id}/variants`, {
         method: "POST",
@@ -1440,7 +1504,7 @@ export default function AnalyticsClient({
       setNewVariantHtml("");
       setNewVariantMode("url");
       setAddVariantError(null);
-      toast.success("Variant added");
+      toast.success("Variant added at 0% traffic — set its weight to send traffic to it");
       fetchAnalytics();
     } catch {
       toast.error("Failed to add variant");
@@ -1488,29 +1552,33 @@ export default function AnalyticsClient({
 
   // ─── Archive / unarchive variant ────────────────────────────────────
 
-  async function handleArchiveVariant(variantId: string) {
+  /**
+   * Stages an archive for confirmation. The variant's share is absorbed by the
+   * others in proportion to what they already hold — archiving one that sits at
+   * 0% moves no traffic at all. Same arithmetic the server runs, so the
+   * preview and the result always match.
+   */
+  function requestArchiveVariant(variantId: string) {
     setActionMenu(null);
-    setArchivingVariantId(variantId);
-    try {
-      const res = await fetch(`/api/tests/${test.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ archive_variant_id: variantId }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        toast.error(err.error || "Failed to archive variant");
-        return;
-      }
-      const updated = await res.json();
-      setTest(updated);
-      toast.success("Variant archived");
-      fetchAnalytics();
-    } catch {
-      toast.error("Failed to archive variant");
-    } finally {
-      setArchivingVariantId(null);
+    const target = activeVariants.find((v) => v.id === variantId);
+    if (!target) return;
+
+    const result = weightsAfterRemoval(
+      activeVariants.map((v) => ({ id: v.id, traffic_weight: v.traffic_weight })),
+      variantId,
+    );
+    if (!result.ok) {
+      toast.error(result.reason);
+      return;
     }
+
+    setPendingSplit({
+      kind: "archive",
+      variantId,
+      variantName: target.name,
+      weights: result.weights,
+      rows: buildSplitRows(result.weights, variantId),
+    });
   }
 
   async function handleUnarchiveVariant(variantId: string) {
@@ -1528,7 +1596,7 @@ export default function AnalyticsClient({
       }
       const updated = await res.json();
       setTest(updated);
-      toast.success("Variant unarchived");
+      toast.success("Variant restored at 0% traffic — set its weight to send traffic to it");
       fetchAnalytics();
     } catch {
       toast.error("Failed to unarchive variant");
@@ -3349,8 +3417,7 @@ export default function AnalyticsClient({
                                   autoFocus
                                   onKeyDown={(e) => {
                                     if (e.key === "Enter") saveWeight();
-                                    if (e.key === "Escape")
-                                      setEditingWeightId(null);
+                                    if (e.key === "Escape") cancelEditWeight();
                                   }}
                                   onBlur={saveWeight}
                                 />
@@ -3566,9 +3633,9 @@ export default function AnalyticsClient({
                                     </button>
                                     {activeVariants.length > 1 && (
                                       <button
-                                        onClick={() => handleArchiveVariant(stat.variant.id)}
+                                        onClick={() => requestArchiveVariant(stat.variant.id)}
                                         disabled={archivingVariantId === stat.variant.id}
-                                        title="Remove from the live traffic split, keep its history — reversible from the Archived section below"
+                                        title="Remove from the live traffic split, keep its history — you'll see the before/after split before anything changes"
                                         className="w-full flex items-center gap-2 px-3 py-2 text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                                       >
                                         {archivingVariantId === stat.variant.id ? (
@@ -3847,6 +3914,7 @@ export default function AnalyticsClient({
                     setNewVariantUrl("");
                     setNewVariantHtml("");
                     setNewVariantMode("url");
+                    setAddVariantError(null);
                     setAddVariantOpen(true);
                   }}
                   className="text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 text-sm font-medium flex items-center gap-1.5 transition-colors"
@@ -6022,10 +6090,16 @@ export default function AnalyticsClient({
             </div>
           )}
 
-          <p className="text-slate-500 text-xs">
-            Traffic weights will be automatically split equally across all
-            variants.
-          </p>
+          <div className="flex items-start gap-2 rounded-lg bg-slate-500/10 border border-slate-500/20 px-3 py-2.5 text-xs text-slate-600 dark:text-slate-400">
+            <Info size={13} className="flex-shrink-0 mt-px" />
+            <span>
+              This variant starts at <strong>0% traffic</strong>. Your current
+              split stays exactly as it is — nothing moves off a live page.
+              Set its weight in the variants table when you want to send
+              traffic to it.
+            </span>
+          </div>
+
           {addVariantError && (
             <div className="rounded-lg bg-red-500/10 border border-red-500/30 px-3 py-2.5 text-sm text-red-600 dark:text-red-400">
               {addVariantError.message}
@@ -6042,7 +6116,10 @@ export default function AnalyticsClient({
             >
               Cancel
             </Button>
-            <Button type="submit" loading={addingVariant}>
+            <Button
+              type="submit"
+              loading={addingVariant}
+            >
               Add Variant
             </Button>
           </div>
@@ -6054,9 +6131,36 @@ export default function AnalyticsClient({
         onClose={() => setDeleteVariantId(null)}
         onConfirm={deleteVariant}
         title="Delete Variant"
-        description="This will permanently delete the variant and its event data. Linked pages and UTM rules will be archived. Traffic weights will be redistributed equally among the remaining variants."
+        description="This will permanently delete the variant and its event data. Linked pages and UTM rules will be archived. Its traffic share moves to the remaining variants in proportion to what they already have — anything at 0% stays at 0%."
+        confirmDisabled={!!deleteSplit && !deleteSplit.ok}
         loading={deletingVariant}
-      />
+      >
+        {deleteSplit?.ok && <SplitPreview rows={deleteSplitRows} />}
+        {deleteSplit && !deleteSplit.ok && (
+          <div className="rounded-lg bg-amber-500/10 border border-amber-500/30 px-3 py-2.5 text-xs text-amber-600 dark:text-amber-400">
+            {deleteSplit.reason}
+          </div>
+        )}
+      </ConfirmDialog>
+
+      {/* Weight edit / archive — never applied on a click alone. The exact
+          before/after split is on screen, and only Apply writes it. */}
+      <ConfirmDialog
+        open={!!pendingSplit}
+        onClose={() => !applyingSplit && setPendingSplit(null)}
+        onConfirm={applyPendingSplit}
+        title={pendingSplit?.kind === "archive" ? "Archive Variant" : "Update Traffic Split"}
+        description={
+          pendingSplit?.kind === "archive"
+            ? `"${pendingSplit.variantName}" comes out of the live split and keeps its history — you can restore it from the Archived section. Here's what happens to traffic:`
+            : `Here's how traffic will be split across the live variants once you apply this:`
+        }
+        confirmLabel={pendingSplit?.kind === "archive" ? "Archive" : "Apply"}
+        confirmVariant={pendingSplit?.kind === "archive" ? "danger" : "primary"}
+        loading={applyingSplit}
+      >
+        {pendingSplit && <SplitPreview rows={pendingSplit.rows} />}
+      </ConfirmDialog>
 
       {/* Reset stats — wipe recorded data for this test (misconfigured tracking, etc.) */}
       <Modal open={resetOpen} onClose={() => !resetting && setResetOpen(false)} title="Reset test statistics" size="sm">
