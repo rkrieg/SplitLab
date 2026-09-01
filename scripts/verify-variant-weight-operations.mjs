@@ -379,6 +379,78 @@ console.log('\nAdding a variant:');
   assert('and the money page keeps all 100%', weights().money === 100);
 }
 
+console.log('\nHand-adjusted splits from the confirm dialog:');
+{
+  // The dialog proposes a proportional split, but the user overrides it.
+  // Their numbers win, as long as they cover the survivors and total 100.
+  seed([['money', 60], ['b', 30], ['c', 10]]);
+  const result = await updateTest(TEST_ID, TEST_META, {
+    archive_variant_id: 'c',
+    remaining_weights: [{ id: 'money', traffic_weight: 90 }, { id: 'b', traffic_weight: 10 }],
+  });
+  assert('an archive with hand-adjusted weights succeeds', result.ok);
+  assert('the typed split is written, not the proportional one',
+    sameWeights(weights(), { money: 90, b: 10, c: 0 }));
+  assert('and the archived variant is out of the split',
+    tables.test_variants.find((v) => v.id === 'c').archived_at !== null);
+}
+{
+  seed([['money', 60], ['b', 30], ['c', 10]]);
+  const result = await updateTest(TEST_ID, TEST_META, {
+    delete_variant_id: 'c',
+    remaining_weights: [{ id: 'money', traffic_weight: 75 }, { id: 'b', traffic_weight: 25 }],
+  });
+  assert('a delete with hand-adjusted weights succeeds', result.ok);
+  assert('the typed split is written', sameWeights(weights(), { money: 75, b: 25 }));
+}
+{
+  // The dialog disables Apply below/above 100, but the API is the real guard.
+  seed([['money', 60], ['b', 30], ['c', 10]]);
+  const result = await updateTest(TEST_ID, TEST_META, {
+    archive_variant_id: 'c',
+    remaining_weights: [{ id: 'money', traffic_weight: 50 }, { id: 'b', traffic_weight: 30 }],
+  });
+  assert('a hand-adjusted split that sums to 80 is refused', !result.ok);
+  assert('and nothing was archived or rewritten',
+    sameWeights(weights(), { money: 60, b: 30, c: 10 })
+      && tables.test_variants.find((v) => v.id === 'c').archived_at === null);
+}
+{
+  seed([['money', 60], ['b', 30], ['c', 10]]);
+  const result = await updateTest(TEST_ID, TEST_META, {
+    archive_variant_id: 'c',
+    remaining_weights: [{ id: 'money', traffic_weight: 100 }],
+  });
+  assert('a hand-adjusted split missing a surviving variant is refused', !result.ok);
+  assert('and the test is untouched', sameWeights(weights(), { money: 60, b: 30, c: 10 }));
+}
+{
+  seed([['money', 60], ['b', 30], ['c', 10]]);
+  const result = await updateTest(TEST_ID, TEST_META, {
+    archive_variant_id: 'c',
+    remaining_weights: [
+      { id: 'money', traffic_weight: 50 },
+      { id: 'b', traffic_weight: 30 },
+      { id: 'c', traffic_weight: 20 },
+    ],
+  });
+  assert('a hand-adjusted split naming the variant being archived is refused', !result.ok);
+  assert('so an archived page can never keep traffic',
+    sameWeights(weights(), { money: 60, b: 30, c: 10 }));
+}
+{
+  // The case the old code refused outright: the variant leaving owns all the
+  // traffic. With an editable dialog the user just says where it goes.
+  seed([['money', 100], ['parked', 0]]);
+  const result = await updateTest(TEST_ID, TEST_META, {
+    archive_variant_id: 'money',
+    remaining_weights: [{ id: 'parked', traffic_weight: 100 }],
+  });
+  assert('archiving the only funded variant works when the split is given', result.ok);
+  assert('the traffic lands where the user put it',
+    sameWeights(weights(), { money: 0, parked: 100 }));
+}
+
 console.log('\nDirect weight writes (dashboard + MCP):');
 {
   seed([['a', 70], ['b', 30]]);

@@ -36,6 +36,7 @@ const updateSchema = z.object({
   forward_url_params: z.boolean().optional(),
   goals: z.array(goalSchema).optional(),
   weights: z.array(weightSchema).optional(),
+  remaining_weights: z.array(weightSchema).optional(),
   variant_updates: z.array(variantUpdateSchema).optional(),
   delete_variant_id: z.string().uuid().optional(),
   archive_variant_id: z.string().uuid().optional(),
