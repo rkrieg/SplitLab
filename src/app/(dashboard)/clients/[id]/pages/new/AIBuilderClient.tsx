@@ -7,7 +7,7 @@ import {
   Wand2, Layout, Palette, RefreshCw, Monitor, Smartphone,
   ExternalLink, RotateCcw, Plus, Download, Lock, ArrowRight,
   Sliders, Trash2, AlertTriangle, MoreHorizontal, MousePointer2, ChevronDown,
-  FileCode2, Link2, Lightbulb,
+  FileCode2, Link2, Lightbulb, X, Search,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { cn } from '@/lib/utils';
@@ -532,6 +532,16 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   const [assetSourceOpen, setAssetSourceOpen] = useState(false);
   /** Link found in the user's own prompt, handed to the picker to auto-open. */
   const [assetSourceLink, setAssetSourceLink] = useState<string | null>(null);
+  // Prominent "paste a link to your assets" banner above the composer. It is
+  // the same import flow as the small link button, just impossible to miss.
+  // Dismissable (X); the dismissal is remembered per browser so it doesn't nag.
+  const [assetLinkPromptOpen, setAssetLinkPromptOpen] = useState(true);
+  const [assetLinkDraft, setAssetLinkDraft] = useState('');
+  useEffect(() => {
+    try {
+      if (localStorage.getItem('sl_asset_link_prompt_dismissed') === '1') setAssetLinkPromptOpen(false);
+    } catch { /* private mode — leave it open */ }
+  }, []);
   const [scanningPrompt, setScanningPrompt] = useState(false);
   // Links we already offered to pull in. Without this, a PRD that stays in the
   // prompt box gets rescanned on every clarifying-answer round and re-imports
@@ -692,6 +702,72 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     } finally {
       setScanningPrompt(false);
     }
+  }
+
+  function dismissAssetLinkPrompt() {
+    setAssetLinkPromptOpen(false);
+    try { localStorage.setItem('sl_asset_link_prompt_dismissed', '1'); } catch { /* ignore */ }
+  }
+
+  /** Hand a pasted link to the picker, which resolves it and — if it's not
+   *  public / can't be read — shows the "make it public" error inline. */
+  function submitAssetLink() {
+    const raw = assetLinkDraft.trim();
+    if (!raw) return;
+    setAssetSourceLink(raw);
+    setAssetSourceOpen(true);
+    setAssetLinkDraft('');
+  }
+
+  /** Prominent, dismissable banner that invites the user to paste a link to
+   *  their existing assets (Drive folder, shared file, web page). Deliberately
+   *  loud — the faint link button went unnoticed. Reuses the AssetSourceModal
+   *  flow, which surfaces a clear error when a link isn't publicly visible. */
+  function renderAssetLinkPrompt() {
+    if (!assetLinkPromptOpen) return null;
+    return (
+      <div className="relative mb-3 rounded-2xl border border-indigo-200 dark:border-indigo-500/40 bg-indigo-50/90 dark:bg-indigo-500/10 p-3.5 pr-9 shadow-sm">
+        <button
+          type="button"
+          onClick={dismissAssetLinkPrompt}
+          className="absolute top-2 right-2 w-6 h-6 rounded-full flex items-center justify-center text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-200 hover:bg-indigo-100 dark:hover:bg-indigo-500/20 transition-colors"
+          title="Hide this"
+          aria-label="Hide the asset link box"
+        >
+          <X size={14} />
+        </button>
+        <div className="flex items-center gap-1.5 mb-1">
+          <Link2 size={13} className="text-indigo-600 dark:text-indigo-300" />
+          <p className="text-xs font-semibold text-indigo-900 dark:text-indigo-100">Add your existing assets</p>
+        </div>
+        <p className="text-[11px] leading-relaxed text-indigo-800/90 dark:text-indigo-200/80 mb-2.5">
+          Paste a link (or links) to your current images or brand assets — a Google Drive folder, a shared
+          file, or any web page. Make sure the link is set to{' '}
+          <span className="font-semibold">public / &ldquo;Anyone with the link&rdquo;</span> so we can access it.
+        </p>
+        <div className="flex items-center gap-2">
+          <div className="relative flex-1">
+            <Link2 size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-indigo-400 pointer-events-none" />
+            <input
+              type="text"
+              value={assetLinkDraft}
+              onChange={e => setAssetLinkDraft(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); submitAssetLink(); } }}
+              placeholder="https://drive.google.com/drive/folders/…"
+              className="w-full pl-8 pr-3 py-2 text-sm rounded-lg bg-white dark:bg-slate-900 border border-indigo-200 dark:border-indigo-500/40 text-slate-700 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-400/30 transition-colors"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={submitAssetLink}
+            disabled={!assetLinkDraft.trim()}
+            className="shrink-0 inline-flex items-center gap-1 px-3 py-2 rounded-lg text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            <Search size={13} /> Pull assets
+          </button>
+        </div>
+      </div>
+    );
   }
 
   /** Thumbnail row for images pulled in from a link. Same shape as the
@@ -2852,6 +2928,10 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
             onChange={handleChatImagePicker}
           />
 
+          {/* Prominent asset-link banner — shown while composing a brief or
+              editing, dismissable with the X. */}
+          {(phase === 'prompt' || phase === 'editing') && renderAssetLinkPrompt()}
+
           {/* Initial prompt form */}
           {phase === 'prompt' && (
             <form onSubmit={handleGenerate} className="space-y-2.5">
@@ -2909,8 +2989,8 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                 onDragLeave={handleChatImageDragLeave}
                 onDrop={handleChatImageDrop}
                 className={cn(
-                  'bg-slate-50 dark:bg-slate-800 border rounded-2xl overflow-hidden focus-within:border-indigo-400 dark:focus-within:border-indigo-500 transition-colors',
-                  isDraggingChatImage ? 'border-indigo-400 dark:border-indigo-500 ring-2 ring-indigo-400/30' : 'border-slate-200 dark:border-slate-700'
+                  'bg-white dark:bg-slate-800 border-2 rounded-2xl overflow-hidden shadow-sm focus-within:border-indigo-400 dark:focus-within:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-400/20 transition-all',
+                  isDraggingChatImage ? 'border-indigo-400 dark:border-indigo-500 ring-2 ring-indigo-400/30' : 'border-slate-300 dark:border-slate-700'
                 )}
               >
                 {chatImages.length > 0 && (
@@ -3046,8 +3126,8 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                 onDragLeave={handleChatImageDragLeave}
                 onDrop={handleChatImageDrop}
                 className={cn(
-                  'bg-slate-50 dark:bg-slate-800 border rounded-2xl overflow-hidden focus-within:border-indigo-400 dark:focus-within:border-indigo-500 transition-colors',
-                  isDraggingChatImage ? 'border-indigo-400 dark:border-indigo-500 ring-2 ring-indigo-400/30' : 'border-slate-200 dark:border-slate-700'
+                  'bg-white dark:bg-slate-800 border-2 rounded-2xl overflow-hidden shadow-sm focus-within:border-indigo-400 dark:focus-within:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-400/20 transition-all',
+                  isDraggingChatImage ? 'border-indigo-400 dark:border-indigo-500 ring-2 ring-indigo-400/30' : 'border-slate-300 dark:border-slate-700'
                 )}
               >
                 {/* Image thumbnails */}
