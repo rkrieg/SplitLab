@@ -53,6 +53,20 @@ export interface AskAIOptions {
    * partial chunks it accumulated — everything delivered so far is void.
    */
   onStreamRestart?: () => void;
+  /**
+   * Hands over the model's reasoning for this call, once, after it completes.
+   *
+   * Opus 5 thinks by default, and thinking is where the work actually happens:
+   * a section rewrite came back as a confident one-line account of a redesign
+   * with no HTML attached, having spent ~1,700 of its ~1,800 output tokens
+   * reasoning. Asked why, the honest answer was "we cannot tell" — the
+   * reasoning was in the response object and we dropped it on the floor.
+   *
+   * Opt-in rather than always logged, because on a normal call it is a large
+   * block of text nobody reads. Callers take it, hold it, and print it only on
+   * the path where the reply turned out to be unusable.
+   */
+  onThinking?: (thinking: string) => void;
 }
 
 /**
@@ -234,6 +248,9 @@ async function askAnthropic(options: AskAIOptions): Promise<string> {
       // still count — we paid for those tokens). Fire-and-forget; never blocks.
       if (options.usage) void recordAiUsage(options.usage, model, input_tokens, output_tokens);
       console.log(`[AI tokens] callId=${callId} label=${options.label} elapsedMs=${Date.now() - startedAt} input=${input_tokens} output=${output_tokens} total=${input_tokens + output_tokens} model=${model} maxTokens=${options.maxTokens} stop_reason=${response.stop_reason} attempt=${attempt}`);
+      // Before the truncation throw below: a call that ran out of room is
+      // exactly one whose reasoning a caller may want to see.
+      options.onThinking?.(thinkingText(response.content));
 
       if (response.stop_reason === 'max_tokens') {
         await logEvent('ai_call', 'warn', 'response truncated at maxTokens', {
@@ -272,6 +289,23 @@ async function askAnthropic(options: AskAIOptions): Promise<string> {
     }
   }
   throw lastErr;
+}
+
+/**
+ * The model's reasoning blocks, joined. Empty string when it did not think.
+ *
+ * Typed loosely on purpose: `thinking` blocks are a newer addition to the SDK's
+ * content union, and this must not stop compiling on a version that predates
+ * them or renames the field. A missing block is simply no reasoning to report.
+ */
+function thinkingText(content: ReadonlyArray<{ type: string }>): string {
+  return content
+    .map((b) => {
+      const rec = b as { type: string; thinking?: unknown };
+      return rec.type === 'thinking' && typeof rec.thinking === 'string' ? rec.thinking : '';
+    })
+    .filter(Boolean)
+    .join('\n\n');
 }
 
 async function askAnthropicStream(options: AskAIOptions, onChunk: (text: string) => void): Promise<string> {
@@ -325,6 +359,9 @@ async function askAnthropicStream(options: AskAIOptions, onChunk: (text: string)
       // still count — we paid for those tokens). Fire-and-forget; never blocks.
       if (options.usage) void recordAiUsage(options.usage, model, input_tokens, output_tokens);
       console.log(`[AI tokens stream] callId=${callId} label=${options.label} elapsedMs=${Date.now() - startedAt} chunks=${chunkCount} input=${input_tokens} output=${output_tokens} total=${input_tokens + output_tokens} model=${model} maxTokens=${options.maxTokens} stop_reason=${response.stop_reason} attempt=${attempt}`);
+      // Before the truncation throw below: a call that ran out of room is
+      // exactly one whose reasoning a caller may want to see.
+      options.onThinking?.(thinkingText(response.content));
 
       if (response.stop_reason === 'max_tokens') {
         await logEvent('ai_call', 'warn', 'response truncated at maxTokens', {

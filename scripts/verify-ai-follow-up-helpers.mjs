@@ -1527,7 +1527,7 @@ assert('a question is a distinct outcome, never a failed rewrite',
   follow.includes("if (result.kind === 'question') return result;"));
 assert('the question is checked before the no-sections failure',
   follow.indexOf("kind: 'question', question }") <
-    follow.indexOf('region rewrite returned no sections'));
+    follow.indexOf('region rewrite replied with words but no edit'));
 assert('the model\'s question reaches the user verbatim',
   follow.includes("sendSSE(controller, { type: 'clarify', message: result.question })"));
 assert('asking twice in a row is prevented by conversation fact, not by judging the ask',
@@ -1535,6 +1535,60 @@ assert('asking twice in a row is prevented by conversation fact, not by judging 
   follow.includes('content: result.question, clarify: true'));
 assert('a mid-recovery and a mid-plan rewrite may not ask',
   (follow.match(/noQuestions: true/g) || []).length >= 2);
+
+// ── A reply with words and no edit is asked again, not thrown away ──────────
+// A user pointed at a section with a screenshot and asked for a redesign. The
+// screenshot was read, the section resolved, the call returned cleanly — and
+// the reply was a confident one-line account of the redesign with no HTML in
+// it. We discarded the turn and told them to name a section we had named two
+// steps earlier. The contract marks "message" always required and never says
+// the same of "sections", so words-only is a legal reply: the guard has to be
+// code, because a prompt rule is guidance and this is not.
+assert('a reply carrying no edit at all is its own failure, not "unusable"',
+  follow.includes("| 'empty_reply'") &&
+  follow.includes("return { kind: 'failed', reason: 'empty_reply' };"));
+assert('the retry wraps the call instead of living inside it',
+  follow.includes('async function runRegionRewriteOnce(opts: {') &&
+  follow.includes('const first = await runRegionRewriteOnce(opts);') &&
+  follow.includes('const second = await runRegionRewriteOnce(opts);'));
+assert('only an empty reply is retried, and only once',
+  /if \(first\.kind !== 'failed' \|\| first\.reason !== 'empty_reply'\) return first;/.test(follow) &&
+  (follow.match(/await runRegionRewriteOnce\(opts\)/g) || []).length === 2);
+assert('no caller bypasses the retry by calling the inner function',
+  (follow.match(/await runRegionRewrite\(\{/g) || []).length >= 1 &&
+  !/await runRegionRewriteOnce\(\{/.test(follow));
+// A question, a no_change, a deletion and {"sections":[]} are all read and
+// returned above this point, so none of them can reach the retry.
+assert('the retry sits after every legitimate reply shape has been taken',
+  follow.indexOf("kind: 'question', question }") <
+    follow.indexOf("reason: 'empty_reply'") &&
+  follow.indexOf("kind: 'no_change', reason }") <
+    follow.indexOf("reason: 'empty_reply'"));
+assert('the failure no longer sends the user back to name a section we resolved',
+  follow.includes(`return "That didn't come through properly. Please send it once more — your page hasn't been changed.";`) &&
+  !/return "I couldn't work out what to change\./.test(follow));
+assert('the reasoning behind an empty reply is kept, not discarded',
+  follow.includes('onThinking: (t) => {') &&
+  follow.includes('thinkingTail: thinking.slice(-2000)'));
+
+// The splice keeps any section the model does not mention; only "deleted"
+// removes. The prompt went on telling the model the opposite long after that
+// changed, on every single edit.
+assert('the model is not told that an unreturned section is destroyed',
+  !follow.includes('Every section in this run is being replaced by what you return') &&
+  follow.includes('Inside a section you DO return, anything you fail to carry across is destroyed'));
+assert('the warning that is still true is kept, scoped to one section',
+  follow.includes('A section you do not return at all is kept exactly as it is'));
+
+const aiClient = readFileSync(join(__dirname, '../src/lib/ai-client.ts'), 'utf8');
+assert('a caller can be handed the model\'s reasoning for a call',
+  aiClient.includes('onThinking?: (thinking: string) => void;') &&
+  (aiClient.match(/options\.onThinking\?\.\(thinkingText\(response\.content\)\)/g) || []).length === 2);
+assert('reasoning is offered before the truncation throw, not after',
+  aiClient.indexOf('options.onThinking?.(thinkingText(response.content));') <
+    aiClient.indexOf('throw new AIResponseTruncatedError'));
+assert('a thinking block that the SDK does not expose is simply no reasoning',
+  aiClient.includes("rec.type === 'thinking' && typeof rec.thinking === 'string'"));
 
 // "Nothing could place this ask" is handed to the rewrite as a fact, so that
 // call decides between doing it and asking. Widening the region is a mechanical

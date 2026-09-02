@@ -1686,12 +1686,19 @@ async function runRegionRewriteOnce(opts: {
     // chunks themselves are unused — this call's output is JSON parsed only
     // once complete, never shown to the user raw — so a dropped stream is
     // free to restart from scratch like any other transient retry.
+    // Held, not logged. On a normal edit this is a wall of text nobody reads;
+    // on the one path where the reply turns out to carry no edit at all, it is
+    // the only record of what the model was doing with the tokens it spent.
+    let thinking = '';
     const text = await askAIStream(
       {
         system: SCOPED_REGION_SYSTEM_PROMPT,
         messages: [{ role: 'user', content: userContent }],
         maxTokens: REGION_REWRITE_MAX_TOKENS,
         label: 'follow-up:region-rewrite',
+        onThinking: (t) => {
+          thinking = t;
+        },
       },
       () => {},
     );
@@ -1772,6 +1779,12 @@ async function runRegionRewriteOnce(opts: {
       // caller can spend one more call on it; see runRegionRewrite.
       console.error('[pages/follow-up] region rewrite replied with words but no edit', {
         rawPreview: text.slice(0, 1500),
+        // The reply is a sentence; the reasoning behind it is the part that
+        // says why the HTML never arrived. Tail, not head — a model that ran
+        // out of steam does so at the end, and the opening of a long think is
+        // almost always just a restatement of the instruction.
+        thinkingChars: thinking.length,
+        thinkingTail: thinking.slice(-2000),
       });
       return { kind: 'failed', reason: 'empty_reply' };
     }
