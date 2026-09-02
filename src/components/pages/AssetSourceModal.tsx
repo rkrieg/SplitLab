@@ -124,6 +124,14 @@ export default function AssetSourceModal({
     return Array.from(byPath.entries());
   }, [assets]);
 
+  // The files that can actually be ticked. Anything over the fetch ceiling is
+  // shown but greyed out, so every count in the header has to come from here
+  // rather than from assets.length.
+  const selectable = useMemo(
+    () => (assets ?? []).filter((a) => !maxBytes || !a.bytes || a.bytes <= maxBytes),
+    [assets, maxBytes],
+  );
+
   async function handleLook(e: React.FormEvent) {
     e.preventDefault();
     await runLook(link);
@@ -175,7 +183,7 @@ export default function AssetSourceModal({
    * something only the user can do: name the file so its filename says what it
    * is, or say where it goes in the prompt.
    */
-  function isVector(asset: ResolvedAsset): boolean {
+  function isNameOnly(asset: ResolvedAsset): boolean {
     return /\.(svgz?|avif|tiff?|bmp)(?:\?|#|$)/i.test(asset.url);
   }
 
@@ -302,17 +310,21 @@ export default function AssetSourceModal({
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <p className="text-xs text-slate-600 dark:text-slate-300">
                 Found <span className="font-semibold">{assets.length}</span> image{assets.length === 1 ? '' : 's'}.{' '}
-                {assets.length > remaining
-                  ? `We ticked ${selected.size} to get you started — untick any you don't want.`
-                  : 'All of them are ticked. Untick anything you don’t want.'}
+                {/* Counted from what is actually ticked, not from the cap: files
+                    over the size limit can't be ticked, so "all of them" and
+                    "we ticked 20" were both wrong whenever a folder held a
+                    big file. */}
+                {selected.size === assets.length
+                  ? 'All of them are ticked. Untick anything you don’t want.'
+                  : `${selected.size} of them are ticked — untick any you don't want, or tick more.`}
               </p>
               <div className="flex items-center gap-3 text-[11px]">
                 <button
                   type="button"
-                  onClick={() => setSelected(new Set(assets.filter(a => !tooBig(a)).slice(0, remaining).map(a => a.url)))}
+                  onClick={() => setSelected(new Set(selectable.slice(0, remaining).map(a => a.url)))}
                   className="text-indigo-600 dark:text-indigo-400 hover:underline"
                 >
-                  Select first {Math.min(remaining, assets.length)}
+                  Select first {Math.min(remaining, selectable.length)}
                 </button>
                 <button
                   type="button"
@@ -330,11 +342,11 @@ export default function AssetSourceModal({
               </p>
             )}
 
-            {assets.some(isVector) && (
+            {assets.some(isNameOnly) && (
               <div className="flex items-start gap-2 p-2.5 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900">
-                <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 mt-px shrink-0">SVG</span>
+                <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 mt-px shrink-0 whitespace-nowrap">no preview</span>
                 <p className="text-[11px] text-amber-700 dark:text-amber-400 leading-relaxed">
-                  The files marked <span className="font-semibold">SVG</span> get used on the page, but the AI can&apos;t look at them — it goes by the filename. If one is a logo, make sure it&apos;s named like a logo (<span className="font-mono">logo.svg</span>), or just say where it goes in your prompt.
+                  The files marked <span className="font-semibold">no preview</span> still go on your page — we just can&apos;t see what they look like, only their name. So name them plainly, like <span className="font-mono">logo.svg</span> or <span className="font-mono">phone-icon.svg</span>, or tell us in your prompt where each one goes.
                 </p>
               </div>
             )}
@@ -393,9 +405,9 @@ export default function AssetSourceModal({
                               too big
                             </span>
                           )}
-                          {!oversized && isVector(asset) && (
-                            <span className="absolute top-1 right-1 px-1 py-0.5 rounded bg-amber-500/90 text-white text-[8px] font-semibold">
-                              SVG
+                          {!oversized && isNameOnly(asset) && (
+                            <span className="absolute top-1 right-1 px-1 py-0.5 rounded bg-amber-500/90 text-white text-[8px] font-semibold whitespace-nowrap">
+                              name only
                             </span>
                           )}
 
