@@ -217,14 +217,24 @@ function SamplePromptChip({ vertical, onUse }: { vertical: string; onUse: (promp
  * know where their monthly allowance stands while editing (Unbounce-style).
  * Small green bar that shifts amber→red as it fills. Hidden on plans with no
  * AI credits. Polls lightly so it reflects credits spent during the session.
+ *
+ * Scoped to the workspace, not to the viewer. Edits are billed to the client
+ * owner, so an invited team member's own balance is the wrong number here — it
+ * would sit still while the owner's credits drained. When the owner is somebody
+ * else their name is shown, so nobody wonders whose meter is moving.
  */
-function AiCreditsMeter() {
-  const [data, setData] = useState<{ creditsUsed: number; creditsIncluded: number; percentUsed: number } | null>(null);
+function AiCreditsMeter({ workspaceId }: { workspaceId: string }) {
+  const [data, setData] = useState<{
+    creditsUsed: number;
+    creditsIncluded: number;
+    percentUsed: number;
+    owner?: { isSelf: boolean; name: string | null };
+  } | null>(null);
 
   useEffect(() => {
     let active = true;
     const load = () => {
-      fetch('/api/ai-usage')
+      fetch(`/api/ai-usage?workspaceId=${encodeURIComponent(workspaceId)}`)
         .then((r) => (r.ok ? r.json() : null))
         .then((d) => { if (active && d) setData(d); })
         .catch(() => {});
@@ -232,18 +242,25 @@ function AiCreditsMeter() {
     load();
     const id = setInterval(load, 20_000); // keep it roughly current as edits burn credits
     return () => { active = false; clearInterval(id); };
-  }, []);
+  }, [workspaceId]);
 
   if (!data || data.creditsIncluded <= 0) return null;
   const pct = Math.min(100, Math.round(data.percentUsed));
   const bar = pct >= 100 ? 'bg-red-500' : pct >= 80 ? 'bg-amber-500' : 'bg-green-500';
+  const otherOwner = data.owner && !data.owner.isSelf ? data.owner.name : null;
 
   return (
     <div
       className="flex items-center gap-2 px-2.5 py-1 rounded-md bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
-      title={`${data.creditsUsed.toLocaleString()} of ${data.creditsIncluded.toLocaleString()} AI credits used this month`}
+      title={
+        otherOwner
+          ? `${data.creditsUsed.toLocaleString()} of ${data.creditsIncluded.toLocaleString()} AI credits used this month from ${otherOwner}'s account`
+          : `${data.creditsUsed.toLocaleString()} of ${data.creditsIncluded.toLocaleString()} AI credits used this month`
+      }
     >
-      <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400 whitespace-nowrap">AI credits</span>
+      <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400 whitespace-nowrap">
+        {otherOwner ? `${otherOwner}'s credits` : 'AI credits'}
+      </span>
       <div className="w-16 h-1.5 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
         <div className={`h-full ${bar} rounded-full transition-all`} style={{ width: `${pct}%` }} />
       </div>
@@ -418,7 +435,16 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   // Out-of-credits upsell modal — opened when an edit is soft-capped (402 softCap).
   // Lets the user turn on metered overage (auto-bill) with a spend cap + reminder
   // threshold, then retries the blocked edit. Wired to PATCH /api/ai-usage.
-  const [outOfCredits, setOutOfCredits] = useState<{ creditsUsed: number; creditsIncluded: number; retry: () => void } | null>(null);
+  // `owner` says whose credits ran out and whether this viewer may spend on that
+  // account — an invited team member burns the client owner's balance, and both
+  // buttons below write to the owner's account, so they are only offered to
+  // someone allowed to commit the charge.
+  const [outOfCredits, setOutOfCredits] = useState<{
+    creditsUsed: number;
+    creditsIncluded: number;
+    owner: { isSelf: boolean; name: string | null; canManage: boolean };
+    retry: () => void;
+  } | null>(null);
   // Prepaid top-up amounts (cents) → credits, at $0.05/credit (keep in sync with
   // TOPUP_CENTS_PER_CREDIT server-side). Labels avoid em dashes on purpose.
   const TOPUP_OPTIONS = [
@@ -438,7 +464,9 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       const res = await fetch('/api/ai-usage/topup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ amountCents: ocAmountCents, returnUrl: window.location.href }),
+        // Scoped to the workspace so the credits land on the account the gate
+        // checks — the client owner — instead of the buyer's personal balance.
+        body: JSON.stringify({ amountCents: ocAmountCents, returnUrl: window.location.href, workspaceId }),
       });
       const d = await res.json().catch(() => ({}));
       if (res.ok && d.url) { window.location.href = d.url; return; }
@@ -459,7 +487,9 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       const res = await fetch('/api/ai-usage', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled: true, capCents, notifyCents: capCents }),
+        // Same reason as buyCredits: the flag has to be set on the account the
+        // allowance check reads, which is the workspace owner's, not the caller's.
+        body: JSON.stringify({ enabled: true, capCents, notifyCents: capCents, workspaceId }),
       });
       if (!res.ok) throw new Error();
       const retry = outOfCredits?.retry;
@@ -2158,6 +2188,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         setOutOfCredits({
           creditsUsed: err.usage?.creditsUsed ?? 0,
           creditsIncluded: err.usage?.creditsIncluded ?? 0,
+          owner: err.owner ?? { isSelf: true, name: null, canManage: true },
           retry: () => sendFollowUp(instruction, images, pid, true),
         });
       } else {
@@ -3143,7 +3174,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
           {/* Page actions */}
           <div className="flex items-center gap-2">
             {/* Always-visible AI credit meter (Unbounce-style) */}
-            <AiCreditsMeter />
+            <AiCreditsMeter workspaceId={workspaceId} />
             {/* UTM Personalization button — links to dedicated picker page */}
             {phase === 'editing' && !!pageId && (
               <button
@@ -3661,44 +3692,67 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
               <div className="flex-shrink-0 w-8 h-8 rounded-full bg-amber-100 dark:bg-amber-500/15 flex items-center justify-center">
                 <Sparkles size={15} className="text-amber-600 dark:text-amber-400" />
               </div>
-              <h3 className="text-slate-900 dark:text-slate-100 font-semibold text-base">You&apos;re out of AI credits</h3>
+              <h3 className="text-slate-900 dark:text-slate-100 font-semibold text-base">
+                {outOfCredits.owner.canManage ? 'You’re out of AI credits' : 'Out of AI credits'}
+              </h3>
             </div>
-            <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
-              You&apos;ve used {outOfCredits.creditsUsed.toLocaleString()} of {outOfCredits.creditsIncluded.toLocaleString()} credits this month. Add more credits to keep building, or wait for your credits to reset when your plan renews next month.
-            </p>
+            {/* Buying credits and turning on auto-billing both put a charge on
+                the account these credits come from. When that account is not
+                the viewer's, point them at the person who can approve it rather
+                than showing buttons that would bill the wrong card. */}
+            {outOfCredits.owner.canManage ? (
+              <>
+                <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
+                  You&apos;ve used {outOfCredits.creditsUsed.toLocaleString()} of {outOfCredits.creditsIncluded.toLocaleString()} credits this month. Add credits to keep building — purchased credits never expire and carry over month to month. Or wait for your plan credits to reset when it renews next month.
+                </p>
 
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Add credits</label>
-            <select value={ocAmountCents} onChange={(e) => setOcAmountCents(Number(e.target.value))} className="input-base w-full">
-              {TOPUP_OPTIONS.map((o) => (
-                <option key={o.cents} value={o.cents}>{o.label}</option>
-              ))}
-            </select>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Add credits</label>
+                <select value={ocAmountCents} onChange={(e) => setOcAmountCents(Number(e.target.value))} className="input-base w-full">
+                  {TOPUP_OPTIONS.map((o) => (
+                    <option key={o.cents} value={o.cents}>{o.label}</option>
+                  ))}
+                </select>
 
-            <button
-              type="button"
-              onClick={buyCredits}
-              disabled={ocBuying || ocSaving}
-              className="mt-3 w-full flex items-center justify-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 disabled:cursor-not-allowed text-white text-sm px-4 py-2.5 rounded-xl font-medium transition-colors"
-            >
-              {ocBuying && <Loader2 size={14} className="animate-spin" />}
-              Add credits
-            </button>
+                <button
+                  type="button"
+                  onClick={buyCredits}
+                  disabled={ocBuying || ocSaving}
+                  className="mt-3 w-full flex items-center justify-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 disabled:cursor-not-allowed text-white text-sm px-4 py-2.5 rounded-xl font-medium transition-colors"
+                >
+                  {ocBuying && <Loader2 size={14} className="animate-spin" />}
+                  Add credits
+                </button>
 
-            <p className="text-center text-xs text-slate-500 dark:text-slate-400 mt-3">
-              Prefer to pay only for what you use?{' '}
-              <button
-                type="button"
-                onClick={enableOverageAndRetry}
-                disabled={ocSaving || ocBuying}
-                className="text-indigo-600 dark:text-indigo-400 hover:underline font-medium disabled:opacity-60"
-              >
-                {ocSaving ? 'Turning on…' : 'Turn on auto-billing'}
-              </button>
-            </p>
+                <p className="text-center text-xs text-slate-500 dark:text-slate-400 mt-3">
+                  Prefer to pay only for what you use?{' '}
+                  <button
+                    type="button"
+                    onClick={enableOverageAndRetry}
+                    disabled={ocSaving || ocBuying}
+                    className="text-indigo-600 dark:text-indigo-400 hover:underline font-medium disabled:opacity-60"
+                  >
+                    {ocSaving ? 'Turning on…' : 'Turn on auto-billing'}
+                  </button>
+                </p>
+              </>
+            ) : (
+              <p className="text-sm text-slate-500 dark:text-slate-400 mb-1">
+                {outOfCredits.creditsUsed.toLocaleString()} of {outOfCredits.creditsIncluded.toLocaleString()} credits have been used this month.
+                These credits come from{' '}
+                <span className="font-medium text-slate-700 dark:text-slate-300">
+                  {outOfCredits.owner.name ? `${outOfCredits.owner.name}'s account` : 'the account owner'}
+                </span>
+                , so only they can add more or turn on auto-billing. Ask them to top up, or wait for the plan credits to reset next month.
+              </p>
+            )}
 
             <div className="flex justify-between items-center gap-2 mt-5 pt-4 border-t border-slate-100 dark:border-slate-800">
-              <a href="/billing" className="text-xs text-slate-500 dark:text-slate-400 hover:text-indigo-500 underline">Or upgrade your plan</a>
-              <button type="button" onClick={() => setOutOfCredits(null)} disabled={ocBuying || ocSaving} className="btn-secondary text-sm rounded-xl">Not now</button>
+              {outOfCredits.owner.canManage
+                ? <a href="/billing" className="text-xs text-slate-500 dark:text-slate-400 hover:text-indigo-500 underline">Or upgrade your plan</a>
+                : <span />}
+              <button type="button" onClick={() => setOutOfCredits(null)} disabled={ocBuying || ocSaving} className="btn-secondary text-sm rounded-xl">
+                {outOfCredits.owner.canManage ? 'Not now' : 'Close'}
+              </button>
             </div>
           </div>
         </div>

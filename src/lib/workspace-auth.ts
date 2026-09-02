@@ -113,28 +113,76 @@ export async function resolveOwnerPlan(workspaceId: string): Promise<string> {
  * workspace → client → owner. AI usage/billing attaches to the owner, not the
  * invited member making the call. Returns null owner on any lookup failure.
  */
-export async function resolveWorkspaceOwner(workspaceId: string): Promise<{ ownerId: string | null; plan: string }> {
+export async function resolveWorkspaceOwner(
+  workspaceId: string
+): Promise<{ ownerId: string | null; plan: string; ownerName: string | null }> {
   const { data: ws } = await db
     .from('workspaces')
     .select('client_id')
     .eq('id', workspaceId)
     .single();
-  if (!ws) return { ownerId: null, plan: 'free' };
+  if (!ws) return { ownerId: null, plan: 'free', ownerName: null };
 
   const { data: client } = await db
     .from('clients')
     .select('owner_id')
     .eq('id', ws.client_id)
     .single();
-  if (!client?.owner_id) return { ownerId: null, plan: 'free' };
+  if (!client?.owner_id) return { ownerId: null, plan: 'free', ownerName: null };
 
   const { data: owner } = await db
     .from('users')
-    .select('plan')
+    .select('plan, name, email')
     .eq('id', client.owner_id)
     .single();
 
-  return { ownerId: client.owner_id, plan: owner?.plan ?? 'free' };
+  return {
+    ownerId: client.owner_id,
+    plan: owner?.plan ?? 'free',
+    // Shown in the editor when the person working is not the person billed, so
+    // they know whose credits are draining and who to ask for more.
+    ownerName: owner?.name ?? owner?.email ?? null,
+  };
+}
+
+/**
+ * The account AI usage in this workspace is billed to, plus whether the caller
+ * is allowed to spend on it.
+ *
+ * AI credits are charged to the client owner, never to the person making the
+ * call — an invited team member editing a client's page drains the owner's
+ * balance. So the credit meter, the top-up checkout and the overage toggle all
+ * have to be resolved against the owner too, or they read and write an account
+ * that has nothing to do with the work being done.
+ *
+ * `canManage` is the separate question of whether the caller may commit money
+ * to that account. Viewing the balance is information an invited member needs
+ * to do their job; buying credits or turning on overage billing is a charge on
+ * somebody else's card, so only the owner (or platform staff) may do it.
+ *
+ * DEFERRED (Renny, Slack 2026-09-03): letting owners delegate this to a team
+ * member. Agreed in principle, parked to keep the billing fixes small. Note the
+ * ask was "make them admins" — that must NOT be done through users.role, which
+ * means SplitLab staff and grants manager access to every workspace on the
+ * platform plus /admin. The scoped version is a `can_manage_billing` flag on
+ * workspace_members, read here alongside `isSelf`; it needs a migration and a
+ * toggle on the Team page, which is why it is not in this pass.
+ *
+ * Returns null when the caller has no access to the workspace at all.
+ */
+export async function resolveAiBillingAccount(
+  workspaceId: string,
+  userId: string,
+  userRole: string
+): Promise<{ ownerId: string; plan: string; ownerName: string | null; isSelf: boolean; canManage: boolean } | null> {
+  const role = await resolveWorkspaceRole(workspaceId, userId, userRole);
+  if (!role) return null;
+
+  const { ownerId, plan, ownerName } = await resolveWorkspaceOwner(workspaceId);
+  if (!ownerId) return null;
+
+  const isSelf = ownerId === userId;
+  return { ownerId, plan, ownerName, isSelf, canManage: isSelf || userRole === 'admin' };
 }
 
 /**

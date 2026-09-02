@@ -31,3 +31,18 @@ ALTER TABLE email_preferences DISABLE ROW LEVEL SECURITY;
 
 -- Re-engagement triggers ("no login in 7/14 days") need a login timestamp.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at timestamptz;
+
+-- ── Ledger ──────────────────────────────────────────────────────────────────
+-- Record this migration in the ledger created by 066. Nothing does this
+-- automatically — these files are pasted into the Supabase SQL editor by hand —
+-- so every migration has to claim its own row, or scripts/check-migrations.mjs
+-- falls back to inferring from the schema.
+--
+-- Renumbered from 064: two files shared that number, and `version` is the
+-- ledger's primary key, so only one of them could ever be recorded. This file
+-- was the one with no row. Every object it creates is guarded by IF NOT EXISTS,
+-- so re-running it where 064_email_lifecycle already applied is a no-op that
+-- just claims the ledger row.
+INSERT INTO supabase_migrations.schema_migrations (version, name)
+VALUES ('068', 'email_lifecycle')
+ON CONFLICT (version) DO NOTHING;

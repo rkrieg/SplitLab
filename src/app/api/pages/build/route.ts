@@ -185,6 +185,20 @@ export async function POST(request: NextRequest) {
         });
       }
 
+      // No usage context passed on purpose: CREATING a page is not metered.
+      // Neither the build model call nor these images count against the user's
+      // AI credits, and this route has no checkAiAllowance() gate — an account
+      // with zero credits left can still generate new pages for free. Editing a
+      // page (api/pages/[id]/follow-up) is gated and metered by comparison —
+      // with one exception, the shared Opus rebuild in buildHtmlFromSchema,
+      // which is unmetered for edits too. See the note on that function; that
+      // half was never a decision, unlike this one.
+      //
+      // Confirmed deliberate-for-now by Renny on Slack, 2026-09-02: asked
+      // whether this was a bug, he said "I don't remember if I set it up like
+      // that, but it's fine for now while we don't have users." Revisit before
+      // onboarding real users — at Opus rates plus up to 8 high-quality images,
+      // one build costs roughly $2 that nobody is charged for.
       const enrichedSchema = await generatePageImages(
         workingSchema,
         pageSlug,

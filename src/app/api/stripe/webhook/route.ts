@@ -5,6 +5,7 @@ import { accrueCommissionForInvoice, markReferralChurned } from '@/lib/affiliate
 import { logEvent } from '@/lib/log';
 import { notifyPaymentFailed } from '@/lib/email/activity';
 import { waitUntil } from '@vercel/functions';
+import { TOKENS_PER_CREDIT } from '@/lib/plans';
 
 export const dynamic = 'force-dynamic';
 
@@ -78,20 +79,36 @@ export async function POST(request: NextRequest) {
           const credits     = parseInt(session.metadata?.credits ?? '0', 10);
           const amountCents  = parseInt(session.metadata?.amountCents ?? '0', 10);
           if (topupUserId && credits > 0) {
-            const { data: existing } = await db
-              .from('ai_credit_topups')
-              .select('id')
-              .eq('stripe_session_id', session.id)
-              .maybeSingle();
-            if (!existing) {
-              await db.from('ai_credit_topups').insert({
-                owner_id:          topupUserId,
-                credits,
-                amount_cents:      amountCents,
-                stripe_session_id: session.id,
-                status:            'completed',
-              } as never);
+            // Purchase record and balance credit are ONE database call on
+            // purpose. Reading "was this session already fulfilled?" and then
+            // writing is not idempotent under concurrent deliveries: both
+            // requests see no row, both write, and the customer is granted
+            // twice. Doing the two writes separately fails the other way — the
+            // insert commits, the balance credit doesn't, and Stripe's retry
+            // skips a purchase that was never actually granted.
+            //
+            // grant_ai_topup() does both in one transaction, keyed on the
+            // Stripe session id, and returns true only for the delivery that
+            // actually fulfilled it.
+            const { data: granted, error: grantErr } = await db.rpc('grant_ai_topup', {
+              p_owner:             topupUserId,
+              p_credits:           credits,
+              p_amount_cents:      amountCents,
+              p_session_id:        session.id,
+              p_tokens_per_credit: TOKENS_PER_CREDIT,
+            });
+            if (grantErr) {
+              // Money taken, credits not delivered. Stripe retries on a
+              // non-2xx, and the function is safe to run again.
+              console.error('[stripe/webhook] ai_topup fulfilment failed', {
+                userId: topupUserId, credits, sessionId: session.id, error: grantErr.message,
+              });
+              return NextResponse.json({ error: 'topup fulfilment failed' }, { status: 500 });
             }
+            console.log('[stripe/webhook] ai_topup', {
+              userId: topupUserId, credits, sessionId: session.id,
+              fulfilled: granted === true, // false = already granted by an earlier delivery
+            });
           }
           break;
         }

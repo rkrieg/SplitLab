@@ -10,7 +10,7 @@ import { analyzePageLayout, countLayoutElements } from '@/lib/ai-page-layout';
 import { uploadHtml, downloadHtmlByPath, fileNameFromUrl } from '@/lib/storage';
 import { resolveWorkspaceRole, resolveOwnerPlan, resolveWorkspaceOwner } from '@/lib/workspace-auth';
 import { PLAN_LIMITS } from '@/lib/plans';
-import { checkAiAllowance, type UsageContext } from '@/lib/ai-usage';
+import { checkAiAllowance, softCapBody, type UsageContext } from '@/lib/ai-usage';
 import { reportAiOverageUsage } from '@/lib/ai-overage-billing';
 import { extractUrls, isEmbedAssetUrl, scrapeCompetitorUrl, fetchLogoAssets, fetchContentImageAssets } from '@/lib/ai-competitor-scrape';
 import { classifyAssetSource } from '@/lib/asset-source-resolver';
@@ -1304,6 +1304,8 @@ async function runScopedInsert(
   /** Storage prefix for any images this section needs generated. */
   pageSlug: string | null,
   imageRoleByUrl?: Map<string, AttachmentRole>,
+  /** Meters this call's tokens and any images it generates against the owner. */
+  usage?: UsageContext,
 ): Promise<{ name: string; html: string } | null> {
   try {
     // Defensive cap — this is a small, scoped call (writing one section, not
@@ -1325,6 +1327,7 @@ async function runScopedInsert(
       messages: [{ role: 'user', content: userContent }],
       maxTokens: 128000,
       label: 'follow-up:scoped-insert',
+      usage,
     });
     let raw = text.trim();
     if (raw.startsWith('```')) raw = raw.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
@@ -1371,7 +1374,7 @@ async function runScopedInsert(
           const slot = typeof rec.slot === 'string' ? rec.slot.trim() : '';
           const imagePrompt = typeof rec.prompt === 'string' ? rec.prompt.trim() : '';
           if (!slot || !imagePrompt || !html.includes(slot)) return null;
-          const url = await generateAndUploadImage(imagePrompt, pageSlug, 'high');
+          const url = await generateAndUploadImage(imagePrompt, pageSlug, 'high', usage);
           return url ? { slot, url } : null;
         }),
       );
@@ -1642,6 +1645,8 @@ async function runRegionRewriteOnce(opts: {
   /** Recent turns — context only, never re-done. */
   conversation?: string;
   imageRoleByUrl?: Map<string, AttachmentRole>;
+  /** Meters this call's tokens and any images it generates against the owner. */
+  usage?: UsageContext;
 }): Promise<
   | {
       kind: 'sections';
@@ -1819,7 +1824,7 @@ async function runRegionRewriteOnce(opts: {
           const slot = typeof rec.slot === 'string' ? rec.slot.trim() : '';
           const imagePrompt = typeof rec.prompt === 'string' ? rec.prompt.trim() : '';
           if (!slot || !imagePrompt || !out.some((s) => s.html.includes(slot))) return null;
-          const url = await generateAndUploadImage(imagePrompt, opts.pageSlug!, 'high');
+          const url = await generateAndUploadImage(imagePrompt, opts.pageSlug!, 'high', opts.usage);
           return url ? { slot, url } : null;
         }),
       );
@@ -2146,6 +2151,7 @@ async function applyRegionRewriteToHtml(opts: {
     regionUnresolved,
     conversation: opts.conversation,
     imageRoleByUrl: opts.imageRoleByUrl,
+    usage: opts.usage,
   });
   if (result.kind === 'failed') return result;
   // Pass the model's question straight through. Wrapping it in a retry or
@@ -2490,12 +2496,14 @@ export async function POST(
   }
 
   // AI usage on this edit is metered against the account owner (credits/overage).
-  const { ownerId: aiOwnerId, plan: aiOwnerPlan } = await resolveWorkspaceOwner(page.workspace_id);
+  const { ownerId: aiOwnerId, plan: aiOwnerPlan, ownerName: aiOwnerName } = await resolveWorkspaceOwner(page.workspace_id);
   const usageCtx: UsageContext = {
     ownerId: aiOwnerId,
     workspaceId: page.workspace_id,
     pageId: params.id,
     operation: 'edit',
+    // Already resolved above — passing it saves a users lookup per model call.
+    plan: aiOwnerPlan,
   };
 
   // Soft-cap gate (admins bypass). Runs before the SSE stream opens, so a
@@ -2506,15 +2514,11 @@ export async function POST(
     const gate = await checkAiAllowance(aiOwnerId, aiOwnerPlan);
     if (!gate.allowed) {
       return NextResponse.json(
-        {
-          error: gate.reason === 'over_cap'
-            ? 'You\'ve reached your AI overage spend cap. Raise it in Billing to continue.'
-            : 'You\'re out of AI credits for this month. Enable overage in Billing to continue.',
-          softCap: true,
-          reason: gate.reason,
-          usage: gate.summary,
-          overage: gate.overage,
-        },
+        softCapBody(
+          gate,
+          { id: aiOwnerId, name: aiOwnerName },
+          { id: session.user.id, role: session.user.role },
+        ),
         { status: 402 },
       );
     }
@@ -4401,6 +4405,7 @@ export async function POST(
                     stepImages,
                     page.slug ?? null,
                     roleByUrl,
+                    usageCtx,
                   );
                   if (!inserted) break;
                   const wrappedBlock = `<!-- SL:${inserted.name} -->\n${inserted.html.trim()}\n<!-- /SL:${inserted.name} -->`;
@@ -5043,7 +5048,7 @@ export async function POST(
             const anchorSection = slSections.find((s) => s.name === anchorName)!;
             const headSection = slSections.find((s) => s.name === 'head');
             const usedNames = slSections.map((s) => s.name);
-            const inserted = await runScopedInsert(anchorSection.html, headSection?.html ?? '', usedNames, withConstraints(prompt), routingImageUrls, page.slug ?? null, roleByUrl);
+            const inserted = await runScopedInsert(anchorSection.html, headSection?.html ?? '', usedNames, withConstraints(prompt), routingImageUrls, page.slug ?? null, roleByUrl, usageCtx);
             if (inserted) {
               const wrappedBlock = `<!-- SL:${inserted.name} -->\n${inserted.html.trim()}\n<!-- /SL:${inserted.name} -->`;
               const spliced = insertSlSectionBlock(html, anchorName, routing!.position as 'before' | 'after', wrappedBlock);
@@ -5069,7 +5074,7 @@ export async function POST(
           } else if (imageGenerateShapeOk) {
             const pageSlugForImage = page.slug ?? crypto.randomUUID();
             sendSSE(controller, { type: 'status', message: 'Generating image...' });
-            const generatedUrl = await generateAndUploadImage(routing!.image_prompt!, pageSlugForImage, 'high');
+            const generatedUrl = await generateAndUploadImage(routing!.image_prompt!, pageSlugForImage, 'high', usageCtx);
             if (generatedUrl) {
               sendSSE(controller, { type: 'image_ready', url: generatedUrl });
               targetSections = routing!.target_sections;
@@ -5609,7 +5614,7 @@ export async function POST(
 
         const enrichedSchema = await generatePageImages(schemaForImages, pageSlug, (url) => {
           sendSSE(controller, { type: 'image_ready', url });
-        });
+        }, usageCtx);
 
         if (request.signal.aborted) { closeSSE(controller); return; }
 

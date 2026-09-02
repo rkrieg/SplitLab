@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth';
 import { getStripeClient } from '@/lib/stripeClient';
 import { db } from '@/lib/supabase-server';
 import { TOPUP_AMOUNTS_CENTS, creditsForCents } from '@/lib/ai-usage';
+import { resolveAiBillingAccount } from '@/lib/workspace-auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,11 +18,35 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { amountCents, returnUrl } = await request.json();
+    const { amountCents, returnUrl, workspaceId } = await request.json();
     if (!TOPUP_AMOUNTS_CENTS.includes(amountCents)) {
       return NextResponse.json({ error: 'Invalid amount' }, { status: 400 });
     }
     const credits = creditsForCents(amountCents);
+
+    // Credits have to land on the account the gate actually checks. AI usage is
+    // billed to the client owner, so an invited team member buying from inside
+    // the editor was topping up their own personal balance while the owner's
+    // stayed empty — they paid and stayed blocked. Resolve the owner, and let
+    // only the owner (or platform staff) put a charge on that account.
+    let ownerId = session.user.id;
+    if (typeof workspaceId === 'string' && workspaceId) {
+      const acct = await resolveAiBillingAccount(workspaceId, session.user.id, session.user.role);
+      if (!acct) {
+        return NextResponse.json({ error: 'No access to this workspace' }, { status: 403 });
+      }
+      if (!acct.canManage) {
+        return NextResponse.json(
+          {
+            error: acct.ownerName
+              ? `Only ${acct.ownerName} can buy credits for this account.`
+              : 'Only the account owner can buy credits for this account.',
+          },
+          { status: 403 },
+        );
+      }
+      ownerId = acct.ownerId;
+    }
 
     const stripe = getStripeClient();
     const origin = request.nextUrl.origin;
@@ -31,10 +56,12 @@ export async function POST(request: NextRequest) {
     if (typeof returnUrl === 'string' && returnUrl.startsWith(origin)) base = returnUrl.split('#')[0];
     const sep = base.includes('?') ? '&' : '?';
 
+    // Bill the same account the credits land on, so the charge and the balance
+    // never end up on two different customers.
     const { data: user } = await db
       .from('users')
       .select('stripe_customer_id, email')
-      .eq('id', session.user.id)
+      .eq('id', ownerId)
       .single();
 
     const checkout = await stripe.checkout.sessions.create({
@@ -49,9 +76,9 @@ export async function POST(request: NextRequest) {
         },
       }],
       // Read back by the webhook to grant credits to the right account.
-      metadata: { kind: 'ai_topup', userId: session.user.id, credits: String(credits), amountCents: String(amountCents) },
+      metadata: { kind: 'ai_topup', userId: ownerId, credits: String(credits), amountCents: String(amountCents) },
       payment_intent_data: {
-        metadata: { kind: 'ai_topup', userId: session.user.id, credits: String(credits) },
+        metadata: { kind: 'ai_topup', userId: ownerId, credits: String(credits) },
       },
       success_url: `${base}${sep}topup=success`,
       cancel_url: `${base}${sep}topup=cancel`,
