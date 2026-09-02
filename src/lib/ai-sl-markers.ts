@@ -365,6 +365,23 @@ export function wrapTopLevelBlocks(html: string): { html: string; wrapped: strin
     if (!WRAPPABLE_TAGS.has(el.tag)) continue;
     if (insideAnyMarker(html, el.start)) continue;
     if (el.innerEnd - el.innerStart < MIN_BLOCK_CHARS) continue;
+    // A block whose contents are ALREADY marked is a container, not a section.
+    //
+    // Without this, a builder that emits `<main>` around its own SL:hero and
+    // SL:contact gets that <main> wrapped as one more section — and the two
+    // real sections end up nested inside it. The route reads sections with an
+    // outermost-only regex, so a nested marker is invisible: the page reports
+    // three sections when it has five, every edit is aimed at the giant outer
+    // one, and a rewrite that correctly returns "hero" is spliced in, cannot be
+    // found on the way back out, and is thrown away with whatever it cost to
+    // produce. That happened on a real page, and the generated image that turn
+    // paid for went in the bin with it.
+    //
+    // It also stops this pass undoing Pass 0. dropNestedMarkers had already
+    // removed the outer marker for exactly this reason; wrapping the same
+    // element again put it straight back, so the two passes fought and the
+    // page came out of "repair" no better than it went in.
+    if (ANY_OPEN_MARKER.test(html.slice(el.innerStart, el.innerEnd))) continue;
 
     const base = nameForElement(el.openTag, el.tag);
     if (!base) continue;
@@ -611,6 +628,35 @@ export function dropNestedMarkers(html: string): { html: string; dropped: string
       close: [innerEnd, innerEnd + close[0].length],
     });
   }
+
+  // Keep only cuts that do not overlap one another, outermost first.
+  //
+  // "Back to front keeps offsets valid" holds for cuts that sit side by side.
+  // It does NOT hold when one cut's span contains another's: removing the inner
+  // pair shortens the string, and the outer cut's CLOSE offset — which sits
+  // after it — has moved. Slicing at the stale offset then eats live markup.
+  //
+  // That is not hypothetical. A real page carried its markers in triplicate
+  // (head, hero, stats-proof, testimonials and footer each appearing three
+  // times, from earlier saves that duplicated them). Pairing each opener with
+  // the next matching closer produced overlapping spans, and the second cut
+  // removed six characters of a real element: `<section class="ue-testimonials
+  // -section">` came out as `<!-- SLon class="ue-testimonials-section">`. A
+  // customer's page, corrupted by the pass whose entire job is repairing it.
+  //
+  // Dropping the overlaps rather than trying to be clever about them: one clean
+  // level of un-nesting per load is enough, this function runs on every load,
+  // and a page shaped badly enough to produce overlapping pairs is exactly the
+  // page that should not be rewritten on a guess.
+  const disjoint: typeof cuts = [];
+  let lastEnd = -1;
+  for (const cut of cuts.sort((a, b) => a.open[0] - b.open[0])) {
+    if (cut.open[0] < lastEnd) continue;
+    disjoint.push(cut);
+    lastEnd = cut.close[1];
+  }
+  cuts.length = 0;
+  cuts.push(...disjoint);
 
   // Back to front, so a cut never shifts an offset still to be used.
   let out = html;

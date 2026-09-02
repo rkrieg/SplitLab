@@ -529,6 +529,81 @@ if (existsSync(templatePath)) {
     M.dropEmptySectionMarkers(repaired).html === repaired);
 }
 
+// ── The repair pass must never damage the page it is repairing ─────────────
+// A real page carried its markers in triplicate from earlier saves. Pairing
+// each opener with the next matching closer produced overlapping spans, and
+// cutting them back-to-front used an offset that the previous cut had already
+// moved — so six characters of a live element were eaten and
+// `<section class="ue-testimonials-section">` came out as
+// `<!-- SLon class="ue-testimonials-section">`. Marker repair corrupting a
+// customer's markup is worse than any nesting it was there to fix.
+{
+  const dup = [
+    '<!doctype html><html><head></head><body>',
+    '<!-- SL:hero -->',
+    '<section class="a"><h1>First hero with plenty of words in it</h1></section>',
+    '<!-- SL:hero -->',
+    '<section class="b"><h1>Second hero, also carrying real copy</h1></section>',
+    '<!-- /SL:hero -->',
+    '<section class="testimonials"><p>Quoted words from a customer we must not lose.</p></section>',
+    '<!-- /SL:hero -->',
+    '<footer class="f"><p>Footer copy that must survive the repair pass.</p></footer>',
+    '</body></html>',
+  ].join('\n');
+
+  const out = M.repairSlMarkers(dup, null).html;
+  const strip = (s) => s.replace(/<!--\s*\/?SL:[a-zA-Z0-9_-]+\s*-->/g, '').replace(/\s+/g, ' ').trim();
+  assert('duplicate marker names never corrupt the markup',
+    !/<!--\s*SL[a-z]/.test(out), out.slice(0, 200));
+  assert('and no page content is lost to the repair',
+    strip(out) === strip(dup));
+  assert('the testimonials element survives intact',
+    out.includes('<section class="testimonials">'));
+  assert('the footer element survives intact',
+    out.includes('<footer class="f">'));
+}
+
+// ── A container among marked siblings is not a section ─────────────────────
+// The shape that broke a freshly built page. Because nav and footer are marked
+// at body level, the search for "where the blocks live" stops there — and the
+// unmarked <main> beside them then reads as one more block and gets wrapped,
+// burying the two real sections inside it. Sections are read outermost-first,
+// so hero and contact stopped existing: the page reported three sections
+// instead of five, and an image swap aimed at the hero was generated, spliced,
+// then discarded because it could not be found on the way back out.
+//
+// The same page WITHOUT the marked siblings passed, which is why this went out.
+// The siblings are the whole test.
+{
+  const S = (n, inner) => `<!-- SL:${n} -->\n${inner}\n<!-- /SL:${n} -->`;
+  const page = [
+    '<!doctype html><html><head><!-- SL:head --><style>.hero{color:#111}</style><!-- /SL:head --></head><body>',
+    S('nav', '<nav class="nav"><a href="#top">Austin Plumbing</a><a href="#contact">Get my quote</a></nav>'),
+    '<main id="top">',
+    S('hero', '<section class="hero"><h1>Need a plumber in Austin today?</h1><p>Tell us what is happening and we reply with a time and a price.</p></section>'),
+    S('contact', '<section class="contact"><h2>Tell us about the job</h2><form><input name="name"><button>Get my quote</button></form></section>'),
+    '</main>',
+    S('footer', '<footer class="footer"><span>© 2025 Austin Plumbing. All rights reserved.</span></footer>'),
+    '</body></html>',
+  ].join('\n');
+
+  const out = M.repairSlMarkers(page, null);
+  const readable = [];
+  const re = /<!-- SL:([a-zA-Z0-9_-]+) -->([\s\S]*?)<!-- \/SL:\1 -->/g;
+  let mm;
+  while ((mm = re.exec(out.html))) readable.push(mm[1]);
+
+  assert('an unmarked container beside marked siblings is not wrapped',
+    out.structural.length === 0, JSON.stringify(out.structural));
+  assert('the sections inside it stay readable',
+    readable.includes('hero') && readable.includes('contact'), readable.join(', '));
+  assert('and so do the ones outside it',
+    readable.includes('nav') && readable.includes('footer'), readable.join(', '));
+  assert('no marker is left buried inside another',
+    [...out.html.matchAll(/<!--\s*SL:([a-zA-Z0-9_-]+)\s*-->/g)]
+      .map((m) => m[1]).every((n) => readable.includes(n)));
+}
+
 rmSync(outDir, { recursive: true, force: true });
 
 if (failed > 0) {
