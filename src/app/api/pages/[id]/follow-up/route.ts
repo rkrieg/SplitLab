@@ -1486,7 +1486,7 @@ Rules for the sections object:
 - You may return sections rewritten, brand new ones (splitting or adding), or the whole run reordered. Merging two sections into one means returning the merged section AND listing the absorbed name in "deleted".
 - KEEP A SECTION'S EXISTING NAME whenever that section survives in recognisable form, even if you moved it or restyled it. Only invent a new kebab-case name for a section that genuinely did not exist before. Names must be unique.
 - Do NOT include <!-- SL:name --> markers yourself — the caller wraps each section you return.
-- Change ONLY what the instruction asks for. Every section in this run is being replaced by what you return, so anything you fail to carry across is destroyed: copy, images, links and layout you were not asked to touch must come back unchanged.
+- Change ONLY what the instruction asks for. Inside a section you DO return, anything you fail to carry across is destroyed: copy, images, links and layout you were not asked to touch must come back unchanged. (A section you do not return at all is kept exactly as it is — see "Silence means KEEP" above. Leaving one out is never a way to edit it.)
 - Preserve every data-field attribute on content you carry across — they drive the page's click-to-edit, and dropping one silently takes away the user's ability to edit that text. Give any genuinely new element a data-field too, using "<name>.<field>" dot-paths matching the section's name. Two limits on that, both of which have broken real pages: put it ONLY on an element that holds text or an image of its own — never on a wrapper/layout box that exists to contain other elements, because every data-field becomes contentEditable and naming the wrapper makes the entire block editable as one lump, so a stray backspace inside it wipes the video and buttons along with the text. And NEVER prefix a name that already carries the section prefix: if the element you are copying from says data-field="hero.badge", the new one is "hero.badge", not "hero.hero.badge" — a doubled prefix points at a path no schema has, so every edit typed there is silently discarded.
 - Match the page's existing visual design system — reuse the existing CSS custom properties/:root variables, class names, fonts and colors rather than inventing a new look. If new CSS is genuinely needed, add a small scoped <style> block inside the section itself; never modify the page's shared stylesheet.
 - Each section must be a single top-level element (e.g. one <section>...</section>).
@@ -1556,8 +1556,26 @@ function regionFailureMessage(reason: RegionFailReason): string {
       return "This page is too large to change several sections at once. Ask for one change at a time and each will go through — your page hasn't been altered.";
     case 'provider':
       return 'Something went wrong while applying that — the AI service returned a bad response. Please try again.';
+    case 'empty_reply':
     case 'unusable':
-      return "I couldn't work out what to change. Name the section (nav, hero, footer, …) and what should happen to it.";
+      // Was: "I couldn't work out what to change. Name the section (nav, hero,
+      // footer, …)". Wrong on both halves, and it reached a real user.
+      //
+      // The section had ALREADY been resolved — the log for that request reads
+      // `targetSections: ['process']`, picked correctly from a screenshot the
+      // user attached with "redesign this section it looks shit". Then the
+      // rewrite replied with a sentence describing the redesign and no HTML,
+      // and this line told them to name a section we had named ourselves two
+      // steps earlier.
+      //
+      // Every route into these two reasons is a fault on our side: a reply we
+      // could not use, a splice that did not survive, a section we could not
+      // rebuild. None of them are caused by how the user worded anything, so
+      // none of them should send the user back to reword it. Genuine "we
+      // cannot tell which part of the page you mean" is a different message on
+      // a different path (see the noTargetResolved branch), and that one is
+      // still free to ask.
+      return "That didn't come through properly. Please send it once more — your page hasn't been changed.";
   }
 }
 
@@ -1566,7 +1584,14 @@ type RegionFailReason =
   | 'too_long'
   /** The provider errored, or returned something unparseable. Retrying helps. */
   | 'provider'
-  /** It ran fine and produced nothing usable. The instruction is the problem. */
+  /**
+   * Valid JSON, but carrying no edit, no question and no verdict — every field
+   * we could act on absent at once. Split out from 'unusable' for one reason:
+   * it is the only failure shape that is never a legitimate answer, so it is
+   * the only one worth spending a second call on. See runRegionRewrite.
+   */
+  | 'empty_reply'
+  /** It ran fine and produced nothing usable. */
   | 'unusable';
 
 /** Byte range covering a whole run of sections, first marker to last marker. */
@@ -1579,7 +1604,7 @@ function findSlRegionBounds(html: string, startName: string, endName: string): [
   return to > from ? [from, to] : null;
 }
 
-async function runRegionRewrite(opts: {
+async function runRegionRewriteOnce(opts: {
   regionHtml: string;
   headSectionHtml: string;
   /** Section names elsewhere on the page — new names must not collide. */
@@ -1661,12 +1686,19 @@ async function runRegionRewrite(opts: {
     // chunks themselves are unused — this call's output is JSON parsed only
     // once complete, never shown to the user raw — so a dropped stream is
     // free to restart from scratch like any other transient retry.
+    // Held, not logged. On a normal edit this is a wall of text nobody reads;
+    // on the one path where the reply turns out to carry no edit at all, it is
+    // the only record of what the model was doing with the tokens it spent.
+    let thinking = '';
     const text = await askAIStream(
       {
         system: SCOPED_REGION_SYSTEM_PROMPT,
         messages: [{ role: 'user', content: userContent }],
         maxTokens: REGION_REWRITE_MAX_TOKENS,
         label: 'follow-up:region-rewrite',
+        onThinking: (t) => {
+          thinking = t;
+        },
       },
       () => {},
     );
@@ -1741,8 +1773,20 @@ async function runRegionRewrite(opts: {
           reason: message ?? "I looked at that and didn't find anything to change on the page.",
         };
       }
-      console.error('[pages/follow-up] region rewrite returned no sections', { rawPreview: text.slice(0, 1500) });
-      return { kind: 'failed', reason: 'unusable' };
+      // Words and nothing else. `sections` is not merely empty here — it is
+      // absent, alongside no question, no no_change and no deleted, so there is
+      // nothing in the reply anyone could act on. Reported separately so the
+      // caller can spend one more call on it; see runRegionRewrite.
+      console.error('[pages/follow-up] region rewrite replied with words but no edit', {
+        rawPreview: text.slice(0, 1500),
+        // The reply is a sentence; the reasoning behind it is the part that
+        // says why the HTML never arrived. Tail, not head — a model that ran
+        // out of steam does so at the end, and the opening of a long think is
+        // almost always just a restatement of the instruction.
+        thinkingChars: thinking.length,
+        thinkingTail: thinking.slice(-2000),
+      });
+      return { kind: 'failed', reason: 'empty_reply' };
     }
 
     const taken = [...opts.outsideNames];
@@ -1807,6 +1851,56 @@ async function runRegionRewrite(opts: {
     console.error('[pages/follow-up] region rewrite failed', { reason, err });
     return { kind: 'failed', reason };
   }
+}
+
+/**
+ * One retry, for the one reply shape that is never a legitimate answer.
+ *
+ * A real user asked to redesign a section, attaching a screenshot of it. Every
+ * step worked: the screenshot was read, the section was resolved to `process`,
+ * the scope and budget were fine, and the call returned cleanly on
+ * `stop_reason=end_turn`. What came back was this, in full:
+ *
+ *   {"message":"Redesigned the \"How your gift gets there\" steps — the ghost
+ *    outline numbers are gone, replaced with brand-coloured numbered badges…"}
+ *
+ * A confident past-tense account of a redesign, with the redesign missing. Of
+ * ~1,800 output tokens, all but ~80 went to thinking: the work was done and
+ * then not written down. We threw the turn away and told the user to name a
+ * section we had already named.
+ *
+ * It broke no rule of ours, which is the point — the contract marks `message`
+ * "always required" and never says the same of `sections`, so words-only
+ * parses as valid. Tightening the prompt to forbid it was considered and left
+ * alone: there is no way to test a wording change here, and this contract is
+ * also what carries multi-section edits, which are worth more than the tidier
+ * rule. A check that cannot misread the reply was the cheaper guarantee.
+ *
+ * Scoped as narrowly as the failure is. 'empty_reply' means the reply carried
+ * no sections, no deleted, no question and no no_change — every actionable
+ * field absent at once. It cannot fire on a model that asked a question, said
+ * nothing needed changing, deleted a section, or returned {"sections":[]},
+ * because each of those is read and returned before this point. Platform and
+ * Q&A requests never reach here at all; they are answered much earlier. So the
+ * only turn that costs a second call is one that was going to be thrown away.
+ *
+ * Once, not a loop. If a second attempt also comes back empty, that is a
+ * signal about the request and not a thing more retries fix.
+ */
+async function runRegionRewrite(
+  opts: Parameters<typeof runRegionRewriteOnce>[0],
+): Promise<Awaited<ReturnType<typeof runRegionRewriteOnce>>> {
+  const first = await runRegionRewriteOnce(opts);
+  if (first.kind !== 'failed' || first.reason !== 'empty_reply') return first;
+
+  console.warn('[pages/follow-up] region rewrite gave words but no edit — asking once more');
+  const second = await runRegionRewriteOnce(opts);
+  // Whatever the retry says now stands, including a different failure: it is
+  // the more recent read of the same request.
+  if (second.kind === 'failed' && second.reason === 'empty_reply') {
+    console.error('[pages/follow-up] region rewrite gave words but no edit twice — giving up');
+  }
+  return second;
 }
 
 /**
