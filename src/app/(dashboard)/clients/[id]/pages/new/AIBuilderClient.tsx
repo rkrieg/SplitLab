@@ -125,6 +125,21 @@ interface Props {
 // brief, tight enough to keep the schema the AI generates within one response.
 const MAX_PROMPT_LENGTH = 50000;
 
+// Composer attachment buttons. These carry visible labels rather than bare
+// icons — the link importer went unnoticed as a faint icon, and it is the only
+// way to pull in a Google Drive folder, so it gets the accented treatment.
+const ATTACH_BTN =
+  'inline-flex items-center gap-1 whitespace-nowrap pl-1.5 pr-2.5 py-1 rounded-lg text-[11px] font-medium ' +
+  'text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700 ' +
+  'hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700/60 ' +
+  'disabled:opacity-30 disabled:cursor-not-allowed transition-colors';
+const LINK_BTN =
+  'inline-flex items-center gap-1 whitespace-nowrap pl-1.5 pr-2.5 py-1 rounded-lg text-[11px] font-medium ' +
+  'text-indigo-600 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-500/10 ' +
+  'border border-indigo-200 dark:border-indigo-500/30 ' +
+  'hover:bg-indigo-100 dark:hover:bg-indigo-500/20 ' +
+  'disabled:opacity-30 disabled:cursor-not-allowed transition-colors';
+
 
 function setNestedValue(obj: Record<string, unknown>, path: string, value: unknown): Record<string, unknown> {
   const keys = path.split('.');
@@ -506,6 +521,29 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   }
   function removeLinkedAsset(index: number) {
     setLinkedAssets(prev => prev.filter((_, i) => i !== index));
+  }
+  /**
+   * Put linked assets back after a send that never used them.
+   *
+   * takeLinkedAssets() empties the list before the request so a success can't
+   * send the same library twice. On a failure that leaves the composer with no
+   * thumbnails and the edit with no images — and the out-of-credits retry then
+   * re-sends the instruction against an empty library, silently dropping every
+   * image the user imported. So every path that returns without a completed
+   * edit hands them back.
+   */
+  function restoreLinkedAssets(assets: ImportedAsset[]) {
+    if (assets.length === 0) return;
+    const held = new Set(linkedAssetsRef.current.map(a => a.url));
+    const back = assets.filter(a => !held.has(a.url));
+    if (back.length === 0) return;
+    // Written by hand as well as through state, same as the import path: the
+    // retry can fire before the ref's useEffect has run.
+    linkedAssetsRef.current = [...linkedAssetsRef.current, ...back];
+    setLinkedAssets(prev => {
+      const seen = new Set(prev.map(a => a.url));
+      return [...prev, ...back.filter(a => !seen.has(a.url))];
+    });
   }
 
   /**
@@ -2097,6 +2135,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     });
 
     if (!res.ok) {
+      restoreLinkedAssets(linkedForEdit);
       const err = await res.json().catch(() => ({ error: 'Edit failed' }));
       const message = err.error || 'Edit failed';
       if (err.limitError) {
@@ -2167,6 +2206,9 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     setFollowUpEvents(null);
 
     if (clarifyMessage) {
+      // No edit happened — the images are still waiting to be used, so they
+      // belong back in the composer for the answer the user is about to type.
+      restoreLinkedAssets(linkedForEdit);
       const clarifyText = clarifyMessage;
       if (!silent) {
         addMessage({ role: 'assistant', content: clarifyText });
@@ -2181,6 +2223,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     }
 
     if (followUpError || !doneData) {
+      restoreLinkedAssets(linkedForEdit);
       setPhase('editing');
       return;
     }
@@ -2891,18 +2934,18 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                       type="button"
                       disabled={chatImages.length >= 3}
                       onClick={() => chatImageInputRef.current?.click()}
-                      className="text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                      title="Attach image (max 3)"
+                      className={ATTACH_BTN}
+                      title="Upload an image from this computer (max 3)"
                     >
-                      <Plus size={16} />
+                      <Plus size={14} /> Upload
                     </button>
                     <button
                       type="button"
                       onClick={() => setAssetSourceOpen(true)}
-                      className="text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 transition-colors"
+                      className={LINK_BTN}
                       title="Add images from a link (Google Drive folder, shared file, or any page)"
                     >
-                      <Link2 size={15} />
+                      <Link2 size={14} /> Add images from link
                     </button>
                   </div>
                   <span
@@ -3025,24 +3068,24 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                   onPaste={handleChatImagePaste}
                 />
                 <div className="flex items-center justify-between px-3 pb-2.5">
-                  <div className="flex items-center gap-0.5">
+                  <div className="flex items-center gap-1.5">
                     <button
                       type="button"
                       disabled={isLoading || preparingSchema || rebuilding || rebuildPending || schemaPrepFailed || chatImages.length >= 3}
                       onClick={() => chatImageInputRef.current?.click()}
-                      className="p-1.5 text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                      title="Attach image (max 3)"
+                      className={ATTACH_BTN}
+                      title="Upload an image from this computer (max 3)"
                     >
-                      <Plus size={15} />
+                      <Plus size={14} /> Upload
                     </button>
                     <button
                       type="button"
                       disabled={isLoading || preparingSchema || rebuilding || rebuildPending || schemaPrepFailed}
                       onClick={() => setAssetSourceOpen(true)}
-                      className="p-1.5 text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                      className={LINK_BTN}
                       title="Add images from a link (Google Drive folder, shared file, or any page)"
                     >
-                      <Link2 size={15} />
+                      <Link2 size={14} /> Add images from link
                     </button>
                   </div>
                   <div className="flex items-center gap-1.5">
