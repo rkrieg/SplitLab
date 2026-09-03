@@ -3292,7 +3292,7 @@ export default function AnalyticsClient({
                         whole column is banded — header and every cell share the
                         same tint and side borders. */}
                     <th
-                      className="text-right px-3 py-3 font-semibold text-indigo-600 dark:text-indigo-400 bg-indigo-500/10 border-x border-indigo-500/30"
+                      className="text-center px-3 py-3 font-semibold text-indigo-600 dark:text-indigo-400 bg-indigo-500/10 border-x border-indigo-500/30"
                       title="Conversion rate — conversions ÷ unique visitors"
                     >
                       CVR
@@ -3557,7 +3557,7 @@ export default function AnalyticsClient({
                                 here instead of stacking two backgrounds — one
                                 bg class only, so there's nothing to resolve. */}
                             <td
-                              className={`px-3 py-3.5 text-right font-semibold text-slate-900 dark:text-slate-100 border-x border-indigo-500/30 ${
+                              className={`px-3 py-3.5 text-center font-semibold text-slate-900 dark:text-slate-100 border-x border-indigo-500/30 ${
                                 stat.isWinner
                                   ? "bg-green-500/10"
                                   : "bg-indigo-500/10"
