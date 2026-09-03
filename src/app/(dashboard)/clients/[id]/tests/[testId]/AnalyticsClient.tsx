@@ -146,6 +146,38 @@ interface VariantStat {
   isWinner: boolean;
 }
 
+/**
+ * Newest of "created" and the page's last save — the same pair the row shows
+ * as "Created … · Edited …". Missing or unparseable dates count as 0 so they
+ * sort to the bottom instead of poisoning the comparison with NaN.
+ */
+function variantTouchedAt(v: Variant): number {
+  const times = [v.created_at, v.pages?.updated_at]
+    .map((iso) => (iso ? new Date(iso).getTime() : NaN))
+    .filter((t) => Number.isFinite(t));
+  return times.length > 0 ? Math.max(...times) : 0;
+}
+
+/**
+ * Table order: heaviest traffic share first, then most recently edited.
+ * Name + id break any remaining tie so the order never shuffles between
+ * renders.
+ */
+function byWeightThenEdited(a: VariantStat, b: VariantStat): number {
+  const wa = Number(a.variant.traffic_weight) || 0;
+  const wb = Number(b.variant.traffic_weight) || 0;
+  if (wa !== wb) return wb - wa;
+
+  const ta = variantTouchedAt(a.variant);
+  const tb = variantTouchedAt(b.variant);
+  if (ta !== tb) return tb - ta;
+
+  return (
+    a.variant.name.localeCompare(b.variant.name) ||
+    a.variant.id.localeCompare(b.variant.id)
+  );
+}
+
 interface Test {
   id: string;
   name: string;
@@ -890,7 +922,10 @@ export default function AnalyticsClient({
   // Computed
   const variants = test.test_variants || [];
   const activeVariants = variants.filter((v) => !v.archived_at);
-  const activeStats = stats.filter((s) => !s.variant.archived_at);
+  // .filter() already returns a fresh array, so sorting it never mutates `stats`.
+  const activeStats = stats
+    .filter((s) => !s.variant.archived_at)
+    .sort(byWeightThenEdited);
 
   // The staged split, re-derived from the drafts on every keystroke. The
   // numbers are only a proposal until they add up to exactly 100 — anything
@@ -936,7 +971,9 @@ export default function AnalyticsClient({
           : `The split adds up to ${splitTotal}% — ${100 - splitTotal}% of your traffic is unassigned. It has to total exactly 100%.`;
 
   const splitValid = splitTotal === 100;
-  const archivedStats = stats.filter((s) => s.variant.archived_at);
+  const archivedStats = stats
+    .filter((s) => s.variant.archived_at)
+    .sort(byWeightThenEdited);
   const snippet = `<script src="${appUrl}/tracker.js"></script>`;
   const fullUrl = domain ? `${domain}${test.url_path}` : null;
 
@@ -1068,7 +1105,8 @@ export default function AnalyticsClient({
       "Confidence",
       "Winner",
     ];
-    const rows = stats.map((s) => [
+    // Same order as the table on screen, so the export reads the same way.
+    const rows = [...stats].sort(byWeightThenEdited).map((s) => [
       s.variant.name,
       s.variant.is_control ? "Yes" : "No",
       s.views,
@@ -3250,7 +3288,13 @@ export default function AnalyticsClient({
                     <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">
                       Goals
                     </th>
-                    <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">
+                    {/* CVR is the number people come to this table for, so the
+                        whole column is banded — header and every cell share the
+                        same tint and side borders. */}
+                    <th
+                      className="text-right px-3 py-3 font-semibold text-indigo-600 dark:text-indigo-400 bg-indigo-500/10 border-x border-indigo-500/30"
+                      title="Conversion rate — conversions ÷ unique visitors"
+                    >
                       CVR
                     </th>
                     <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">
@@ -3509,8 +3553,15 @@ export default function AnalyticsClient({
                             >
                               {stat.goalHits.toLocaleString()}
                             </td>
+                            {/* Highlighted CVR column. The winner's green wins
+                                here instead of stacking two backgrounds — one
+                                bg class only, so there's nothing to resolve. */}
                             <td
-                              className={`px-3 py-3.5 text-right font-semibold text-slate-900 dark:text-slate-100 ${rowBg}`}
+                              className={`px-3 py-3.5 text-right font-semibold text-slate-900 dark:text-slate-100 border-x border-indigo-500/30 ${
+                                stat.isWinner
+                                  ? "bg-green-500/10"
+                                  : "bg-indigo-500/10"
+                              }`}
                             >
                               {formatPercent(cvr)}
                             </td>
