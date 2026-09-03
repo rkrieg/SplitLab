@@ -41,8 +41,13 @@ import { buildConversationContext, classifyEditIntent, MAX_ATTACHMENTS } from '@
  * already answers, so paying vision cost times eight call sites buys nothing.
  * Only THIS call — the one that decides what goes in which slot — needs to
  * look at the photographs, so only this one pays for it.
+ *
+ * 40, not 20: the link importer no longer asks the user to hand-pick, so a
+ * pasted folder arrives whole and the model chooses. Every viewable file here
+ * is still vision-attached, so this is the real cost/context ceiling — kept in
+ * sync with MAX_LIBRARY_IMPORT in the asset resolver.
  */
-const MAX_LIBRARY_ASSETS = 20;
+const MAX_LIBRARY_ASSETS = 40;
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 800;
