@@ -797,34 +797,21 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     if (!assetLinkPromptOpen) return null;
     const ready = linkedAssets.length;
     return (
-      <div className="relative mb-3 rounded-2xl border border-indigo-200 dark:border-indigo-500/40 bg-indigo-50/90 dark:bg-indigo-500/10 p-3.5 pr-9 shadow-sm">
+      <div className="relative mb-3 rounded-xl border border-indigo-200 dark:border-indigo-500/40 bg-indigo-50/80 dark:bg-indigo-500/10 px-3 py-2.5 pr-8">
         <button
           type="button"
           onClick={dismissAssetLinkPrompt}
-          className="absolute top-2 right-2 w-6 h-6 rounded-full flex items-center justify-center text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-200 hover:bg-indigo-100 dark:hover:bg-indigo-500/20 transition-colors"
+          className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full flex items-center justify-center text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-200 hover:bg-indigo-100 dark:hover:bg-indigo-500/20 transition-colors"
           title="Hide this"
           aria-label="Hide the asset link box"
         >
           <X size={14} />
         </button>
 
-        <div className="flex items-center gap-1.5 mb-1">
-          <Link2 size={13} className="text-indigo-600 dark:text-indigo-300" />
+        <div className="flex items-center gap-1.5 mb-2">
+          <Link2 size={13} className="text-indigo-600 dark:text-indigo-300 shrink-0" />
           <p className="text-xs font-semibold text-indigo-900 dark:text-indigo-100">Add your existing assets</p>
-        </div>
-        <p className="text-[11px] leading-relaxed text-indigo-800/90 dark:text-indigo-200/80 mb-2">
-          Paste links to your images or brand assets — a Google Drive folder, a shared file, or any web page.
-          We pull the images in and hand them to the AI to use while it builds your page. You don&apos;t place
-          them; the AI picks what fits.
-        </p>
-
-        {/* Public-link requirement — loud, not fine print. This is the #1 reason
-            a link comes back empty. */}
-        <div className="flex items-start gap-1.5 mb-2.5 px-2.5 py-1.5 rounded-lg bg-amber-100/70 dark:bg-amber-500/10 border border-amber-300/70 dark:border-amber-500/30">
-          <AlertTriangle size={12} className="text-amber-600 dark:text-amber-400 mt-px shrink-0" />
-          <p className="text-[11px] leading-relaxed text-amber-800 dark:text-amber-300">
-            Every link must be <span className="font-semibold">public</span>. In Google Drive: <span className="font-medium">Share → General access → &ldquo;Anyone with the link.&rdquo;</span> If it&apos;s private, we can&apos;t see inside.
-          </p>
+          <span className="text-[11px] text-indigo-700/70 dark:text-indigo-300/60">— a link for the AI to pull from</span>
         </div>
 
         {/* Per-link status ledger */}
@@ -850,7 +837,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                   {row.status === 'loading' && <p className="text-slate-400 dark:text-slate-500">Checking the link…</p>}
                   {row.status === 'done' && (
                     <p className="text-green-700 dark:text-green-400">
-                      Added {row.count} image{row.count === 1 ? '' : 's'} for the AI to use{row.message ? ` · ${row.message}` : ''}
+                      Added {row.count} asset{row.count === 1 ? '' : 's'}{row.message ? ` · ${row.message}` : ''}
                     </p>
                   )}
                   {row.status === 'error' && <p className="text-red-600 dark:text-red-400">{row.message}</p>}
@@ -891,11 +878,11 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
             <Plus size={13} /> Add link
           </button>
         </div>
-        <p className="mt-1.5 text-[10px] text-indigo-700/70 dark:text-indigo-300/60">
-          {ready > 0
-            ? `${ready} asset${ready === 1 ? '' : 's'} ready for the AI (up to 40). Add another link above.`
-            : 'Add one link at a time — paste another to add more.'}
-        </p>
+        {ready > 0 && (
+          <p className="mt-1.5 text-[10px] text-indigo-700/70 dark:text-indigo-300/60">
+            {ready} asset{ready === 1 ? '' : 's'} ready · paste another link to add more
+          </p>
+        )}
       </div>
     );
   }
