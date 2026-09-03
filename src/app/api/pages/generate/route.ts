@@ -43,11 +43,22 @@ import { buildConversationContext, classifyEditIntent, MAX_ATTACHMENTS } from '@
  * look at the photographs, so only this one pays for it.
  *
  * 40, not 20: the link importer no longer asks the user to hand-pick, so a
- * pasted folder arrives whole and the model chooses. Every viewable file here
- * is still vision-attached, so this is the real cost/context ceiling — kept in
- * sync with MAX_LIBRARY_IMPORT in the asset resolver.
+ * pasted folder arrives whole and the model chooses. This is how many files the
+ * model is TOLD about (name + URL) — cheap, text only — kept in sync with
+ * MAX_LIBRARY_IMPORT in the asset resolver.
  */
 const MAX_LIBRARY_ASSETS = 40;
+
+/**
+ * How many library images we actually VISION-ATTACH to this call. This is the
+ * real token/margin cost — each attached image is ~1–1.6k input tokens on the
+ * schema model, so attaching all 40 of a big folder is what eats margin. The
+ * rest of the library is still handed to the model as a name + URL list it can
+ * place by filename; it just doesn't get to LOOK at those. 8 keeps the "let the
+ * AI see the hero/brand shots" value while bounding cost no matter how big the
+ * pasted folder is.
+ */
+const LIBRARY_VISION_CAP = 8;
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 800;
@@ -524,24 +535,31 @@ export async function POST(request: NextRequest) {
     const viewableAssets = libraryAssets.filter((a) => VIEWABLE_EXT_RE.test(a.url));
     const unviewableAssets = libraryAssets.filter((a) => !VIEWABLE_EXT_RE.test(a.url));
 
+    // Only the first LIBRARY_VISION_CAP viewable files are actually attached as
+    // vision — that is the cost. Everything past the cap (plus vector/other
+    // formats) is still offered to the model, but by filename + URL only, the
+    // same as the unviewable bucket. So a 40-image folder costs 8 images, not 40.
+    const visionAssets = viewableAssets.slice(0, LIBRARY_VISION_CAP);
+    const namedOnlyAssets = [...viewableAssets.slice(LIBRARY_VISION_CAP), ...unviewableAssets];
+
     if (libraryAssets.length > 0) {
       console.log('[pages/generate] asset library', {
         count: libraryAssets.length,
-        viewable: viewableAssets.length,
-        unviewable: unviewableAssets.length,
+        vision: visionAssets.length,
+        namedOnly: namedOnlyAssets.length,
       });
     }
 
     const assetLibraryNote =
       libraryAssets.length > 0
         ? `\n\n## The client's own images — USE THESE, do not invent replacements\nThese ${libraryAssets.length} file(s) are real photos/logos the user supplied for this page. They are already hosted and safe to embed.\n` +
-          (viewableAssets.length > 0
-            ? `\nYou can SEE these: the last ${viewableAssets.length} image(s) attached to this message are these files, in exactly this order.\n${viewableAssets
+          (visionAssets.length > 0
+            ? `\nYou can SEE these: the last ${visionAssets.length} image(s) attached to this message are these files, in exactly this order.\n${visionAssets
                 .map((a, i) => `${i + 1}. ${a.name} — ${a.url}`)
                 .join('\n')}\n`
             : '') +
-          (unviewableAssets.length > 0
-            ? `\nThese you CANNOT see (vector/other format) — judge them by filename alone:\n${unviewableAssets
+          (namedOnlyAssets.length > 0
+            ? `\nThese you CANNOT see (not attached / vector format) — judge them by filename alone:\n${namedOnlyAssets
                 .map((a, i) => `${i + 1}. ${a.name} — ${a.url}`)
                 .join('\n')}\n`
             : '') +
@@ -556,12 +574,12 @@ export async function POST(request: NextRequest) {
     }));
 
     // Library images go AFTER the user's own attachments and in the same order
-    // as the numbered list in assetLibraryNote — that ordering is the only way
-    // the model can tell which picture belongs to which URL, so both must be
-    // built from viewableAssets and nothing else.
+    // as the "You can SEE these" list in assetLibraryNote — that ordering is the
+    // only way the model can tell which picture belongs to which URL, so both
+    // must be built from visionAssets (the capped subset) and nothing else.
     const visionBlocks: AIContentBlock[] = [
       ...attachedImageUrls.map((url): AIContentBlock => ({ type: 'image', url })),
-      ...viewableAssets.map((a): AIContentBlock => ({ type: 'image', url: a.url })),
+      ...visionAssets.map((a): AIContentBlock => ({ type: 'image', url: a.url })),
     ];
 
     const lastUserContent: AIContent =
