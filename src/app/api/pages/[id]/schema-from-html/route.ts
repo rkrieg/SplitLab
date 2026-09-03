@@ -975,8 +975,15 @@ export async function POST(
         await db.from('personalization_rules').delete().eq('page_id', params.id);
       }
 
-      // Report accrued overage to Stripe (no-op unless configured). Fire-and-forget.
-      void reportAiOverageUsage(ownerId);
+      // Report accrued overage to Stripe (no-op unless configured).
+      //
+      // Awaited, not fire-and-forget: closeSSE() is two statements away, and the
+      // isolate can freeze as soon as the response completes. Reporting needs two
+      // DB reads and up to three Stripe calls, so a detached promise here is
+      // dropped before it ever reaches Stripe — the accrued overage stays visible
+      // in the app and is never billed. See the note at the matching call in
+      // follow-up/route.ts.
+      await reportAiOverageUsage(ownerId);
 
       sendSSE(controller, {
         type: 'done',

@@ -6694,8 +6694,17 @@ export async function POST(
       }
 
       // Report any accrued overage to Stripe (no-op unless overage is enabled
-      // and a metered price is configured). Fire-and-forget.
-      void reportAiOverageUsage(aiOwnerId);
+      // and a metered price is configured).
+      //
+      // Awaited, not fire-and-forget: this runs inside the SSE stream's detached
+      // task, and the isolate is free to freeze the moment the stream closes.
+      // Reporting needs two DB reads and up to three Stripe calls, so a detached
+      // promise loses that race — proven on staging, where an overage edit left
+      // Billing showing $0.05, ai_overage_reported_cents at 0, and Stripe's meter
+      // empty. The app-side accounting is all that survived; the charge never
+      // reached Stripe. Same failure the image charge in ai-client.ts already
+      // documents. Costs a few hundred ms on an edit that took tens of seconds.
+      await reportAiOverageUsage(aiOwnerId);
 
       // ── Did this edit add markup the page has nowhere to put? ─────────────
       //
