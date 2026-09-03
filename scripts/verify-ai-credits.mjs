@@ -19,7 +19,7 @@ import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { rmSync, existsSync } from 'node:fs';
+import { rmSync, existsSync, readFileSync } from 'node:fs';
 import Module from 'node:module';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -266,6 +266,26 @@ run.push(async () => {
   const overCap = softCapBody({ ...capGate, reason: 'over_cap' }, acctOwner, { id: 'owner-1', role: 'manager' });
   assert('cap reason still reaches the editor', overCap.reason === 'over_cap');
   assert('soft-cap flag still set', overCap.softCap === true);
+});
+
+run.push(async () => {
+  console.log('\noverage is actually reported to Stripe');
+  // Source check, not behaviour: reportAiOverageUsage() runs inside an SSE
+  // route's detached task, where the isolate may freeze the moment the stream
+  // closes. Detaching the report as well loses the race — staging proved it,
+  // leaving accrued overage visible in the app and never billed. There is no
+  // runtime assertion that can catch that, so pin the call shape instead.
+  for (const rel of [
+    'src/app/api/pages/[id]/follow-up/route.ts',
+    'src/app/api/pages/[id]/schema-from-html/route.ts',
+  ]) {
+    const src = readFileSync(join(repoRoot, rel), 'utf8');
+    const calls = src.match(/[\w.]*\s*reportAiOverageUsage\(/g) ?? [];
+    const short = rel.split('/').slice(-2).join('/');
+    assert(`${short} reports overage at all`, calls.length > 0);
+    assert(`${short} never fire-and-forgets it`, !/void\s+reportAiOverageUsage\(/.test(src));
+    assert(`${short} awaits every report`, (src.match(/await\s+reportAiOverageUsage\(/g) ?? []).length === calls.length);
+  }
 });
 
 run.push(async () => {
