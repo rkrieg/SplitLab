@@ -98,7 +98,7 @@ import {
  * Same number the create path uses (generate/route.ts), so a folder that
  * survived intact into the first build does not get trimmed on the first edit.
  */
-const MAX_LIBRARY_ASSETS = 20;
+const MAX_LIBRARY_ASSETS = 40;
 
 export const dynamic = 'force-dynamic';
 // Large full-page rewrites can run several minutes; raised well past the old
