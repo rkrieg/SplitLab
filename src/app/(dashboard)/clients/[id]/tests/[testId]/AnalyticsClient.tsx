@@ -3289,10 +3289,10 @@ export default function AnalyticsClient({
                       Goals
                     </th>
                     {/* CVR is the number people come to this table for, so the
-                        whole column is banded — header and every cell share the
-                        same tint and side borders. */}
+                        whole column is tinted — header and every cell. No side
+                        borders: they read as if the table were cut in two. */}
                     <th
-                      className="text-right px-3 py-3 font-semibold text-indigo-600 dark:text-indigo-400 bg-indigo-500/10 border-x border-indigo-500/30"
+                      className="text-right px-3 py-3 font-semibold text-indigo-600 dark:text-indigo-400 bg-indigo-500/10"
                       title="Conversion rate — conversions ÷ unique visitors"
                     >
                       CVR
@@ -3351,6 +3351,12 @@ export default function AnalyticsClient({
                       const isEditing = editingVariantId === stat.variant.id;
                       const verified = getVerifiedStatus(stat.variant);
                       const rowBg = stat.isWinner ? "bg-green-500/5" : "";
+                      // The highlighted CVR column. One background class only —
+                      // the winner's green replaces the tint rather than
+                      // stacking on top of it.
+                      const cvrCellBg = stat.isWinner
+                        ? "bg-green-500/10"
+                        : "bg-indigo-500/10";
                       const variantScanned =
                         scanResults !== null &&
                         scanResults.variants.some((vs) => vs.variant_id === stat.variant.id);
@@ -3553,15 +3559,8 @@ export default function AnalyticsClient({
                             >
                               {stat.goalHits.toLocaleString()}
                             </td>
-                            {/* Highlighted CVR column. The winner's green wins
-                                here instead of stacking two backgrounds — one
-                                bg class only, so there's nothing to resolve. */}
                             <td
-                              className={`px-3 py-3.5 text-right font-semibold text-slate-900 dark:text-slate-100 border-x border-indigo-500/30 ${
-                                stat.isWinner
-                                  ? "bg-green-500/10"
-                                  : "bg-indigo-500/10"
-                              }`}
+                              className={`px-3 py-3.5 text-right font-semibold text-slate-900 dark:text-slate-100 ${cvrCellBg}`}
                             >
                               {formatPercent(cvr)}
                             </td>
@@ -3832,7 +3831,10 @@ export default function AnalyticsClient({
 
                           {stat.variant.pages?.draft_html_content && (
                             <tr className={rowBg}>
-                              <td colSpan={12} className="px-5 py-2">
+                              {/* Split 6 + CVR + 6 (13 columns) so the tinted
+                                  CVR column runs through this row instead of
+                                  being cut in half by it. */}
+                              <td colSpan={6} className="px-5 py-2">
                                 <div className="flex items-center gap-1.5">
                                   <span className="text-xs font-medium text-amber-600 dark:text-amber-500">
                                     Unsaved AI edits for this variant
@@ -3846,6 +3848,8 @@ export default function AnalyticsClient({
                                   </button>
                                 </div>
                               </td>
+                              <td className={cvrCellBg} />
+                              <td colSpan={6} />
                             </tr>
                           )}
 
