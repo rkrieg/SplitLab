@@ -7,11 +7,11 @@ import {
   Wand2, Layout, Palette, RefreshCw, Monitor, Smartphone,
   ExternalLink, RotateCcw, Plus, Download, Lock, ArrowRight,
   Sliders, Trash2, AlertTriangle, MoreHorizontal, MousePointer2, ChevronDown,
-  FileCode2, Link2, Lightbulb,
+  FileCode2, Link2, Lightbulb, X,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { cn } from '@/lib/utils';
-import AssetSourceModal, { type ImportedAsset } from '@/components/pages/AssetSourceModal';
+import { type ImportedAsset } from '@/components/pages/AssetSourceModal';
 import { VERTICAL_LABELS } from '@/lib/ai-page-verticals';
 import { SAMPLE_PROMPTS } from '@/lib/ai-page-sample-prompts';
 import { readSSEStream, type SSEEvent } from '@/lib/use-sse-stream';
@@ -217,14 +217,24 @@ function SamplePromptChip({ vertical, onUse }: { vertical: string; onUse: (promp
  * know where their monthly allowance stands while editing (Unbounce-style).
  * Small green bar that shifts amber→red as it fills. Hidden on plans with no
  * AI credits. Polls lightly so it reflects credits spent during the session.
+ *
+ * Scoped to the workspace, not to the viewer. Edits are billed to the client
+ * owner, so an invited team member's own balance is the wrong number here — it
+ * would sit still while the owner's credits drained. When the owner is somebody
+ * else their name is shown, so nobody wonders whose meter is moving.
  */
-function AiCreditsMeter() {
-  const [data, setData] = useState<{ creditsUsed: number; creditsIncluded: number; percentUsed: number } | null>(null);
+function AiCreditsMeter({ workspaceId }: { workspaceId: string }) {
+  const [data, setData] = useState<{
+    creditsUsed: number;
+    creditsIncluded: number;
+    percentUsed: number;
+    owner?: { isSelf: boolean; name: string | null };
+  } | null>(null);
 
   useEffect(() => {
     let active = true;
     const load = () => {
-      fetch('/api/ai-usage')
+      fetch(`/api/ai-usage?workspaceId=${encodeURIComponent(workspaceId)}`)
         .then((r) => (r.ok ? r.json() : null))
         .then((d) => { if (active && d) setData(d); })
         .catch(() => {});
@@ -232,18 +242,25 @@ function AiCreditsMeter() {
     load();
     const id = setInterval(load, 20_000); // keep it roughly current as edits burn credits
     return () => { active = false; clearInterval(id); };
-  }, []);
+  }, [workspaceId]);
 
   if (!data || data.creditsIncluded <= 0) return null;
   const pct = Math.min(100, Math.round(data.percentUsed));
   const bar = pct >= 100 ? 'bg-red-500' : pct >= 80 ? 'bg-amber-500' : 'bg-green-500';
+  const otherOwner = data.owner && !data.owner.isSelf ? data.owner.name : null;
 
   return (
     <div
       className="flex items-center gap-2 px-2.5 py-1 rounded-md bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
-      title={`${data.creditsUsed.toLocaleString()} of ${data.creditsIncluded.toLocaleString()} AI credits used this month`}
+      title={
+        otherOwner
+          ? `${data.creditsUsed.toLocaleString()} of ${data.creditsIncluded.toLocaleString()} AI credits used this month from ${otherOwner}'s account`
+          : `${data.creditsUsed.toLocaleString()} of ${data.creditsIncluded.toLocaleString()} AI credits used this month`
+      }
     >
-      <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400 whitespace-nowrap">AI credits</span>
+      <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400 whitespace-nowrap">
+        {otherOwner ? `${otherOwner}'s credits` : 'AI credits'}
+      </span>
       <div className="w-16 h-1.5 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
         <div className={`h-full ${bar} rounded-full transition-all`} style={{ width: `${pct}%` }} />
       </div>
@@ -418,7 +435,16 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   // Out-of-credits upsell modal — opened when an edit is soft-capped (402 softCap).
   // Lets the user turn on metered overage (auto-bill) with a spend cap + reminder
   // threshold, then retries the blocked edit. Wired to PATCH /api/ai-usage.
-  const [outOfCredits, setOutOfCredits] = useState<{ creditsUsed: number; creditsIncluded: number; retry: () => void } | null>(null);
+  // `owner` says whose credits ran out and whether this viewer may spend on that
+  // account — an invited team member burns the client owner's balance, and both
+  // buttons below write to the owner's account, so they are only offered to
+  // someone allowed to commit the charge.
+  const [outOfCredits, setOutOfCredits] = useState<{
+    creditsUsed: number;
+    creditsIncluded: number;
+    owner: { isSelf: boolean; name: string | null; canManage: boolean };
+    retry: () => void;
+  } | null>(null);
   // Prepaid top-up amounts (cents) → credits, at $0.05/credit (keep in sync with
   // TOPUP_CENTS_PER_CREDIT server-side). Labels avoid em dashes on purpose.
   const TOPUP_OPTIONS = [
@@ -438,7 +464,9 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       const res = await fetch('/api/ai-usage/topup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ amountCents: ocAmountCents, returnUrl: window.location.href }),
+        // Scoped to the workspace so the credits land on the account the gate
+        // checks — the client owner — instead of the buyer's personal balance.
+        body: JSON.stringify({ amountCents: ocAmountCents, returnUrl: window.location.href, workspaceId }),
       });
       const d = await res.json().catch(() => ({}));
       if (res.ok && d.url) { window.location.href = d.url; return; }
@@ -459,7 +487,9 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       const res = await fetch('/api/ai-usage', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled: true, capCents, notifyCents: capCents }),
+        // Same reason as buyCredits: the flag has to be set on the account the
+        // allowance check reads, which is the workspace owner's, not the caller's.
+        body: JSON.stringify({ enabled: true, capCents, notifyCents: capCents, workspaceId }),
       });
       if (!res.ok) throw new Error();
       const retry = outOfCredits?.retry;
@@ -499,9 +529,22 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   // capped at 3 because each one costs vision context, while on the create path
   // these are described to the schema step as a named URL list with no such
   // cost. Merging them would force the smaller cap onto both.
-  const [assetSourceOpen, setAssetSourceOpen] = useState(false);
-  /** Link found in the user's own prompt, handed to the picker to auto-open. */
-  const [assetSourceLink, setAssetSourceLink] = useState<string | null>(null);
+  // Prominent "paste a link to your assets" banner above the composer. It is
+  // impossible to miss and imports whatever a link contains wholesale — no
+  // picker. Dismissable (X); the dismissal is remembered per browser.
+  const [assetLinkPromptOpen, setAssetLinkPromptOpen] = useState(true);
+  const [assetLinkDraft, setAssetLinkDraft] = useState('');
+  const assetLinkInputRef = useRef<HTMLInputElement>(null);
+  // One row per link the user has added, with its live status. Not the images
+  // themselves (those live in linkedAssets) — this is the add-a-link ledger.
+  type AssetLinkRow = { id: number; url: string; status: 'loading' | 'done' | 'error'; count?: number; message?: string };
+  const [assetLinkRows, setAssetLinkRows] = useState<AssetLinkRow[]>([]);
+  const assetLinkSeq = useRef(0);
+  useEffect(() => {
+    try {
+      if (localStorage.getItem('sl_asset_link_prompt_dismissed') === '1') setAssetLinkPromptOpen(false);
+    } catch { /* private mode — leave it open */ }
+  }, []);
   const [scanningPrompt, setScanningPrompt] = useState(false);
   // Links we already offered to pull in. Without this, a PRD that stays in the
   // prompt box gets rescanned on every clarifying-answer round and re-imports
@@ -595,28 +638,11 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         return false;
       }
 
-      // One cap for both paths now that edits carry the library as a URL list
-      // rather than through the 3-attachment routing. Counts linked assets
-      // only: images attached with the + button ride the separate 3-slot
-      // vision budget, so charging them against this one would shrink the
-      // library for no reason.
-      const room = Math.max(0, 20 - linkedAssetsRef.current.length);
-      if (found.length > room || data.truncated) {
-        setAssetSourceLink(sourceUrl);
-        setAssetSourceOpen(true);
-        toast(`Found ${found.length} images in your brief's link — pick the ones you want.`);
-        return true;
-      }
-
-      // The server preselects against its own default cap; trim to what this
-      // phase can actually use so we never import more than we will send.
-      const preselected: string[] = (data.preselected ?? []).slice(0, room);
-      const chosen = found.filter((a) => preselected.includes(a.url));
-      if (chosen.length === 0) {
-        setAssetSourceLink(sourceUrl);
-        setAssetSourceOpen(true);
-        return true;
-      }
+      // No picker any more: a link found in the brief is imported wholesale and
+      // handed to the model to choose from. The server caps the batch
+      // (MAX_LIBRARY_IMPORT) and de-dupes against what's already attached, so we
+      // send everything we found and let it trim.
+      const chosen = found;
 
       const importRes = await fetch(`/api/pages/${pageId}/import-assets`, {
         method: 'POST',
@@ -662,6 +688,216 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     } finally {
       setScanningPrompt(false);
     }
+  }
+
+  function dismissAssetLinkPrompt() {
+    setAssetLinkPromptOpen(false);
+    try { localStorage.setItem('sl_asset_link_prompt_dismissed', '1'); } catch { /* ignore */ }
+  }
+
+  function reopenAssetLinkPrompt() {
+    setAssetLinkPromptOpen(true);
+    try { localStorage.removeItem('sl_asset_link_prompt_dismissed'); } catch { /* ignore */ }
+    requestAnimationFrame(() => assetLinkInputRef.current?.focus());
+  }
+
+  function updateAssetLinkRow(id: number, patch: Partial<AssetLinkRow>) {
+    setAssetLinkRows(prev => prev.map(r => (r.id === id ? { ...r, ...patch } : r)));
+  }
+
+  /** Merge freshly-imported assets into the library that gets handed to the
+   *  model. Writes the ref by hand too (runGenerate reads it in the same tick). */
+  function mergeLinkedAssets(imported: ImportedAsset[]) {
+    const fresh = imported.filter(a => !linkedAssetsRef.current.some(p => p.url === a.url));
+    if (fresh.length === 0) return;
+    linkedAssetsRef.current = [...linkedAssetsRef.current, ...fresh];
+    setLinkedAssets(prev => {
+      const seen = new Set(prev.map(a => a.url));
+      return [...prev, ...fresh.filter(a => !seen.has(a.url))];
+    });
+  }
+
+  /**
+   * Add one link: resolve it, then import EVERY image behind it into the page's
+   * asset library — no picker. The model is handed the whole set and chooses
+   * what fits. If a link isn't public / can't be read, the row shows a loud
+   * error telling the user to make it public.
+   */
+  async function addAssetLink() {
+    const url = assetLinkDraft.trim();
+    if (!url) return;
+    if (!/^https?:\/\//i.test(url)) {
+      toast.error('Paste a full link starting with http:// or https://');
+      return;
+    }
+    if (!pageId) {
+      toast.error('Give your page a name first, then add a link.');
+      return;
+    }
+    const id = ++assetLinkSeq.current;
+    setAssetLinkRows(prev => [...prev, { id, url, status: 'loading' }]);
+    setAssetLinkDraft('');
+    try {
+      const res = await fetch('/api/asset-sources/resolve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url, workspace_id: workspaceId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.error) {
+        updateAssetLinkRow(id, { status: 'error', message: data.error || "Couldn't read that link." });
+        return;
+      }
+      const found: { url: string; name: string }[] = data.assets ?? [];
+      if (found.length === 0) {
+        updateAssetLinkRow(id, {
+          status: 'error',
+          message: 'No images found here. If this is a Google Drive folder, make sure it’s shared as “Anyone with the link.”',
+        });
+        return;
+      }
+      const importRes = await fetch(`/api/pages/${pageId}/import-assets`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ assets: found.map(a => ({ url: a.url, name: a.name })) }),
+      });
+      const importData = await importRes.json().catch(() => ({}));
+      if (!importRes.ok) {
+        updateAssetLinkRow(id, { status: 'error', message: importData.error || "Couldn't add those images." });
+        return;
+      }
+      const imported: ImportedAsset[] = importData.imported ?? [];
+      const failed: { name: string; reason: string }[] = importData.failed ?? [];
+      if (imported.length === 0) {
+        updateAssetLinkRow(id, {
+          status: 'error',
+          message: failed[0]?.reason ? `Couldn’t add these — ${failed[0].reason}.` : "Couldn't add those images.",
+        });
+        return;
+      }
+      mergeLinkedAssets(imported);
+      scannedLinksRef.current.add(url);
+      updateAssetLinkRow(id, {
+        status: 'done',
+        count: imported.length,
+        message: failed.length > 0 ? `${failed.length} couldn’t be added` : undefined,
+      });
+    } catch {
+      updateAssetLinkRow(id, { status: 'error', message: "Couldn't reach that link. Check it and try again." });
+    }
+  }
+
+  /**
+   * Prominent, dismissable banner for pulling in the client's own assets. No
+   * picker: paste a link and every image behind it is imported and handed to
+   * the model to choose from. Add as many links as you like — each shows its
+   * own status, and a private link fails loudly with a "make it public" fix.
+   */
+  function renderAssetLinkPrompt() {
+    if (!assetLinkPromptOpen) return null;
+    const ready = linkedAssets.length;
+    return (
+      <div className="relative mb-3 rounded-2xl border border-indigo-200 dark:border-indigo-500/40 bg-indigo-50/90 dark:bg-indigo-500/10 p-3.5 pr-9 shadow-sm">
+        <button
+          type="button"
+          onClick={dismissAssetLinkPrompt}
+          className="absolute top-2 right-2 w-6 h-6 rounded-full flex items-center justify-center text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-200 hover:bg-indigo-100 dark:hover:bg-indigo-500/20 transition-colors"
+          title="Hide this"
+          aria-label="Hide the asset link box"
+        >
+          <X size={14} />
+        </button>
+
+        <div className="flex items-center gap-1.5 mb-1">
+          <Link2 size={13} className="text-indigo-600 dark:text-indigo-300" />
+          <p className="text-xs font-semibold text-indigo-900 dark:text-indigo-100">Add your existing assets</p>
+        </div>
+        <p className="text-[11px] leading-relaxed text-indigo-800/90 dark:text-indigo-200/80 mb-2">
+          Paste links to your images or brand assets — a Google Drive folder, a shared file, or any web page.
+          We pull the images in and hand them to the AI to use while it builds your page. You don&apos;t place
+          them; the AI picks what fits.
+        </p>
+
+        {/* Public-link requirement — loud, not fine print. This is the #1 reason
+            a link comes back empty. */}
+        <div className="flex items-start gap-1.5 mb-2.5 px-2.5 py-1.5 rounded-lg bg-amber-100/70 dark:bg-amber-500/10 border border-amber-300/70 dark:border-amber-500/30">
+          <AlertTriangle size={12} className="text-amber-600 dark:text-amber-400 mt-px shrink-0" />
+          <p className="text-[11px] leading-relaxed text-amber-800 dark:text-amber-300">
+            Every link must be <span className="font-semibold">public</span>. In Google Drive: <span className="font-medium">Share → General access → &ldquo;Anyone with the link.&rdquo;</span> If it&apos;s private, we can&apos;t see inside.
+          </p>
+        </div>
+
+        {/* Per-link status ledger */}
+        {assetLinkRows.length > 0 && (
+          <div className="space-y-1.5 mb-2.5">
+            {assetLinkRows.map(row => (
+              <div
+                key={row.id}
+                className={cn(
+                  'flex items-start gap-2 px-2.5 py-1.5 rounded-lg border text-[11px]',
+                  row.status === 'error'
+                    ? 'bg-red-50 dark:bg-red-950/40 border-red-200 dark:border-red-900'
+                    : row.status === 'done'
+                    ? 'bg-white/70 dark:bg-slate-900/40 border-indigo-200 dark:border-indigo-500/30'
+                    : 'bg-white/70 dark:bg-slate-900/40 border-slate-200 dark:border-slate-700'
+                )}
+              >
+                {row.status === 'loading' && <Loader2 size={12} className="animate-spin text-indigo-500 mt-0.5 shrink-0" />}
+                {row.status === 'done' && <Check size={12} className="text-green-600 dark:text-green-400 mt-0.5 shrink-0" />}
+                {row.status === 'error' && <AlertTriangle size={12} className="text-red-500 mt-0.5 shrink-0" />}
+                <div className="flex-1 min-w-0">
+                  <p className="truncate text-slate-600 dark:text-slate-300">{row.url}</p>
+                  {row.status === 'loading' && <p className="text-slate-400 dark:text-slate-500">Checking the link…</p>}
+                  {row.status === 'done' && (
+                    <p className="text-green-700 dark:text-green-400">
+                      Added {row.count} image{row.count === 1 ? '' : 's'} for the AI to use{row.message ? ` · ${row.message}` : ''}
+                    </p>
+                  )}
+                  {row.status === 'error' && <p className="text-red-600 dark:text-red-400">{row.message}</p>}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAssetLinkRows(prev => prev.filter(r => r.id !== row.id))}
+                  className="shrink-0 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                  title="Remove"
+                  aria-label="Remove this link"
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="flex items-center gap-2">
+          <div className="relative flex-1">
+            <Link2 size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-indigo-400 pointer-events-none" />
+            <input
+              ref={assetLinkInputRef}
+              type="text"
+              value={assetLinkDraft}
+              onChange={e => setAssetLinkDraft(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void addAssetLink(); } }}
+              placeholder="https://drive.google.com/drive/folders/…"
+              className="w-full pl-8 pr-3 py-2 text-sm rounded-lg bg-white dark:bg-slate-900 border border-indigo-200 dark:border-indigo-500/40 text-slate-700 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-400/30 transition-colors"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => void addAssetLink()}
+            disabled={!assetLinkDraft.trim()}
+            className="shrink-0 inline-flex items-center gap-1 px-3 py-2 rounded-lg text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            <Plus size={13} /> Add link
+          </button>
+        </div>
+        <p className="mt-1.5 text-[10px] text-indigo-700/70 dark:text-indigo-300/60">
+          {ready > 0
+            ? `${ready} asset${ready === 1 ? '' : 's'} ready for the AI (up to 40). Add another link above.`
+            : 'Add one link at a time — paste another to add more.'}
+        </p>
+      </div>
+    );
   }
 
   /** Thumbnail row for images pulled in from a link. Same shape as the
@@ -2158,6 +2394,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         setOutOfCredits({
           creditsUsed: err.usage?.creditsUsed ?? 0,
           creditsIncluded: err.usage?.creditsIncluded ?? 0,
+          owner: err.owner ?? { isSelf: true, name: null, canManage: true },
           retry: () => sendFollowUp(instruction, images, pid, true),
         });
       } else {
@@ -2821,6 +3058,10 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
             onChange={handleChatImagePicker}
           />
 
+          {/* Prominent asset-link banner — shown while composing a brief or
+              editing, dismissable with the X. */}
+          {(phase === 'prompt' || phase === 'editing') && renderAssetLinkPrompt()}
+
           {/* Initial prompt form */}
           {phase === 'prompt' && (
             <form onSubmit={handleGenerate} className="space-y-2.5">
@@ -2878,8 +3119,8 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                 onDragLeave={handleChatImageDragLeave}
                 onDrop={handleChatImageDrop}
                 className={cn(
-                  'bg-slate-50 dark:bg-slate-800 border rounded-2xl overflow-hidden focus-within:border-indigo-400 dark:focus-within:border-indigo-500 transition-colors',
-                  isDraggingChatImage ? 'border-indigo-400 dark:border-indigo-500 ring-2 ring-indigo-400/30' : 'border-slate-200 dark:border-slate-700'
+                  'bg-white dark:bg-slate-800 border-2 rounded-2xl overflow-hidden shadow-sm focus-within:border-indigo-400 dark:focus-within:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-400/20 transition-all',
+                  isDraggingChatImage ? 'border-indigo-400 dark:border-indigo-500 ring-2 ring-indigo-400/30' : 'border-slate-300 dark:border-slate-700'
                 )}
               >
                 {chatImages.length > 0 && (
@@ -2941,7 +3182,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                     </button>
                     <button
                       type="button"
-                      onClick={() => setAssetSourceOpen(true)}
+                      onClick={reopenAssetLinkPrompt}
                       className={LINK_BTN}
                       title="Add images from a link (Google Drive folder, shared file, or any page)"
                     >
@@ -3015,8 +3256,8 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                 onDragLeave={handleChatImageDragLeave}
                 onDrop={handleChatImageDrop}
                 className={cn(
-                  'bg-slate-50 dark:bg-slate-800 border rounded-2xl overflow-hidden focus-within:border-indigo-400 dark:focus-within:border-indigo-500 transition-colors',
-                  isDraggingChatImage ? 'border-indigo-400 dark:border-indigo-500 ring-2 ring-indigo-400/30' : 'border-slate-200 dark:border-slate-700'
+                  'bg-white dark:bg-slate-800 border-2 rounded-2xl overflow-hidden shadow-sm focus-within:border-indigo-400 dark:focus-within:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-400/20 transition-all',
+                  isDraggingChatImage ? 'border-indigo-400 dark:border-indigo-500 ring-2 ring-indigo-400/30' : 'border-slate-300 dark:border-slate-700'
                 )}
               >
                 {/* Image thumbnails */}
@@ -3081,7 +3322,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                     <button
                       type="button"
                       disabled={isLoading || preparingSchema || rebuilding || rebuildPending || schemaPrepFailed}
-                      onClick={() => setAssetSourceOpen(true)}
+                      onClick={reopenAssetLinkPrompt}
                       className={LINK_BTN}
                       title="Add images from a link (Google Drive folder, shared file, or any page)"
                     >
@@ -3143,7 +3384,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
           {/* Page actions */}
           <div className="flex items-center gap-2">
             {/* Always-visible AI credit meter (Unbounce-style) */}
-            <AiCreditsMeter />
+            <AiCreditsMeter workspaceId={workspaceId} />
             {/* UTM Personalization button — links to dedicated picker page */}
             {phase === 'editing' && !!pageId && (
               <button
@@ -3413,29 +3654,6 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         )}
       </div>
 
-      {/*
-        Link → images picker. 20 on both paths: create passes the library to the
-        schema step, edit appends it to the instruction as a URL list. Neither
-        goes through the 3-attachment vision routing, which is why the old
-        split cap is gone. The modal subtracts what is already attached.
-      */}
-      <AssetSourceModal
-        open={assetSourceOpen}
-        onClose={() => { setAssetSourceOpen(false); setAssetSourceLink(null); }}
-        initialLink={assetSourceLink}
-        pageId={pageId}
-        workspaceId={workspaceId}
-        selectionCap={20}
-        alreadyAttached={linkedAssets.length}
-        onImported={(assets) => setLinkedAssets(prev => {
-          // Importing the same folder twice is an easy thing to do, and a
-          // duplicate URL would be described to the model as two separate
-          // files — inviting it to place the same photo in two slots.
-          const seen = new Set(prev.map(a => a.url));
-          return [...prev, ...assets.filter(a => !seen.has(a.url))];
-        })}
-      />
-
       {/* Chat image lightbox — click thumbnail in messages/composer to open */}
       {chatImageLightboxUrl && (
         <div
@@ -3661,44 +3879,67 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
               <div className="flex-shrink-0 w-8 h-8 rounded-full bg-amber-100 dark:bg-amber-500/15 flex items-center justify-center">
                 <Sparkles size={15} className="text-amber-600 dark:text-amber-400" />
               </div>
-              <h3 className="text-slate-900 dark:text-slate-100 font-semibold text-base">You&apos;re out of AI credits</h3>
+              <h3 className="text-slate-900 dark:text-slate-100 font-semibold text-base">
+                {outOfCredits.owner.canManage ? 'You’re out of AI credits' : 'Out of AI credits'}
+              </h3>
             </div>
-            <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
-              You&apos;ve used {outOfCredits.creditsUsed.toLocaleString()} of {outOfCredits.creditsIncluded.toLocaleString()} credits this month. Add more credits to keep building, or wait for your credits to reset when your plan renews next month.
-            </p>
+            {/* Buying credits and turning on auto-billing both put a charge on
+                the account these credits come from. When that account is not
+                the viewer's, point them at the person who can approve it rather
+                than showing buttons that would bill the wrong card. */}
+            {outOfCredits.owner.canManage ? (
+              <>
+                <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
+                  You&apos;ve used {outOfCredits.creditsUsed.toLocaleString()} of {outOfCredits.creditsIncluded.toLocaleString()} credits this month. Add credits to keep building — purchased credits never expire and carry over month to month. Or wait for your plan credits to reset when it renews next month.
+                </p>
 
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Add credits</label>
-            <select value={ocAmountCents} onChange={(e) => setOcAmountCents(Number(e.target.value))} className="input-base w-full">
-              {TOPUP_OPTIONS.map((o) => (
-                <option key={o.cents} value={o.cents}>{o.label}</option>
-              ))}
-            </select>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Add credits</label>
+                <select value={ocAmountCents} onChange={(e) => setOcAmountCents(Number(e.target.value))} className="input-base w-full">
+                  {TOPUP_OPTIONS.map((o) => (
+                    <option key={o.cents} value={o.cents}>{o.label}</option>
+                  ))}
+                </select>
 
-            <button
-              type="button"
-              onClick={buyCredits}
-              disabled={ocBuying || ocSaving}
-              className="mt-3 w-full flex items-center justify-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 disabled:cursor-not-allowed text-white text-sm px-4 py-2.5 rounded-xl font-medium transition-colors"
-            >
-              {ocBuying && <Loader2 size={14} className="animate-spin" />}
-              Add credits
-            </button>
+                <button
+                  type="button"
+                  onClick={buyCredits}
+                  disabled={ocBuying || ocSaving}
+                  className="mt-3 w-full flex items-center justify-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 disabled:cursor-not-allowed text-white text-sm px-4 py-2.5 rounded-xl font-medium transition-colors"
+                >
+                  {ocBuying && <Loader2 size={14} className="animate-spin" />}
+                  Add credits
+                </button>
 
-            <p className="text-center text-xs text-slate-500 dark:text-slate-400 mt-3">
-              Prefer to pay only for what you use?{' '}
-              <button
-                type="button"
-                onClick={enableOverageAndRetry}
-                disabled={ocSaving || ocBuying}
-                className="text-indigo-600 dark:text-indigo-400 hover:underline font-medium disabled:opacity-60"
-              >
-                {ocSaving ? 'Turning on…' : 'Turn on auto-billing'}
-              </button>
-            </p>
+                <p className="text-center text-xs text-slate-500 dark:text-slate-400 mt-3">
+                  Prefer to pay only for what you use?{' '}
+                  <button
+                    type="button"
+                    onClick={enableOverageAndRetry}
+                    disabled={ocSaving || ocBuying}
+                    className="text-indigo-600 dark:text-indigo-400 hover:underline font-medium disabled:opacity-60"
+                  >
+                    {ocSaving ? 'Turning on…' : 'Turn on auto-billing'}
+                  </button>
+                </p>
+              </>
+            ) : (
+              <p className="text-sm text-slate-500 dark:text-slate-400 mb-1">
+                {outOfCredits.creditsUsed.toLocaleString()} of {outOfCredits.creditsIncluded.toLocaleString()} credits have been used this month.
+                These credits come from{' '}
+                <span className="font-medium text-slate-700 dark:text-slate-300">
+                  {outOfCredits.owner.name ? `${outOfCredits.owner.name}'s account` : 'the account owner'}
+                </span>
+                , so only they can add more or turn on auto-billing. Ask them to top up, or wait for the plan credits to reset next month.
+              </p>
+            )}
 
             <div className="flex justify-between items-center gap-2 mt-5 pt-4 border-t border-slate-100 dark:border-slate-800">
-              <a href="/billing" className="text-xs text-slate-500 dark:text-slate-400 hover:text-indigo-500 underline">Or upgrade your plan</a>
-              <button type="button" onClick={() => setOutOfCredits(null)} disabled={ocBuying || ocSaving} className="btn-secondary text-sm rounded-xl">Not now</button>
+              {outOfCredits.owner.canManage
+                ? <a href="/billing" className="text-xs text-slate-500 dark:text-slate-400 hover:text-indigo-500 underline">Or upgrade your plan</a>
+                : <span />}
+              <button type="button" onClick={() => setOutOfCredits(null)} disabled={ocBuying || ocSaving} className="btn-secondary text-sm rounded-xl">
+                {outOfCredits.owner.canManage ? 'Not now' : 'Close'}
+              </button>
             </div>
           </div>
         </div>

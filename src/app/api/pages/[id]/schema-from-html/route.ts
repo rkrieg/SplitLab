@@ -11,7 +11,7 @@ import { isTestVariantPage } from '@/lib/page-drafts';
 import { extractDataUris, restoreDataUris, restoreDataUrisInValue } from '@/lib/data-uri-strip';
 import { verifyAndRehostHtmlImages, applyRehostMap } from '@/lib/ai-asset-integrity';
 import { createSSEStream, sendSSE, sendSSEPing, closeSSE, SSE_HEADERS } from '@/lib/sse';
-import { checkAiAllowance, type UsageContext } from '@/lib/ai-usage';
+import { checkAiAllowance, softCapBody, type UsageContext } from '@/lib/ai-usage';
 import { reportAiOverageUsage } from '@/lib/ai-overage-billing';
 import { repairSlMarkers, markerCoverage, markerQuality, dropEmptySectionMarkers, type MarkerQuality } from '@/lib/ai-sl-markers';
 import { analyzePageLayout, describePrepOutcome } from '@/lib/ai-page-layout';
@@ -654,26 +654,24 @@ export async function POST(
   // Meter this prepare against the account owner (AI credits / overage), and
   // soft-cap before opening the SSE stream so a blocked request returns clean
   // JSON the editor turns into an upsell (admins bypass).
-  const { ownerId, plan: ownerPlanForUsage } = await resolveWorkspaceOwner(page.workspace_id);
+  const { ownerId, plan: ownerPlanForUsage, ownerName } = await resolveWorkspaceOwner(page.workspace_id);
   const usageCtx: UsageContext = {
     ownerId,
     workspaceId: page.workspace_id,
     pageId: params.id,
     operation: 'prepare',
+    // Already resolved above — passing it saves a users lookup per model call.
+    plan: ownerPlanForUsage,
   };
   if (session.user.role !== 'admin') {
     const gate = await checkAiAllowance(ownerId, ownerPlanForUsage);
     if (!gate.allowed) {
       return NextResponse.json(
-        {
-          error: gate.reason === 'over_cap'
-            ? 'You\'ve reached your AI overage spend cap. Raise it in Billing to continue.'
-            : 'You\'re out of AI credits for this month. Enable overage in Billing to continue.',
-          softCap: true,
-          reason: gate.reason,
-          usage: gate.summary,
-          overage: gate.overage,
-        },
+        softCapBody(
+          gate,
+          { id: ownerId, name: ownerName },
+          { id: session.user.id, role: session.user.role },
+        ),
         { status: 402 },
       );
     }
@@ -977,8 +975,15 @@ export async function POST(
         await db.from('personalization_rules').delete().eq('page_id', params.id);
       }
 
-      // Report accrued overage to Stripe (no-op unless configured). Fire-and-forget.
-      void reportAiOverageUsage(ownerId);
+      // Report accrued overage to Stripe (no-op unless configured).
+      //
+      // Awaited, not fire-and-forget: closeSSE() is two statements away, and the
+      // isolate can freeze as soon as the response completes. Reporting needs two
+      // DB reads and up to three Stripe calls, so a detached promise here is
+      // dropped before it ever reaches Stripe — the accrued overage stays visible
+      // in the app and is never billed. See the note at the matching call in
+      // follow-up/route.ts.
+      await reportAiOverageUsage(ownerId);
 
       sendSSE(controller, {
         type: 'done',

@@ -52,6 +52,10 @@ interface AiUsageResponse {
   percentUsed: number;
   overageCostCents: number;
   periodStart: string;
+  /** Plan allowance alone — this is the part that resets each month. */
+  planCredits?: number;
+  /** Prepaid credits still unspent. Rolls over; never expires. */
+  topupCredits?: number;
   overage: { enabled: boolean; capCents: number };
 }
 
@@ -94,7 +98,7 @@ function AiCreditsCard() {
       <div className="card p-6">
         <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100 mb-1">AI Credits</h3>
         <p className="text-sm text-slate-500 dark:text-slate-400">
-          Build &amp; edit pages with AI is available on the Agency and Scale plans. Upgrade to unlock it.
+          Build &amp; edit pages with AI is available on the Growth, Agency and Scale plans. Upgrade to unlock it.
         </p>
       </div>
     );
@@ -111,7 +115,7 @@ function AiCreditsCard() {
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">AI Credits</h3>
         <span className="text-xs text-slate-500 dark:text-slate-400">
-          Resets {nextReset.toLocaleDateString("en-US", { month: "short", day: "numeric" })} · 1 credit = 1,000 tokens
+          Plan credits reset {nextReset.toLocaleDateString("en-US", { month: "short", day: "numeric" })} · 1 credit = 1,000 tokens
         </span>
       </div>
 
@@ -126,10 +130,19 @@ function AiCreditsCard() {
         <div className={`h-full ${barColor} rounded-full transition-all`} style={{ width: `${pct}%` }} />
       </div>
 
+      {/* Purchased credits are the half of the bar that does NOT reset. Saying
+          so on the meter is the point of the rollover change — people bought
+          top-ups late in the month and assumed they were about to lose them. */}
+      {(data.topupCredits ?? 0) > 0 && (
+        <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+          Includes <span className="font-medium text-slate-700 dark:text-slate-300 tabular-nums">{(data.topupCredits ?? 0).toLocaleString()}</span> purchased credits, which roll over and never expire.
+        </p>
+      )}
+
       {overExhausted && !data.overage.enabled && (
         <div className="mt-4 rounded-lg bg-amber-500/10 border border-amber-500/25 px-3 py-2.5">
           <p className="text-sm text-amber-700 dark:text-amber-300">
-            You&apos;re out of AI credits this month. Enable overage to keep building — usage beyond your plan is billed at cost&nbsp;+&nbsp;10%, up to the spend cap you set.
+            You&apos;re out of AI credits. Buy more (purchased credits never expire) or enable overage to keep building — usage beyond your credits is billed at cost&nbsp;+&nbsp;10%, up to the spend cap you set.
           </p>
         </div>
       )}

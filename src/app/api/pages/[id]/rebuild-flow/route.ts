@@ -9,7 +9,7 @@ import { resolveWorkspaceRole, resolveOwnerPlan, resolveWorkspaceOwner } from '@
 import { PLAN_LIMITS } from '@/lib/plans';
 import { isTestVariantPage } from '@/lib/page-drafts';
 import { createSSEStream, sendSSE, sendSSEPing, closeSSE, SSE_HEADERS } from '@/lib/sse';
-import { checkAiAllowance } from '@/lib/ai-usage';
+import { checkAiAllowance, softCapBody } from '@/lib/ai-usage';
 import { ensureClickToEditFields } from '@/lib/ai-data-field-stamp';
 import { repairSlMarkers, markerQuality, dropEmptySectionMarkers } from '@/lib/ai-sl-markers';
 import { analyzePageLayout } from '@/lib/ai-page-layout';
@@ -112,7 +112,7 @@ export async function POST(
 
   const isVariant = await isTestVariantPage(params.id);
 
-  const { ownerId, plan: ownerPlanForUsage } = await resolveWorkspaceOwner(page.workspace_id);
+  const { ownerId, plan: ownerPlanForUsage, ownerName } = await resolveWorkspaceOwner(page.workspace_id);
   // The rebuild itself no longer spends AI credits — it is a transpile, not a model
   // call — so nothing is reported as usage afterwards. The allowance check stays
   // because it is also the plan gate for AI page editing, which is what the rebuild
@@ -122,15 +122,11 @@ export async function POST(
     const gate = await checkAiAllowance(ownerId, ownerPlanForUsage);
     if (!gate.allowed) {
       return NextResponse.json(
-        {
-          error: gate.reason === 'over_cap'
-            ? 'You\'ve reached your AI overage spend cap. Raise it in Billing to continue.'
-            : 'You\'re out of AI credits for this month. Enable overage in Billing to continue.',
-          softCap: true,
-          reason: gate.reason,
-          usage: gate.summary,
-          overage: gate.overage,
-        },
+        softCapBody(
+          gate,
+          { id: ownerId, name: ownerName },
+          { id: session.user.id, role: session.user.role },
+        ),
         { status: 402 },
       );
     }

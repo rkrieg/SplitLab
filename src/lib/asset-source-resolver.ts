@@ -87,6 +87,16 @@ const FETCH_TIMEOUT_MS = 10_000;
 export const DEFAULT_SELECTION_CAP = 20;
 
 /**
+ * Hard ceiling on how many images we import from a link into a page's asset
+ * library in one go. Higher than DEFAULT_SELECTION_CAP because the flow no
+ * longer asks the user to hand-pick — a pasted folder is imported wholesale and
+ * handed to the model to choose from. Still bounded: every viewable image is
+ * vision-attached to the build call, so this is the real cost/context ceiling.
+ * Kept in sync with MAX_LIBRARY_ASSETS in the generate/follow-up routes.
+ */
+export const MAX_LIBRARY_IMPORT = 40;
+
+/**
  * Hard ceiling on a single asset we will fetch and re-host.
  *
  * Defined here rather than in ai-asset-integrity so this module stays free of

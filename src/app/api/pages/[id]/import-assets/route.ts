@@ -5,7 +5,7 @@ import { db } from '@/lib/supabase-server';
 import { resolveWorkspaceRole, resolveOwnerPlan } from '@/lib/workspace-auth';
 import { PLAN_LIMITS } from '@/lib/plans';
 import { materializeAsset } from '@/lib/ai-asset-integrity';
-import { toFetchableUrl, DEFAULT_SELECTION_CAP, MAX_ASSET_BYTES } from '@/lib/asset-source-resolver';
+import { toFetchableUrl, MAX_LIBRARY_IMPORT, MAX_ASSET_BYTES } from '@/lib/asset-source-resolver';
 
 /**
  * Download the images the user ticked in the picker and re-host them on our
@@ -84,7 +84,7 @@ export async function POST(
         name: typeof a.name === 'string' && a.name.trim() ? a.name.trim() : 'image',
       }))
       .filter((a) => a.ref.length > 0)
-      .slice(0, DEFAULT_SELECTION_CAP);
+      .slice(0, MAX_LIBRARY_IMPORT);
 
     if (requested.length === 0) {
       return NextResponse.json({ error: 'No images selected' }, { status: 400 });

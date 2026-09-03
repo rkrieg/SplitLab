@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import { uploadImage } from '@/lib/storage';
 import { logEvent } from '@/lib/log';
-import { recordAiUsage, type UsageContext } from '@/lib/ai-usage';
+import { recordAiUsage, imageCostMicros, imageTokenEquivalent, type UsageContext } from '@/lib/ai-usage';
 
 /**
  * Provider-agnostic content shape used by every AI page-builder route.
@@ -414,11 +414,18 @@ async function askAnthropicStream(options: AskAIOptions, onChunk: (text: string)
  * Generates a single image from a text prompt (gpt-image-1) and uploads it to
  * Supabase Storage. Returns the public URL, or null if generation/upload
  * failed — callers decide how to handle that (skip, fall back, etc.).
+ *
+ * Pass `usage` to charge the image against the account owner's AI credits. It
+ * is optional because the two image paths are metered differently: images made
+ * while EDITING a page are metered (edits are gated and metered end to end),
+ * images made while CREATING one are not — see the note in
+ * src/app/api/pages/build/route.ts.
  */
 export async function generateAndUploadImage(
   prompt: string,
   pageSlug: string,
   quality: 'low' | 'medium' | 'high' = 'low',
+  usage?: UsageContext,
 ): Promise<string | null> {
   const startedAt = Date.now();
   console.log(`[generateAndUploadImage start] pageSlug=${pageSlug} quality=${quality} prompt="${prompt.slice(0, 60)}…"`);
@@ -458,6 +465,21 @@ export async function generateAndUploadImage(
 
     const publicUrl = await uploadImage(pageSlug, buffer, mimeType, ext);
     console.log(`[generateAndUploadImage] uploaded image for prompt: "${prompt.slice(0, 60)}…" elapsedMs=${Date.now() - startedAt}`);
+    // Meter only once the image actually exists — a failed generation costs us
+    // nothing and must not spend the user's credits.
+    if (usage) {
+      // Awaited, not fire-and-forget: the request continues after this, and a
+      // detached promise can be dropped when the serverless isolate freezes —
+      // which would hand back a working image nobody paid for. recordAiUsage
+      // swallows its own errors, so this cannot fail the generation.
+      await recordAiUsage(
+        { ...usage, operation: 'image' },
+        'gpt-image-1',
+        0,
+        imageTokenEquivalent(quality),
+        imageCostMicros(quality),
+      );
+    }
     await logEvent('ai_call', 'info', 'image generated', {
       label: 'generateAndUploadImage', pageSlug, quality, elapsedMs: Date.now() - startedAt,
     });
@@ -489,6 +511,7 @@ export async function generatePageImages(
   schema: Record<string, unknown>,
   pageSlug: string,
   onImageReady?: (url: string) => void,
+  usage?: UsageContext,
 ): Promise<Record<string, unknown>> {
   const jobs: Array<{ obj: Record<string, unknown>; prompt: string }> = [];
 
@@ -509,9 +532,10 @@ export async function generatePageImages(
 
   await Promise.all(
     capped.map(async ({ obj, prompt }) => {
-      // Medium quality for create builds — low was a common client complaint
-      // on first-paint pages. Edit-time image_generate still picks its own quality.
-      const publicUrl = await generateAndUploadImage(prompt, pageSlug, 'high');
+      // High quality for create builds — low, then medium, were both common
+      // client complaints on first-paint pages. Edit-time image_generate still
+      // picks its own quality.
+      const publicUrl = await generateAndUploadImage(prompt, pageSlug, 'high', usage);
       if (!publicUrl) return;
       obj.generated_image_url = publicUrl;
       onImageReady?.(publicUrl);

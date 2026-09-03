@@ -1235,6 +1235,26 @@ export async function buildHtmlFromSchema(
   });
 
   const label = `build-html:${options.callerLabel ?? 'unknown-caller'}`;
+  // No `usage` field: this call — the most expensive in the product (Opus, 128k
+  // max tokens) — is not metered against the user's AI credits.
+  //
+  // Read this carefully before "fixing" it, because it covers two cases and only
+  // one of them was a decision:
+  //
+  //  - CREATE (api/pages/build): free on purpose. Renny, 2026-09-02, asked
+  //    directly whether the unmetered create path was a bug: "it's fine for now
+  //    while we don't have users." See the fuller note in that route.
+  //  - EDIT (api/pages/[id]/follow-up, structural rebuilds): ALSO unmetered,
+  //    and that was never decided — it just falls out of the two paths sharing
+  //    this function. Every other part of an edit is gated and metered, so a
+  //    structural edit is the one way to spend ~$2 of Opus on a metered flow
+  //    without touching the meter.
+  //
+  // Fixing the edit half means an optional `usage` on BuildHtmlOptions, passed
+  // from follow-up and omitted by build — not an unconditional `usage` here,
+  // which would silently start metering create too. It is a real behaviour
+  // change either way (a structural edit is ~750 credits, so Growth's 2,000/mo
+  // becomes ~2 of them), so it needs a call on plan limits first.
   const aiOptions = {
     // TEMP: design-quality experiment — Opus 5 for the actual HTML/CSS build
     // call only. Every other AI call in the pipeline (generate, follow-up,

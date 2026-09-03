@@ -112,7 +112,8 @@ export default async function AdminUserDetail({ params }: { params: { id: string
         <Card title="AI usage (this month)">
           <Row label="Credits used" value={`${usage.creditsUsed.toLocaleString()} / ${usage.creditsIncluded.toLocaleString()}`} />
           <Row label="Plan credits" value={(usage.planCredits ?? 0).toLocaleString()} />
-          <Row label="Purchased (top-ups)" value={(usage.topupCredits ?? 0).toLocaleString()} />
+          <Row label="Purchased (unspent)" value={(usage.topupCredits ?? 0).toLocaleString()} />
+          <Row label="Purchased (used this month)" value={(usage.topupCreditsDrawn ?? 0).toLocaleString()} />
           <Row label="Overage cost" value={`$${(usage.overageCostCents / 100).toFixed(2)}`} />
         </Card>
 
