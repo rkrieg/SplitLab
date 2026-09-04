@@ -1057,15 +1057,14 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       {
         id: 'utm-wipe-warning',
         icon: '⚠️',
-        duration: Infinity,
+        duration: 6000,
         style: { background: 'rgb(254 243 199)', color: 'rgb(146 64 14)', maxWidth: '420px' },
       }
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase]);
 
-  // Dismiss the UTM warning only when leaving the builder — not on every phase
-  // change — so it stays put once (until the user closes it) instead of flashing.
+  // Clear the UTM warning if the builder unmounts before it times out.
   useEffect(() => () => toast.dismiss('utm-wipe-warning'), []);
 
   // Returning from a Stripe credit top-up: confirm and strip the query param so
