@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Plus, Sparkles, ExternalLink, Edit2, Globe, Trash2, Loader2, Lock, ArrowRight, Sliders, ChevronLeft, ChevronRight, ChevronDown, Link2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import toast from 'react-hot-toast';
@@ -80,6 +80,12 @@ const PAGE_SIZE = 10;
 export default function AIPagesClient({ pages: initialPages, clientId, workspaceId, canManage, canUseAI }: Props) {
   const router = useRouter();
   const [pages, setPages] = useState(initialPages);
+
+  // Keep local state in sync with refreshed server data after router.refresh().
+  useEffect(() => {
+    setPages(initialPages);
+  }, [initialPages]);
+
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
@@ -134,6 +140,8 @@ export default function AIPagesClient({ pages: initialPages, clientId, workspace
       });
       if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Failed to create page'); }
       const page = await res.json();
+      // Drop the cached list payload so coming back shows the new page.
+      router.refresh();
       router.push(`/clients/${clientId}/ai-pages/new?page_id=${page.id}`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to create page');

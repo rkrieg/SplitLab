@@ -329,7 +329,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
             <ArrowRight size={15} />
           </a>
           <button
-            onClick={() => { router.push(backPath ?? `/clients/${clientId}/pages`); router.refresh(); }}
+            onClick={() => { router.refresh(); router.push(backPath ?? `/clients/${clientId}/pages`); }}
             className="mt-4 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
           >
             ← Back to pages
@@ -1412,8 +1412,8 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
    * or go back; nothing in between.
    */
   function leaveWithoutRebuilding() {
-    router.push(backPath ?? `/clients/${clientId}/pages`);
     router.refresh();
+    router.push(backPath ?? `/clients/${clientId}/pages`);
   }
 
   /**
@@ -2575,8 +2575,8 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       }
       setReplaceConfirmOpen(false);
       toast.success('Live variant updated');
-      router.push(backPath ?? `/clients/${clientId}/ai-pages`);
       router.refresh();
+      router.push(backPath ?? `/clients/${clientId}/ai-pages`);
     } finally {
       setSavingVariant(null);
     }
@@ -2604,8 +2604,8 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       }
       setSaveAsNewOpen(false);
       toast.success('Added to the test as a new variant at 0% traffic');
-      router.push(backPath ?? `/clients/${clientId}/ai-pages`);
       router.refresh();
+      router.push(backPath ?? `/clients/${clientId}/ai-pages`);
     } finally {
       setSavingVariant(null);
     }
@@ -2771,7 +2771,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         {/* Panel header */}
         <div className="flex items-center gap-2 px-4 h-12 border-b border-slate-200 dark:border-slate-800 flex-shrink-0">
           <button
-            onClick={() => { router.push(backPath ?? `/clients/${clientId}/pages`); router.refresh(); }}
+            onClick={() => { router.refresh(); router.push(backPath ?? `/clients/${clientId}/pages`); }}
             className="flex items-center gap-1 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors"
           >
             <ChevronLeft size={14} />
@@ -3407,7 +3407,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                   </span>
                 )}
                 <button
-                  onClick={() => { router.push(backPath ?? `/clients/${clientId}/ai-pages`); router.refresh(); }}
+                  onClick={() => { router.refresh(); router.push(backPath ?? `/clients/${clientId}/ai-pages`); }}
                   className="flex items-center gap-1.5 text-xs bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600 px-3 py-1.5 rounded-full font-medium transition-colors"
                 >
                   Back to Test
