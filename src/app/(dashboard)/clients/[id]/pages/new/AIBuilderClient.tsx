@@ -820,6 +820,13 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
           <span className="text-[11px] text-indigo-700/70 dark:text-indigo-300/60">— a link for the AI to pull from</span>
         </div>
 
+        {/* Says which files the AI can actually look at. Everything else is
+            still used, just chosen by filename — so name those clearly. */}
+        <p className="text-[10px] leading-relaxed text-indigo-700/70 dark:text-indigo-300/60 mb-2">
+          The AI can see <span className="font-medium">JPG, PNG, WebP and GIF</span> and picks them by what&rsquo;s in the picture.
+          Other types (SVG, AVIF, TIFF) still go on your page, but it goes by the filename — so give those clear names like <span className="font-medium">logo.svg</span>.
+        </p>
+
         {/* Per-link status ledger */}
         {assetLinkRows.length > 0 && (
           <div className="space-y-1.5 mb-2.5">
