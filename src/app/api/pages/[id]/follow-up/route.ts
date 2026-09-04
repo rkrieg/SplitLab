@@ -5,6 +5,8 @@ import { db } from '@/lib/supabase-server';
 import { jsonrepair } from 'jsonrepair';
 import { askAI, askAIStream, isRateLimited, generatePageImages, generateAndUploadImage, AIResponseTruncatedError, isPromptTooLongError, userFacingAIErrorMessage, type AIContent, type AIContentBlock } from '@/lib/ai-client';
 import { remainingInputChars } from '@/lib/ai-context-budget';
+import { MAX_LIBRARY_IMPORT } from '@/lib/asset-source-resolver';
+import { buildLibraryBlock, type LibraryEntry } from '@/lib/ai-asset-library';
 import { repairSlMarkers, markerCoverage, markerQuality } from '@/lib/ai-sl-markers';
 import { analyzePageLayout, countLayoutElements } from '@/lib/ai-page-layout';
 import { uploadHtml, downloadHtmlByPath, fileNameFromUrl } from '@/lib/storage';
@@ -97,8 +99,9 @@ import {
  *
  * Same number the create path uses (generate/route.ts), so a folder that
  * survived intact into the first build does not get trimmed on the first edit.
+ * MAX_LIBRARY_BLOCK_CHARS bounds what it actually costs.
  */
-const MAX_LIBRARY_ASSETS = 40;
+const MAX_LIBRARY_ASSETS = MAX_LIBRARY_IMPORT;
 
 export const dynamic = 'force-dynamic';
 // Large full-page rewrites can run several minutes; raised well past the old
@@ -2872,24 +2875,27 @@ export async function POST(
   // having failed. Routing the library around the MAX_ATTACHMENTS cap also
   // routed it around the memory, which was never the intent.
   //
-  // Replayed as text only — no vision blocks — for the same reason the current
-  // turn's library is text: an imported folder is up to 20 files, and putting
-  // that many pictures through vision on every subsequent turn would eat the
-  // window the page HTML needs. Names and URLs are enough to place a file.
-  const normalizeLibrary = (raw: unknown): { url: string; name: string }[] =>
+  // Replayed as text only — no vision blocks. A caption describes the picture
+  // for ~25 tokens where an attachment costs ~1,600, so the whole library fits
+  // on every turn without eating the window the page HTML needs.
+  const normalizeLibrary = (raw: unknown): LibraryEntry[] =>
     Array.isArray(raw)
       ? raw
-          .filter((a): a is { url: string; name?: string } =>
+          .filter((a): a is { url: string; name?: string; caption?: string | null } =>
             !!a && typeof a === 'object' && typeof (a as { url?: unknown }).url === 'string' &&
             /^https?:\/\//i.test((a as { url: string }).url))
-          .map((a) => ({ url: a.url, name: typeof a.name === 'string' && a.name ? a.name : 'image' }))
+          .map((a) => ({
+            url: a.url,
+            name: typeof a.name === 'string' && a.name ? a.name : 'image',
+            caption: typeof a.caption === 'string' ? a.caption : null,
+          }))
       : [];
 
   // This turn's imports first, then older ones most-recent-first, so the cap
   // sheds the files least likely to be the ones meant.
   const seenLibraryUrls = new Set<string>();
-  const libraryAssets: { url: string; name: string }[] = [];
-  const pushLibrary = (assets: { url: string; name: string }[]) => {
+  const libraryAssets: LibraryEntry[] = [];
+  const pushLibrary = (assets: LibraryEntry[]) => {
     for (const a of assets) {
       if (libraryAssets.length >= MAX_LIBRARY_ASSETS) return;
       if (seenLibraryUrls.has(a.url)) continue;
@@ -2905,12 +2911,19 @@ export async function POST(
     pushLibrary(normalizeLibrary(entry.asset_library));
   }
 
-  if (libraryAssets.length > 0) {
-    prompt = `${prompt}\n\n## Real assets the user supplied for this page (already hosted, safe to embed)\nThese were imported from a link the user gave — this turn or earlier in this conversation. They are still available and still theirs to use.\n${libraryAssets
-      .map((a, i) => `${i + 1}. ${a.name} — ${a.url}`)
-      .join('\n')}\n\nWhen this edit needs one of these, use the EXACT URL above in src and do NOT generate a new image for that slot. Pick by filename and by what the instruction asks for. A logo file belongs in nav/footer, a headshot on a person. Only generate an image when NONE of these fit.\n`;
+  // Sent on EVERY edit, including ones that touch no images, because an edit
+  // cannot ask for a photo it was never told about. Cost scales with folder
+  // size: ~30 images ~2k tokens (nothing), ~100 ~7k, a full 500 ~37k. Trimming
+  // it would make some images silently invisible to edits, which is the
+  // blindness this whole change removed.
+  const libraryBlock = buildLibraryBlock(libraryAssets);
+  if (libraryBlock.included > 0) {
+    prompt = `${prompt}\n\n## Real assets the user supplied for this page (safe to embed)\nThese were imported from a link the user gave — this turn or earlier in this conversation. They are still available and still theirs to use.\nEach line is: name — what the image shows — URL. Some have no description; judge those by filename alone.\n${libraryBlock.lines}\n\nWhen this edit needs one of these, use the EXACT URL above in src and do NOT generate a new image for that slot. Pick by the description and by what the instruction asks for. A logo file belongs in nav/footer, a headshot on a person. Only generate an image when NONE of these fit.\n`;
     console.log('[pages/follow-up] asset library', {
       count: libraryAssets.length,
+      listed: libraryBlock.included,
+      droppedForSize: libraryBlock.dropped,
+      described: libraryAssets.filter((a) => a.caption).length,
       thisTurn: currentTurnLibraryCount,
       carried: libraryAssets.length - currentTurnLibraryCount,
     });
@@ -5893,6 +5906,10 @@ export async function POST(
       const assetScan = await verifyAndRehostHtmlImages({
         pageSlug: params.id,
         html: finalHtmlPersisted,
+        // Library images are only fetched once one is actually used, and an
+        // edit is one of the places that uses one. Named explicitly so a
+        // library URL in a CSS background is copied too.
+        extraUrls: libraryAssets.map((a) => a.url),
       });
       finalHtmlPersisted = assetScan.html;
       if (assetScan.rehosted.length > 0 || assetScan.broken.length > 0) {

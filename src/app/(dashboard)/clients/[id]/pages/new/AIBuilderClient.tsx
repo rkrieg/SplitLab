@@ -81,7 +81,7 @@ interface InitialPage {
   name: string;
   vertical: string;
   schema_json: unknown;
-  conversation_json: { role: string; content: string; note?: string; image_urls?: string[]; asset_library?: { url: string; name?: string }[] }[] | null;
+  conversation_json: { role: string; content: string; note?: string; image_urls?: string[]; asset_library?: { url: string; name?: string; caption?: string | null }[] }[] | null;
   html_url: string | null;
   slug: string | null;
   is_published: boolean;
@@ -124,6 +124,10 @@ interface Props {
 // Soft cap on the initial prompt — generous enough for a detailed multi-section
 // brief, tight enough to keep the schema the AI generates within one response.
 const MAX_PROMPT_LENGTH = 50000;
+
+/** How many linked images get a thumbnail. The rest are counted, not drawn —
+ *  a folder can hold hundreds and every thumbnail is a network fetch. */
+const LINKED_ASSET_PREVIEWS = 12;
 
 // Composer attachment buttons. These carry visible labels rather than bare
 // icons — the link importer went unnoticed as a faint icon, and it is the only
@@ -325,7 +329,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
             <ArrowRight size={15} />
           </a>
           <button
-            onClick={() => { router.push(backPath ?? `/clients/${clientId}/pages`); router.refresh(); }}
+            onClick={() => { router.refresh(); router.push(backPath ?? `/clients/${clientId}/pages`); }}
             className="mt-4 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
           >
             ← Back to pages
@@ -388,7 +392,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   const [iframeSrc, setIframeSrc] = useState<string | null>(null);
   const [iframeLoaded, setIframeLoaded] = useState(false);
   const [schemaJson, setSchemaJson] = useState<unknown>(null);
-  const [conversationJson, setConversationJson] = useState<{ role: string; content: string; note?: string; image_urls?: string[]; asset_library?: { url: string; name?: string }[]; clarify?: boolean }[]>([]);
+  const [conversationJson, setConversationJson] = useState<{ role: string; content: string; note?: string; image_urls?: string[]; asset_library?: { url: string; name?: string; caption?: string | null }[]; clarify?: boolean }[]>([]);
   const [publishedUrl, setPublishedUrl] = useState<string | null>(null);
   const [urlCopied, setUrlCopied] = useState(false);
   const [publishConfirmOpen, setPublishConfirmOpen] = useState(false);
@@ -632,7 +636,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         return false;
       }
 
-      const found: { url: string; name: string }[] = data.assets ?? [];
+      const found: { url: string; name: string; bytes?: number | null }[] = data.assets ?? [];
       if (found.length === 0) {
         toast('Found a link in your brief, but there were no images in it.');
         return false;
@@ -647,7 +651,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       const importRes = await fetch(`/api/pages/${pageId}/import-assets`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ assets: chosen.map((a) => ({ url: a.url, name: a.name })) }),
+        body: JSON.stringify({ assets: chosen.map((a) => ({ url: a.url, name: a.name, bytes: a.bytes ?? null })) }),
       });
       if (!importRes.ok) return false;
       const imported = await importRes.json();
@@ -748,7 +752,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         updateAssetLinkRow(id, { status: 'error', message: data.error || "Couldn't read that link." });
         return;
       }
-      const found: { url: string; name: string }[] = data.assets ?? [];
+      const found: { url: string; name: string; bytes?: number | null }[] = data.assets ?? [];
       if (found.length === 0) {
         updateAssetLinkRow(id, {
           status: 'error',
@@ -756,10 +760,12 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         });
         return;
       }
+      // bytes comes straight from the source listing. Passed on so the server
+      // can refuse a file too big to fetch before paying to describe it.
       const importRes = await fetch(`/api/pages/${pageId}/import-assets`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ assets: found.map(a => ({ url: a.url, name: a.name })) }),
+        body: JSON.stringify({ assets: found.map(a => ({ url: a.url, name: a.name, bytes: a.bytes ?? null })) }),
       });
       const importData = await importRes.json().catch(() => ({}));
       if (!importRes.ok) {
@@ -813,6 +819,13 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
           <p className="text-xs font-semibold text-indigo-900 dark:text-indigo-100">Add your existing assets</p>
           <span className="text-[11px] text-indigo-700/70 dark:text-indigo-300/60">— a link for the AI to pull from</span>
         </div>
+
+        {/* Says which files the AI can actually look at. Everything else is
+            still used, just chosen by filename — so name those clearly. */}
+        <p className="text-[10px] leading-relaxed text-indigo-700/70 dark:text-indigo-300/60 mb-2">
+          The AI can see <span className="font-medium">JPG, PNG, WebP and GIF</span> and picks them by what&rsquo;s in the picture.
+          Other types (SVG, AVIF, TIFF) still go on your page, but it goes by the filename — so give those clear names like <span className="font-medium">logo.svg</span>.
+        </p>
 
         {/* Per-link status ledger */}
         {assetLinkRows.length > 0 && (
@@ -888,26 +901,31 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   }
 
   /** Thumbnail row for images pulled in from a link. Same shape as the
-   *  chatImages row so the two read as one attachment area. */
+   *  chatImages row so the two read as one attachment area.
+   *
+   *  Only the first LINKED_ASSET_PREVIEWS are drawn: a pasted folder can hold
+   *  hundreds, and each thumbnail is a real network fetch. */
   function renderLinkedAssetStrip() {
     if (linkedAssets.length === 0) return null;
+    const shown = linkedAssets.slice(0, LINKED_ASSET_PREVIEWS);
+    const hidden = linkedAssets.length - shown.length;
     return (
       <div className="px-3.5 pt-2.5">
         <p className="text-[10px] text-slate-400 dark:text-slate-500 mb-1.5">
-          {linkedAssets.length} image{linkedAssets.length === 1 ? '' : 's'} from your link
+          {linkedAssets.length} image{linkedAssets.length === 1 ? '' : 's'} from your link — the AI picks which ones to use
         </p>
         <div className="flex items-center gap-2 flex-wrap">
-          {linkedAssets.map((asset, i) => (
+          {shown.map((asset, i) => (
             <div key={asset.url} className="relative group w-14 h-14 rounded-lg overflow-hidden border border-indigo-300 dark:border-indigo-700 shrink-0">
               <button
                 type="button"
                 onClick={() => setChatImageLightboxUrl(asset.url)}
                 className="absolute inset-0 p-0 border-0 bg-transparent"
-                title={asset.name}
+                title={asset.caption ? `${asset.name} — ${asset.caption}` : asset.name}
                 aria-label={`View ${asset.name} full size`}
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={asset.url} alt="" className="w-full h-full object-cover cursor-zoom-in" />
+                <img src={asset.url} alt="" loading="lazy" className="w-full h-full object-cover cursor-zoom-in" />
               </button>
               <button
                 type="button"
@@ -920,6 +938,11 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
               </button>
             </div>
           ))}
+          {hidden > 0 && (
+            <div className="w-14 h-14 rounded-lg border border-dashed border-slate-300 dark:border-slate-600 shrink-0 flex items-center justify-center text-[10px] font-medium text-slate-500 dark:text-slate-400">
+              +{hidden}
+            </div>
+          )}
         </div>
       </div>
     );
@@ -1041,15 +1064,14 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       {
         id: 'utm-wipe-warning',
         icon: '⚠️',
-        duration: Infinity,
+        duration: 6000,
         style: { background: 'rgb(254 243 199)', color: 'rgb(146 64 14)', maxWidth: '420px' },
       }
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase]);
 
-  // Dismiss the UTM warning only when leaving the builder — not on every phase
-  // change — so it stays put once (until the user closes it) instead of flashing.
+  // Clear the UTM warning if the builder unmounts before it times out.
   useEffect(() => () => toast.dismiss('utm-wipe-warning'), []);
 
   // Returning from a Stripe credit top-up: confirm and strip the query param so
@@ -1396,8 +1418,8 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
    * or go back; nothing in between.
    */
   function leaveWithoutRebuilding() {
-    router.push(backPath ?? `/clients/${clientId}/pages`);
     router.refresh();
+    router.push(backPath ?? `/clients/${clientId}/pages`);
   }
 
   /**
@@ -1761,7 +1783,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
 
   // ── Generate → Build ──────────────────────────────────────────────────────
 
-  async function runGenerate(userPrompt: string, history: { role: string; content: string; image_urls?: string[]; asset_library?: { url: string; name?: string }[] }[]) {
+  async function runGenerate(userPrompt: string, history: { role: string; content: string; image_urls?: string[]; asset_library?: { url: string; name?: string; caption?: string | null }[] }[]) {
     setPhase('generating');
 
     // Upload create-time attachments before schema gen so generate/build both see them
@@ -1940,7 +1962,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
 
   async function runBuild(
     schema: unknown,
-    history: { role: string; content: string; image_urls?: string[]; asset_library?: { url: string; name?: string }[] }[],
+    history: { role: string; content: string; image_urls?: string[]; asset_library?: { url: string; name?: string; caption?: string | null }[] }[],
     freshScreenshots?: string[] | null,
     freshCssTokens?: string | null,
     freshPalette?: string | null,
@@ -2559,8 +2581,8 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       }
       setReplaceConfirmOpen(false);
       toast.success('Live variant updated');
-      router.push(backPath ?? `/clients/${clientId}/ai-pages`);
       router.refresh();
+      router.push(backPath ?? `/clients/${clientId}/ai-pages`);
     } finally {
       setSavingVariant(null);
     }
@@ -2588,8 +2610,8 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       }
       setSaveAsNewOpen(false);
       toast.success('Added to the test as a new variant at 0% traffic');
-      router.push(backPath ?? `/clients/${clientId}/ai-pages`);
       router.refresh();
+      router.push(backPath ?? `/clients/${clientId}/ai-pages`);
     } finally {
       setSavingVariant(null);
     }
@@ -2755,7 +2777,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         {/* Panel header */}
         <div className="flex items-center gap-2 px-4 h-12 border-b border-slate-200 dark:border-slate-800 flex-shrink-0">
           <button
-            onClick={() => { router.push(backPath ?? `/clients/${clientId}/pages`); router.refresh(); }}
+            onClick={() => { router.refresh(); router.push(backPath ?? `/clients/${clientId}/pages`); }}
             className="flex items-center gap-1 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors"
           >
             <ChevronLeft size={14} />
@@ -3391,7 +3413,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                   </span>
                 )}
                 <button
-                  onClick={() => { router.push(backPath ?? `/clients/${clientId}/ai-pages`); router.refresh(); }}
+                  onClick={() => { router.refresh(); router.push(backPath ?? `/clients/${clientId}/ai-pages`); }}
                   className="flex items-center gap-1.5 text-xs bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600 px-3 py-1.5 rounded-full font-medium transition-colors"
                 >
                   Back to Test

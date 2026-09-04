@@ -10,6 +10,8 @@ import { resolveWorkspaceRole, resolveOwnerPlan } from '@/lib/workspace-auth';
 import { PLAN_LIMITS } from '@/lib/plans';
 import { extractUrls, isEmbedAssetUrl, scrapeCompetitorUrl, describeScrapeGaps } from '@/lib/ai-competitor-scrape';
 import { remainingInputChars } from '@/lib/ai-context-budget';
+import { MAX_LIBRARY_IMPORT } from '@/lib/asset-source-resolver';
+import { buildLibraryBlock } from '@/lib/ai-asset-library';
 import { classifyAssetSource } from '@/lib/asset-source-resolver';
 import {
   injectBrandAssetsIntoSchema,
@@ -28,37 +30,18 @@ import {
 import { buildConversationContext, classifyEditIntent, MAX_ATTACHMENTS } from '@/lib/ai-edit-intent';
 
 /**
- * Ceiling on client-supplied images the schema step both SEES and receives
- * URLs for.
+ * Ceiling on client-supplied library images this call is told about.
  *
- * Matches the picker's own selection cap, so every image a user was allowed to
- * tick actually reaches the model — a lower number here would drop images the
- * UI had already promised to use.
+ * Kept in sync with MAX_LIBRARY_IMPORT in the asset resolver, so every image
+ * the importer accepted actually reaches the model.
  *
- * Deliberately NOT MAX_ATTACHMENTS. That constant caps images sent to the
- * classifier calls (intent, OCR, edit routing), and it stays at 3: those calls
- * decide "is this a design reference or a photo to place", which a filename
- * already answers, so paying vision cost times eight call sites buys nothing.
- * Only THIS call — the one that decides what goes in which slot — needs to
- * look at the photographs, so only this one pays for it.
- *
- * 40, not 20: the link importer no longer asks the user to hand-pick, so a
- * pasted folder arrives whole and the model chooses. This is how many files the
- * model is TOLD about (name + URL) — cheap, text only — kept in sync with
- * MAX_LIBRARY_IMPORT in the asset resolver.
+ * None of them are vision-attached any more. They arrive captioned (see
+ * asset-captions.ts), and a caption costs ~25 tokens against ~1,600 for a
+ * picture — so the model reads the whole folder for less than it used to pay
+ * to look at eight of it, and no longer picks a hero shot by filename.
+ * MAX_LIBRARY_BLOCK_CHARS is what actually bounds the cost.
  */
-const MAX_LIBRARY_ASSETS = 40;
-
-/**
- * How many library images we actually VISION-ATTACH to this call. This is the
- * real token/margin cost — each attached image is ~1–1.6k input tokens on the
- * schema model, so attaching all 40 of a big folder is what eats margin. The
- * rest of the library is still handed to the model as a name + URL list it can
- * place by filename; it just doesn't get to LOOK at those. 8 keeps the "let the
- * AI see the hero/brand shots" value while bounding cost no matter how big the
- * pasted folder is.
- */
-const LIBRARY_VISION_CAP = 8;
+const MAX_LIBRARY_ASSETS = MAX_LIBRARY_IMPORT;
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 800;
@@ -327,8 +310,38 @@ export async function POST(request: NextRequest) {
       ? `\nMINIMAL PAGE TASTE:\n- Strong hierarchy: one clear H1, short supporting line, generous whitespace, flat or near-flat background\n- No decorative card chrome, no competing CTAs, no mid-page clutter\n- Type scale slightly calmer than a full marketing LP (still clamp()-based)\n`
       : '';
 
+    // Real client photos from a Drive folder / page link the user gave us,
+    // described by the caption pass at import time.
+    //
+    // Built here, above the reference budget, because the caption list is text
+    // this call is committed to sending and the scrape only gets what is left.
+    //
+    // The instruction targets generated_image_url specifically because that is
+    // the one image field with teeth on both ends: generatePageImages() skips
+    // DALL-E for any node that already has one (ai-client.ts), and the builder
+    // prompt forbids ignoring one (ai-page-builder.ts). Writing a real photo
+    // there is therefore what stops an invented image replacing it.
+    const libraryAssets = Array.isArray(asset_library)
+      ? (asset_library as unknown[])
+          .filter((a): a is { url: string; name?: string; caption?: string | null } =>
+            !!a && typeof a === 'object' && typeof (a as { url?: unknown }).url === 'string')
+          .map((a) => ({
+            url: a.url,
+            name: typeof a.name === 'string' ? a.name : 'image',
+            caption: typeof a.caption === 'string' ? a.caption : null,
+          }))
+          .slice(0, MAX_LIBRARY_ASSETS)
+      : [];
+
+    const libraryBlock = buildLibraryBlock(libraryAssets);
+
     // Vision attachments cost window whether or not they are the user's own —
     // counted here so the reference budget below is honest about them.
+    //
+    // Only the user's own uploads are attached now; the library travels as
+    // caption text and is charged through libraryBlock.chars instead. Both
+    // halves have to reach the budget: it was once told "3 images" while 11
+    // were on the wire, and the scrape then filled room that did not exist.
     const attachedImagesForBudget = Array.isArray(image_urls)
       ? Math.min((image_urls as unknown[]).length, MAX_ATTACHMENTS)
       : 0;
@@ -360,6 +373,7 @@ export async function POST(request: NextRequest) {
             prompt.length +
             systemPrompt.length +
             paletteBlock.length +
+            libraryBlock.chars +
             (competitorContext.cssTokens?.length ?? 0) +
             history.reduce((n, h) => n + (h.content?.length ?? 0), 0),
           reservedOutputTokens: 128_000,
@@ -505,65 +519,29 @@ export async function POST(request: NextRequest) {
         ? `${attachedNote}\n## REQUIRED copy from attached screenshot (use verbatim in matching sections)\n${designCopyLines.map((l, i) => `${i + 1}. ${l}`).join('\n')}\nPut these into footer/nav/hero (or the section the user named). Each line once — if several attachments are the same screenshot, do not repeat blocks. Do not invent substitute legal/contact lines when these are present.\n`
         : attachedNote;
 
-    // Real client photos pulled from a Drive folder / page link the user gave
-    // us, already re-hosted on our storage by /api/pages/[id]/import-assets.
-    //
-    // NOT sent as vision attachments: those are capped at MAX_ATTACHMENTS (3)
-    // in every classifier on this path, so a 20-image folder would lose 17 of
-    // them silently. A named URL list has no such cap and is what the schema
-    // step actually needs — it places URLs, it does not need to look at them.
-    //
-    // The instruction targets generated_image_url specifically because that is
-    // the one image field with teeth on both ends: generatePageImages() skips
-    // DALL-E for any node that already has one (ai-client.ts), and the builder
-    // prompt forbids ignoring one (ai-page-builder.ts). Writing a real photo
-    // there is therefore what stops an invented image replacing it.
-    const libraryAssets = Array.isArray(asset_library)
-      ? (asset_library as unknown[])
-          .filter((a): a is { url: string; name?: string } =>
-            !!a && typeof a === 'object' && typeof (a as { url?: unknown }).url === 'string')
-          .map((a) => ({ url: a.url, name: typeof a.name === 'string' ? a.name : 'image' }))
-          .slice(0, MAX_LIBRARY_ASSETS)
-      : [];
-
-    // Vision accepts JPEG/PNG/GIF/WebP only. An SVG logo — extremely common in
-    // a client asset folder — would make the whole schema call fail, taking the
-    // page build down with it. Split rather than drop: viewable files are shown
-    // AND listed, the rest are still listed by name and URL so they can be
-    // placed, just chosen by filename instead of by sight.
-    const VIEWABLE_EXT_RE = /\.(png|jpe?g|webp|gif)(?:\?|#|$)/i;
-    const viewableAssets = libraryAssets.filter((a) => VIEWABLE_EXT_RE.test(a.url));
-    const unviewableAssets = libraryAssets.filter((a) => !VIEWABLE_EXT_RE.test(a.url));
-
-    // Only the first LIBRARY_VISION_CAP viewable files are actually attached as
-    // vision — that is the cost. Everything past the cap (plus vector/other
-    // formats) is still offered to the model, but by filename + URL only, the
-    // same as the unviewable bucket. So a 40-image folder costs 8 images, not 40.
-    const visionAssets = viewableAssets.slice(0, LIBRARY_VISION_CAP);
-    const namedOnlyAssets = [...viewableAssets.slice(LIBRARY_VISION_CAP), ...unviewableAssets];
 
     if (libraryAssets.length > 0) {
       console.log('[pages/generate] asset library', {
         count: libraryAssets.length,
-        vision: visionAssets.length,
-        namedOnly: namedOnlyAssets.length,
+        described: libraryAssets.filter((a) => a.caption).length,
+        listed: libraryBlock.included,
+        droppedForSize: libraryBlock.dropped,
+        chars: libraryBlock.chars,
       });
     }
 
+    // Every asset is offered on equal terms now: a caption describes what the
+    // picture actually shows, so nothing has to be chosen by filename. Files
+    // with no caption (SVG and other formats the caption model cannot open,
+    // or an image that failed) are still listed — they just fall back to the
+    // filename, which is what every asset used to be.
     const assetLibraryNote =
-      libraryAssets.length > 0
-        ? `\n\n## The client's own images — USE THESE, do not invent replacements\nThese ${libraryAssets.length} file(s) are real photos/logos the user supplied for this page. They are already hosted and safe to embed.\n` +
-          (visionAssets.length > 0
-            ? `\nYou can SEE these: the last ${visionAssets.length} image(s) attached to this message are these files, in exactly this order.\n${visionAssets
-                .map((a, i) => `${i + 1}. ${a.name} — ${a.url}`)
-                .join('\n')}\n`
+      libraryBlock.included > 0
+        ? `\n\n## The client's own images — USE THESE, do not invent replacements\nThese ${libraryBlock.included} file(s) are real photos/logos the user supplied for this page. They are safe to embed.\nEach line is: name — what the image shows — URL. Some have no description; judge those by filename alone.\n${libraryBlock.lines}\n` +
+          (libraryBlock.dropped > 0
+            ? `\n(${libraryBlock.dropped} more file(s) were left out of this list for space.)\n`
             : '') +
-          (namedOnlyAssets.length > 0
-            ? `\nThese you CANNOT see (not attached / vector format) — judge them by filename alone:\n${namedOnlyAssets
-                .map((a, i) => `${i + 1}. ${a.name} — ${a.url}`)
-                .join('\n')}\n`
-            : '') +
-          `\nRules:\n- For the files you can see, decide where each belongs by LOOKING at it. What the photo actually shows outranks its filename — "IMG_4821.jpg" means nothing, and a file named "hero" may not suit the hero.\n- When one of these fits a slot, set "generated_image_url" on that schema node to the EXACT URL above and do NOT also write an "image_prompt" for that node — an image_prompt there would have us draw a fake photo over a real one.\n- A logo belongs on nav/footer logo_url, never as a content photo. A headshot belongs on a person, not a hero.\n- Only write image_prompt for slots NONE of these files fit.\n- Never alter these URLs, and never reuse the same file for two different slots unless the page genuinely needs it twice.\n- If the user's instruction says where a specific file goes, that beats what you infer from the picture.\n`
+          `\nRules:\n- Decide where each file belongs from its DESCRIPTION, not its filename. "IMG_4821.jpg" means nothing, and a file named "hero" may not suit the hero.\n- When one of these fits a slot, set "generated_image_url" on that schema node to the EXACT URL above and do NOT also write an "image_prompt" for that node — an image_prompt there would have us draw a fake photo over a real one.\n- A logo belongs on nav/footer logo_url, never as a content photo. A headshot belongs on a person, not a hero.\n- Only write image_prompt for slots NONE of these files fit.\n- Never alter these URLs, and never reuse the same file for two different slots unless the page genuinely needs it twice.\n- If the user's instruction says where a specific file goes, that beats what you infer from the description.\n`
         : '';
 
     const finalUserText = prompt + competitorNote + multiNote + constraintNote + designNote + assetLibraryNote;
@@ -573,14 +551,13 @@ export async function POST(request: NextRequest) {
       content: m.content,
     }));
 
-    // Library images go AFTER the user's own attachments and in the same order
-    // as the "You can SEE these" list in assetLibraryNote — that ordering is the
-    // only way the model can tell which picture belongs to which URL, so both
-    // must be built from visionAssets (the capped subset) and nothing else.
-    const visionBlocks: AIContentBlock[] = [
-      ...attachedImageUrls.map((url): AIContentBlock => ({ type: 'image', url })),
-      ...visionAssets.map((a): AIContentBlock => ({ type: 'image', url: a.url })),
-    ];
+    // The user's own attachments only. Library images are described in text,
+    // never attached: a picture costs ~1,600 tokens and a caption ~25, and
+    // attaching a slice of the folder is what made the model blind to the rest
+    // of it.
+    const visionBlocks: AIContentBlock[] = attachedImageUrls.map(
+      (url): AIContentBlock => ({ type: 'image', url }),
+    );
 
     const lastUserContent: AIContent =
       visionBlocks.length > 0

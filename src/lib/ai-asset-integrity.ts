@@ -289,6 +289,16 @@ export async function verifyAndRehostHtmlImages(opts: {
    * permanent dependency on someone else's server.
    */
   maxProbes?: number;
+  /**
+   * Known asset URLs to re-host wherever they appear, not just in <img src>.
+   *
+   * Link-imported library images are not downloaded up front any more — they
+   * are captioned, offered to the model, and fetched only once one is actually
+   * placed. This scan is that fetch, so it has to catch a library URL in a CSS
+   * background or a srcset too, not only in an <img>. Exact strings we handed
+   * the model, so this stays a substring match and never parses CSS.
+   */
+  extraUrls?: string[];
 }): Promise<{
   html: string;
   rehosted: string[];
@@ -303,7 +313,7 @@ export async function verifyAndRehostHtmlImages(opts: {
    */
   rehostedMap: Record<string, string>;
 }> {
-  const { pageSlug, html, concurrency = REHOST_CONCURRENCY, maxProbes = 12 } = opts;
+  const { pageSlug, html, concurrency = REHOST_CONCURRENCY, maxProbes = 12, extraUrls = [] } = opts;
 
   const srcs = new Set<string>();
   const ownSrcs = new Set<string>();
@@ -315,6 +325,11 @@ export async function verifyAndRehostHtmlImages(opts: {
       continue;
     }
     srcs.add(src);
+  }
+  for (const url of extraUrls) {
+    if (!url || !/^https?:\/\//i.test(url)) continue;
+    if (isOwnStorageUrl(url) || ownSrcs.has(url) || srcs.has(url)) continue;
+    if (html.includes(url)) srcs.add(url);
   }
 
   // Never sliced: every foreign URL gets copied, however many there are.

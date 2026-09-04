@@ -19,6 +19,8 @@ interface ResolvedAsset {
 export interface ImportedAsset {
   url: string;
   name: string;
+  /** One-line description from the caption pass. Null when we couldn't read it. */
+  caption?: string | null;
 }
 
 interface Props {

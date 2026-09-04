@@ -73,13 +73,14 @@ export interface AssetSourceResult {
 //               Five is generous; past that it is someone's whole Drive.
 // MAX_SCANNED — hard ceiling on entries examined. Stops the walk dead rather
 //               than paginating a huge Drive to completion.
-// MAX_ASSETS  — ceiling on images RETURNED, so a folder of 1000 photos does
-//               not render 1000 <img> thumbnails and lock up the browser.
+// MAX_ASSETS  — ceiling on images RETURNED. Matches MAX_LIBRARY_IMPORT: the
+//               list feeds the caption pass, so a lower number here would cap
+//               the library before the importer ever saw it.
 // Images-only filtering happens in the API query itself (mimeType contains
 // 'image/'), so PDFs, docs and spreadsheets never consume scan budget.
 const MAX_DEPTH = 5;
 const MAX_SCANNED = 1000;
-const MAX_ASSETS = 250;
+const MAX_ASSETS = 500;
 const MAX_PAGES_PER_FOLDER = 10;
 const FETCH_TIMEOUT_MS = 10_000;
 
@@ -87,14 +88,14 @@ const FETCH_TIMEOUT_MS = 10_000;
 export const DEFAULT_SELECTION_CAP = 20;
 
 /**
- * Hard ceiling on how many images we import from a link into a page's asset
- * library in one go. Higher than DEFAULT_SELECTION_CAP because the flow no
- * longer asks the user to hand-pick — a pasted folder is imported wholesale and
- * handed to the model to choose from. Still bounded: every viewable image is
- * vision-attached to the build call, so this is the real cost/context ceiling.
- * Kept in sync with MAX_LIBRARY_ASSETS in the generate/follow-up routes.
+ * Hard ceiling on how many images one link contributes to a page's library.
+ *
+ * 500, not 40: images are no longer vision-attached, they are captioned once
+ * and offered to the model as text, so the cost per asset fell ~60x. The
+ * remaining limits are wall-clock (the caption pass) and prompt size
+ * (MAX_LIBRARY_BLOCK_CHARS), not the model's vision budget.
  */
-export const MAX_LIBRARY_IMPORT = 40;
+export const MAX_LIBRARY_IMPORT = 500;
 
 /**
  * Hard ceiling on a single asset we will fetch and re-host.
