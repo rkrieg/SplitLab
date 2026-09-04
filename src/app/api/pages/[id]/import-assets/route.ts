@@ -4,54 +4,35 @@ import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { resolveWorkspaceRole, resolveOwnerPlan } from '@/lib/workspace-auth';
 import { PLAN_LIMITS } from '@/lib/plans';
-import { materializeAsset } from '@/lib/ai-asset-integrity';
-import { toFetchableUrl, MAX_LIBRARY_IMPORT, MAX_ASSET_BYTES } from '@/lib/asset-source-resolver';
+import { MAX_LIBRARY_IMPORT } from '@/lib/asset-source-resolver';
+import { publicAssetUrl } from '@/lib/asset-proxy';
+import { captionAssets, type CaptionTarget } from '@/lib/asset-captions';
 
 /**
- * Download the images a pasted link resolved to and re-host them on our
- * storage, so the page never depends on the client's Drive staying shared.
+ * Describe the images behind a pasted link so the model can choose from all of
+ * them — it does NOT download anything.
  *
- * This is the expensive half of the flow — /api/asset-sources/resolve lists,
- * this one spends bytes — and it is capped at MAX_LIBRARY_IMPORT per call.
- *
- * 300, not 120: the picker used to keep the list small, but a pasted folder
- * now arrives whole. MAX_LIBRARY_IMPORT (40) files at IMPORT_CONCURRENCY (5)
- * at a 20s per-file fetch timeout is ~160s worst case — past 120 the function
- * is killed mid-import and the user gets a 504 with a half-filled library.
+ * Look first, download last. Downloading 500 files to place 15 spent storage
+ * and wall-clock on 485 nobody wanted, and the old 40-file cap that made it
+ * survivable is what left the model picking hero shots by filename. Captions
+ * cost ~25 tokens against ~1,600 for a vision attachment, so the whole folder
+ * now fits where 8 photos used to. The files themselves are fetched later, by
+ * verifyAndRehostHtmlImages, for the handful that reach the page.
  */
 export const maxDuration = 300;
 
-// Matches REHOST_CONCURRENCY in ai-asset-integrity: Supabase Storage's
-// connection pool times out requests past the pool limit instead of queuing
-// them, so firing 20 uploads at once loses images rather than slowing down.
-const IMPORT_CONCURRENCY = 5;
-
-async function inBatches<T, R>(items: T[], size: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-  const out: R[] = [];
-  for (let i = 0; i < items.length; i += size) {
-    out.push(...(await Promise.all(items.slice(i, i + size).map(fn))));
-  }
-  return out;
-}
-
-const FAILURE_COPY: Record<string, string> = {
-  not_http: "that link isn't downloadable",
-  fetch_failed: "couldn't reach it in time",
-  rate_limited:
-    'Google is rate-limiting downloads right now — wait a few minutes and try again',
-  not_shared: 'the file is not shared publicly',
-  bad_status: 'the server refused the download',
-  not_an_image: "it isn't an image file",
-  // Derived, never hardcoded: this string sat at "8MB" while the real ceiling
-  // was 5MB, which told users the wrong number to aim for.
-  too_large: `it's over the ${Math.round(MAX_ASSET_BYTES / (1024 * 1024))}MB limit`,
-  upload_failed: 'saving it failed',
-};
+/**
+ * Stop captioning here and return what we have. The platform kills the
+ * function at maxDuration with no response at all, which would lose every
+ * caption already paid for.
+ */
+const CAPTION_BUDGET_MS = 240_000;
 
 export async function POST(
   request: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  const startedAt = Date.now();
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
@@ -91,32 +72,46 @@ export async function POST(
       .slice(0, MAX_LIBRARY_IMPORT);
 
     if (requested.length === 0) {
-      return NextResponse.json({ error: 'No images selected' }, { status: 400 });
+      return NextResponse.json({ error: 'No images found behind that link' }, { status: 400 });
     }
 
-    const results = await inBatches(requested, IMPORT_CONCURRENCY, async (asset) => {
-      // Drive refs carry no key by design (see ResolvedAsset.url); the key is
-      // added here, server-side, and never leaves this process.
-      const fetchable = toFetchableUrl(asset.ref);
-      if (!fetchable) {
-        return { ok: false as const, name: asset.name, reason: 'not_http' };
+    // A ref we cannot turn into a URL cannot be captioned OR placed, so it is
+    // reported rather than carried as an asset that would 404 on the page.
+    const targets: CaptionTarget[] = [];
+    const unusable: { name: string; reason: string }[] = [];
+    for (const a of requested) {
+      const url = publicAssetUrl(a.ref);
+      if (!url) {
+        unusable.push({ name: a.name, reason: "that link isn't usable on a page" });
+        continue;
       }
-      const hosted = await materializeAsset({ pageSlug: params.id, url: fetchable });
-      if (!hosted.ok) {
-        return { ok: false as const, name: asset.name, reason: hosted.reason };
-      }
-      return { ok: true as const, name: asset.name, url: hosted.url };
+      targets.push({ ref: a.ref, name: a.name, imageUrl: url });
+    }
+
+    const { results, cached, generated, skipped } = await captionAssets(targets, {
+      deadlineAt: startedAt + CAPTION_BUDGET_MS,
     });
 
-    const imported = results
-      .filter((r): r is { ok: true; name: string; url: string } => r.ok)
-      .map((r) => ({ url: r.url, name: r.name }));
+    const byRef = new Map(results.map((r) => [r.ref, r]));
+    const imported = targets.map((t) => ({
+      url: t.imageUrl as string,
+      name: t.name,
+      caption: byRef.get(t.ref)?.caption ?? null,
+    }));
 
-    const failed = results
-      .filter((r): r is { ok: false; name: string; reason: string } => !r.ok)
-      .map((r) => ({ name: r.name, reason: FAILURE_COPY[r.reason] ?? 'it failed to download' }));
+    console.log('[pages/import-assets] captioned', {
+      requested: requested.length,
+      usable: targets.length,
+      cached,
+      generated,
+      // Not an error: SVG and other non-vision formats are still offered to the
+      // model by filename, exactly as they always were.
+      noPreview: skipped,
+      described: imported.filter((a) => a.caption).length,
+      elapsedMs: Date.now() - startedAt,
+    });
 
-    return NextResponse.json({ imported, failed });
+    return NextResponse.json({ imported, failed: unusable });
   } catch (err) {
     console.error('[pages/import-assets]', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

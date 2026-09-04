@@ -81,7 +81,7 @@ interface InitialPage {
   name: string;
   vertical: string;
   schema_json: unknown;
-  conversation_json: { role: string; content: string; note?: string; image_urls?: string[]; asset_library?: { url: string; name?: string }[] }[] | null;
+  conversation_json: { role: string; content: string; note?: string; image_urls?: string[]; asset_library?: { url: string; name?: string; caption?: string | null }[] }[] | null;
   html_url: string | null;
   slug: string | null;
   is_published: boolean;
@@ -124,6 +124,10 @@ interface Props {
 // Soft cap on the initial prompt — generous enough for a detailed multi-section
 // brief, tight enough to keep the schema the AI generates within one response.
 const MAX_PROMPT_LENGTH = 50000;
+
+/** How many linked images get a thumbnail. The rest are counted, not drawn —
+ *  a folder can hold hundreds and every thumbnail is a network fetch. */
+const LINKED_ASSET_PREVIEWS = 12;
 
 // Composer attachment buttons. These carry visible labels rather than bare
 // icons — the link importer went unnoticed as a faint icon, and it is the only
@@ -388,7 +392,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   const [iframeSrc, setIframeSrc] = useState<string | null>(null);
   const [iframeLoaded, setIframeLoaded] = useState(false);
   const [schemaJson, setSchemaJson] = useState<unknown>(null);
-  const [conversationJson, setConversationJson] = useState<{ role: string; content: string; note?: string; image_urls?: string[]; asset_library?: { url: string; name?: string }[]; clarify?: boolean }[]>([]);
+  const [conversationJson, setConversationJson] = useState<{ role: string; content: string; note?: string; image_urls?: string[]; asset_library?: { url: string; name?: string; caption?: string | null }[]; clarify?: boolean }[]>([]);
   const [publishedUrl, setPublishedUrl] = useState<string | null>(null);
   const [urlCopied, setUrlCopied] = useState(false);
   const [publishConfirmOpen, setPublishConfirmOpen] = useState(false);
@@ -888,26 +892,31 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   }
 
   /** Thumbnail row for images pulled in from a link. Same shape as the
-   *  chatImages row so the two read as one attachment area. */
+   *  chatImages row so the two read as one attachment area.
+   *
+   *  Only the first LINKED_ASSET_PREVIEWS are drawn: a pasted folder can hold
+   *  hundreds, and each thumbnail is a real network fetch. */
   function renderLinkedAssetStrip() {
     if (linkedAssets.length === 0) return null;
+    const shown = linkedAssets.slice(0, LINKED_ASSET_PREVIEWS);
+    const hidden = linkedAssets.length - shown.length;
     return (
       <div className="px-3.5 pt-2.5">
         <p className="text-[10px] text-slate-400 dark:text-slate-500 mb-1.5">
-          {linkedAssets.length} image{linkedAssets.length === 1 ? '' : 's'} from your link
+          {linkedAssets.length} image{linkedAssets.length === 1 ? '' : 's'} from your link — the AI picks which ones to use
         </p>
         <div className="flex items-center gap-2 flex-wrap">
-          {linkedAssets.map((asset, i) => (
+          {shown.map((asset, i) => (
             <div key={asset.url} className="relative group w-14 h-14 rounded-lg overflow-hidden border border-indigo-300 dark:border-indigo-700 shrink-0">
               <button
                 type="button"
                 onClick={() => setChatImageLightboxUrl(asset.url)}
                 className="absolute inset-0 p-0 border-0 bg-transparent"
-                title={asset.name}
+                title={asset.caption ? `${asset.name} — ${asset.caption}` : asset.name}
                 aria-label={`View ${asset.name} full size`}
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={asset.url} alt="" className="w-full h-full object-cover cursor-zoom-in" />
+                <img src={asset.url} alt="" loading="lazy" className="w-full h-full object-cover cursor-zoom-in" />
               </button>
               <button
                 type="button"
@@ -920,6 +929,11 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
               </button>
             </div>
           ))}
+          {hidden > 0 && (
+            <div className="w-14 h-14 rounded-lg border border-dashed border-slate-300 dark:border-slate-600 shrink-0 flex items-center justify-center text-[10px] font-medium text-slate-500 dark:text-slate-400">
+              +{hidden}
+            </div>
+          )}
         </div>
       </div>
     );
@@ -1761,7 +1775,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
 
   // ── Generate → Build ──────────────────────────────────────────────────────
 
-  async function runGenerate(userPrompt: string, history: { role: string; content: string; image_urls?: string[]; asset_library?: { url: string; name?: string }[] }[]) {
+  async function runGenerate(userPrompt: string, history: { role: string; content: string; image_urls?: string[]; asset_library?: { url: string; name?: string; caption?: string | null }[] }[]) {
     setPhase('generating');
 
     // Upload create-time attachments before schema gen so generate/build both see them
@@ -1940,7 +1954,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
 
   async function runBuild(
     schema: unknown,
-    history: { role: string; content: string; image_urls?: string[]; asset_library?: { url: string; name?: string }[] }[],
+    history: { role: string; content: string; image_urls?: string[]; asset_library?: { url: string; name?: string; caption?: string | null }[] }[],
     freshScreenshots?: string[] | null,
     freshCssTokens?: string | null,
     freshPalette?: string | null,

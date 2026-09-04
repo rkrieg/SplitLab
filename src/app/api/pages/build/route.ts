@@ -384,9 +384,24 @@ export async function POST(request: NextRequest) {
       // Strip any remaining STATUS comments before upload
       html = html.replace(/<!--\s*STATUS:[^>]*-->/g, '');
 
+      // Link-imported assets are not downloaded at import time any more — they
+      // are captioned and offered by URL, and this scan is what finally fetches
+      // the ones the model actually placed. Passed explicitly so a library image
+      // used as a CSS background is copied too, not just one in an <img>.
+      const libraryForPlacement: LibraryAsset[] = Array.isArray(asset_library)
+        ? (asset_library as unknown[]).filter(
+            (a): a is LibraryAsset =>
+              !!a && typeof a === 'object' && typeof (a as { url?: unknown }).url === 'string',
+          )
+        : [];
+
       // Every external <img> the model wrote is verified and re-hosted, so a
       // hotlink that 403s in the browser can't ship as a "successful" build.
-      const assetScan = await verifyAndRehostHtmlImages({ pageSlug, html });
+      const assetScan = await verifyAndRehostHtmlImages({
+        pageSlug,
+        html,
+        extraUrls: libraryForPlacement.map((a) => a.url),
+      });
       html = assetScan.html;
       if (assetScan.rehosted.length > 0 || assetScan.broken.length > 0) {
         console.log('[pages/build] asset integrity', {
@@ -525,14 +540,15 @@ export async function POST(request: NextRequest) {
       // that bans extra imagery, or files that suit no slot). The count exists
       // so the client can SAY so, since an unexplained absence reads as the
       // import having failed.
-      const libraryForPlacement: LibraryAsset[] = Array.isArray(asset_library)
-        ? (asset_library as unknown[]).filter(
-            (a): a is LibraryAsset =>
-              !!a && typeof a === 'object' && typeof (a as { url?: unknown }).url === 'string',
-          )
-        : [];
+      // Measured on the re-hosted addresses: the scan above rewrote every
+      // placed library URL to our storage, so checking the original URLs would
+      // report every one of them as unused.
+      const placementAssets = libraryForPlacement.map((a) => ({
+        ...a,
+        url: assetScan.rehostedMap[a.url] ?? a.url,
+      }));
       const placement =
-        libraryForPlacement.length > 0 ? measureAssetPlacement(libraryForPlacement, html) : null;
+        placementAssets.length > 0 ? measureAssetPlacement(placementAssets, html) : null;
       if (placement) {
         console.log('[pages/build] asset library placement', {
           imported: placement.imported,
