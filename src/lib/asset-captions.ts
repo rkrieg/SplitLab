@@ -72,7 +72,12 @@ export interface CaptionResult {
 }
 
 export function isCaptionable(target: CaptionTarget): boolean {
-  return !!target.imageUrl && CAPTIONABLE_EXT_RE.test(target.ref);
+  // Drive refs are `drive:<fileId>` with no extension — the filename lives in
+  // `name`. Web/bucket refs often carry the extension on the URL itself.
+  return (
+    !!target.imageUrl &&
+    (CAPTIONABLE_EXT_RE.test(target.ref) || CAPTIONABLE_EXT_RE.test(target.name))
+  );
 }
 
 function clean(text: string): string {

@@ -4,7 +4,7 @@ import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { resolveWorkspaceRole, resolveOwnerPlan } from '@/lib/workspace-auth';
 import { PLAN_LIMITS } from '@/lib/plans';
-import { MAX_LIBRARY_IMPORT } from '@/lib/asset-source-resolver';
+import { MAX_LIBRARY_IMPORT, MAX_ASSET_BYTES } from '@/lib/asset-source-resolver';
 import { publicAssetUrl } from '@/lib/asset-proxy';
 import { captionAssets, type CaptionTarget } from '@/lib/asset-captions';
 
@@ -61,12 +61,13 @@ export async function POST(
     const body = await request.json();
     const incoming = Array.isArray(body?.assets) ? body.assets : [];
 
-    const requested: { ref: string; name: string }[] = (incoming as unknown[])
-      .filter((a): a is { url: string; name?: string } =>
+    const requested: { ref: string; name: string; bytes: number | null }[] = (incoming as unknown[])
+      .filter((a): a is { url: string; name?: string; bytes?: number | null } =>
         !!a && typeof a === 'object' && typeof (a as { url?: unknown }).url === 'string')
       .map((a) => ({
         ref: a.url.trim(),
         name: typeof a.name === 'string' && a.name.trim() ? a.name.trim() : 'image',
+        bytes: typeof a.bytes === 'number' && a.bytes > 0 ? a.bytes : null,
       }))
       .filter((a) => a.ref.length > 0)
       .slice(0, MAX_LIBRARY_IMPORT);
@@ -75,17 +76,32 @@ export async function POST(
       return NextResponse.json({ error: 'No images found behind that link' }, { status: 400 });
     }
 
-    // A ref we cannot turn into a URL cannot be captioned OR placed, so it is
-    // reported rather than carried as an asset that would 404 on the page.
+    // Anything we cannot serve is reported, never carried. An asset that stays
+    // in the library is one the model may place, and a URL we can't fetch ships
+    // as a broken image on the finished page.
+    //
+    // Size is checked here, from the listing, because it is knowable before we
+    // spend anything: the proxy and fetchAssetBytes both refuse past
+    // MAX_ASSET_BYTES, so offering an oversized file only buys a caption we
+    // pay for and a Drive URL left on the page.
+    const overSizeCopy = `it's over the ${Math.round(MAX_ASSET_BYTES / (1024 * 1024))}MB limit`;
     const targets: CaptionTarget[] = [];
     const unusable: { name: string; reason: string }[] = [];
     for (const a of requested) {
+      if (a.bytes !== null && a.bytes > MAX_ASSET_BYTES) {
+        unusable.push({ name: a.name, reason: overSizeCopy });
+        continue;
+      }
       const url = publicAssetUrl(a.ref);
       if (!url) {
         unusable.push({ name: a.name, reason: "that link isn't usable on a page" });
         continue;
       }
       targets.push({ ref: a.ref, name: a.name, imageUrl: url });
+    }
+
+    if (targets.length === 0) {
+      return NextResponse.json({ imported: [], failed: unusable });
     }
 
     const { results, cached, generated, skipped } = await captionAssets(targets, {

@@ -636,7 +636,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         return false;
       }
 
-      const found: { url: string; name: string }[] = data.assets ?? [];
+      const found: { url: string; name: string; bytes?: number | null }[] = data.assets ?? [];
       if (found.length === 0) {
         toast('Found a link in your brief, but there were no images in it.');
         return false;
@@ -651,7 +651,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       const importRes = await fetch(`/api/pages/${pageId}/import-assets`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ assets: chosen.map((a) => ({ url: a.url, name: a.name })) }),
+        body: JSON.stringify({ assets: chosen.map((a) => ({ url: a.url, name: a.name, bytes: a.bytes ?? null })) }),
       });
       if (!importRes.ok) return false;
       const imported = await importRes.json();
@@ -752,7 +752,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         updateAssetLinkRow(id, { status: 'error', message: data.error || "Couldn't read that link." });
         return;
       }
-      const found: { url: string; name: string }[] = data.assets ?? [];
+      const found: { url: string; name: string; bytes?: number | null }[] = data.assets ?? [];
       if (found.length === 0) {
         updateAssetLinkRow(id, {
           status: 'error',
@@ -760,10 +760,12 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         });
         return;
       }
+      // bytes comes straight from the source listing. Passed on so the server
+      // can refuse a file too big to fetch before paying to describe it.
       const importRes = await fetch(`/api/pages/${pageId}/import-assets`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ assets: found.map(a => ({ url: a.url, name: a.name })) }),
+        body: JSON.stringify({ assets: found.map(a => ({ url: a.url, name: a.name, bytes: a.bytes ?? null })) }),
       });
       const importData = await importRes.json().catch(() => ({}));
       if (!importRes.ok) {
