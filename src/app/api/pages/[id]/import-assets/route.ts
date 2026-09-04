@@ -8,14 +8,18 @@ import { materializeAsset } from '@/lib/ai-asset-integrity';
 import { toFetchableUrl, MAX_LIBRARY_IMPORT, MAX_ASSET_BYTES } from '@/lib/asset-source-resolver';
 
 /**
- * Download the images the user ticked in the picker and re-host them on our
+ * Download the images a pasted link resolved to and re-host them on our
  * storage, so the page never depends on the client's Drive staying shared.
  *
  * This is the expensive half of the flow — /api/asset-sources/resolve lists,
- * this one spends bytes — which is why it only ever sees an explicit list the
- * user chose, capped, never a whole folder.
+ * this one spends bytes — and it is capped at MAX_LIBRARY_IMPORT per call.
+ *
+ * 300, not 120: the picker used to keep the list small, but a pasted folder
+ * now arrives whole. MAX_LIBRARY_IMPORT (40) files at IMPORT_CONCURRENCY (5)
+ * at a 20s per-file fetch timeout is ~160s worst case — past 120 the function
+ * is killed mid-import and the user gets a 504 with a half-filled library.
  */
-export const maxDuration = 120;
+export const maxDuration = 300;
 
 // Matches REHOST_CONCURRENCY in ai-asset-integrity: Supabase Storage's
 // connection pool times out requests past the pool limit instead of queuing

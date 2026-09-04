@@ -327,11 +327,59 @@ export async function POST(request: NextRequest) {
       ? `\nMINIMAL PAGE TASTE:\n- Strong hierarchy: one clear H1, short supporting line, generous whitespace, flat or near-flat background\n- No decorative card chrome, no competing CTAs, no mid-page clutter\n- Type scale slightly calmer than a full marketing LP (still clamp()-based)\n`
       : '';
 
+    // Real client photos pulled from a Drive folder / page link the user gave
+    // us, already re-hosted on our storage by /api/pages/[id]/import-assets.
+    //
+    // Mostly NOT sent as vision attachments: only the first LIBRARY_VISION_CAP
+    // viewable files are (see below). A named URL list has no such cap and is
+    // what the schema step mainly needs — it places URLs, and past the cap it
+    // chooses by filename rather than by sight.
+    //
+    // Derived here, above the reference budget, because the vision slice is
+    // part of what that budget has to account for.
+    //
+    // The instruction targets generated_image_url specifically because that is
+    // the one image field with teeth on both ends: generatePageImages() skips
+    // DALL-E for any node that already has one (ai-client.ts), and the builder
+    // prompt forbids ignoring one (ai-page-builder.ts). Writing a real photo
+    // there is therefore what stops an invented image replacing it.
+    const libraryAssets = Array.isArray(asset_library)
+      ? (asset_library as unknown[])
+          .filter((a): a is { url: string; name?: string } =>
+            !!a && typeof a === 'object' && typeof (a as { url?: unknown }).url === 'string')
+          .map((a) => ({ url: a.url, name: typeof a.name === 'string' ? a.name : 'image' }))
+          .slice(0, MAX_LIBRARY_ASSETS)
+      : [];
+
+    // Vision accepts JPEG/PNG/GIF/WebP only. An SVG logo — extremely common in
+    // a client asset folder — would make the whole schema call fail, taking the
+    // page build down with it. Split rather than drop: viewable files are shown
+    // AND listed, the rest are still listed by name and URL so they can be
+    // placed, just chosen by filename instead of by sight.
+    const VIEWABLE_EXT_RE = /\.(png|jpe?g|webp|gif)(?:\?|#|$)/i;
+    const viewableAssets = libraryAssets.filter((a) => VIEWABLE_EXT_RE.test(a.url));
+    const unviewableAssets = libraryAssets.filter((a) => !VIEWABLE_EXT_RE.test(a.url));
+
+    // Only the first LIBRARY_VISION_CAP viewable files are actually attached as
+    // vision — that is the cost. Everything past the cap (plus vector/other
+    // formats) is still offered to the model, but by filename + URL only, the
+    // same as the unviewable bucket. So a 40-image folder costs 8 images, not 40.
+    const visionAssets = viewableAssets.slice(0, LIBRARY_VISION_CAP);
+    const namedOnlyAssets = [...viewableAssets.slice(LIBRARY_VISION_CAP), ...unviewableAssets];
+
     // Vision attachments cost window whether or not they are the user's own —
     // counted here so the reference budget below is honest about them.
+    //
+    // BOTH groups are attached further down (visionBlocks): the user's own
+    // uploads AND the capped slice of the asset library. Counting only the
+    // uploads told the budget "3 images" while 11 were on the wire, and the
+    // reference scrape was then handed room the window did not have — the
+    // build failing outright with "prompt is too long". The library assets are
+    // derived above precisely so this number can include them.
     const attachedImagesForBudget = Array.isArray(image_urls)
       ? Math.min((image_urls as unknown[]).length, MAX_ATTACHMENTS)
       : 0;
+    const visionImagesForBudget = attachedImagesForBudget + visionAssets.length;
 
     // ── How much of the reference site can this call actually carry? ────────
     //
@@ -363,7 +411,7 @@ export async function POST(request: NextRequest) {
             (competitorContext.cssTokens?.length ?? 0) +
             history.reduce((n, h) => n + (h.content?.length ?? 0), 0),
           reservedOutputTokens: 128_000,
-          images: attachedImagesForBudget,
+          images: visionImagesForBudget,
         })
       : 0;
 
@@ -505,42 +553,6 @@ export async function POST(request: NextRequest) {
         ? `${attachedNote}\n## REQUIRED copy from attached screenshot (use verbatim in matching sections)\n${designCopyLines.map((l, i) => `${i + 1}. ${l}`).join('\n')}\nPut these into footer/nav/hero (or the section the user named). Each line once — if several attachments are the same screenshot, do not repeat blocks. Do not invent substitute legal/contact lines when these are present.\n`
         : attachedNote;
 
-    // Real client photos pulled from a Drive folder / page link the user gave
-    // us, already re-hosted on our storage by /api/pages/[id]/import-assets.
-    //
-    // NOT sent as vision attachments: those are capped at MAX_ATTACHMENTS (3)
-    // in every classifier on this path, so a 20-image folder would lose 17 of
-    // them silently. A named URL list has no such cap and is what the schema
-    // step actually needs — it places URLs, it does not need to look at them.
-    //
-    // The instruction targets generated_image_url specifically because that is
-    // the one image field with teeth on both ends: generatePageImages() skips
-    // DALL-E for any node that already has one (ai-client.ts), and the builder
-    // prompt forbids ignoring one (ai-page-builder.ts). Writing a real photo
-    // there is therefore what stops an invented image replacing it.
-    const libraryAssets = Array.isArray(asset_library)
-      ? (asset_library as unknown[])
-          .filter((a): a is { url: string; name?: string } =>
-            !!a && typeof a === 'object' && typeof (a as { url?: unknown }).url === 'string')
-          .map((a) => ({ url: a.url, name: typeof a.name === 'string' ? a.name : 'image' }))
-          .slice(0, MAX_LIBRARY_ASSETS)
-      : [];
-
-    // Vision accepts JPEG/PNG/GIF/WebP only. An SVG logo — extremely common in
-    // a client asset folder — would make the whole schema call fail, taking the
-    // page build down with it. Split rather than drop: viewable files are shown
-    // AND listed, the rest are still listed by name and URL so they can be
-    // placed, just chosen by filename instead of by sight.
-    const VIEWABLE_EXT_RE = /\.(png|jpe?g|webp|gif)(?:\?|#|$)/i;
-    const viewableAssets = libraryAssets.filter((a) => VIEWABLE_EXT_RE.test(a.url));
-    const unviewableAssets = libraryAssets.filter((a) => !VIEWABLE_EXT_RE.test(a.url));
-
-    // Only the first LIBRARY_VISION_CAP viewable files are actually attached as
-    // vision — that is the cost. Everything past the cap (plus vector/other
-    // formats) is still offered to the model, but by filename + URL only, the
-    // same as the unviewable bucket. So a 40-image folder costs 8 images, not 40.
-    const visionAssets = viewableAssets.slice(0, LIBRARY_VISION_CAP);
-    const namedOnlyAssets = [...viewableAssets.slice(LIBRARY_VISION_CAP), ...unviewableAssets];
 
     if (libraryAssets.length > 0) {
       console.log('[pages/generate] asset library', {
