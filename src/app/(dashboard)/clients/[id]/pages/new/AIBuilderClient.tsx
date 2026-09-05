@@ -1362,6 +1362,16 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         assistantSeen = true;
       }
     }
+    // A run that died on this page leaves it looking untouched, which reads as
+    // "my edit did nothing" rather than "it was stopped". Only a timeout gets
+    // here (see lastBuildError) — a refusal was already read live, and telling
+    // someone to send it again would be advice that cannot work.
+    if (failedBuildMessage) {
+      restored.push({
+        role: 'assistant',
+        content: `${failedBuildMessage} Your page is unchanged — send that again and I'll have another go.`,
+      });
+    }
     restored.push({
       role: 'assistant',
       content: (initialPage.draft_schema_json ?? initialPage.schema_json)

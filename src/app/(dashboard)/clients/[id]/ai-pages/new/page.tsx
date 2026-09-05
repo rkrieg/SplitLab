@@ -64,7 +64,12 @@ export default async function AIBuilderPage({ params, searchParams }: PageProps)
 
   // Only meaningful when nothing is live: it is the reason the last attempt
   // ended, so the screen can say "ran out of time" instead of "didn't finish".
-  const failedBuildMessage = activeBuild ? null : await lastBuildError(initialPage.id);
+  // The narrowing applies only where the page already has HTML — same test the
+  // builder uses to pick its restore branch. With no HTML the screen is empty
+  // and this message is the only explanation, so it takes any reason it can.
+  const failedBuildMessage = activeBuild
+    ? null
+    : await lastBuildError(initialPage.id, { recentTimeoutsOnly: !!initialPage.html_url });
 
   // A build and an edit hold the same row but need opposite treatment: a build
   // is watched and replayed, an edit is only waited out. See BuildKind.

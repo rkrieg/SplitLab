@@ -68,6 +68,14 @@ export const BUILD_MAX_MS = 800_000 + 60_000;
  */
 export const BUILD_HEARTBEAT_MS = 300_000;
 
+/**
+ * How recently a run must have failed for the builder to mention it on open.
+ *
+ * An hour covers walking away from a long build and coming back; past that,
+ * the user is opening the page for a new reason and the old failure is noise.
+ */
+export const FAILURE_IS_NEWS_MS = 3_600_000;
+
 /** The same verdict, in the words of whatever the user was actually waiting on. */
 export function staleMessage(kind: BuildKind): string {
   return kind === 'edit'
@@ -111,28 +119,58 @@ export async function findActiveBuild(
 }
 
 /**
- * Why the last build ended, when it ended badly and left no page behind.
+ * Why the last run on this page ended, when it ended badly.
  *
  * findActiveBuild reaps a stale row and returns null, so by the time the
- * builder renders, the only trace of a build that ran out of time is the
- * error on its row. Without reading it the screen falls back to a generic
- * "didn't finish", which tells the user nothing about what went wrong.
+ * builder renders, the only trace of a run that timed out is the error on its
+ * row. Without reading it the screen says nothing at all, or falls back to a
+ * generic "didn't finish". Covers edits as well as builds — a timed-out edit
+ * leaves the page looking untouched, which is the more confusing of the two.
  * Call this AFTER findActiveBuild so the reaping has already happened.
  */
-export async function lastBuildError(pageId: string): Promise<string | null> {
+export async function lastBuildError(
+  pageId: string,
+  /**
+   * Narrow to a recent timeout. For a page that already has HTML, where the
+   * failure was one turn in a longer session and the page still looks fine.
+   * A page with no HTML at all wants every reason it can get — there, this
+   * message is the only account of why there is nothing on the screen.
+   */
+  opts?: { recentTimeoutsOnly?: boolean },
+): Promise<string | null> {
   const { data } = await db
     .from('page_builds')
-    .select('status, error')
+    .select('status, error, updated_at')
     .eq('page_id', pageId)
-    // Builds only. This message is shown on a page with no HTML, and an edit
-    // that failed there would be describing work on a page that never existed.
-    .eq('kind', 'build')
     .order('created_at', { ascending: false })
     .limit(1);
 
-  const row = data?.[0] as { status: BuildStatus; error: string | null } | undefined;
+  const row = data?.[0] as
+    | { status: BuildStatus; error: string | null; updated_at: string }
+    | undefined;
   if (!row || row.status !== 'error') return null;
-  return row.error || null;
+
+  // News, not history. This is answering "why does my page look untouched?"
+  // for someone who just walked back in — and unlike the no-page version of
+  // this message, which stops the moment a build succeeds, a page that already
+  // has HTML would otherwise carry a week-old failure on every single open.
+  // A later success clears it too (that row becomes the newest), but a user
+  // who simply never edits again should not be told about it forever.
+  if (!opts?.recentTimeoutsOnly) return row.error || null;
+
+  if (Date.now() - new Date(row.updated_at).getTime() > FAILURE_IS_NEWS_MS) return null;
+
+  // Timeouts only — the one failure the user was never told about, because the
+  // run died with nobody watching. Everything else on that row is a refusal or
+  // an AI error the user read live ("we couldn't find a usable logo — attach it
+  // instead"), and repeating it here would pair its advice with our "send that
+  // again", which is the one thing that cannot work: resending fails
+  // identically. Matched against the same strings that write them, so the two
+  // cannot drift apart.
+  const timeouts = [staleMessage('build'), staleMessage('edit')];
+  if (!row.error || !timeouts.includes(row.error)) return null;
+
+  return row.error;
 }
 
 /**
