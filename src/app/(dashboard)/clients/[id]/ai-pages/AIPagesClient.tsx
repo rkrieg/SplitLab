@@ -138,8 +138,15 @@ export default function AIPagesClient({ pages: initialPages, clientId, workspace
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ workspace_id: workspaceId, name: newName.trim(), vertical: newVertical }),
       });
-      if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Failed to create page'); }
-      const page = await res.json();
+      // A platform-level failure (500, gateway timeout) answers with an HTML
+      // error page, and res.json() on that throws "Unexpected token '<'" —
+      // which is what the user saw instead of the actual problem.
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({} as { error?: string }));
+        throw new Error(err.error || `Couldn't create the page (server error ${res.status}). Please try again.`);
+      }
+      const page = await res.json().catch(() => null);
+      if (!page?.id) throw new Error("Couldn't create the page — the server sent back something unexpected. Please try again.");
       // Drop the cached list payload so coming back shows the new page.
       router.refresh();
       router.push(`/clients/${clientId}/ai-pages/new?page_id=${page.id}`);

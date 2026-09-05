@@ -5,7 +5,7 @@ import { db } from '@/lib/supabase-server';
 import { resolveWorkspaceRole } from '@/lib/workspace-auth';
 import { PLAN_LIMITS } from '@/lib/plans';
 import { loadPageSkills } from '@/lib/skills/persistence';
-import { findActiveBuild } from '@/lib/page-builds';
+import { findActiveBuild, lastBuildError } from '@/lib/page-builds';
 import AIBuilderClient from '../../pages/new/AIBuilderClient';
 
 interface PageProps {
@@ -62,6 +62,15 @@ export default async function AIBuilderPage({ params, searchParams }: PageProps)
   // Stale rows are marked failed by this lookup rather than reported as live.
   const activeBuild = await findActiveBuild(initialPage.id);
 
+  // Only meaningful when nothing is live: it is the reason the last attempt
+  // ended, so the screen can say "ran out of time" instead of "didn't finish".
+  const failedBuildMessage = activeBuild ? null : await lastBuildError(initialPage.id);
+
+  // A build and an edit hold the same row but need opposite treatment: a build
+  // is watched and replayed, an edit is only waited out. See BuildKind.
+  const liveBuild = activeBuild?.kind === 'edit' ? null : activeBuild;
+  const liveEdit = activeBuild?.kind === 'edit' ? activeBuild : null;
+
   // Pages reached via a test variant's "Edit using AI" button are already
   // live on that test the moment they're saved (served directly from this
   // same pages row) — Publish would just create an unrelated, unused
@@ -105,7 +114,9 @@ export default async function AIBuilderPage({ params, searchParams }: PageProps)
       clientName={isTestVariantPage && testName ? testName : (client?.name ?? 'Client')}
       variantName={isTestVariantPage ? linkedVariant.name : undefined}
       initialPage={initialPage}
-      activeBuildId={activeBuild?.id ?? null}
+      activeBuildId={liveBuild?.id ?? null}
+      activeEditId={liveEdit?.id ?? null}
+      failedBuildMessage={failedBuildMessage}
       initialSkills={savedSkillState.skills}
       initialStyle={savedSkillState.style}
       backPath={backPath}

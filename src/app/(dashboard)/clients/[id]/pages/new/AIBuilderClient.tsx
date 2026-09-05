@@ -158,6 +158,14 @@ interface Props {
    * what leaving mid-build used to look like on return.
    */
   activeBuildId?: string | null;
+  /**
+   * An AI edit still running on this page, started by a tab that has since
+   * gone. Its progress went down that tab's stream, so there is nothing to
+   * replay here — this screen waits it out and reloads. See BuildKind.
+   */
+  activeEditId?: string | null;
+  /** Why the previous build ended badly, when one did. */
+  failedBuildMessage?: string | null;
 }
 
 // Soft cap on the initial prompt — generous enough for a detailed multi-section
@@ -341,7 +349,7 @@ function styleStripLabel(style: string | null, wasAuto: boolean): string | null 
   return `${name}${wasAuto ? ' (auto)' : ''}`;
 }
 
-export default function AIBuilderClient({ workspaceId, clientId, clientName, variantName, initialPage, initialSkills, initialStyle, backPath, canUseAI = true, isTestVariantPage = false, canPublish = true, activeBuildId = null }: Props) {
+export default function AIBuilderClient({ workspaceId, clientId, clientName, variantName, initialPage, initialSkills, initialStyle, backPath, canUseAI = true, isTestVariantPage = false, canPublish = true, activeBuildId = null, activeEditId = null, failedBuildMessage = null }: Props) {
   const router = useRouter();
 
   // Variant pages ask the preview route for the in-progress draft; every
@@ -1026,6 +1034,9 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   // have HTML but no schema, and only once per page (guarded below and
   // idempotently on the server).
   const [preparingSchema, setPreparingSchema] = useState(false);
+  // An edit running on this page that this tab did not start. Blocks the
+  // composer until it clears, so two edits cannot overwrite each other.
+  const [editInFlight, setEditInFlight] = useState(!!activeEditId);
   // A rebuild replaces the whole document, so it locks the chat the same way prep
   // does — two writers on one page row is how a draft gets half-overwritten.
   const [rebuilding, setRebuilding] = useState(false);
@@ -1257,7 +1268,11 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         // calling it a failure — in exactly the case this all exists for.
         restored.push({
           role: 'assistant',
-          content: "Your last build didn't finish, so there's no page yet — but everything you told me is saved. Send it again and I'll build it.",
+          // The build's own reason when it left one ("ran out of time and was
+          // stopped") — the generic line is the fallback, not the default.
+          content: failedBuildMessage
+            ? `${failedBuildMessage} Everything you told me is saved — send it again and I'll build it.`
+            : "Your last build didn't finish, so there's no page yet — but everything you told me is saved. Send it again and I'll build it.",
         });
       }
       setMessages(restored);
@@ -1384,6 +1399,29 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       if (cancelled) return;
       if (finished) applyFinishedBuild(finished);
       else setPhase('prompt');
+    })();
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Rejoin an edit this tab did not start.
+  //
+  // The edit survives the tab that asked for it now, so arriving here mid-edit
+  // is normal. Its progress is replayed into the same panel a live edit uses,
+  // and when it lands the screen reloads — the edit saved the page itself, so
+  // a reload is what picks up the new HTML, schema and chat turn together.
+  // (router.refresh() would update the server half only; this component
+  // hydrates once on mount and would keep showing the pre-edit conversation.)
+  useEffect(() => {
+    if (!activeEditId) return;
+    let cancelled = false;
+    setFollowUpEvents([]);
+    void (async () => {
+      const landed = await waitForEdit(activeEditId, () => cancelled);
+      if (cancelled) return;
+      setEditInFlight(false);
+      if (landed) window.location.reload();
+      else setFollowUpEvents(null);
     })();
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2429,6 +2467,50 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   }
 
   /**
+   * Follow an edit this tab did not start, showing its progress as it goes.
+   *
+   * The route writes every line it streams into the edit's row as well, so the
+   * same "Rewriting hero section…" the original tab is watching shows up here
+   * — replayed from the start on the first poll, then only what is new.
+   *
+   * Returns true once the edit finished and the page was written. Separate
+   * from watchBuild because an edit's row carries no result to apply: it saved
+   * the page itself, so the answer is to read the page again.
+   */
+  async function waitForEdit(jobId: string, isCancelled?: () => boolean): Promise<boolean> {
+    let seen = 0;
+    let failures = 0;
+
+    while (!unmountedRef.current && !isCancelled?.()) {
+      try {
+        const res = await fetch(`/api/pages/build/${jobId}?after=${seen}`);
+        if (res.status === 401 || res.status === 403 || res.status === 404) return false;
+        if (!res.ok) throw new Error(`edit poll failed: ${res.status}`);
+        const poll = (await res.json()) as BuildPoll;
+        failures = 0;
+        if (poll.events.length > 0) {
+          seen = poll.total_events;
+          setFollowUpEvents(prev => (prev ? [...prev, ...poll.events] : poll.events));
+        }
+        if (poll.status === 'done') return true;
+        if (poll.status === 'error') {
+          toast.error(poll.error || 'That edit did not finish.');
+          return false;
+        }
+      } catch (err) {
+        console.error('[ai-builder] edit poll failed', err);
+        failures++;
+        if (failures >= MAX_POLL_FAILURES) {
+          toast.error('Lost contact with the edit running on this page. Reload to see where it got to.');
+          return false;
+        }
+      }
+      await new Promise(r => setTimeout(r, POLL_MS));
+    }
+    return false;
+  }
+
+  /**
    * Follow a build to its end, wherever it was started from.
    *
    * Returns the finished result, or null if it failed — the reason is already
@@ -2474,7 +2556,13 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         setBuildEvents(prev => [...prev, ...poll.events]);
       }
 
-      if (poll.status === 'done' && poll.result) return poll.result;
+      if (poll.status === 'done') {
+        if (poll.result) return poll.result;
+        // Finished with nothing to show. Kept as its own exit because the loop
+        // used to fall through to another poll here and never stop.
+        toast.error('That build finished without producing a page. Please try again.');
+        return null;
+      }
       if (poll.status === 'error') {
         toast.error(poll.error || 'Build failed');
         return null;
@@ -2929,7 +3017,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     e.preventDefault();
     // A rebuild rewrites the whole document and the whole schema; an edit landing
     // mid-rebuild would be applied to markup that is about to be replaced.
-    if ((!followUpInput.trim() && chatImages.length === 0 && linkedAssets.length === 0) || !pageId || preparingSchema || rebuilding || rebuildPending || schemaPrepFailed) return;
+    if ((!followUpInput.trim() && chatImages.length === 0 && linkedAssets.length === 0) || !pageId || preparingSchema || rebuilding || rebuildPending || schemaPrepFailed || editInFlight) return;
     const instruction = followUpInput.trim() || 'Please incorporate these reference images into the page.';
     // Same intake as the create path — an edit like "use the photos in
     // <drive link> for the gallery" has to work, not be silently ignored.
@@ -3736,10 +3824,10 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                     el.style.height = 'auto';
                     el.style.height = `${Math.min(el.scrollHeight, FOLLOW_UP_MAX_HEIGHT)}px`;
                   }}
-                  disabled={isLoading || preparingSchema || rebuilding || rebuildPending || schemaPrepFailed}
+                  disabled={isLoading || preparingSchema || rebuilding || rebuildPending || schemaPrepFailed || editInFlight}
                   className="w-full bg-transparent px-3.5 pt-3 pb-2 text-sm text-slate-700 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none resize-none disabled:opacity-40 overflow-y-auto"
                   style={{ maxHeight: FOLLOW_UP_MAX_HEIGHT }}
-                  placeholder={schemaPrepFailed ? 'Preparation failed — try again above' : rebuilding ? 'Rebuilding this page…' : preparingSchema ? 'Preparing this page for editing…' : rebuildPending ? 'Resolve the dialog above to start editing this page' : 'Ask Splitlab…'}
+                  placeholder={schemaPrepFailed ? 'Preparation failed — try again above' : editInFlight ? 'An edit is already running on this page…' : rebuilding ? 'Rebuilding this page…' : preparingSchema ? 'Preparing this page for editing…' : rebuildPending ? 'Resolve the dialog above to start editing this page' : 'Ask Splitlab…'}
                   rows={2}
                   onKeyDown={e => {
                     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); }
@@ -3750,7 +3838,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                   <div className="flex items-center gap-1.5">
                     <button
                       type="button"
-                      disabled={isLoading || preparingSchema || rebuilding || rebuildPending || schemaPrepFailed || chatImages.length >= 3}
+                      disabled={isLoading || preparingSchema || rebuilding || rebuildPending || schemaPrepFailed || editInFlight || chatImages.length >= 3}
                       onClick={() => chatImageInputRef.current?.click()}
                       className={ATTACH_BTN}
                       title="Upload an image from this computer (max 3)"
@@ -3759,7 +3847,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                     </button>
                     <button
                       type="button"
-                      disabled={isLoading || preparingSchema || rebuilding || rebuildPending || schemaPrepFailed}
+                      disabled={isLoading || preparingSchema || rebuilding || rebuildPending || schemaPrepFailed || editInFlight}
                       onClick={reopenAssetLinkPrompt}
                       className={LINK_BTN}
                       title="Add images from a link (Google Drive folder, shared file, or any page)"
@@ -3770,7 +3858,7 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                   <div className="flex items-center gap-1.5">
                     <button
                       type="submit"
-                      disabled={(!followUpInput.trim() && chatImages.length === 0 && linkedAssets.length === 0) || isLoading || scanningPrompt || preparingSchema || rebuilding || rebuildPending || schemaPrepFailed}
+                      disabled={(!followUpInput.trim() && chatImages.length === 0 && linkedAssets.length === 0) || isLoading || scanningPrompt || preparingSchema || rebuilding || rebuildPending || schemaPrepFailed || editInFlight}
                       className="w-7 h-7 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-30 disabled:cursor-not-allowed rounded-full flex items-center justify-center transition-colors"
                     >
                       <Send size={12} className="text-white" />

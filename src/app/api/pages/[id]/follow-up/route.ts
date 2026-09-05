@@ -21,7 +21,9 @@ import { resolveSkills } from '@/lib/skills';
 import { loadPageSkills } from '@/lib/skills/persistence';
 import { isStyleTag } from '@/lib/ai-page-exemplars';
 import { buildFontFollowUpBlock } from '@/lib/ai-page-fonts';
-import { createSSEStream, sendSSE, sendSSEPing, closeSSE, SSE_HEADERS, type SSEEvent } from '@/lib/sse';
+import { createSSEStream, sendSSE as sendSSERaw, sendSSEPing, closeSSE, SSE_HEADERS, type SSEEvent } from '@/lib/sse';
+import { waitUntil } from '@vercel/functions';
+import { startBuild, finishBuild, failBuild, createBuildEmitter } from '@/lib/page-builds';
 import { isTestVariantPage, getLinkedVariant } from '@/lib/page-drafts';
 import { rescanVariantHtml } from '@/lib/services/scan';
 import { extractDataUris, restoreDataUris, restoreDataUrisInValue } from '@/lib/data-uri-strip';
@@ -2453,6 +2455,36 @@ export async function POST(
 
   const startedAt = Date.now();
 
+  /**
+   * Every progress line goes two places: down the stream to the tab that asked
+   * for this edit, and into the edit's own row so a tab arriving later can
+   * replay what it missed.
+   *
+   * Declared here, at the top of the handler, rather than next to the emitter
+   * it writes to — this name shadows the import for the whole function, and
+   * the early question/outage paths below call it before the row exists.
+   * `buildEvents` is null until then, and those paths have nothing to replay.
+   */
+  let buildEvents: ReturnType<typeof createBuildEmitter> | null = null;
+  /**
+   * The reason this edit ended badly, if it did.
+   *
+   * An edit can report a failure and return without throwing — "couldn't find
+   * a usable headshot" is an SSE error event, not an exception — and the row
+   * would then be released as `done`. Catching it here, where every event
+   * passes anyway, means the record matches what the user was told no matter
+   * which of the many exits the route took.
+   */
+  let emittedError: string | null = null;
+  const sendSSE = (
+    controller: ReadableStreamDefaultController<Uint8Array>,
+    event: SSEEvent,
+  ): void => {
+    sendSSERaw(controller, event);
+    buildEvents?.emit(event);
+    if (event.type === 'error') emittedError = event.message || 'The edit could not be completed.';
+  };
+
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
@@ -3194,6 +3226,33 @@ export async function POST(
     if (parsed.length > 0) modelRequirements = mergeRequirements(modelRequirements, parsed);
   };
 
+  // ── Claim the page ────────────────────────────────────────────────────────
+  //
+  // The work below now outlives the tab that asked for it, so the tab is no
+  // longer what stops a second edit landing on top of the first. This row is:
+  // a partial unique index allows one live row per page, so a second edit (or
+  // a rebuild) is refused here rather than racing us to the same HTML.
+  //
+  // Taken now rather than at the top of the route: everything above is prep,
+  // and holding the page through an intent classification that may end in a
+  // question would lock out an edit the user is entitled to start.
+  const lock = await startBuild(params.id, page.workspace_id, 'edit');
+  if (!lock) {
+    return NextResponse.json(
+      { error: 'Could not start this edit. Please try again.' },
+      { status: 500 },
+    );
+  }
+  if (lock.joined) {
+    return NextResponse.json(
+      { error: 'Something else is already working on this page. Give it a moment and try again.' },
+      { status: 409 },
+    );
+  }
+  // From here on every sendSSE above also lands in this row. Batched, and with
+  // its own heartbeat so a long silent model call is not read as a dead edit.
+  buildEvents = createBuildEmitter(lock.id);
+
   // ── Open SSE stream — no NextResponse.json after this point ───────────────
 
   const { stream, controller } = createSSEStream();
@@ -3206,7 +3265,13 @@ export async function POST(
   // comment, so it never reaches the client's event parser.
   const heartbeat = setInterval(() => sendSSEPing(controller), 15_000);
 
-  void (async () => {
+  // waitUntil, not a floating promise: the edit has to keep running after the
+  // tab is gone. It used to stop on `request.signal.aborted` at fifteen points
+  // in here, which threw away a finished edit the moment someone navigated
+  // away — the same loss the build path had. Every path below saves the page
+  // itself (HTML, schema and the chat turn), so surviving to the end is all it
+  // takes for the work to land. Still bounded by maxDuration.
+  waitUntil((async () => {
     try {
       let finalHtml = '';
       let finalSchemaJson: unknown | undefined;
@@ -3465,7 +3530,6 @@ export async function POST(
           let rewriteInstruction = withConstraints(prompt);
 
           if (isLogoSwapAttempt && !logoSwapCompleted) {
-            if (request.signal.aborted) { closeSSE(controller); return; }
             sendSSE(controller, { type: 'status', message: 'Fetching logo...' });
             const assets = await fetchLogoAssets(competitorUrls[0]);
             const pageSlugForLogo = page.slug ?? crypto.randomUUID();
@@ -3495,7 +3559,6 @@ export async function POST(
           }
 
           if (isContentImageSwapAttempt) {
-            if (request.signal.aborted) { closeSSE(controller); return; }
             sendSSE(controller, { type: 'status', message: 'Fetching photo from site...' });
             const photos = await fetchContentImageAssets(competitorUrls[0]);
             if (photos.length === 0) {
@@ -3511,7 +3574,6 @@ export async function POST(
             rewriteInstruction += `\n\n(A photo was fetched from the referenced site. Hosted URL:\n${photos[0]}\nUse this exact URL in src if the instruction is about placing that photo.)`;
           }
 
-          if (request.signal.aborted) { closeSSE(controller); return; }
           sendSSE(controller, { type: 'status', message: 'Rewriting that part of the page...' });
           let result: Awaited<ReturnType<typeof applyRegionRewriteToHtml>> | null = null;
           try {
@@ -3646,7 +3708,6 @@ export async function POST(
         // down the image_generate path, reproducing the exact fake-logo bug
         // this exists to fix.
         if (!scopedApplied && !targetSections && isLogoSwapAttempt && !logoSwapCompleted) {
-          if (request.signal.aborted) { closeSSE(controller); return; }
           sendSSE(controller, { type: 'status', message: 'Fetching logo...' });
           const assets = await fetchLogoAssets(competitorUrls[0]);
           const pageSlugForLogo = page.slug ?? crypto.randomUUID();
@@ -3780,7 +3841,6 @@ export async function POST(
         if (!scopedApplied && !scopedFailureReason) {
           const reuse = resolveContentReuse(prompt, slSections.map((s) => s.name));
           if (reuse) {
-            if (request.signal.aborted) { closeSSE(controller); return; }
 
             let targets = reuse.targets;
             if (targets.length === 0) {
@@ -4052,7 +4112,6 @@ export async function POST(
         // "Use their headshot / product photo from this URL" — fail-closed fetch,
         // scoped embed (same family as logo swap; never invent a photo).
         if (!scopedApplied && !scopedFailureReason && isContentImageSwapAttempt) {
-          if (request.signal.aborted) { closeSSE(controller); return; }
           sendSSE(controller, { type: 'status', message: 'Fetching photo from site...' });
           const photos = await fetchContentImageAssets(competitorUrls[0]);
           if (photos.length === 0) {
@@ -4330,7 +4389,6 @@ export async function POST(
 
             for (let i = 0; i < plan.steps.length; i++) {
               const step = plan.steps[i];
-              if (request.signal.aborted) { closeSSE(controller); return; }
               sendSSE(controller, {
                 type: 'status',
                 message: `Step ${i + 1}/${plan.steps.length}: ${step.instruction.slice(0, 60)}${step.instruction.length > 60 ? '…' : ''}`,
@@ -4402,7 +4460,6 @@ export async function POST(
                 let anchorForNext: string = anchorName;
                 let positionForNext: 'before' | 'after' = anchorPosition;
                 for (let n = 0; n < wanted; n++) {
-                  if (request.signal.aborted) { closeSSE(controller); return; }
                   if (wanted > 1) {
                     sendSSE(controller, {
                       type: 'status',
@@ -5062,7 +5119,6 @@ export async function POST(
               scopedFailureReason = 'reorder_sections_marker_not_found';
             }
           } else if (insertShapeOk) {
-            if (request.signal.aborted) { closeSSE(controller); return; }
             sendSSE(controller, { type: 'status', message: 'Writing new section...' });
             const anchorName = routing!.anchor_section!;
             const anchorSection = slSections.find((s) => s.name === anchorName)!;
@@ -5179,7 +5235,6 @@ export async function POST(
         }
 
         if (!scopedApplied && targetSections && targetSections.length > 0) {
-          if (request.signal.aborted) { closeSSE(controller); return; }
           sendSSE(controller, { type: 'status', message: 'Applying patch...' });
 
           const scopedPrompt = generatedImageUrl
@@ -5422,7 +5477,6 @@ export async function POST(
         competitorContext = await scrapeCompetitorUrl(competitorUrls[0]);
       }
 
-      if (request.signal.aborted) { closeSSE(controller); return; }
 
       const hasCompetitorContext =
         (competitorContext?.screenshots?.length ?? 0) > 0 ||
@@ -5545,7 +5599,6 @@ export async function POST(
       // Everything from here to the end of this block is the full-page attempt,
       // and re-running it would undo what just succeeded.
       if (!scopedApplied) {
-      if (request.signal.aborted) { closeSSE(controller); return; }
 
       // Parse Pass 1 result
       let raw = pass1Text.trim();
@@ -5636,7 +5689,6 @@ export async function POST(
           sendSSE(controller, { type: 'image_ready', url });
         }, usageCtx);
 
-        if (request.signal.aborted) { closeSSE(controller); return; }
 
         // Content-only structural edits (remove/shorten sections, no
         // redesign intent) — apply the AI's already-decided schema diff
@@ -6018,7 +6070,7 @@ export async function POST(
         //    before, so this can never leave the page worse than not trying
         //  • runs BEFORE the loss guard below, so anything it damages is still
         //    caught, repaired, or rejected there
-        if (results.some((r) => !r.passed) && !request.signal.aborted) {
+        if (results.some((r) => !r.passed)) {
           // Deleting is not a patch. It happens by splicing out the marker block
           // (removeSlSection / the planner's remove op / the full-page `deleted`
           // list) and normally succeeds, in which case section_absent PASSES and
@@ -6050,7 +6102,6 @@ export async function POST(
               `Keep every data-field attribute so the text stays click-to-editable.`;
             const repatched: Array<{ name: string; html: string }> = [];
             for (const name of retryTargets) {
-              if (request.signal.aborted) break;
               const section = availableSections.find((s) => s.name === name);
               if (!section) continue;
               // Real image bytes are back in the HTML by this point (line ~4875).
@@ -6806,11 +6857,21 @@ export async function POST(
       console.error('[pages/follow-up]', err);
       sendSSE(controller, { type: 'error', message: userFacingAIErrorMessage(err) });
       closeSSE(controller);
+      // No failBuild here: the event above already recorded the reason, and
+      // the finally below writes it. One path for every kind of failure.
     } finally {
-      // Covers every early `return` above too, not just the happy path.
+      // Covers every early `return` above too, not just the happy path. The
+      // lock must be released on all of them — a page left claimed by a dead
+      // edit refuses the next one until the staleness check reaps it.
       clearInterval(heartbeat);
+      // Flush before the release, or a tab that sees 'done' can poll for the
+      // last events and find them still sitting in the buffer.
+      await buildEvents?.flush();
+      buildEvents?.stop();
+      if (emittedError) await failBuild(lock.id, emittedError);
+      else await finishBuild(lock.id);
     }
-  })();
+  })());
 
   return response;
 }

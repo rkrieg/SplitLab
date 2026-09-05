@@ -12,10 +12,14 @@ import { createPage } from '@/lib/services/pages';
 export const maxDuration = 300;
 
 export async function POST(request: NextRequest) {
-  const session = await getServerSession(authOptions);
-  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
   try {
+    // Inside the try on purpose. Left outside, anything this throws (a cookie
+    // it can't decrypt, a secret mismatch) escapes the handler entirely and
+    // the platform answers with an HTML error page instead of our JSON — the
+    // client then chokes on "<" and shows a parser error as the toast.
+    const session = await getServerSession(authOptions);
+    if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
     const {
       workspace_id, name, vertical,
       prompt, schema_json, conversation_json,

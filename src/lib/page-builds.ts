@@ -34,6 +34,18 @@ export type BuildStatus = 'running' | 'saving' | 'done' | 'error';
 const LIVE_STATUSES: BuildStatus[] = ['running', 'saving'];
 
 /**
+ * What the row is holding the page for.
+ *
+ * Both write their progress into `events`, so a tab arriving late can replay
+ * what it missed. They differ in what finishing means: a build stores a
+ * `result` for the watching tab to apply, while an edit saves the page itself
+ * — HTML, schema and the chat turn — and leaves the row carrying only the
+ * progress. So a build is watched and applied; an edit is watched and, once
+ * done, read back off the page row.
+ */
+export type BuildKind = 'build' | 'edit';
+
+/**
  * How long a build may live before we call it dead.
  *
  * maxDuration on the build route is 800s and covers the background work too, so
@@ -56,6 +68,13 @@ export const BUILD_MAX_MS = 800_000 + 60_000;
  */
 export const BUILD_HEARTBEAT_MS = 300_000;
 
+/** The same verdict, in the words of whatever the user was actually waiting on. */
+export function staleMessage(kind: BuildKind): string {
+  return kind === 'edit'
+    ? 'This edit ran out of time and was stopped.'
+    : 'This build ran out of time and was stopped.';
+}
+
 export function isStale(row: { created_at: string; updated_at?: string | null; status: BuildStatus }): boolean {
   if (!LIVE_STATUSES.includes(row.status)) return false;
   const now = Date.now();
@@ -71,24 +90,49 @@ export function isStale(row: { created_at: string; updated_at?: string | null; s
  */
 export async function findActiveBuild(
   pageId: string,
-): Promise<{ id: string; status: BuildStatus; created_at: string; updated_at: string } | null> {
+): Promise<{ id: string; status: BuildStatus; kind: BuildKind; created_at: string; updated_at: string } | null> {
   const { data } = await db
     .from('page_builds')
-    .select('id, status, created_at, updated_at')
+    .select('id, status, kind, created_at, updated_at')
     .eq('page_id', pageId)
     .in('status', LIVE_STATUSES)
     .order('created_at', { ascending: false })
     .limit(1);
 
   const row = data?.[0] as
-    | { id: string; status: BuildStatus; created_at: string; updated_at: string }
+    | { id: string; status: BuildStatus; kind: BuildKind; created_at: string; updated_at: string }
     | undefined;
   if (!row) return null;
   if (isStale(row)) {
-    await failBuild(row.id, 'This build ran out of time and was stopped.');
+    await failBuild(row.id, staleMessage(row.kind));
     return null;
   }
   return row;
+}
+
+/**
+ * Why the last build ended, when it ended badly and left no page behind.
+ *
+ * findActiveBuild reaps a stale row and returns null, so by the time the
+ * builder renders, the only trace of a build that ran out of time is the
+ * error on its row. Without reading it the screen falls back to a generic
+ * "didn't finish", which tells the user nothing about what went wrong.
+ * Call this AFTER findActiveBuild so the reaping has already happened.
+ */
+export async function lastBuildError(pageId: string): Promise<string | null> {
+  const { data } = await db
+    .from('page_builds')
+    .select('status, error')
+    .eq('page_id', pageId)
+    // Builds only. This message is shown on a page with no HTML, and an edit
+    // that failed there would be describing work on a page that never existed.
+    .eq('kind', 'build')
+    .order('created_at', { ascending: false })
+    .limit(1);
+
+  const row = data?.[0] as { status: BuildStatus; error: string | null } | undefined;
+  if (!row || row.status !== 'error') return null;
+  return row.error || null;
 }
 
 /**
@@ -102,20 +146,38 @@ export async function findActiveBuild(
 export async function startBuild(
   pageId: string,
   workspaceId: string,
-): Promise<{ id: string; joined: boolean } | null> {
+  kind: BuildKind = 'build',
+): Promise<{ id: string; joined: boolean; kind: BuildKind } | null> {
   const { data, error } = await db
     .from('page_builds')
-    .insert({ page_id: pageId, workspace_id: workspaceId, status: 'running' })
+    .insert({ page_id: pageId, workspace_id: workspaceId, status: 'running', kind })
     .select('id')
     .single();
 
-  if (!error && data) return { id: (data as { id: string }).id, joined: false };
+  if (!error && data) return { id: (data as { id: string }).id, joined: false, kind };
 
   // 23505 = unique_violation: another request started one between our check and
-  // this insert.
+  // this insert. `kind` is the winner's, not ours — joining a build and being
+  // turned away by an edit are different answers.
   if (error?.code === '23505') {
     const existing = await findActiveBuild(pageId);
-    if (existing) return { id: existing.id, joined: true };
+    if (existing) return { id: existing.id, joined: true, kind: existing.kind };
+
+    // No live row, yet the index refused us: what blocked the insert was a
+    // corpse, and the lookup above has just reaped it. Retry once. Without
+    // this, the first attempt after a run died at the time cap always fails —
+    // the caller has no reap of its own to fall back on the way the build
+    // route does, and "try again" would be the user doing this by hand.
+    const retry = await db
+      .from('page_builds')
+      .insert({ page_id: pageId, workspace_id: workspaceId, status: 'running', kind })
+      .select('id')
+      .single();
+    if (!retry.error && retry.data) {
+      return { id: (retry.data as { id: string }).id, joined: false, kind };
+    }
+    console.error('[page-builds] could not start build after reap', retry.error?.message);
+    return null;
   }
 
   console.error('[page-builds] could not start build', error?.message);
@@ -189,6 +251,23 @@ export function createBuildEmitter(buildId: string) {
     },
     flush,
   };
+}
+
+/**
+ * Release a row that finished its work.
+ *
+ * For an edit this is the whole completion path — the follow-up route saves
+ * the page itself, so there is nothing to record here but the release. Guarded
+ * on a live status so it cannot resurrect a row a staleness check already
+ * failed.
+ */
+export async function finishBuild(buildId: string): Promise<void> {
+  const { error } = await db
+    .from('page_builds')
+    .update({ status: 'done', updated_at: new Date().toISOString() })
+    .eq('id', buildId)
+    .in('status', LIVE_STATUSES);
+  if (error) console.error('[page-builds] could not release build', error.message);
 }
 
 export async function failBuild(buildId: string, message: string): Promise<void> {
@@ -327,7 +406,7 @@ export async function completeBuild(args: {
   // being told it was ready.
   if (!saved.ok) {
     console.error('[page-builds] page not saved', saved.error);
-    await failBuild(buildId, 'The page was built but could not be saved. Nothing is lost — try again.');
+    await failBuild(buildId, 'The page was built but could not be saved.');
     return;
   }
 

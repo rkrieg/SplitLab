@@ -1966,8 +1966,6 @@ assert('the retry re-checks against the same requirements array, so labels canno
 assert('image bytes are stripped before the retry call and restored after',
   /const \{ html: sectionForModel, map: sectionUris \} = extractDataUris\(section\.html\)/.test(follow) &&
   /restoreDataUris\(attempt\.html, sectionUris\)/.test(follow));
-assert('an aborted request does not start a retry',
-  /results\.some\(\(r\) => !r\.passed\) && !request\.signal\.aborted/.test(follow));
 assert('a retry with nowhere to go is logged rather than silently skipped',
   /unmet requirements with nowhere to retry/.test(follow));
 // Each target is a sequential model call inside an open SSE stream. 16
@@ -1976,8 +1974,29 @@ assert('a retry with nowhere to go is logged rather than silently skipped',
 assert('the retry cannot hang the stream with an unbounded number of calls',
   /const REQUIREMENT_RETRY_SECTION_CAP = 3;/.test(follow) &&
   /\.slice\(0, REQUIREMENT_RETRY_SECTION_CAP\)/.test(follow));
-assert('an abort mid-retry stops the remaining calls',
-  /for \(const name of retryTargets\) \{\s*\n\s*if \(request\.signal\.aborted\) break;/.test(follow));
+// The edit outlives the tab that asked for it now: it runs under waitUntil and
+// holds a page_builds row as its lock. Stopping on client disconnect - which is
+// what the two assertions here used to require - threw away finished work.
+assert('the edit never stops just because the client disconnected',
+  !/if \(request\.signal\.aborted\)/.test(follow) && !/&& !request\.signal\.aborted/.test(follow));
+assert('the edit runs under waitUntil so it survives the tab',
+  /waitUntil\(\(async \(\) => \{/.test(follow));
+// Option B: the same progress lines the asking tab streams are written into
+// the edit's row, so a tab that arrives late replays them instead of staring
+// at "still working". One wrapper does it - all 66 call sites are untouched.
+assert('progress lines are teed into the edit row, not only streamed',
+  /sendSSERaw\(controller, event\);\s*[\s\S]{0,80}?buildEvents\?\.emit\(event\);/.test(follow) &&
+  /buildEvents = createBuildEmitter\(lock\.id\)/.test(follow));
+assert('the last events are flushed before the row is released',
+  /await buildEvents\?\.flush\(\);[\s\S]{0,120}?await finishBuild\(lock\.id\);/.test(follow));
+assert('the edit claims the page, so a second edit or a build cannot race it',
+  /startBuild\(params\.id, page\.workspace_id, 'edit'\)/.test(follow));
+// An edit can report a failure and return without throwing, so the release
+// cannot assume success. The wrapper sees every event, error ones included.
+assert('an edit that ends on an error event is recorded as an error, not done',
+  /if \(event\.type === 'error'\) emittedError = event\.message/.test(follow));
+assert('the claim is released on every path, not just the happy one',
+  /\} finally \{[\s\S]{0,600}?if \(emittedError\) await failBuild\(lock\.id, emittedError\);[\s\S]{0,60}?else await finishBuild\(lock\.id\);/.test(follow));
 // Image verification already ran by this point, so a URL the retry invents would
 // ship unchecked and 404 on the live page.
 assert('a retry that invents an unverified image URL is discarded',

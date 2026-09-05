@@ -3,7 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/supabase-server';
 import { resolveWorkspaceRole } from '@/lib/workspace-auth';
-import { isStale, failBuild, type BuildStatus } from '@/lib/page-builds';
+import { isStale, failBuild, staleMessage, type BuildStatus, type BuildKind } from '@/lib/page-builds';
 import type { SSEEvent } from '@/lib/sse';
 
 export const dynamic = 'force-dynamic';
@@ -24,7 +24,7 @@ export async function GET(
 
   const { data: job } = await db
     .from('page_builds')
-    .select('id, page_id, workspace_id, status, events, result, error, created_at, updated_at')
+    .select('id, page_id, workspace_id, status, kind, events, result, error, created_at, updated_at')
     .eq('id', params.jobId)
     .single();
 
@@ -35,6 +35,7 @@ export async function GET(
     page_id: string;
     workspace_id: string;
     status: BuildStatus;
+    kind: BuildKind;
     events: SSEEvent[] | null;
     result: unknown;
     error: string | null;
@@ -49,7 +50,11 @@ export async function GET(
   // the verdict is reached here instead. Without this a build that died mid-run
   // sits at "running" forever — the same frozen spinner, one layer down.
   if (isStale(row)) {
-    const message = 'This build ran out of time and was stopped. Nothing was lost — try again.';
+    // No "try again" here: this string is also the stored reason, and the
+    // builder appends its own "send it again" sentence when it shows it.
+    // Worded from the row's kind — a user waiting on an edit should not be
+    // told a "build" was stopped.
+    const message = staleMessage(row.kind);
     await failBuild(row.id, message);
     return NextResponse.json({
       status: 'error',

@@ -187,13 +187,29 @@ export async function POST(request: NextRequest) {
 
   // A second click joins the run already going rather than starting a rival one.
   const running = await findActiveBuild(page_id);
+  // An edit holds the same row but has no events to replay and no build result
+  // to hand back — a tab told to watch it would poll a job that never answers.
+  if (running?.kind === 'edit') {
+    return NextResponse.json(
+      { error: 'An AI edit is still running on this page. Give it a moment and try again.' },
+      { status: 409 },
+    );
+  }
   if (running) return NextResponse.json({ job_id: running.id, already_running: true });
 
   const started = await startBuild(page_id, workspace_id);
   if (!started) return NextResponse.json({ error: 'Could not start the build' }, { status: 500 });
   // Lost the insert race to another tab or a double click: join theirs rather
   // than run a second build against the same page.
-  if (started.joined) return NextResponse.json({ job_id: started.id, already_running: true });
+  if (started.joined) {
+    if (started.kind === 'edit') {
+      return NextResponse.json(
+        { error: 'An AI edit is still running on this page. Give it a moment and try again.' },
+        { status: 409 },
+      );
+    }
+    return NextResponse.json({ job_id: started.id, already_running: true });
+  }
   const buildId = started.id;
 
   const { emit, flush, stop: stopHeartbeat } = createBuildEmitter(buildId);
