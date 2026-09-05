@@ -8,7 +8,9 @@ import { PLAN_LIMITS } from '@/lib/plans';
 import { buildHtmlFromSchema } from '@/lib/ai-page-builder';
 import { resolveSkills, runSkillChecks, skillIds, skillNames } from '@/lib/skills';
 import { isStyleTag } from '@/lib/ai-page-exemplars';
-import { createSSEStream, sendSSE, closeSSE, SSE_HEADERS } from '@/lib/sse';
+import { waitUntil } from '@vercel/functions';
+import { db } from '@/lib/supabase-server';
+import { startBuild, findActiveBuild, createBuildEmitter, completeBuild, failBuild } from '@/lib/page-builds';
 import {
   injectBrandAssetsIntoSchema,
   forceEmbedLogoInHtml,
@@ -35,6 +37,36 @@ import {
   mergeRequirements,
 } from '@/lib/ai-page-requirements';
 
+/**
+ * Who runs a build, and who watches it.
+ *
+ * Today the browser does both, over one connection it has to keep open:
+ *
+ *   Browser  ->  /api/pages/build
+ *                    |  connection stays open for the whole build
+ *                    |  progress comes back down this same wire
+ *                    v
+ *                 finishes  ->  sends html_url down the wire
+ *                    v
+ *   Browser  ->  PATCH /api/pages/[id]      <- the BROWSER saves the result
+ *
+ * So a tab that navigates away takes the build with it: the abort check below
+ * returns early, and the page row never learns the build happened.
+ *
+ * Where this is going - the browser only watches:
+ *
+ *   Browser  ->  /api/pages/build
+ *                    |  responds at once with { job_id }, connection closes
+ *                    |
+ *                    waitUntil( build the page -> write progress + result to DB )
+ *
+ *   Browser  ->  polls the job every 2s, and reattaches to it on return
+ *
+ * The response is the job id, not the page, so waitUntil is doing exactly what
+ * it is for. maxDuration still caps the background work - a build gets the same
+ * ~13 minutes it gets today, and one that runs past it is marked failed rather
+ * than vanishing.
+ */
 export const dynamic = 'force-dynamic';
 export const maxDuration = 800;
 
@@ -65,6 +97,8 @@ export async function POST(request: NextRequest) {
     image_urls: unknown,
     user_prompt: unknown,
     workspace_id: unknown,
+    page_id: unknown,
+    conversation_json: unknown,
     competitor_screenshots: unknown,
     competitor_css_tokens: unknown,
     competitor_palette: unknown,
@@ -89,6 +123,8 @@ export async function POST(request: NextRequest) {
       image_urls,
       user_prompt,
       workspace_id,
+      page_id,
+      conversation_json,
       competitor_screenshots,
       competitor_css_tokens,
       competitor_palette,
@@ -138,18 +174,52 @@ export async function POST(request: NextRequest) {
   const activeSkills = resolveSkills(selected_skills);
   const activeStyle = isStyleTag(selected_style) ? selected_style : null;
 
-  // ── Open SSE stream — no NextResponse.json after this point ───────────────
+  if (!page_id || typeof page_id !== 'string') {
+    return NextResponse.json({ error: 'page_id is required' }, { status: 400 });
+  }
+  const { data: pageRow } = await db
+    .from('pages')
+    .select('id')
+    .eq('id', page_id)
+    .eq('workspace_id', workspace_id)
+    .single();
+  if (!pageRow) return NextResponse.json({ error: 'Page not found' }, { status: 404 });
 
-  const { stream, controller } = createSSEStream();
-  const response = new Response(stream, { headers: SSE_HEADERS });
+  // A second click joins the run already going rather than starting a rival one.
+  const running = await findActiveBuild(page_id);
+  if (running) return NextResponse.json({ job_id: running.id, already_running: true });
 
-  void (async () => {
+  const started = await startBuild(page_id, workspace_id);
+  if (!started) return NextResponse.json({ error: 'Could not start the build' }, { status: 500 });
+  // Lost the insert race to another tab or a double click: join theirs rather
+  // than run a second build against the same page.
+  if (started.joined) return NextResponse.json({ job_id: started.id, already_running: true });
+  const buildId = started.id;
+
+  const { emit, flush, stop: stopHeartbeat } = createBuildEmitter(buildId);
+  const history = Array.isArray(conversation_json)
+    ? (conversation_json as { role: string; content: string; image_urls?: string[] }[])
+    : [];
+
+  // Every early exit below has to land in the job row: a build the browser
+  // cannot see fail is a spinner that never stops.
+  const fail = async (message: string) => {
+    emit({ type: 'error', message });
+    await flush();
+    await failBuild(buildId, message);
+  };
+
+  // ── Build in the background ────────────────────────────────────────
+  //
+  // waitUntil is what keeps this alive after the response is sent. Nothing is
+  // waiting on it, so nothing can abort it — which is the entire point.
+  waitUntil((async () => {
     try {
-      sendSSE(controller, { type: 'status', message: 'Preparing your page...' });
+      emit({ type: 'status', message: 'Preparing your page...' });
 
       const imageCount = countImagePrompts(schema_json);
       if (imageCount > 0) {
-        sendSSE(controller, {
+        emit({
           type: 'status',
           message: `Generating ${imageCount} image${imageCount !== 1 ? 's' : ''}...`,
         });
@@ -202,10 +272,9 @@ export async function POST(request: NextRequest) {
       const enrichedSchema = await generatePageImages(
         workingSchema,
         pageSlug,
-        (url) => { sendSSE(controller, { type: 'image_ready', url }); },
+        (url) => { emit({ type: 'image_ready', url }); },
       );
 
-      if (request.signal.aborted) { closeSSE(controller); return; }
 
       const attachedImageUrls = Array.isArray(image_urls)
         ? (image_urls as string[]).filter((u) => typeof u === 'string' && u.trim().length > 0).slice(0, MAX_ATTACHMENTS)
@@ -223,7 +292,7 @@ export async function POST(request: NextRequest) {
         : [];
 
       if (designCopyLines.length === 0 && hasImages && reuseReferenceCopy) {
-        sendSSE(controller, { type: 'status', message: 'Reading design screenshot…' });
+        emit({ type: 'status', message: 'Reading design screenshot…' });
         designCopyLines = await extractDesignReferenceCopy({
           imageUrls: attachedImageUrls,
           prompt: promptText,
@@ -231,7 +300,7 @@ export async function POST(request: NextRequest) {
         console.log('[pages/build] design-ref OCR', { lines: designCopyLines.length });
       }
 
-      sendSSE(controller, { type: 'status', message: 'Building HTML...' });
+      emit({ type: 'status', message: 'Building HTML...' });
 
       let statusBuffer = '';
       let html: string;
@@ -260,14 +329,14 @@ export async function POST(request: NextRequest) {
           callerLabel: 'build',
           onStreamRestart: () => {
             statusBuffer = '';
-            sendSSE(controller, { type: 'status', message: 'Connection dropped — restarting the build…' });
+            emit({ type: 'status', message: 'Connection dropped — restarting the build…' });
           },
           onChunk: (chunk) => {
             statusBuffer += chunk;
             statusBuffer = statusBuffer.replace(
               /<!--\s*STATUS:\s*([^>]*?)-->/g,
               (_full, msg: string) => {
-                sendSSE(controller, { type: 'section_status', message: msg.trim() });
+                emit({ type: 'section_status', message: msg.trim() });
                 return '';
               }
             );
@@ -278,8 +347,7 @@ export async function POST(request: NextRequest) {
         // Don't blame the model's output for a dead socket — this catch used to
         // report "invalid HTML" for a connection that never finished sending any.
         console.error('[pages/build] build HTML failed', err);
-        sendSSE(controller, { type: 'error', message: userFacingAIErrorMessage(err) });
-        closeSSE(controller);
+        await fail(userFacingAIErrorMessage(err));
         return;
       }
 
@@ -335,12 +403,9 @@ export async function POST(request: NextRequest) {
         // never error just because a oddly-named footer section was hard to hit.
         if (logoUrl && !hasUrl) {
           console.error('[pages/build] logo URL missing from HTML after embed attempts');
-          sendSSE(controller, {
-            type: 'error',
-            message:
-              "We couldn't place the real logo on the page cleanly. Try again, or attach the logo file directly.",
-          });
-          closeSSE(controller);
+          await fail(
+            "We couldn't place the real logo on the page cleanly. Try again, or attach the logo file directly.",
+          );
           return;
         }
       }
@@ -579,8 +644,8 @@ export async function POST(request: NextRequest) {
         skillScores = [];
       }
 
-      sendSSE(controller, {
-        type: 'done',
+      const done = {
+        type: 'done' as const,
         html_url: htmlUrl,
         skills_applied: skillIds(activeSkills),
         skills_applied_names: skillNames(activeSkills),
@@ -599,14 +664,26 @@ export async function POST(request: NextRequest) {
         ...(placement
           ? { imported_assets: placement.imported, placed_assets: placement.placed, unused_asset_names: placement.unusedNames }
           : {}),
+      };
+      emit(done);
+      await flush();
+      await completeBuild({
+        buildId,
+        pageId: page_id,
+        done,
+        userPrompt: typeof user_prompt === 'string' ? user_prompt : '',
+        history,
+        imageUrls: Array.isArray(image_urls) ? (image_urls as string[]) : [],
+        skills: skillIds(activeSkills),
+        style: resolvedStyle,
       });
-      closeSSE(controller);
     } catch (err) {
       console.error('[pages/build]', err);
-      sendSSE(controller, { type: 'error', message: 'Internal server error' });
-      closeSSE(controller);
+      await fail('Internal server error');
+    } finally {
+      stopHeartbeat();
     }
-  })();
+  })());
 
-  return response;
+  return NextResponse.json({ job_id: buildId });
 }

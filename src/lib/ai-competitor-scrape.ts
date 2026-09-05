@@ -542,6 +542,28 @@ async function extractCssTokens(cssBlocks: string, htmlStructure: string): Promi
   }
 }
 
+// The text leg carries the copy, palette, logo and footer — nearly everything
+// a reference is FOR. 45s was picked by reflex and was below the 60s these two
+// legs used to share, so it quietly made the important half more likely to fail
+// than before. Given more room than the old ceiling, not less.
+const FIRECRAWL_TIMEOUT_MS = 75_000;
+// Screenshots are captured in sequence — one full-page pass to measure the
+// height, then a chunk per 4096px — so a tall site is genuinely slow: six
+// chunks measured at ~53s. Anything under a minute here silently costs the
+// build its only view of the reference layout.
+const SCREENSHOT_TIMEOUT_MS = 90_000;
+
+/** Bound one leg of the scrape on its own clock, so a slow one cannot sink a fast one. */
+function withTimeout<T>(work: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    work.finally(() => clearTimeout(timer)),
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms / 1000}s`)), ms);
+    }),
+  ]);
+}
+
 export async function scrapeCompetitorUrl(url: string): Promise<CompetitorContext | null> {
   const firecrawlKey = process.env.FIRECRAWL_API_KEY?.trim();
   const apiFlashKey = process.env.API_FLASH_KEY?.trim();
@@ -554,18 +576,17 @@ export async function scrapeCompetitorUrl(url: string): Promise<CompetitorContex
     ? fetchApiFlashScreenshots(url, apiFlashKey)
     : Promise.reject(new Error('API_FLASH_KEY not set'));
 
-  let results: PromiseSettledResult<unknown>[];
-  try {
-    results = await Promise.race([
-      Promise.allSettled([firecrawlPromise, apiFlashPromise]),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('60s timeout')), 60_000)
-      ),
-    ]);
-  } catch (err) {
-    console.error('[scrapeCompetitorUrl] timed out or crashed:', err);
-    return null;
-  }
+  // Timed separately, on purpose.
+  //
+  // Both legs used to share one 60s race against Promise.allSettled — which
+  // waits for BOTH — so a slow screenshot threw away a text scrape that had
+  // finished in eight seconds, and the caller was told only that the whole
+  // thing failed. Everything downstream already copes with half a result;
+  // nothing but this race was throwing the good half away.
+  const results = await Promise.allSettled([
+    withTimeout(firecrawlPromise, FIRECRAWL_TIMEOUT_MS, 'Firecrawl'),
+    withTimeout(apiFlashPromise, SCREENSHOT_TIMEOUT_MS, 'Screenshot'),
+  ]);
 
   const [firecrawlResult, apiFlashResult] = results as [
     PromiseSettledResult<{ rawHtml: string; html: string; markdown: string }>,

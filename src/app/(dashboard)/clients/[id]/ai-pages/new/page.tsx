@@ -5,6 +5,7 @@ import { db } from '@/lib/supabase-server';
 import { resolveWorkspaceRole } from '@/lib/workspace-auth';
 import { PLAN_LIMITS } from '@/lib/plans';
 import { loadPageSkills } from '@/lib/skills/persistence';
+import { findActiveBuild } from '@/lib/page-builds';
 import AIBuilderClient from '../../pages/new/AIBuilderClient';
 
 interface PageProps {
@@ -44,7 +45,7 @@ export default async function AIBuilderPage({ params, searchParams }: PageProps)
 
   const { data: initialPage } = await db
     .from('pages')
-    .select('id, name, vertical, schema_json, conversation_json, html_url, html_content, slug, is_published, published_url, draft_html_content, draft_schema_json, source_type')
+    .select('id, name, vertical, prompt, schema_json, conversation_json, html_url, html_content, slug, is_published, published_url, draft_html_content, draft_schema_json, source_type')
     .eq('id', searchParams.page_id)
     .eq('workspace_id', workspace.id)
     .single();
@@ -55,6 +56,11 @@ export default async function AIBuilderPage({ params, searchParams }: PageProps)
   // and folding them into the SELECT above would blank this whole editor page
   // on any environment that has not applied it yet.
   const savedSkillState = await loadPageSkills(initialPage.id);
+
+  // A build still running for this page. The tab that started it may be long
+  // gone — the build survives it now, so the screen has to be able to rejoin.
+  // Stale rows are marked failed by this lookup rather than reported as live.
+  const activeBuild = await findActiveBuild(initialPage.id);
 
   // Pages reached via a test variant's "Edit using AI" button are already
   // live on that test the moment they're saved (served directly from this
@@ -99,6 +105,7 @@ export default async function AIBuilderPage({ params, searchParams }: PageProps)
       clientName={isTestVariantPage && testName ? testName : (client?.name ?? 'Client')}
       variantName={isTestVariantPage ? linkedVariant.name : undefined}
       initialPage={initialPage}
+      activeBuildId={activeBuild?.id ?? null}
       initialSkills={savedSkillState.skills}
       initialStyle={savedSkillState.style}
       backPath={backPath}

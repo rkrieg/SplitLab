@@ -20,7 +20,6 @@ import { LiveProgressPanel } from '@/components/ai/LiveProgressPanel';
 // client-side. Used by the rebuild-block modal's Reupload flow to check
 // pasted HTML instantly and for free, before ever touching the network.
 import { analyzePageLayout } from '@/lib/ai-page-layout';
-import { describeAssetPlacement } from '@/lib/asset-placement';
 // Skills + Style pickers — commented out with the controls they render (see
 // the "Initial prompt form" below). The components themselves are untouched
 // and still compile; only this file stopped mounting them.
@@ -41,6 +40,29 @@ type Phase =
   | 'publishing';
 
 type ViewMode = 'desktop' | 'mobile';
+
+/** The build's 'done' event, plus the chat line the server wrote to go with it. */
+type FinishedBuild = Extract<SSEEvent, { type: 'done' }> & {
+  assistant_reply: string;
+  assistant_note?: string;
+};
+
+type BuildPoll = {
+  // 'saving' is the build writing its result to the page. Anything that is not
+  // done or error keeps the watcher waiting.
+  status: 'running' | 'saving' | 'done' | 'error';
+  events: SSEEvent[];
+  total_events: number;
+  result?: FinishedBuild;
+  error?: string;
+};
+
+type HistoryEntry = {
+  role: string;
+  content: string;
+  image_urls?: string[];
+  asset_library?: { url: string; name?: string; caption?: string | null }[];
+};
 
 interface Message {
   role: 'user' | 'assistant';
@@ -69,6 +91,14 @@ interface Message {
    */
   rebuildOffer?: boolean;
   /**
+   * A reference URL in the brief that could not be read at all, so the build
+   * about to run has nothing of that site in it. Renders "Build without it" /
+   * "Cancel" until answered — building on regardless is how a user got a
+   * generic page and only found out by looking at it.
+   */
+  scrapeFailedUrl?: string;
+  scrapeAnswered?: boolean;
+  /**
    * Set once the page has actually been rebuilt, so the buttons stop being
    * clickable and the chat unlocks. There is no "declined" state: the only other
    * answer to the offer is to leave the editor.
@@ -80,6 +110,7 @@ interface InitialPage {
   id: string;
   name: string;
   vertical: string;
+  prompt: string | null;
   schema_json: unknown;
   conversation_json: { role: string; content: string; note?: string; image_urls?: string[]; asset_library?: { url: string; name?: string; caption?: string | null }[] }[] | null;
   html_url: string | null;
@@ -119,11 +150,28 @@ interface Props {
   // pages can always publish a standalone URL, even once linked to a test —
   // publishing and serving test traffic are independent concerns.
   canPublish?: boolean;
+  /**
+   * A build that was already running for this page when the screen loaded.
+   *
+   * Set by the server so a tab arriving after the fact rejoins the run instead
+   * of showing a page that looks like nothing ever happened — which is exactly
+   * what leaving mid-build used to look like on return.
+   */
+  activeBuildId?: string | null;
 }
 
 // Soft cap on the initial prompt — generous enough for a detailed multi-section
 // brief, tight enough to keep the schema the AI generates within one response.
 const MAX_PROMPT_LENGTH = 50000;
+
+// How often a watching tab asks the server how the build is going. The build
+// itself no longer depends on anyone asking.
+const POLL_MS = 2000;
+
+// Consecutive failed polls before we stop asking. A build is not lost when a
+// poll is: the server keeps going either way. But retrying without end is how
+// a spinner outlives the thing it was spinning for.
+const MAX_POLL_FAILURES = 5;
 
 /** How many linked images get a thumbnail. The rest are counted, not drawn —
  *  a folder can hold hundreds and every thumbnail is a network fetch. */
@@ -293,7 +341,7 @@ function styleStripLabel(style: string | null, wasAuto: boolean): string | null 
   return `${name}${wasAuto ? ' (auto)' : ''}`;
 }
 
-export default function AIBuilderClient({ workspaceId, clientId, clientName, variantName, initialPage, initialSkills, initialStyle, backPath, canUseAI = true, isTestVariantPage = false, canPublish = true }: Props) {
+export default function AIBuilderClient({ workspaceId, clientId, clientName, variantName, initialPage, initialSkills, initialStyle, backPath, canUseAI = true, isTestVariantPage = false, canPublish = true, activeBuildId = null }: Props) {
   const router = useRouter();
 
   // Variant pages ask the preview route for the in-progress draft; every
@@ -364,6 +412,19 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
   const [messages, setMessages] = useState<Message[]>([]);
   const [followUpInput, setFollowUpInput] = useState('');
   const [buildEvents, setBuildEvents] = useState<SSEEvent[]>([]);
+  // The build waiting on an answer about an unreadable reference site.
+  const pendingBuildRef = useRef<(() => Promise<void>) | null>(null);
+  // The reference URL nothing could be read from, remembered across the
+  // clarifying-questions round — see runGenerateInner.
+  const scrapeFailedUrlRef = useRef<string | null>(null);
+  const scrapeWarnedRef = useRef(false);
+  // Which half failed: nothing came back at all, or only the screenshots did.
+  const scrapeFailedReasonRef = useRef<'nothing' | 'content'>('nothing');
+  // Separate from the one above: a site we could read but not photograph is a
+  // different message, and the two can happen on different runs.
+  const noScreenshotWarnedRef = useRef(false);
+  // Stops the poll below from outliving the screen that started it.
+  const unmountedRef = useRef(false);
   const [followUpEvents, setFollowUpEvents] = useState<SSEEvent[] | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>('desktop');
   const previewWrapRef = useRef<HTMLDivElement>(null);
@@ -1103,8 +1164,105 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       setAppliedStyleAuto(false);
     }
 
-    // Fresh page (just created from modal) — no HTML yet, stay in prompt phase
-    if (!initialPage.html_url) return;
+    // No finished HTML: either a page just created from the modal, or one
+    // whose build never landed. Those used to look identical — a blank form —
+    // because the brief was only ever saved after a build succeeded, so a tab
+    // that navigated away mid-build took the whole conversation with it.
+    // Now the brief is written before the build (saveBrief, and the schema
+    // step in pages/generate), and this is where it comes back.
+    if (!initialPage.html_url) {
+      if (initialPage.prompt) setPrompt(initialPage.prompt);
+      const saved = initialPage.conversation_json ?? [];
+      if (saved.length === 0) return;
+
+      setConversationJson(saved);
+
+      // Attachments and imported photos travel on the turn that carried them,
+      // so they can be put back the same way.
+      //
+      // This is for the return with NO job to rejoin — the build failed, or
+      // died before it ever started one. The user is looking at their restored
+      // brief and presses Generate again, and that second run reads these refs.
+      // Without seeding them it goes out with no images at all: the design
+      // reference and the whole asset library gone, and nothing said so.
+      const savedImages = Array.from(
+        new Set(saved.flatMap(e => (Array.isArray(e.image_urls) ? e.image_urls : []))),
+      );
+      if (savedImages.length > 0) createAttachUrlsRef.current = savedImages;
+      const savedLibrary = saved.flatMap(e => (Array.isArray(e.asset_library) ? e.asset_library : []));
+      if (savedLibrary.length > 0) {
+        // A stored turn can carry a URL with no filename. The library type
+        // needs one, and the last path segment is what the importer would have
+        // shown anyway.
+        const byUrl = new Map<string, ImportedAsset>(
+          savedLibrary.map(a => [
+            a.url,
+            { url: a.url, name: a.name ?? a.url.split('/').pop() ?? 'image', caption: a.caption ?? null },
+          ]),
+        );
+        createLibraryRef.current = Array.from(byUrl.values());
+      }
+
+      if (initialPage.schema_json) {
+        setSchemaJson(initialPage.schema_json);
+        schemaRef.current = initialPage.schema_json;
+      }
+
+      const parsePayload = (text: string): { type?: string; questions?: unknown } | null => {
+        if (!text.trim().startsWith('{')) return null;
+        try { return JSON.parse(text); } catch { return null; }
+      };
+
+      const restored: Message[] = [];
+      let openQuestions: string[] | null = null;
+      saved.forEach((entry, i) => {
+        const content = typeof entry.content === 'string' ? entry.content : '';
+        if (entry.role === 'user') {
+          // With the thumbnails, as the editing-path restore does. They are
+          // re-seeded into the refs above and the build does use them — but a
+          // chat that shows no attachment reads as "my screenshot was lost".
+          const userEntry: Message = { role: 'user', content };
+          if (Array.isArray(entry.image_urls) && entry.image_urls.length > 0) {
+            userEntry.image_urls = entry.image_urls;
+          }
+          restored.push(userEntry);
+          return;
+        }
+        const payload = parsePayload(content);
+        if (payload?.type === 'questions' && Array.isArray(payload.questions)) {
+          const qs = payload.questions as string[];
+          restored.push({
+            role: 'assistant',
+            content: 'I have a few questions to build the best page for you:',
+            isQuestions: true,
+            questions: qs,
+          });
+          // Only still open if nothing was said after them — answers already
+          // given are further down this same list.
+          if (i === saved.length - 1) openQuestions = qs;
+          return;
+        }
+        // The schema blob. It is state, not something anyone said.
+        if (payload) return;
+        restored.push({ role: 'assistant', content });
+      });
+
+      if (openQuestions) {
+        setQuestions(openQuestions);
+        setAnswers(new Array((openQuestions as string[]).length).fill(''));
+        setPhase('questions');
+      } else if (!activeBuildId) {
+        // Only when nothing is running. A build still in flight is reattached
+        // by the effect below, and this line would sit above its live spinner
+        // calling it a failure — in exactly the case this all exists for.
+        restored.push({
+          role: 'assistant',
+          content: "Your last build didn't finish, so there's no page yet — but everything you told me is saved. Send it again and I'll build it.",
+        });
+      }
+      setMessages(restored);
+      return;
+    }
 
     // Variant pages resume from their draft (if one exists) rather than the
     // live schema, so the user picks up exactly where they left off.
@@ -1196,6 +1354,38 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         : "This page hasn't been set up for AI editing yet — preparing it now. In the meantime, describe any change below and I'll apply it once ready.",
     });
     setMessages(restored);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Rejoin a build that was already running when this screen opened.
+  //
+  // Runs after the restore effect on purpose: that one decides what the page
+  // looked like before the build, this one has the last word on the phase,
+  // because a build genuinely in flight outranks whatever came before it.
+  // Set false on the way IN as well as true on the way out. React's dev
+  // StrictMode mounts, cleans up, and mounts again — without the reset the
+  // latch stayed true from that first cleanup and every poll loop exited
+  // immediately, so builds ran server-side while the tab showed nothing.
+  useEffect(() => {
+    unmountedRef.current = false;
+    return () => { unmountedRef.current = true; };
+  }, []);
+
+  useEffect(() => {
+    if (!activeBuildId) return;
+    // Cancelled per run, not just per unmount: StrictMode mounts this twice in
+    // dev, and without its own flag the first watch keeps polling alongside the
+    // second, both appending the same events to the same panel.
+    let cancelled = false;
+    setPhase('building');
+    setBuildEvents([]);
+    void (async () => {
+      const finished = await watchBuild(activeBuildId, () => cancelled);
+      if (cancelled) return;
+      if (finished) applyFinishedBuild(finished);
+      else setPhase('prompt');
+    })();
+    return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1783,8 +1973,53 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
 
   // ── Generate → Build ──────────────────────────────────────────────────────
 
-  async function runGenerate(userPrompt: string, history: { role: string; content: string; image_urls?: string[]; asset_library?: { url: string; name?: string; caption?: string | null }[] }[]) {
+  // Written BEFORE the slow calls rather than after them. Until this existed
+  // the brief lived only in this tab, so leaving mid-build lost the lot.
+  // Deliberately non-blocking: refusing to build because a metadata write
+  // failed is a worse trade than building without the safety net.
+  async function saveBrief(history: HistoryEntry[]) {
+    // Same guard the server-side save uses: a page that already has built HTML
+    // has a real conversation on it, and this only ever carries the opening
+    // turns. Unreachable from the prompt/questions phases, kept so it stays so.
+    if (!pageId || htmlUrl) return;
+    try {
+      const res = await fetch(`/api/pages/${pageId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt,
+          conversation_json: history,
+          ...(pageName.trim() ? { name: pageName.trim() } : {}),
+        }),
+      });
+      if (!res.ok) throw new Error('save failed');
+    } catch {
+      toast("Couldn't save your brief — if you leave this page you may lose it.", { icon: '⚠️' });
+    }
+  }
+
+  // Everything inside can throw: an aborted fetch, a bad parse, a failed
+  // upload. Before this wrapper a throw left the screen on the spinner for
+  // good — no error, no way back, nothing to do but reload.
+  async function runGenerate(userPrompt: string, history: HistoryEntry[]) {
     setPhase('generating');
+    try {
+      await runGenerateInner(userPrompt, history);
+    } catch (err) {
+      console.error('[ai-builder] generate/build failed', err);
+      toast.error(err instanceof Error ? err.message : 'Generation failed. Your brief is saved — try again.');
+    } finally {
+      // Only rescues a phase nothing else moved on: the success paths already
+      // set questions/editing, and clobbering those would undo a good build.
+      setPhase(prev =>
+        prev === 'generating' || prev === 'building'
+          ? (questions.length > 0 ? 'questions' : 'prompt')
+          : prev,
+      );
+    }
+  }
+
+  async function runGenerateInner(userPrompt: string, history: { role: string; content: string; image_urls?: string[]; asset_library?: { url: string; name?: string; caption?: string | null }[] }[]) {
 
     // Upload create-time attachments before schema gen so generate/build both see them
     // (same screenshot reader path as follow-up design refs).
@@ -1845,6 +2080,9 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         skills: selectedSkills,
         conversation_json: history,
         workspace_id: workspaceId,
+        // Lets the route save the schema server-side the moment it has one,
+        // instead of it living in this tab until the build finishes.
+        ...(pageId ? { page_id: pageId } : {}),
         ...(createImageUrls.length > 0 ? { image_urls: createImageUrls } : {}),
         ...(libraryAssets.length > 0 ? { asset_library: libraryAssets } : {}),
       }),
@@ -1909,14 +2147,47 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       : createDesignCopySectionsRef.current;
     createDesignCopySectionsRef.current = freshDesignCopySections;
 
+    // Recorded here, above the questions branch, because the URL only ever
+    // appears in the FIRST message. Round two posts the answers alone, so
+    // nothing re-detects it and nothing re-scrapes — the flag fires once or
+    // never. Renny's round one returned questions, which is exactly why he was
+    // never told the site had failed before the build spent ten minutes on it.
+    if (data.competitor_fetch_failed) {
+      scrapeFailedUrlRef.current =
+        typeof data.competitor_url === 'string' ? data.competitor_url : 'that site';
+      scrapeFailedReasonRef.current = data.competitor_missing_content ? 'content' : 'nothing';
+    }
+
+    // Read, but never seen. Worth saying — the layout of the reference is most
+    // of what people mean by "make it like this site". No confirmation button:
+    // there is still real material to build from, so stopping would be worse.
+    if (data.competitor_missing_screenshots && !noScreenshotWarnedRef.current) {
+      noScreenshotWarnedRef.current = true;
+      const site = typeof data.competitor_url === 'string' ? data.competitor_url : 'that site';
+      addMessage({
+        role: 'assistant',
+        content: `A heads up on ${site}: I could read its text and colours, but couldn't capture screenshots of it — so I'm working from its content without having seen its layout.`,
+      });
+    }
+
     if (data.type === 'questions') {
+      // Said now, not held back until the build: the answers they are about to
+      // give may well be shaped by knowing the reference site is missing.
+      if (scrapeFailedUrlRef.current && !scrapeWarnedRef.current) {
+        scrapeWarnedRef.current = true;
+        addMessage({
+          role: 'assistant',
+          content: scrapeFailedReasonRef.current === 'content'
+            ? `One thing first — I could only get screenshots of ${scrapeFailedUrlRef.current}; its text, colours and logo didn't come through. Answer these and I'll check with you before building anyway.`
+            : `One thing first — I couldn't read ${scrapeFailedUrlRef.current}. It timed out or blocked us, so I have nothing from that site to work from. Answer these and I'll check with you before building without it.`,
+        });
+      }
       setQuestions(data.questions);
       setAnswers(new Array(data.questions.length).fill(''));
       addMessage({ role: 'assistant', content: 'I have a few questions to build the best page for you:', isQuestions: true, questions: data.questions });
       setPhase('questions');
       return;
     }
-    addMessage({ role: 'assistant', content: `Got it! Building your ${VERTICAL_LABELS[vertical]} page now…` });
     const updatedHistory = [
       ...history,
       {
@@ -1933,33 +2204,103 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       { role: 'assistant', content: JSON.stringify(data.schema) },
     ];
     setConversationJson(updatedHistory);
-    await runBuild(
-      data.schema,
-      updatedHistory,
-      freshCompetitorScreenshots,
-      freshCompetitorCssTokens,
-      freshCompetitorPalette,
-      freshCompetitorScrapeGaps,
-      freshCompetitorPageContent,
-      freshCompetitorLogoUrl,
-      freshCompetitorFooter,
-      freshCompetitorLogoSvg,
-      createImageUrls,
-      freshDesignCopyLines,
-      freshRequirements,
-      freshReuseReferenceCopy,
-      freshDesignCopySections,
-      freshMinimalShape,
-    );
-    createAttachUrlsRef.current = [];
-    createLibraryRef.current = [];
-    createDesignCopyRef.current = [];
-    createRequirementsRef.current = [];
-    createReuseRefCopyRef.current = null;
-    createDesignCopySectionsRef.current = [];
-    createMinimalShapeRef.current = false;
+    const startBuild = async () => {
+      // Announced here rather than before the gate below: the chat used to say
+      // it was building, THEN ask whether to build, and a Cancel left "nothing
+      // was built" sitting under "Building your page now…".
+      addMessage({ role: 'assistant', content: `Got it! Building your ${VERTICAL_LABELS[vertical]} page now…` });
+      const built = await runBuild(
+        data.schema,
+        updatedHistory,
+        freshCompetitorScreenshots,
+        freshCompetitorCssTokens,
+        freshCompetitorPalette,
+        freshCompetitorScrapeGaps,
+        freshCompetitorPageContent,
+        freshCompetitorLogoUrl,
+        freshCompetitorFooter,
+        freshCompetitorLogoSvg,
+        createImageUrls,
+        freshDesignCopyLines,
+        freshRequirements,
+        freshReuseReferenceCopy,
+        freshDesignCopySections,
+        freshMinimalShape,
+      );
+      // Cleared here rather than after the call below, because the build can
+      // now be deferred — and a deferred build still reads these.
+      //
+      // Only on success. A failed build (a 429 from the shared rate limit, a
+      // server error, a poll that gave up) leaves the user on the prompt with
+      // Generate in front of them, and emptying these first means that retry
+      // goes out with no design reference and no imported photos, saying
+      // nothing about either.
+      if (!built) return;
+      createAttachUrlsRef.current = [];
+      createLibraryRef.current = [];
+      createDesignCopyRef.current = [];
+      createRequirementsRef.current = [];
+      createReuseRefCopyRef.current = null;
+      createDesignCopySectionsRef.current = [];
+      createMinimalShapeRef.current = false;
+    };
+
+    // The reference site could not be read at all. Going ahead silently is what
+    // cost a user ten minutes and three generated images for a page that had
+    // nothing to do with the site they pasted.
+    if (scrapeFailedUrlRef.current) {
+      pendingBuildRef.current = startBuild;
+      const site = scrapeFailedUrlRef.current;
+      addMessage({
+        role: 'assistant',
+        content: scrapeFailedReasonRef.current === 'content'
+          ? `I could only get screenshots of ${site} — its text, colours, logo and footer didn't come through. I can see roughly what it looks like, but I can't reuse any of its wording or brand. I can still build from your brief.`
+          : `I couldn't read ${site} — it timed out or blocked us, so I have nothing from it to work from. I can still build your page from your brief alone, but it won't follow that site.`,
+        scrapeFailedUrl: site,
+      });
+      setPhase('prompt');
+      return;
+    }
+
+    await startBuild();
   }
 
+  function closeScrapeOffer() {
+    setMessages(prev => prev.map(m => (m.scrapeFailedUrl && m.scrapeAnswered === undefined ? { ...m, scrapeAnswered: true } : m)));
+  }
+
+  async function buildWithoutReference() {
+    const go = pendingBuildRef.current;
+    pendingBuildRef.current = null;
+    scrapeFailedUrlRef.current = null;
+    closeScrapeOffer();
+    if (!go) return;
+    // Same protection as runGenerate: this runs outside that wrapper, and an
+    // unguarded throw here would leave the spinner up for good.
+    try {
+      await go();
+    } catch (err) {
+      console.error('[ai-builder] build failed', err);
+      toast.error(err instanceof Error ? err.message : 'Build failed. Your brief is saved — try again.');
+    } finally {
+      setPhase(prev => (prev === 'generating' || prev === 'building' ? 'prompt' : prev));
+    }
+  }
+
+  function cancelPendingBuild() {
+    pendingBuildRef.current = null;
+    scrapeFailedUrlRef.current = null;
+    closeScrapeOffer();
+    addMessage({
+      role: 'assistant',
+      content: 'Stopped — nothing was built. Edit your brief and send it again, or try the same link once more.',
+    });
+  }
+
+  /** Resolves true only if a page was actually built. Every failure path here
+   *  returns rather than throws, so the caller cannot tell the difference by
+   *  catching — and clearing the user's attachments on a failure means their
+   *  retry goes out with no design reference and an empty asset library. */
   async function runBuild(
     schema: unknown,
     history: { role: string; content: string; image_urls?: string[]; asset_library?: { url: string; name?: string; caption?: string | null }[] }[],
@@ -1977,8 +2318,8 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     reuseReferenceCopy?: boolean | null,
     designCopySections?: string[],
     minimalShape?: boolean,
-  ) {
-    if (!pageId) return;
+  ): Promise<boolean> {
+    if (!pageId) return false;
     setPhase('building');
     setBuildEvents([]);
 
@@ -2012,11 +2353,16 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       } catch (err) {
         toast.error(err instanceof Error ? err.message : 'Image upload failed');
         setPhase('prompt');
-        return;
+        return false;
       }
     }
 
-    // Step 2: build HTML via SSE
+    // Step 2: start the build and watch the job it returns.
+    //
+    // This used to be one long open connection that the browser both watched
+    // and saved the result of — so leaving the page lost the build. Now the
+    // server owns the work; this poll is only a viewer, and closing it costs
+    // nothing.
     const res = await fetch('/api/pages/build', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2024,6 +2370,10 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
         schema_json: schema,
         user_prompt: prompt,
         workspace_id: workspaceId,
+        // Both new: the job needs to know which page it is building, and it
+        // writes the finished conversation itself now.
+        page_id: pageId,
+        conversation_json: history,
         skills: selectedSkills,
         ...(selectedStyle ? { style: selectedStyle } : {}),
         ...(image_urls.length > 0 ? { image_urls } : {}),
@@ -2052,124 +2402,111 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       const err = await res.json().catch(() => ({ error: 'Build failed' }));
       toast.error(err.error || 'Build failed');
       setPhase('prompt');
-      return;
+      return false;
     }
 
-    let htmlUrl: string | null = null;
-    let finalSlug: string | null = null;
-    let finalSchema: unknown = schema;
-    let buildError = false;
-    let unmetRequirements: string | null = null;
-    let brokenAssets = 0;
-    let assetPlacementNote: string | null = null;
-    // Recommendations the builder made, or a warning that something the user
-    // asked for outright is not best practice. Absent on most builds.
-    let modelNotes: string | null = null;
-    let builtSkillIds: string[] | null = null;
-    let builtStyle: string | null = null;
-
-    await readSSEStream(res, (event) => {
-      setBuildEvents(prev => [...prev, event]);
-      if (event.type === 'done') {
-        htmlUrl = event.html_url;
-        finalSlug = event.slug ?? null;
-        finalSchema = event.schema_json ?? schema;
-        unmetRequirements = event.unmet_requirements ?? null;
-        brokenAssets = event.broken_assets ?? 0;
-        modelNotes = event.notes ?? null;
-        // Server-resolved, so this is what ACTUALLY built the page — the
-        // panel must never show what was ticked if the two disagree.
-        builtSkillIds = event.skills_applied ?? null;
-        builtStyle = event.style_applied ?? null;
-        setAppliedSkillNames(event.skills_applied_names ?? []);
-        setAppliedStyle(event.style_applied ?? null);
-        setAppliedStyleAuto(event.style_auto === true);
-        setSkillScores(event.skill_scores ?? []);
-        // Only sent when this build had link-imported files at all, so an
-        // ordinary build never produces a note about images it never had.
-        if (typeof event.imported_assets === 'number' && typeof event.placed_assets === 'number') {
-          assetPlacementNote = describeAssetPlacement({
-            imported: event.imported_assets,
-            placed: event.placed_assets,
-            unusedNames: event.unused_asset_names ?? [],
-          });
-        }
-      } else if (event.type === 'error') {
-        buildError = true;
-        toast.error(event.message || 'Build failed');
-      }
-    });
-
-    if (buildError || !htmlUrl) {
+    const { job_id: jobId, already_running: alreadyRunning } =
+      (await res.json()) as { job_id: string; already_running?: boolean };
+    // The server refused to start a rival run because one was already going for
+    // this page — another tab, or a reload that outran it. Watching that one is
+    // right, but the schema this run just generated is dropped on the floor, so
+    // say so rather than presenting its result as the answer to this request.
+    if (alreadyRunning) {
+      toast('This page already had a build running — showing that one. Your latest request was not started.', {
+        icon: 'ℹ️',
+        duration: 6000,
+      });
+    }
+    const finished = await watchBuild(jobId);
+    if (!finished) {
       setPhase('prompt');
-      return;
+      return false;
     }
+    applyFinishedBuild(finished);
+    // False when we only watched someone else's run: this request's schema was
+    // never built, so the caller must keep the attachments for the retry.
+    return !alreadyRunning;
+  }
 
-    // Attach image_urls to the last user entry in history before saving
-    const historyWithImages = image_urls.length > 0
-      ? history.map((entry, i) =>
-          i === history.length - 2 && entry.role === 'user'
-            ? { ...entry, image_urls }
-            : entry
-        )
-      : history;
+  /**
+   * Follow a build to its end, wherever it was started from.
+   *
+   * Returns the finished result, or null if it failed — the reason is already
+   * on screen by then, both in the progress panel and as a toast.
+   */
+  async function watchBuild(jobId: string, isCancelled?: () => boolean): Promise<FinishedBuild | null> {
+    let seen = 0;
+    let failures = 0;
 
-    // Name what didn't land instead of a blanket "ready" — a page with a
-    // banned CTA still on it is not what the user asked for.
-    // An image URL that didn't respond is a note about the page, not an ask we
-    // failed — it used to be listed alongside unmet asks under "not everything
-    // landed", which reads as "you ignored me" on a page that is in fact done.
-    const note = (brokenAssets > 0
-      ? ` ${brokenAssets} image URL(s) couldn't be loaded and were left as they were.`
-      : '')
-      // Placing none of the user's imported photos can be the right call, but
-      // saying nothing about it reads as the import having failed — which is
-      // exactly how it was read. Name the outcome either way.
-      + (assetPlacementNote ? ` ${assetPlacementNote}` : '')
-      ;
-    // A design call the builder made and wants looked at. It does NOT ride the
-    // status sentence — it renders as its own callout, because a recommendation
-    // tucked onto the end of "your page is ready" is one nobody reads.
-    const assistantReply = unmetRequirements
-      ? `Your page is built, but not everything landed — ${unmetRequirements}. Tell me to fix it and I'll take another pass.${note}`
-      : `Your page is ready! Click any text in the preview to edit it, or ask me to make changes.${note}`;
+    while (!unmountedRef.current && !isCancelled?.()) {
+      let poll: BuildPoll;
+      try {
+        const res = await fetch(`/api/pages/build/${jobId}?after=${seen}`);
+        // These will never come good by waiting: an expired session, a build
+        // belonging to someone else, or one that is simply gone. Retrying them
+        // is the same endless spinner in a new pipe.
+        if (res.status === 401 || res.status === 403 || res.status === 404) {
+          toast.error(
+            res.status === 404
+              ? 'This build is no longer available.'
+              : 'Your session expired — reload the page to see this build.',
+          );
+          return null;
+        }
+        if (!res.ok) throw new Error(`build poll failed: ${res.status}`);
+        poll = (await res.json()) as BuildPoll;
+        failures = 0;
+      } catch (err) {
+        // A dropped poll is not a dead build — the server keeps going either
+        // way — so a few are worth riding out. Forever is not.
+        console.error('[ai-builder] build poll failed', err);
+        failures++;
+        if (failures >= MAX_POLL_FAILURES) {
+          toast.error('Lost contact with this build. It may still finish — reopen this page to check.');
+          return null;
+        }
+        await new Promise(r => setTimeout(r, POLL_MS));
+        continue;
+      }
 
-    // Step 3: PATCH first so DB has html_url before preview route is hit
-    const patchRes = await fetch(`/api/pages/${pageId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        prompt,
-        slug: finalSlug,
-        html_url: htmlUrl,
-        schema_json: finalSchema,
-        // The reply is stored, not just rendered: it carries the build's NOTE
-        // comments, and until this was saved a refresh replaced the whole
-        // thing with a canned "Got it! Built your page." Follow-up turns have
-        // always persisted their assistant reply — the build now matches.
-        // `note` is stored beside `content`, not inside it: the note no longer
-        // rides the status sentence, so persisting only `content` would drop
-        // the model's recommendation the moment the page is reopened.
-        conversation_json: [...historyWithImages, { role: 'assistant', content: assistantReply, ...(modelNotes ? { note: modelNotes } : {}) }],
-        // Saved so a later "Edit with AI" rebuild obeys the same rules. Written
-        // through a separate, non-fatal query server-side (skills/persistence),
-        // so a missing migration cannot fail this PATCH.
-        skills: builtSkillIds ?? selectedSkills,
-        style: builtStyle ?? selectedStyle,
-      }),
-    });
-    if (!patchRes.ok) {
-      toast('Page built but metadata not saved — edits may not persist.', { icon: '⚠️' });
+      if (poll.events.length > 0) {
+        seen = poll.total_events;
+        setBuildEvents(prev => [...prev, ...poll.events]);
+      }
+
+      if (poll.status === 'done' && poll.result) return poll.result;
+      if (poll.status === 'error') {
+        toast.error(poll.error || 'Build failed');
+        return null;
+      }
+
+      await new Promise(r => setTimeout(r, POLL_MS));
     }
+    // Unmounted, or this particular watch was cancelled. The build carries on
+    // without us either way, which is the point.
+    return null;
+  }
 
-    setHtmlUrl(htmlUrl);
-    setSlug(finalSlug);
+  /**
+   * Show a finished build.
+   *
+   * Saving it is the server's job now, so this only moves the screen — which
+   * is what lets a tab that reattached to someone else's run end up in exactly
+   * the same place as the tab that started it.
+   */
+  function applyFinishedBuild(result: FinishedBuild) {
+    setHtmlUrl(result.html_url);
+    setSlug(result.slug ?? null);
+    const finalSchema = result.schema_json ?? schemaRef.current;
     schemaRef.current = finalSchema;
     setSchemaJson(finalSchema);
+    setAppliedSkillNames(result.skills_applied_names ?? []);
+    setAppliedStyle(result.style_applied ?? null);
+    setAppliedStyleAuto(result.style_auto === true);
+    setSkillScores(result.skill_scores ?? []);
     setPhase('editing');
-
-    if (unmetRequirements) toast('Built, but some asks need another pass.', { icon: '⚠️' });
-    addMessage({ role: 'assistant', content: assistantReply, note: modelNotes ?? undefined });
+    if (result.unmet_requirements) toast('Built, but some asks need another pass.', { icon: '⚠️' });
+    addMessage({ role: 'assistant', content: result.assistant_reply, note: result.assistant_note });
   }
 
   async function handleGenerate(e: React.FormEvent) {
@@ -2191,7 +2528,44 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
       ...linkedAssetsRef.current.map(a => a.url),
     ];
     addMessage({ role: 'user', content: prompt, ...(previewUrls.length > 0 ? { image_urls: previewUrls } : {}) });
+    // Cleared here and nowhere else: a fresh brief means a fresh scrape, but
+    // the answers round must inherit round one's verdict — the URL is only in
+    // the first message, so nothing would re-detect it. Without this reset a
+    // single failure stuck for the life of the tab, still warning about a site
+    // the user had since removed from the prompt.
+    scrapeFailedUrlRef.current = null;
+    scrapeFailedReasonRef.current = 'nothing';
+    scrapeWarnedRef.current = false;
+    noScreenshotWarnedRef.current = false;
+    pendingBuildRef.current = null;
+    // Retire any offer still on screen from a previous attempt. Left live, its
+    // "Cancel" would clear the refs belonging to THIS run — which then builds
+    // without the reference and without asking — and its "Build without it"
+    // would do nothing at all.
+    closeScrapeOffer();
+    await saveBrief([{ role: 'user', content: prompt }]);
     await runGenerate(prompt, []);
+  }
+
+  /**
+   * The opening turn, with whatever it carried.
+   *
+   * Rebuilt rather than read back, because the answers round has to re-send the
+   * history it is answering. Bare `{ role, content }` turns here would overwrite
+   * the richer copy the schema step saved server-side — and if that round then
+   * failed, reopening the page would seed no attachments and the retry would go
+   * out with no design reference and an empty asset library.
+   */
+  function firstTurnWithAttachments(): HistoryEntry[] {
+    return [
+      {
+        role: 'user',
+        content: prompt,
+        ...(createAttachUrlsRef.current.length > 0 ? { image_urls: createAttachUrlsRef.current } : {}),
+        ...(createLibraryRef.current.length > 0 ? { asset_library: createLibraryRef.current } : {}),
+      },
+      { role: 'assistant', content: JSON.stringify({ type: 'questions', questions }) },
+    ];
   }
 
   async function handleAnswers(e: React.FormEvent) {
@@ -2201,19 +2575,15 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     // Do NOT include answersText here — runGenerate appends it as the final user
     // entry itself; including it would duplicate the message and break the
     // user/assistant alternation in the saved conversation.
-    const history = [
-      { role: 'user', content: prompt },
-      { role: 'assistant', content: JSON.stringify({ type: 'questions', questions }) },
-    ];
+    const history = firstTurnWithAttachments();
+    await saveBrief([...history, { role: 'user', content: answersText }]);
     await runGenerate(answersText, history);
   }
 
   async function handleSurpriseMe() {
     addMessage({ role: 'user', content: 'Surprise me — just build the best default.' });
-    const history = [
-      { role: 'user', content: prompt },
-      { role: 'assistant', content: JSON.stringify({ type: 'questions', questions }) },
-    ];
+    const history = firstTurnWithAttachments();
+    await saveBrief([...history, { role: 'user', content: 'Surprise me — just build the best default.' }]);
     await runGenerate('Surprise me — just build the best default.', history);
   }
 
@@ -2404,7 +2774,13 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
           creditsUsed: err.usage?.creditsUsed ?? 0,
           creditsIncluded: err.usage?.creditsIncluded ?? 0,
           owner: err.owner ?? { isSelf: true, name: null, canManage: true },
-          retry: () => sendFollowUp(instruction, images, pid, true),
+          retry: () => {
+            void sendFollowUp(instruction, images, pid, true).catch((e) => {
+              console.error('[follow-up] retry', e);
+              toast.error('Edit failed');
+              setPhase('editing');
+            });
+          },
         });
       } else {
         toast.error(message);
@@ -2418,8 +2794,9 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     let doneData: FollowUpDone | null = null;
     let followUpError = false;
     let clarifyMessage: string | null = null;
+    let streamDropped = false;
 
-    await readSSEStream(res, (event) => {
+    const onFollowUpEvent = (event: SSEEvent) => {
       setFollowUpEvents(prev => prev ? [...prev, event] : [event]);
       if (event.type === 'done') {
         // The edit changed the HTML, so every score was measured against a
@@ -2447,9 +2824,28 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
           addMessage({ role: 'assistant', content: msg });
         }
       }
-    });
+    };
+
+    // A dropped connection throws out of readSSEStream. Uncaught, it rejected
+    // sendFollowUp and left the composer stuck on "generating" forever — while
+    // the server finished the edit and saved it. Catch it and say so instead.
+    try {
+      await readSSEStream(res, onFollowUpEvent);
+    } catch (err) {
+      console.error('[follow-up] stream dropped', err);
+      streamDropped = true;
+    }
 
     setFollowUpEvents(null);
+
+    if (streamDropped && !doneData && !clarifyMessage && !followUpError) {
+      restoreLinkedAssets(linkedForEdit);
+      const msg = 'Lost connection while the edit was running. It may have finished anyway — reload this page to see the latest version.';
+      toast.error(msg);
+      if (!silent) addMessage({ role: 'assistant', content: msg });
+      setPhase('editing');
+      return;
+    }
 
     if (clarifyMessage) {
       // No edit happened — the images are still waiting to be used, so they
@@ -2544,7 +2940,16 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
     const attachedImages = takePendingChatImages();
     setFollowUpInput('');
     if (followUpRef.current) followUpRef.current.style.height = 'auto';
-    await sendFollowUp(instruction, attachedImages, pageId);
+    // Last line of defence: anything sendFollowUp throws (a failed fetch, a
+    // non-JSON error body) must not leave the composer spinning.
+    try {
+      await sendFollowUp(instruction, attachedImages, pageId);
+    } catch (err) {
+      console.error('[follow-up]', err);
+      toast.error(err instanceof Error ? err.message : 'Edit failed');
+      setFollowUpEvents(null);
+      setPhase('editing');
+    }
   }
 
   async function handleImageUpload(e: React.ChangeEvent<HTMLInputElement>) {
@@ -2936,6 +3341,30 @@ export default function AIBuilderClient({ workspaceId, clientId, clientName, var
                         offers to rebuild the page itself; runRebuild/rebuild-flow
                         stay in place but are unreachable from the UI.
                       */}
+                      {msg.scrapeFailedUrl && (
+                        <div className="mt-3 flex items-center gap-2">
+                          {msg.scrapeAnswered ? (
+                            <span className="text-[11px] text-slate-400 dark:text-slate-500">Answered.</span>
+                          ) : (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => void buildWithoutReference()}
+                                className="px-2.5 py-1 rounded-lg text-[11px] font-medium text-white bg-indigo-600 hover:bg-indigo-500 transition-colors"
+                              >
+                                Build anyway
+                              </button>
+                              <button
+                                type="button"
+                                onClick={cancelPendingBuild}
+                                className="px-2.5 py-1 rounded-lg text-[11px] font-medium text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700/60 transition-colors"
+                              >
+                                Cancel
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      )}
                       {msg.rebuildOffer && (
                         <div className="mt-3">
                           <span className="text-[11px] text-slate-400 dark:text-slate-500">

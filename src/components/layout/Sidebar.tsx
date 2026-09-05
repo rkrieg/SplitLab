@@ -33,7 +33,10 @@ import toast from 'react-hot-toast';
 import Spinner from '@/components/ui/Spinner';
 import ClaimAccountModal from '@/components/layout/ClaimAccountModal';
 
-const COLLAPSE_DEFAULT_PATHS = ['/utm', '/pages/new'];
+// '/pages/new' never matched the builder: its route is '/ai-pages/new', where
+// the character before "pages" is a dash, not a slash. So the screen this
+// was written for has never actually collapsed the sidebar.
+const COLLAPSE_DEFAULT_PATHS = ['/utm', '/ai-pages/new'];
 
 function shouldDefaultCollapsed(pathname: string) {
   return COLLAPSE_DEFAULT_PATHS.some((p) => pathname.includes(p));

@@ -21,7 +21,7 @@ import { resolveSkills } from '@/lib/skills';
 import { loadPageSkills } from '@/lib/skills/persistence';
 import { isStyleTag } from '@/lib/ai-page-exemplars';
 import { buildFontFollowUpBlock } from '@/lib/ai-page-fonts';
-import { createSSEStream, sendSSE, closeSSE, SSE_HEADERS, type SSEEvent } from '@/lib/sse';
+import { createSSEStream, sendSSE, sendSSEPing, closeSSE, SSE_HEADERS, type SSEEvent } from '@/lib/sse';
 import { isTestVariantPage, getLinkedVariant } from '@/lib/page-drafts';
 import { rescanVariantHtml } from '@/lib/services/scan';
 import { extractDataUris, restoreDataUris, restoreDataUrisInValue } from '@/lib/data-uri-strip';
@@ -3198,6 +3198,13 @@ export async function POST(
 
   const { stream, controller } = createSSEStream();
   const response = new Response(stream, { headers: SSE_HEADERS });
+
+  // An edit can sit silent for minutes on a single AI call. Without bytes on
+  // the wire an idle-connection proxy kills the stream, the browser throws
+  // mid-read, and the user is left on a spinner while the save lands anyway.
+  // Same guard rebuild-flow and schema-from-html already have. Sent as an SSE
+  // comment, so it never reaches the client's event parser.
+  const heartbeat = setInterval(() => sendSSEPing(controller), 15_000);
 
   void (async () => {
     try {
@@ -6799,6 +6806,9 @@ export async function POST(
       console.error('[pages/follow-up]', err);
       sendSSE(controller, { type: 'error', message: userFacingAIErrorMessage(err) });
       closeSSE(controller);
+    } finally {
+      // Covers every early `return` above too, not just the happy path.
+      clearInterval(heartbeat);
     }
   })();
 

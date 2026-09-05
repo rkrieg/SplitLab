@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
+import { db } from '@/lib/supabase-server';
 import { jsonrepair } from 'jsonrepair';
 import { askAIStream, isRateLimited, AIResponseTruncatedError } from '@/lib/ai-client';
 import { VERTICAL_VALUES } from '@/lib/ai-page-verticals';
@@ -179,7 +180,7 @@ export async function POST(request: NextRequest) {
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   try {
-    const { prompt, vertical, conversation_json, workspace_id, image_urls, asset_library, skills } = await request.json();
+    const { prompt, vertical, conversation_json, workspace_id, page_id, image_urls, asset_library, skills } = await request.json();
 
     if (!workspace_id || typeof workspace_id !== 'string') {
       return NextResponse.json({ error: 'workspace_id is required' }, { status: 400 });
@@ -653,6 +654,44 @@ export async function POST(request: NextRequest) {
       console.log('[generate] brand_logo_url:', s.brand_logo_url ?? (s.nav as Record<string, unknown>)?.logo_url);
     }
 
+    // Save the brief and the plan BEFORE the caller starts its long build.
+    // The client keeps its own copy, but that copy dies with the tab; this one
+    // does not, so a build abandoned halfway still leaves the conversation and
+    // the schema on the page row.
+    //
+    // Scoped to a page with no finished HTML, so it can never overwrite what a
+    // completed build wrote. Never fatal — a safety net, not the answer.
+    if (typeof page_id === 'string' && page_id) {
+      const turn: Record<string, unknown> = { role: 'user', content: prompt };
+      if (Array.isArray(image_urls) && image_urls.length > 0) turn.image_urls = image_urls;
+      if (Array.isArray(asset_library) && asset_library.length > 0) turn.asset_library = asset_library;
+      const priorTurns = Array.isArray(conversation_json) ? conversation_json : [];
+      // Same shape the client would have saved after a build, so a resumed
+      // page reads back exactly like one that finished.
+      const answer = parsed.type === 'schema'
+        ? JSON.stringify(parsed.schema)
+        : JSON.stringify({ type: 'questions', questions: parsed.questions ?? [] });
+      try {
+        const { error } = await db
+          .from('pages')
+          .update({
+            // Only the OPENING turn is the brief. On a later round `prompt` is
+            // the answers to our own questions, and writing that here would
+            // replace the brief with a Q&A blob — which is then what a resumed
+            // page puts back in the prompt box.
+            ...(priorTurns.length === 0 ? { prompt } : {}),
+            conversation_json: [...priorTurns, turn, { role: 'assistant', content: answer }],
+            ...(parsed.type === 'schema' ? { schema_json: parsed.schema } : {}),
+          })
+          .eq('id', page_id)
+          .eq('workspace_id', workspace_id)
+          .is('html_url', null);
+        if (error) console.error('[pages/generate] brief not saved', error.message);
+      } catch (err) {
+        console.error('[pages/generate] brief not saved', err);
+      }
+    }
+
     return NextResponse.json({
       ...parsed,
       // Echoed back so build and the page record use the SERVER's validated
@@ -670,6 +709,25 @@ export async function POST(request: NextRequest) {
       // back to us for a call that cannot use most of it.
       ...(referenceContentBlock ? { competitor_page_content: referenceContentBlock.slice(0, 150_000) } : {}),
       ...(scrapeGaps ? { competitor_scrape_gaps: scrapeGaps } : {}),
+      // A pasted URL we could not read at all. Building on regardless is how a
+      // user who asked for a page based on their competitor got a generic one
+      // and was never told why — so the client asks before spending a build.
+      ...(referenceUrl && !competitorContext
+        ? { competitor_fetch_failed: true, competitor_url: referenceUrl }
+        : {}),
+      // Screenshots came back, the page itself did not. The context is non-null
+      // so nothing else here treats it as a failure — but with no copy, colours,
+      // logo or footer there is almost nothing left to follow, so it asks the
+      // same question a total failure does.
+      ...(referenceUrl && competitorContext && !competitorContext.markdown && !competitorContext.pageContent
+        ? { competitor_fetch_failed: true, competitor_missing_content: true, competitor_url: referenceUrl }
+        : {}),
+      // Half a scrape. The model is told about this through the gaps block, but
+      // the user was told nothing at all — so a page built without ever seeing
+      // the reference's layout looked exactly like one built from it.
+      ...(referenceUrl && competitorContext && competitorContext.screenshots.length === 0
+        ? { competitor_missing_screenshots: true, competitor_url: referenceUrl }
+        : {}),
       ...(competitorContext?.logoUrl ? { competitor_logo_url: competitorContext.logoUrl } : {}),
       ...(competitorContext?.logoSvgMarkup ? { competitor_logo_svg: competitorContext.logoSvgMarkup } : {}),
       ...(competitorContext?.footerContact && Object.keys(competitorContext.footerContact).length > 0

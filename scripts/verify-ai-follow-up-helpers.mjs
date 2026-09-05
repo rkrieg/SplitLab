@@ -801,6 +801,11 @@ const client = readFileSync(
   join(__dirname, '../src/app/(dashboard)/clients/[id]/pages/new/AIBuilderClient.tsx'),
   'utf8',
 );
+// The create path's reply used to be written in the browser after the stream
+// closed. It is composed on the server now (a build outlives the tab that asked
+// for it), so the two checks below follow it there rather than lapsing.
+const pageBuilds = readFileSync(join(__dirname, '../src/lib/page-builds.ts'), 'utf8');
+
 assert('client competitorLogoSvg state', client.includes('competitorLogoSvg'));
 assert('client passes competitor_logo_svg', client.includes('competitor_logo_svg'));
 assert('client partial toast path', client.includes('Partly done (not fully finished)'));
@@ -875,7 +880,10 @@ assert('follow-up seeds the checklist from the intent pass',
 assert('follow-up no longer derives requirements from prompt keywords',
   !follow.includes('extractRequirements('));
 assert('follow-up unmet downgrades toast', follow.includes('Still not applied'));
-assert('client surfaces unmet on create', client.includes('unmet_requirements') && client.includes('not everything landed'));
+assert('the create path still reports unmet asks',
+  pageBuilds.includes('unmet_requirements') && pageBuilds.includes('not everything landed'));
+assert('the client shows the reply the build composed',
+  client.includes('assistant_reply') && client.includes('unmet_requirements'));
 
 // ── Routing is decided by the model; intent failure clarifies (no regex) ────
 const intentSrc = readFileSync(join(__dirname, '../src/lib/ai-edit-intent.ts'), 'utf8');
@@ -1919,7 +1927,8 @@ assert('a section that was rewritten does not report itself as unfinished',
 assert('a broken image URL is a note about the page, not a failed ask',
   /addNote\(\s*`\$\{assetScan\.broken\.length\} image URL\(s\)/.test(follow));
 assert('the create path does not list a broken image under "not everything landed"',
-  /const note = \(?brokenAssets > 0/.test(client) &&
+  /const tail =\s*\(done\.broken_assets/.test(pageBuilds) &&
+  !/caveats\.push\(`\$\{brokenAssets\}/.test(pageBuilds) &&
   !/caveats\.push\(`\$\{brokenAssets\}/.test(client));
 
 // The three legitimate writers must survive — a genuinely missing ask still has
